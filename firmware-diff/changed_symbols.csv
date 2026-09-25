@@ -1,0 +1,1486 @@
+kind,class,ref_addr,size,instr_structural,instr_offset_only,instr_const_only,name
+FUNC,logic,0x20154fdc,20912,2186,568,212,__static_initialization_and_destruction_0() [clone .lto_priv.32]
+FUNC,logic,0x2015a1e8,6936,714,132,72,_sub_I_65535_0.0
+FUNC,logic,0x200dd4a4,3588,356,26,5,"LivePitchShifter::render(long*, long, long, long, long, long)"
+FUNC,logic,0x20108dbc,2036,282,10,8,InstrumentClip::InstrumentClip(Song*)
+FUNC,logic,0x2014b484,7728,174,88,62,deluge_main.isra.0
+FUNC,logic,0x2010780c,3550,167,38,13,UITimerManager::routine() [clone .constprop.0]
+FUNC,logic,0x20113f20,4614,161,251,10,mount_volume
+FUNC,logic,0x20138f58,2496,97,3,9,"SampleBrowser::loadAllSamplesInFolder(bool, long*, Sample***, bool*, long*) [clone .constprop.0]"
+FUNC,logic,0x2007d4dc,136,95,0,2,"PlaybackHandler::getTempoStringForOLED(float, StringBuf&) [clone .constprop.0]"
+FUNC,logic,0x2007d564,100,86,0,1,deluge::gui::menu_item::DecimalWithoutScrolling::getNotificationValue(StringBuf&)
+FUNC,logic,0x2010f7e4,7748,85,210,27,usb_cstd_usb_task.part.0
+FUNC,logic,0x20152c80,4466,82,0,13,"GlobalEffectableForClip::renderOutput(ModelStackWithTimelineCounter*, ParamManager*, std::span<StereoSample, 4294967295u>, long*, long, long, bool, bool, OutputType, SampleRecorder*)"
+FUNC,logic,0x200e7b30,18164,75,16,52,"Sound::render(ModelStackWithThreeMainThings*, std::span<StereoSample, 4294967295u>, long*, long, long, bool, long, SampleRecorder*)"
+FUNC,logic,0x2013c2d4,1264,72,10,5,SessionView::transitionToViewForClip(Clip*)
+FUNC,logic,0x2014633c,2160,72,7,3,"SoundEditor::buttonAction(unsigned char, bool, bool)"
+FUNC,logic,0x200a20f0,720,69,5,5,Voice::calculatePhaseIncrements(ModelStackWithSoundFlags*)
+FUNC,logic,0x20140a5c,1212,67,10,7,"InstrumentClipMinder::buttonAction(unsigned char, bool, bool)"
+FUNC,logic,0x200d38b8,336,65,5,6,deluge::gui::menu_item::gate::Selection::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x2015f9ac,3908,64,161,77,_sub_D_65535_1.1
+FUNC,logic,0x2007e64c,832,62,2,1,"PadLEDs::renderExplodeAnimation(long, bool)"
+FUNC,logic,0x20090408,188,53,4,2,deluge::gui::context_menu::DeleteFile::getOptions()
+FUNC,logic,0x2006f9e8,796,50,29,4,"deluge::hid::display::Rainfall::spawn(unsigned int, bool) [clone .constprop.0]"
+FUNC,logic,0x2016f3a8,628,44,0,4,"DxVoice::update(DxPatch&, int)"
+FUNC,logic,0x2010dcd4,1062,41,13,11,PlaybackHandler::midiRoutine() [clone .constprop.0]
+FUNC,logic,0x2012d8d8,1096,41,15,2,"Buttons::buttonAction(unsigned char, bool, bool)"
+FUNC,logic,0x2007bf24,48,38,0,0,deluge::gui::menu_item::PatchCableStrength::getNotificationValue(StringBuf&)
+FUNC,logic,0x2016efa8,920,36,2,4,"DxVoice::init(DxPatch&, int, int)"
+FUNC,logic,0x200d3ca0,408,36,3,2,deluge::gui::menu_item::osc::Type::renderInHorizontalMenu(SlotPosition const&)
+FUNC,logic,0x2007bef4,48,35,0,0,deluge::gui::menu_item::Decimal::getNotificationValue(StringBuf&)
+FUNC,logic,0x20147544,2502,34,12,9,"SessionView::buttonAction(unsigned char, bool, bool)"
+FUNC,logic,0x200c2888,128,33,0,0,deluge::gui::menu_item::SyncLevel::renderInHorizontalMenu(SlotPosition const&)
+FUNC,logic,0x200b1758,472,32,2,1,deluge::hid::display::SevenSegment::render()
+FUNC,logic,0x200c2638,184,32,0,0,deluge::gui::menu_item::arpeggiator::PresetMode::renderInHorizontalMenu(SlotPosition const&)
+FUNC,logic,0x20177710,8,32,0,0,____disable_irq_from_thumb
+FUNC,logic,0x200bc628,420,31,6,9,"deluge::memory::ObjectPool<TimeStretcher, deluge::memory::fast_allocator>::recycle(TimeStretcher*)"
+FUNC,logic,0x200bc83c,432,31,6,8,"deluge::memory::ObjectPool<VoiceSample, deluge::memory::fast_allocator>::recycle(VoiceSample*)"
+FUNC,logic,0x20177708,8,31,0,0,__memcpy_from_thumb
+FUNC,logic,0x200bd59c,196,30,4,1,deluge::hid::display::swapDisplayType()
+FUNC,logic,0x201240f4,524,29,3,5,SampleBrowser::opened()
+FUNC,logic,0x200b1988,256,29,2,2,deluge::hid::display::SevenSegment::transitionToNewLayer(NumericLayer*)
+FUNC,logic,0x2014177c,124,29,0,1,SoundEditor::goUpOneLevel()
+FUNC,logic,0x201776f0,8,29,0,0,___ZN6deluge3dsp6reverb8Freeverb6updateEv_from_thumb
+FUNC,logic,0x2009604c,184,28,5,4,hmidi_detach
+FUNC,logic,0x201040d0,712,28,4,4,"PlaybackHandler::finishTempolessRecording(bool, long, bool) [clone .constprop.0]"
+FUNC,logic,0x200bc534,244,28,2,5,AudioEngine::solicitTimeStretcher()
+FUNC,logic,0x200d9440,372,28,2,4,"StorageManager::createNewNonAudioInstrument(OutputType, long, long)"
+FUNC,logic,0x2015012c,56,28,3,0,AudioEngine::routine_task()
+FUNC,logic,0x200bd118,448,27,6,8,"deluge::memory::ObjectPool<Voice, deluge::memory::fast_allocator>::recycle(Voice*)"
+FUNC,logic,0x200b1c04,376,27,3,2,"deluge::hid::display::SevenSegment::innerSetText(std::basic_string_view<char, std::char_traits<char> >, bool, std::vector<unsigned char, std::allocator<unsigned char> >, bool, unsigned char*, bool, bool, long, unsigned char*, bool)"
+FUNC,logic,0x200bc2e0,236,27,2,3,AudioEngine::solicitVoiceSample()
+FUNC,logic,0x200b1a88,120,27,2,2,"deluge::hid::display::SevenSegment::displayLoadingAnimationText(char const*, bool, bool)"
+FUNC,logic,0x200930d8,42,27,0,0,non-virtual thunk to deluge::gui::menu_item::sidechain::Shape::getColumnLabel(StringBuf&)
+FUNC,logic,0x201776b8,8,27,0,0,___ZN13TimeStretcher12getSamplePosEl_from_thumb
+FUNC,logic,0x2011cc00,388,26,6,8,SaveInstrumentPresetUI::opened()
+FUNC,logic,0x200b1b00,260,26,2,2,"deluge::hid::display::SevenSegment::setScrollingText(char const*, long, long, int, unsigned char)"
+FUNC,logic,0x200f6a94,408,26,2,2,"Song::setTimePerTimerTick(unsigned long long, bool)"
+FUNC,logic,0x201776c8,8,26,0,0,____enable_irq_from_thumb
+FUNC,logic,0x201776d0,8,26,0,0,___ZN5Delay7processESt4spanI12StereoSampleLj4294967295EERKNS_5StateE_from_thumb
+FUNC,logic,0x200ec22c,2632,25,89,9,AudioEngine::routine() [clone .part.0]
+FUNC,logic,0x200ee8c0,560,25,4,10,InstrumentClipView::rotateNoteRowHorizontally(long)
+FUNC,logic,0x20149610,2028,25,6,4,"ArrangerView::padAction(long, long, long)"
+FUNC,logic,0x200a9228,788,25,2,3,"TaskManager::yield(bool (*)(), Time, bool) [clone .constprop.0]"
+FUNC,logic,0x200e5504,480,25,2,3,SessionView::renderOLED(deluge::hid::display::oled_canvas::Canvas&)
+FUNC,logic,0x200edb90,348,25,3,0,"ArrangerView::verticalEncoderAction(long, bool)"
+FUNC,logic,0x2006f770,294,25,0,2,usb_peri_devdefault
+FUNC,logic,0x200d44d8,844,25,0,1,Song::Song()
+FUNC,logic,0x201776e8,8,25,0,0,__v7_dma_inv_range_from_thumb
+FUNC,logic,0x200bbad4,584,24,4,4,ModControllableAudio::cloneFrom(ModControllableAudio*)
+FUNC,logic,0x2010cf7c,3416,24,0,6,"MidiEngine::midiMessageReceived(MIDICable&, unsigned char, unsigned char, unsigned char, unsigned char, unsigned long*) [clone .constprop.0]"
+FUNC,logic,0x200e30ec,344,24,2,3,"InstrumentClip::getOrCreateNoteRowForYNote(long, ModelStackWithTimelineCounter*, Action*, bool*)"
+FUNC,logic,0x200ff17c,268,24,2,3,virtual thunk to SoundInstrument::~SoundInstrument()
+FUNC,logic,0x2006fd04,156,24,0,0,deluge::hid::display::Rainfall::scatter() [clone .constprop.0]
+FUNC,logic,0x20090400,6,24,0,0,deluge::gui::context_menu::ConfigureSongMacros::getTitle()
+FUNC,logic,0x200bd6a0,672,23,13,4,"deluge::gui::menu_item::HorizontalMenu::buttonAction(unsigned char, bool, bool)"
+FUNC,logic,0x200fee88,252,23,2,3,SoundInstrument::~SoundInstrument()
+FUNC,logic,0x201067c8,272,23,2,3,InstrumentClipView::doubleClipLengthAction()
+FUNC,logic,0x200eec3c,292,23,2,2,"PerformanceView::logPerformanceViewPress(long, bool)"
+FUNC,logic,0x200f6f34,284,23,2,2,PlaybackHandler::grabTempoFromClip(Clip*) [clone .constprop.0]
+FUNC,logic,0x2012e338,192,23,1,0,"deluge::gui::ui::keyboard::KeyboardScreen::verticalEncoderAction(long, bool)"
+FUNC,logic,0x200feca8,236,22,2,3,non-virtual thunk to SoundInstrument::~SoundInstrument()
+FUNC,logic,0x200fed94,244,22,2,3,SoundInstrument::~SoundInstrument()
+FUNC,logic,0x200f0278,196,21,2,3,InstrumentClip::toggleNoteRowMute(ModelStackWithNoteRow*)
+FUNC,logic,0x200fef84,240,21,2,3,non-virtual thunk to SoundInstrument::~SoundInstrument()
+FUNC,logic,0x200ff074,264,21,2,3,virtual thunk to SoundInstrument::~SoundInstrument()
+FUNC,logic,0x20091cac,44,21,0,4,SessionView::getMacroKindString(SessionMacroKind)
+FUNC,logic,0x201039f8,152,21,2,2,"Action::recordClipExistenceChange(Song*, ClipArray*, Clip*, ExistenceChangeType)"
+FUNC,logic,0x2011a704,240,21,1,3,MIDIDeviceManager::factoryReset(bool)
+FUNC,logic,0x200ecc74,52,21,2,1,AudioEngine::runRoutine()
+FUNC,logic,0x20093130,72,21,0,0,non-virtual thunk to deluge::gui::menu_item::envelope::Segment::getColumnLabel(StringBuf&)
+FUNC,logic,0x2013675c,2236,20,6,8,Slicer::doSlice()
+FUNC,logic,0x20141098,1524,19,31,12,FlashStorage::writeSettings()
+FUNC,logic,0x2007ecc0,254,19,9,4,"View::potentiallyMakeItHarderToTurnKnob(long, ModelStackWithAutoParam*, long) [clone .constprop.0]"
+FUNC,logic,0x200b168c,60,19,5,0,Browser::opened()
+FUNC,logic,0x2008aa68,84,19,0,0,ConnectedUSBMIDIDevice::bufferMessage(unsigned long)
+FUNC,logic,0x201776c0,8,19,0,0,___ZN17GranularProcessor22startSkippingRenderingEv_from_thumb
+FUNC,logic,0x200d3760,344,18,5,2,deluge::gui::menu_item::cv::DualCVSelection::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x2008a8e0,392,17,11,4,MidiEngine::flushUSBMIDIOutput() [clone .constprop.0]
+FUNC,logic,0x200cd460,732,17,10,2,"QwertyUI::padAction(long, long, long)"
+FUNC,logic,0x201651f0,192,17,0,4,GranularProcessor::getBuffer()
+FUNC,logic,0x2016f798,156,17,0,3,getDxEngine()
+FUNC,logic,0x2016e018,276,17,0,2,EngineMkI::EngineMkI()
+FUNC,logic,0x20164cc0,944,17,0,1,GranularProcessor::setupGrainsIfNeeded(long)
+FUNC,logic,0x20169524,68,17,0,1,__tcf_0
+FUNC,logic,0x2016ed7c,252,17,0,1,DxPatch::computeLfo(int)
+FUNC,logic,0x2016fd1c,68,17,0,1,__tcf_0
+FUNC,logic,0x201776d8,8,17,0,0,__delugeDealloc_from_arm
+FUNC,logic,0x201776e0,8,17,0,0,___Z15shouldDoPanninglPlS__from_arm
+FUNC,logic,0x20177718,8,17,0,0,____cxa_thread_atexit_from_arm
+FUNC,logic,0x200d33ec,212,16,2,13,deluge::gui::menu_item::Colour::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200bbd40,652,16,4,7,"ModControllableAudio::learnKnob(MIDICable*, ParamDescriptor, unsigned char, unsigned char, unsigned char, Song*)"
+FUNC,logic,0x2006b8ec,204,16,0,0,"CVEngine::calculateVoltage(long, unsigned char) [clone .constprop.0]"
+FUNC,logic,0x200d0b78,1464,15,39,15,"MidiEngine::midiSysexReceived(MIDICable&, unsigned char*, long) [clone .part.0]"
+FUNC,logic,0x20091698,42,15,0,1,deluge::gui::menu_item::sidechain::Shape::getColumnLabel(StringBuf&)
+FUNC,logic,0x20091774,42,15,0,1,deluge::gui::menu_item::voice::PolyphonyType::getColumnLabel(StringBuf&)
+FUNC,logic,0x20091824,42,15,0,1,deluge::gui::menu_item::sample::TimeStretch::getColumnLabel(StringBuf&)
+FUNC,logic,0x20139918,1616,14,6,7,deluge::gui::context_menu::sample_browser::Kit::acceptCurrentOption()
+FUNC,logic,0x20111628,3030,13,117,6,usb_cstd_usb_task
+FUNC,logic,0x200edd14,1276,13,11,4,"SoundEditor::setup(Clip*, MenuItem const*, long)"
+FUNC,logic,0x2011c95c,132,13,3,5,DxSyxBrowser::opened()
+FUNC,logic,0x20141b64,344,13,0,1,"deluge::gui::menu_item::HorizontalMenu::handleInstrumentButtonPress(std::span<MenuItem*, 4294967295u>, MenuItem const*, long)"
+FUNC,logic,0x20177700,8,13,0,0,__logf_from_arm
+FUNC,logic,0x2010e740,1836,12,23,2,usb_hstd_interrupt
+FUNC,logic,0x20137d14,2536,12,13,9,"Sample::workOutMIDINote(bool, float, float, bool)"
+FUNC,logic,0x20148448,4552,11,7,26,"AutomationView::padAction(long, long, long)"
+FUNC,logic,0x200d28a4,176,11,2,3,deluge::gui::menu_item::voice::Priority::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x2007dedc,848,11,3,0,SoundEditor::updatePadLightsFor(MenuItem*) [clone .constprop.0]
+FUNC,logic,0x200a3cb0,162,11,0,0,deluge::gui::menu_item::MultiRange::noteOnToChangeRange(long) [clone .constprop.0]
+FUNC,logic,0x200c2908,2396,11,0,0,deluge::gui::menu_item::Number::renderInHorizontalMenu(SlotPosition const&)
+FUNC,logic,0x20125b00,5408,10,63,97,smSysex::handleNextSysEx()
+FUNC,logic,0x2010ee6c,1812,10,21,24,R_USB_Open.constprop.0
+FUNC,logic,0x2013d598,3012,10,14,9,deluge::hid::encoders::interpretEncoders(bool) [clone .isra.0]
+FUNC,logic,0x20108630,944,10,14,6,SessionView::transitionToSessionView() [clone .constprop.0]
+FUNC,logic,0x20109dc4,8916,9,5,146,Song::readFromFile(Deserializer&)
+FUNC,logic,0x200c0900,1080,9,36,7,deluge::hid::display::OLED::consoleText(char const*)
+FUNC,logic,0x20093104,42,9,0,1,non-virtual thunk to deluge::gui::menu_item::sidechain::GlobalVolume::getColumnLabel(StringBuf&)
+FUNC,logic,0x2011bbb4,3496,8,6,14,"Browser::arrivedInNewFolder(long, char const*, char const*)"
+FUNC,logic,0x20143db4,1360,8,7,4,"InstrumentClipView::padAction(long, long, long)"
+FUNC,logic,0x20130e60,956,8,4,6,"InstrumentClipView::enterDrumCreator(ModelStackWithNoteRow*, bool)"
+FUNC,logic,0x2008f798,152,8,1,2,"deluge::l10n::getView(deluge::l10n::Language const&, deluge::l10n::String)"
+FUNC,logic,0x201776f8,8,8,0,1,___ZN22GeneralMemoryAllocator7deallocEPv_from_arm
+FUNC,logic,0x20135eac,2044,7,18,17,"AudioFileManager::getAudioFileFromFilename(String&, bool, Error*, FilePointer*, AudioFileType, bool) [clone .constprop.0]"
+FUNC,logic,0x20123a88,1040,7,6,9,LoadInstrumentPresetUI::setupForOutputType()
+FUNC,logic,0x20090294,160,7,8,4,deluge::gui::context_menu::clip_settings::ClipSettingsMenu::getOptions()
+FUNC,logic,0x201089e0,812,7,7,4,ClipMinder::transitionToArrangerOrSession()
+FUNC,logic,0x20128634,4248,6,13,17,"Sound::noteOnPostArpeggiator(ModelStackWithSoundFlags*, long, long, long, short const*, unsigned long, long, unsigned long, long)"
+FUNC,logic,0x20137684,968,6,9,10,LoadInstrumentPresetUI::performLoadSynthToKit()
+FUNC,logic,0x2014f6d8,1464,6,4,3,"PerformanceView::padAction(long, long, long)"
+FUNC,logic,0x20090384,124,6,2,3,deluge::gui::context_menu::ConfigureSongMacros::getOptions()
+FUNC,logic,0x2009c280,324,6,3,1,"GlobalEffectable::setupFilterSetConfig(long*, ParamManager*)"
+FUNC,logic,0x200beb6c,292,6,1,2,PerformanceView::renderViewDisplay()
+FUNC,logic,0x2008f914,16,6,0,1,deluge::gui::menu_item::mpe::ZoneNumMemberChannels::getTitle() const
+FUNC,logic,0x200b32d4,32,6,0,0,MIDICableUSBHosted::~MIDICableUSBHosted()
+FUNC,logic,0x200b32f4,32,6,0,0,MIDIDeviceLumiKeys::~MIDIDeviceLumiKeys()
+FUNC,logic,0x200b3320,28,6,0,0,ConsequenceAudioClipSetSample::~ConsequenceAudioClipSetSample()
+FUNC,logic,0x200b3408,28,6,0,0,DrumName::~DrumName()
+FUNC,logic,0x200b3430,32,6,0,0,CopiedNoteRow::~CopiedNoteRow()
+FUNC,logic,0x200b3450,44,6,0,0,AudioFile::~AudioFile()
+FUNC,logic,0x200d63e0,3412,5,5,70,"ModControllableAudio::readTagFromFile(Deserializer&, char const*, ParamManagerForTimeline*, long, ArpeggiatorSettings*, Song*)"
+FUNC,logic,0x201402b0,1464,5,7,21,LoadPatternUI::performLoad()
+FUNC,logic,0x201195d0,268,5,8,9,"StorageManager::openDelugeFile(FileItem*, char const*, char const*, bool) [clone .constprop.0]"
+FUNC,logic,0x200aa0a4,440,5,7,9,SampleCache::getCluster(long)
+FUNC,logic,0x2014d2b4,1904,5,1,10,resetprg
+FUNC,logic,0x20106af4,1316,5,3,4,ArrangerView::horizontalEncoderAction(long)
+FUNC,logic,0x2013c8f4,2202,5,7,0,"ActionLogger::revert(TimeType, bool, bool) [clone .constprop.0]"
+FUNC,logic,0x200fe3e0,228,5,2,2,StorageManager::createNewDrum(DrumType)
+FUNC,logic,0x200dfb04,132,5,0,2,deluge::gui::menu_item::EditName::beginSession(MenuItem*)
+FUNC,logic,0x200b31d0,28,5,1,0,std::bad_expected_access<void>::~bad_expected_access()
+FUNC,logic,0x200b31ec,28,5,1,0,std::bad_expected_access<Error>::~bad_expected_access()
+FUNC,logic,0x200b3208,12,5,0,0,Slicer::~Slicer()
+FUNC,logic,0x200b3314,12,5,0,0,ConsequenceArrangerParamsTimeInserted::~ConsequenceArrangerParamsTimeInserted()
+FUNC,logic,0x200b333c,12,5,0,0,ConsequenceBeginPlayback::~ConsequenceBeginPlayback()
+FUNC,logic,0x200b3424,12,5,0,0,ModControllable::~ModControllable()
+FUNC,logic,0x200b347c,12,5,0,0,ArpeggiatorForDrum::~ArpeggiatorForDrum()
+FUNC,logic,0x200fcb40,6128,4,4,94,"InstrumentClip::readFromFile(Deserializer&, Song*)"
+FUNC,logic,0x20146bac,2456,4,5,41,"PerformanceView::buttonAction(unsigned char, bool, bool)"
+FUNC,logic,0x200820c8,4020,4,31,13,"PadLEDs::renderInstrumentClipCollapseAnimation(long, long, long) [clone .constprop.0]"
+FUNC,logic,0x200ae0f8,1924,4,8,22,"InstrumentClipView::copyNotes(Serializer*, bool)"
+FUNC,logic,0x200fc5b8,1156,4,13,6,Sound::Sound() [clone .isra.0]
+FUNC,logic,0x20107070,764,4,10,3,PadLEDs::renderAudioClipExpandOrCollapse()
+FUNC,logic,0x200d3a08,280,4,2,7,deluge::gui::menu_item::midi::FollowFeedbackChannelType::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x2011dbd0,892,4,7,2,"LoadInstrumentPresetUI::doPresetNavigation(long, Instrument*, Availability, bool) [clone .constprop.0]"
+FUNC,logic,0x20149dfc,636,4,5,4,"Session::giveClipOpportunityToBeginLinearRecording(Clip*, long, long) [clone .part.0]"
+FUNC,logic,0x200c1b44,944,4,1,7,deluge::gui::menu_item::PatchCableStrength::renderOLED()
+FUNC,logic,0x201432c8,1468,4,5,3,"SoundEditor::potentialShortcutPadAction(long, long, bool)"
+FUNC,logic,0x2015de08,2496,4,5,3,"AutomationView::buttonAction(unsigned char, bool, bool)"
+FUNC,logic,0x20080d64,1544,4,3,1,TaskManager::chooseBestTask(Time) [clone .constprop.0]
+FUNC,logic,0x200fe994,196,4,2,2,SoundDrum::~SoundDrum()
+FUNC,logic,0x200fea58,192,4,2,2,non-virtual thunk to SoundDrum::~SoundDrum()
+FUNC,logic,0x200feb18,204,4,2,2,SoundDrum::~SoundDrum()
+FUNC,logic,0x200febe4,196,4,2,2,non-virtual thunk to SoundDrum::~SoundDrum()
+FUNC,logic,0x20122888,528,4,2,2,SampleBrowser::exitAction()
+FUNC,logic,0x2013aed0,520,4,2,2,SampleMarkerEditor::horizontalEncoderAction(long)
+FUNC,logic,0x2014a2b4,3376,4,2,1,Session::doLaunch(bool)
+FUNC,logic,0x2012c114,968,4,0,2,"SampleMarkerEditor::writeValue(unsigned long, MarkerType)"
+FUNC,logic,0x2011eb38,1236,4,1,0,AutomationView::selectEncoderAction(signed char)
+FUNC,logic,0x20122d7c,1548,3,25,6,"Browser::padAction(long, long, long)"
+FUNC,logic,0x200e6d74,3516,3,21,7,"Voice::renderBasicSource(Sound&, ParamManagerForTimeline*, long, long*, long, bool, long, bool*, long, bool, unsigned long*, unsigned long*, long, unsigned long*, bool, long) [clone .constprop.0]"
+FUNC,logic,0x2010c098,1404,3,17,11,LoadSongUI::performLoad()
+FUNC,logic,0x2011a310,1010,3,3,23,MIDIDeviceManager::readDevicesFromFile()
+FUNC,logic,0x20124a40,2024,3,8,16,SaveSongUI::performSave(bool)
+FUNC,logic,0x2012c670,1252,3,15,7,"AudioEngine::getNewRecorder(long, AudioRecordingFolder, AudioInputChannel, bool, bool, long, bool, Output*, RecorderConfig) [clone .constprop.0]"
+FUNC,logic,0x2013410c,5766,3,11,10,"WaveTable::setup(Sample*, long, unsigned long, unsigned long, long, RawDataFormat, WaveTableReader*)"
+FUNC,logic,0x2010747c,912,3,18,2,PadLEDs::timerRoutine()
+FUNC,logic,0x200c0f10,1244,3,14,3,"deluge::gui::menu_item::HorizontalMenu::renderMenuItems(std::span<MenuItem*, 4294967295u>, MenuItem const*)"
+FUNC,logic,0x2014fc90,1180,3,11,4,"SoundEditor::padAction(long, long, long)"
+FUNC,logic,0x20139f68,1564,3,4,9,deluge::gui::context_menu::sample_browser::Synth::acceptCurrentOption()
+FUNC,logic,0x2009e4d0,1756,3,2,10,"Patcher::performInitialPatching(Sound&, ParamManager&)"
+FUNC,logic,0x201194f8,216,3,8,4,"StorageManager::openXMLFile(FilePointer*, XMLDeserializer&, char const*, char const*, bool) [clone .constprop.0]"
+FUNC,logic,0x2011d3cc,778,3,7,5,"LoadInstrumentPresetUI::findAnUnlaunchedPresetIncludingWithinSubfolders(Song*, OutputType, Availability)"
+FUNC,logic,0x200d8e84,692,3,5,6,Song::createNewAudioOutput(Output*)
+FUNC,logic,0x2011abec,460,3,7,4,"Browser::readFileItemsForFolder(char const*, bool, char const**, char const*, long, long) [clone .constprop.0]"
+FUNC,logic,0x2011d044,512,3,2,9,SavePatternUI::opened()
+FUNC,logic,0x2013f824,624,3,7,4,ClipView::horizontalEncoderAction(long)
+FUNC,logic,0x2012bc0c,1078,3,3,7,Song::ensureAtLeastOneSessionClip()
+FUNC,logic,0x2016c9e8,5676,3,0,10,"Delay::process(std::span<StereoSample, 4294967295u>, Delay::State const&)"
+FUNC,logic,0x200b72c0,1260,3,4,4,PatchCableSet::setupPatching(ModelStackWithParamCollection const*)
+FUNC,logic,0x200d3668,248,3,4,4,deluge::gui::menu_item::sample::Repeat::getColumnLabel(StringBuf&)
+FUNC,logic,0x200d4194,424,3,4,4,deluge::gui::menu_item::filter::FilterModeSelection::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x2007c3f0,500,3,6,1,"PadLEDs::renderAudioClipExplodeAnimation(long, bool)"
+FUNC,logic,0x200d31a4,212,3,2,5,deluge::gui::menu_item::voice::PolyphonyType::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200e3314,1948,3,1,6,"AutomationView::renderDisplay(long, long, bool)"
+FUNC,logic,0x200e61cc,348,3,2,5,deluge::gui::menu_item::sequence::Direction::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x2007ec70,78,3,5,1,indicator_leds::blinkKnobIndicatorLevelTimeout()
+FUNC,logic,0x20105dd0,1140,3,3,3,"PlaybackHandler::tempoEncoderAction(signed char, bool, bool) [clone .constprop.0]"
+FUNC,logic,0x200cf3ac,392,3,0,5,"deluge::gui::menu_item::midi::FollowChannel::drawInteger(long, long, long)"
+FUNC,logic,0x200d25ec,164,3,2,3,deluge::gui::menu_item::defaults::AccessibilityMenuHighlighting::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d29fc,180,3,2,3,deluge::gui::menu_item::sample::Repeat::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d2ab0,176,3,2,3,deluge::gui::menu_item::record::ThresholdMode::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200ac070,216,3,2,2,ParamManager::setupMIDI()
+FUNC,logic,0x200fff20,100,3,1,3,deluge::gui::context_menu::clip_settings::ClipSettingsMenu::acceptCurrentOption()
+FUNC,logic,0x201095b0,392,3,2,2,"InstrumentClip::cloneAsNewOverdub(ModelStackWithTimelineCounter*, OverDubType)"
+FUNC,logic,0x20093610,300,3,0,2,"deluge::gui::menu_item::midi::FollowFeedbackChannelType::getTrackAndChannelOption(unsigned int, deluge::l10n::String)"
+FUNC,logic,0x20060924,172,3,0,1,AutomationView::initMIDICCShortcutsForAutomation()
+FUNC,logic,0x20098780,1276,2,53,19,deluge::hid::display::OLED::consoleTimerEvent() [clone .isra.0]
+FUNC,logic,0x20166020,12496,2,0,35,"deluge::dsp::Oscillator::renderOsc(OscType, long, long*, long*, long, unsigned long, unsigned long, unsigned long*, bool, long, bool, unsigned long, unsigned long, unsigned long, long, int, WaveTable*)"
+FUNC,logic,0x2012eae4,1244,2,26,5,StemExport::startStemExportProcess(StemExportType) [clone .constprop.0]
+FUNC,logic,0x2014e9d4,3124,2,22,8,"SessionView::padAction(long, long, long)"
+FUNC,logic,0x201325f4,6504,2,6,21,"VoiceSample::render(SamplePlaybackGuide*, long*, long, Sample*, long, LoopType, long, long, long, long, long, InterpolationMode, long)"
+FUNC,logic,0x200cd204,524,2,12,6,hmidi_configured
+FUNC,logic,0x2012a954,2332,2,6,12,"VoiceSample::weShouldBeTimeStretchingNow(Sample*, SamplePlaybackGuide*, long, long, long, long, long, LoopType)"
+FUNC,logic,0x20079cf4,508,2,16,1,inputRoutine()
+FUNC,logic,0x2011fdcc,1264,2,8,9,"InstrumentClip::changeOutputType(ModelStackWithTimelineCounter*, OutputType)"
+FUNC,logic,0x2015e7c8,3204,2,12,5,"InstrumentClipView::buttonAction(unsigned char, bool, bool)"
+FUNC,logic,0x200cb694,364,2,13,2,deluge::gui::menu_item::DxGlobalParams::selectButtonPress()
+FUNC,logic,0x20124430,572,2,6,9,SaveKitRowUI::performSave(bool)
+FUNC,logic,0x2012466c,568,2,9,6,SaveInstrumentPresetUI::performSave(bool)
+FUNC,logic,0x2010c614,1672,2,4,8,"PlaybackHandler::offerNoteToLearnedThings(MIDICable&, bool, long, long) [clone .constprop.0]"
+FUNC,logic,0x2009db98,268,2,9,1,ModControllableAudio::beginStutter(ParamManagerForTimeline*)
+FUNC,logic,0x200b9110,656,2,5,5,"MIDIDeviceManager::getOrCreateHostedMIDIDeviceFromDetails(String*, unsigned short, unsigned short)"
+FUNC,logic,0x2013d190,812,2,5,5,InstrumentClipView::editNoteRowLength(long)
+FUNC,logic,0x200d3584,228,2,4,4,deluge::gui::menu_item::sample::PitchSpeed::getColumnLabel(StringBuf&)
+FUNC,logic,0x20100a00,364,2,8,0,Browser::getNewFileItem()
+FUNC,logic,0x2010e358,284,2,7,1,usb_hhub_open
+FUNC,logic,0x20144cf4,1472,2,3,5,"View::buttonAction(unsigned char, bool, bool) [clone .constprop.0]"
+FUNC,logic,0x2015f44c,1100,2,8,0,"deluge::gui::ui::keyboard::KeyboardScreen::buttonAction(unsigned char, bool, bool)"
+FUNC,logic,0x200ceae0,564,2,0,7,deluge::gui::menu_item::midi::Command::drawPixelsForOled()
+FUNC,logic,0x200d1320,340,2,4,3,deluge::gui::menu_item::defaults::DefaultScale::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x2011cd84,232,2,3,4,SaveKitRowUI::opened()
+FUNC,logic,0x2013baec,868,2,6,1,SampleBrowser::previewIfPossible(long)
+FUNC,logic,0x20145d78,640,2,5,2,"AudioClipView::buttonAction(unsigned char, bool, bool)"
+FUNC,logic,0x20070478,1002,2,0,6,"SessionView::gridRenderClipColor(Clip*, long, long, bool) [clone .isra.0]"
+FUNC,logic,0x20090218,120,2,6,0,deluge::gui::context_menu::ClearSong::getOptions()
+FUNC,logic,0x20090520,116,2,4,2,deluge::gui::context_menu::MidiLearnMode::getOptions()
+FUNC,logic,0x200b1de8,392,2,4,2,doAnyPendingUIRendering()
+FUNC,logic,0x200d0a74,258,2,2,4,deluge::gui::menu_item::stutter::StutterDirection::getNotificationValue(StringBuf&)
+FUNC,logic,0x200d2034,164,2,2,4,deluge::gui::menu_item::SynthModeSelection::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d235c,164,2,2,4,deluge::gui::menu_item::FilterRouting::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200907f8,116,2,4,1,deluge::gui::context_menu::DoneStemExport::getOptions()
+FUNC,logic,0x200ac148,156,2,2,3,"Cluster::create(Cluster::Type, bool, void*)"
+FUNC,logic,0x200b3e70,828,2,4,1,deluge::gui::menu_item::MultiRange::selectEncoderAction(long)
+FUNC,logic,0x200d1c24,148,2,2,3,deluge::gui::menu_item::sample::PitchSpeed::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d1d4c,148,2,2,3,deluge::gui::menu_item::randomizer::RandomizerLock::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d1f08,148,2,2,3,deluge::gui::menu_item::AudioInterpolation::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d2178,164,2,2,3,deluge::gui::menu_item::performance_session_view::EditingMode::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d24a4,164,2,2,3,deluge::gui::menu_item::defaults::DefaultGridDefaultActiveMode::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d2730,164,2,2,3,deluge::gui::menu_item::reverb::Model::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x201387f0,1560,2,4,1,"SampleBrowser::claimCurrentFile(long, long, long, bool)"
+FUNC,logic,0x2009059c,112,2,4,0,deluge::gui::context_menu::OverwriteFile::getOptions()
+FUNC,logic,0x20090610,112,2,4,0,deluge::gui::context_menu::ResetSettings::getOptions()
+FUNC,logic,0x20090780,112,2,4,0,deluge::gui::context_menu::CancelStemExport::getOptions()
+FUNC,logic,0x200ab1a8,136,2,2,2,"Action::recordClipLengthChange(Clip*, long)"
+FUNC,logic,0x200ab34c,124,2,2,2,"Action::recordClipInstanceExistenceChange(Output*, ClipInstance*, ExistenceChangeType)"
+FUNC,logic,0x200ab3c8,156,2,2,2,"Action::recordNoteExistenceChange(InstrumentClip*, long, Note*, ExistenceChangeType)"
+FUNC,logic,0x200ab51c,160,2,2,2,"ClipInstance::change(Action*, Output*, long, long, Clip*)"
+FUNC,logic,0x200b155c,136,2,2,2,Action::recordAudioClipSampleChange(AudioClip*)
+FUNC,logic,0x200b58b8,88,2,2,2,FileWriter::~FileWriter()
+FUNC,logic,0x200b5f1c,124,2,2,2,ModControllableAudio::~ModControllableAudio()
+FUNC,logic,0x200b6ec4,88,2,2,2,deluge::gui::menu_item::HorizontalMenuGroup::~HorizontalMenuGroup()
+FUNC,logic,0x200b6f1c,92,2,2,2,deluge::gui::menu_item::submenu::ActualSource::~ActualSource()
+FUNC,logic,0x200b7030,92,2,2,2,deluge::gui::menu_item::HorizontalMenuGroup::~HorizontalMenuGroup()
+FUNC,logic,0x200b70f0,100,2,2,2,deluge::gui::menu_item::submenu::ActualSource::~ActualSource()
+FUNC,logic,0x200d1290,144,2,2,2,deluge::gui::menu_item::defaults::ui::clip_type::DefaultNewClipType::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d2548,164,2,2,2,deluge::gui::menu_item::defaults::DefaultFavouritesLayout::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d2cc0,180,2,2,2,deluge::gui::menu_item::defaults::ScreensaverModeMenu::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d2d74,176,2,2,2,deluge::gui::menu_item::runtime_feature::DevSysexSetting::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d2f00,224,2,2,2,deluge::gui::menu_item::arpeggiator::PresetMode::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d3278,216,2,2,2,modfx::getModNames()
+FUNC,logic,0x200da1cc,208,2,2,2,"Action::recordParamChangeDefinitely(ModelStackWithAutoParam const*, bool)"
+FUNC,logic,0x200dadc4,172,2,2,2,"Action::recordNoteArrayChangeDefinitely(InstrumentClip*, long, NoteVector*, bool)"
+FUNC,logic,0x20100f2c,660,2,2,2,"InstrumentClip::detachFromOutput(ModelStackWithTimelineCounter*, bool, bool, bool, bool, bool, bool)"
+FUNC,logic,0x20109b40,300,2,2,2,Instrument::createNewClipForArrangementRecording(ModelStack*)
+FUNC,logic,0x20120d14,468,2,2,2,"StorageManager::createFile(char const*, bool)"
+FUNC,logic,0x2013b988,356,2,3,1,SampleBrowser::horizontalEncoderAction(long)
+FUNC,logic,0x20154c78,112,2,2,2,FileWriter::FileWriter() [clone .isra.0]
+FUNC,logic,0x2015a18c,92,2,2,2,FileReader::FileReader() [clone .isra.0]
+FUNC,logic,0x20097c0c,172,2,1,2,deluge::gui::ui::keyboard::KeyboardScreen::graphicsRoutine()
+FUNC,logic,0x2010736c,272,2,2,1,PadLEDs::renderClipExpandOrCollapse()
+FUNC,logic,0x2013fae4,572,2,2,1,AutomationView::horizontalEncoderAction(long)
+FUNC,logic,0x2007caf0,352,2,1,1,closeUI(UI*)
+FUNC,logic,0x2007fa2c,60,2,1,1,"SessionView::potentiallyRenderClipLaunchPlayhead(bool, long)"
+FUNC,logic,0x20099b40,142,2,1,1,"GlobalEffectable::createDelayWorkingState(ParamManager&, bool, bool)"
+FUNC,logic,0x200d09d0,162,2,0,2,deluge::gui::menu_item::stutter::StutterDirection::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x20077204,212,2,1,0,SoundEditor::enterOrUpdateSoundEditor(bool) [clone .constprop.0]
+FUNC,logic,0x2009500c,74,2,0,1,"GeneralMemoryAllocator::putStealableInQueue(Stealable*, StealableQueue) [clone .constprop.0]"
+FUNC,logic,0x200b22c4,124,2,0,1,GlobalEffectableForClip::GlobalEffectableForClip() [clone .isra.0]
+FUNC,logic,0x200ffb8c,220,2,1,0,PlaybackHandler::recordButtonPressed() [clone .constprop.0]
+FUNC,logic,0x2012f0c4,6864,1,33,65,SampleRecorder::cardRoutine()
+FUNC,logic,0x20089b40,852,1,44,1,usb_hhub_enumeration
+FUNC,logic,0x2007c818,348,1,29,2,QwertyUI::drawKeys()
+FUNC,logic,0x20145374,2486,1,14,10,"ArrangerView::buttonAction(unsigned char, bool, bool)"
+FUNC,logic,0x200e68d0,832,1,17,6,AudioEngine::renderReverb(unsigned int)
+FUNC,logic,0x2012dd20,552,1,16,5,readButtonsAndPads() [clone .isra.0]
+FUNC,logic,0x200cdd54,292,1,19,0,"deluge::hid::display::OLED::setupSideScroller(long, std::basic_string_view<char, std::char_traits<char> >, long, long, long, long, long, long, bool)"
+FUNC,logic,0x2008962c,376,1,13,5,usb_hstd_enum_get_descriptor
+FUNC,logic,0x2008995c,228,1,17,1,usb_hmidi_get_string_desc.constprop.0.isra.0
+FUNC,logic,0x20146134,500,1,14,4,"deluge::gui::menu_item::PatchCableStrength::buttonAction(unsigned char, bool, bool)"
+FUNC,logic,0x200bf6b0,1452,1,1,16,deluge::gui::menu_item::DxParam::drawPixelsForOled()
+FUNC,logic,0x200add10,524,1,11,5,"MemoryRegion::markSpaceAsEmpty(unsigned long, unsigned long, bool, bool)"
+FUNC,logic,0x200f2ff0,4480,1,3,13,"InstrumentClipView::editPadAction(bool, unsigned char, unsigned char, unsigned long)"
+FUNC,logic,0x20141e50,4522,1,5,11,InstrumentClipView::nudgeNotes(long)
+FUNC,logic,0x2014da24,1232,1,7,9,"SessionView::gridCreateClip(unsigned long, Output*, Clip*)"
+FUNC,logic,0x200b8db8,856,1,10,5,ResizeableArray::ensureEnoughSpaceAllocated(long)
+FUNC,logic,0x200d15c0,888,1,5,9,deluge::gui::menu_item::PatchCables::readValueAgain()
+FUNC,logic,0x200ee41c,680,1,10,3,"ActionLogger::getNewAction(ActionType, ActionAddition) [clone .constprop.0]"
+FUNC,logic,0x201011c0,1712,1,3,10,InstrumentClip::claimOutput(ModelStackWithTimelineCounter*)
+FUNC,logic,0x20123414,224,1,12,1,"FavouritesManager::setCategory(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) [clone .constprop.0]"
+FUNC,logic,0x2009fcd4,1586,1,6,6,"Patcher::performPatching(unsigned long, Sound&, ParamManagerForTimeline&)"
+FUNC,logic,0x200cce60,472,1,6,6,"String::concatenateAtPos(char const*, long, long)"
+FUNC,logic,0x200d2e24,220,1,8,3,deluge::gui::menu_item::cv::Selection::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x20122aac,720,1,4,7,FavouritesManager::loadFavouritesBank() [clone .constprop.0]
+FUNC,logic,0x2012c044,208,1,8,3,setupBlankSong()
+FUNC,logic,0x2013e190,1442,1,3,8,InstrumentClipView::editNoteRepeat(long) [clone .part.0]
+FUNC,logic,0x20090188,140,1,10,0,deluge::gui::context_menu::AudioInputSelector::getOptions()
+FUNC,logic,0x200ac1e4,920,1,5,5,"ResizeableArray::insertAtIndex(long, long, void*)"
+FUNC,logic,0x200bc014,356,1,6,4,"deluge::memory::ObjectPool<Voice, deluge::memory::fast_allocator>::repopulate()"
+FUNC,logic,0x200bc178,360,1,6,4,"deluge::memory::ObjectPool<VoiceSample, deluge::memory::fast_allocator>::repopulate()"
+FUNC,logic,0x200bc3cc,360,1,6,4,"deluge::memory::ObjectPool<TimeStretcher, deluge::memory::fast_allocator>::repopulate()"
+FUNC,logic,0x200ccd24,316,1,6,4,"String::set(char const*, long)"
+FUNC,logic,0x200d5e64,472,1,6,4,ParamManager::setupWithPatching()
+FUNC,logic,0x20075d2c,364,1,7,2,HIDSysex::sendDisplayIfChanged()
+FUNC,logic,0x200aa25c,956,1,5,4,"ResizeableArray::deleteAtIndex(long, long, bool)"
+FUNC,logic,0x200b8bb8,512,1,6,3,"ResizeableArray::attemptMemoryExpansion(long, long, bool, void*)"
+FUNC,logic,0x200bb7c4,532,1,4,5,"OpenAddressingHashTable::insert(unsigned long, bool*) [clone .constprop.0] [clone .isra.0]"
+FUNC,logic,0x200de8d4,1492,1,3,6,"ArpeggiatorBase::executeArpStep(ArpeggiatorSettings*, unsigned char, bool, unsigned long, unsigned long, bool*, bool*, bool*, bool*, bool*, bool*)"
+FUNC,logic,0x20094edc,184,1,7,1,PadLEDs::setupAudioClipCollapseOrExplodeAnimation(AudioClip*)
+FUNC,logic,0x2009b5e4,152,1,5,3,ModControllableAudio::endStutter(ParamManagerForTimeline*)
+FUNC,logic,0x200bb9d8,252,1,4,4,"void std::vector<std::pair<unsigned long, Cluster*>, deluge::memory::fast_allocator<std::pair<unsigned long, Cluster*> > >::_M_realloc_append<std::pair<unsigned long, Cluster*> >(std::pair<unsigned long, Cluster*>&&)"
+FUNC,logic,0x200cfe40,356,1,4,4,"void std::vector<RuntimeFeatureSettingOption, deluge::memory::external_allocator<RuntimeFeatureSettingOption> >::_M_assign_aux<RuntimeFeatureSettingOption const*>(RuntimeFeatureSettingOption const*, RuntimeFeatureSettingOption const*, std::forward_iterator_tag) [clone .constprop.0]"
+FUNC,logic,0x200d08bc,276,1,4,4,"std::basic_string_view<char, std::char_traits<char> >& std::vector<std::basic_string_view<char, std::char_traits<char> >, deluge::memory::external_allocator<std::basic_string_view<char, std::char_traits<char> > > >::emplace_back<std::basic_string_view<char, std::char_traits<char> > >(std::basic_string_view<char, std::char_traits<char> >&&)"
+FUNC,logic,0x200d27d4,208,1,2,6,deluge::gui::menu_item::keyboard::Layout::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d3e38,440,1,4,4,deluge::gui::menu_item::arpeggiator::NoteMode::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d3ff0,420,1,4,4,deluge::gui::menu_item::arpeggiator::OctaveMode::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200fe4c4,484,1,7,1,InstrumentClipView::createDrumForAuditionedNoteRow(DrumType)
+FUNC,logic,0x2013735c,276,1,6,2,deluge::gui::context_menu::ClearSong::acceptCurrentOption()
+FUNC,logic,0x200b5430,504,1,4,3,"AutoParam::copy(long, long, CopiedParamAutomation*, bool, ModelStackWithAutoParam const*)"
+FUNC,logic,0x200bb020,332,1,4,3,"std::_Rb_tree_iterator<std::pair<short const, MelodicInstrument::EarlyNoteInfo> > std::_Rb_tree<short, std::pair<short const, MelodicInstrument::EarlyNoteInfo>, std::_Select1st<std::pair<short const, MelodicInstrument::EarlyNoteInfo> >, std::less<short>, deluge::memory::fast_allocator<std::pair<short const, MelodicInstrument::EarlyNoteInfo> > >::_M_emplace_hint_unique<std::piecewise_construct_t const&, std::tuple<short&&>, std::tuple<> >(std::_Rb_tree_const_iterator<std::pair<short const, MelodicInstrument::EarlyNoteInfo> >, std::piecewise_construct_t const&, std::tuple<short&&>&&, std::tuple<>&&) [clone .constprop.0] [clone .isra.0]"
+FUNC,logic,0x200bb410,332,1,4,3,"std::_Rb_tree_iterator<std::pair<unsigned char const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > std::_Rb_tree<unsigned char, std::pair<unsigned char const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::_Select1st<std::pair<unsigned char const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >, std::less<unsigned char>, deluge::memory::fast_allocator<std::pair<unsigned char const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > >::_M_emplace_hint_unique<std::piecewise_construct_t const&, std::tuple<unsigned char&&>, std::tuple<> >(std::_Rb_tree_const_iterator<std::pair<unsigned char const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >, std::piecewise_construct_t const&, std::tuple<unsigned char&&>&&, std::tuple<>&&) [clone .constprop.0] [clone .isra.0]"
+FUNC,logic,0x200d1130,352,1,4,3,deluge::gui::menu_item::runtime_feature::Setting::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d1474,332,1,4,3,deluge::gui::menu_item::gate::Mode::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x2010632c,780,1,4,3,PadLEDs::renderZoom()
+FUNC,logic,0x20119198,360,1,5,2,smSysex::performFileCopy(smSysex::FileOpParams const&)
+FUNC,logic,0x20090334,80,1,5,1,deluge::gui::context_menu::clip_settings::LaunchStyleMenu::getOptions()
+FUNC,logic,0x200906cc,92,1,6,0,deluge::gui::context_menu::sample_browser::Synth::getOptions()
+FUNC,logic,0x200a6b3c,1104,1,3,3,"InstrumentClipView::renderSidebar(unsigned long, RGB (*) [18], unsigned char (*) [18])"
+FUNC,logic,0x200b5ff8,148,1,4,2,"deluge::memory::ObjectPool<Voice, deluge::memory::fast_allocator>::~ObjectPool()"
+FUNC,logic,0x200b608c,148,1,4,2,"deluge::memory::ObjectPool<VoiceSample, deluge::memory::fast_allocator>::~ObjectPool()"
+FUNC,logic,0x200b6120,148,1,4,2,"deluge::memory::ObjectPool<TimeStretcher, deluge::memory::fast_allocator>::~ObjectPool()"
+FUNC,logic,0x200d19d0,160,1,2,4,deluge::gui::menu_item::defaults::PatchCablePolarity::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d1de0,148,1,2,4,deluge::gui::menu_item::midi::Transpose::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d3b20,384,1,4,2,deluge::gui::menu_item::osc::Type::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200dbc8c,724,1,2,4,"NoteRow::clearArea(long, long, ModelStackWithNoteRow*, Action*, unsigned long, bool) [clone .isra.0]"
+FUNC,logic,0x200dbf60,480,1,2,4,"NoteRow::changeNotesAcrossAllScreens(long, ModelStackWithNoteRow*, Action*, long, long) [clone .isra.0]"
+FUNC,logic,0x200e3bd0,148,1,5,1,View::setKnobIndicatorLevels() [clone .constprop.0]
+FUNC,logic,0x20109c6c,344,1,2,4,"Song::readClipsFromFile(Deserializer&, ClipArray*)"
+FUNC,logic,0x2011adb8,280,1,4,2,"Browser::readFileItemsFromFolderAndMemory(Song*, OutputType, char const*, char const*, char const*, bool, Availability, long)"
+FUNC,logic,0x20124300,304,1,3,3,SaveMidiDeviceDefinitionUI::performSave(bool)
+FUNC,logic,0x20125368,308,1,3,3,SavePatternUI::performSave(bool)
+FUNC,logic,0x201323e4,528,1,2,4,"Song::renderAudio(std::span<StereoSample, 4294967295u>, long*, long) [clone .constprop.0]"
+FUNC,logic,0x2009072c,80,1,5,0,deluge::gui::context_menu::SaveSongOrInstrument::getOptions()
+FUNC,logic,0x200b3b58,192,1,2,3,"AudioClip::cloneAsNewOverdub(ModelStackWithTimelineCounter*, OverDubType)"
+FUNC,logic,0x200b3d38,136,1,2,3,AudioOutput::createNewClipForArrangementRecording(ModelStack*)
+FUNC,logic,0x200bd500,92,1,3,2,operator new(unsigned int)
+FUNC,logic,0x200d34c0,196,1,2,3,deluge::gui::menu_item::arpeggiator::ChordType::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d5550,280,1,2,3,ParamManager::ensureExpressionParamSetExists(bool)
+FUNC,logic,0x201046b8,1004,1,2,3,Arrangement::doTickForward(long)
+FUNC,logic,0x2010548c,560,1,2,3,PlaybackHandler::playButtonPressed(long) [clone .constprop.0]
+FUNC,logic,0x20109738,1032,1,2,3,"InstrumentClip::clone(ModelStackWithTimelineCounter*, bool) const"
+FUNC,logic,0x2011d244,392,1,2,3,SaveSongUI::opened()
+FUNC,logic,0x2012a710,580,1,2,3,"VoiceSample::possiblySetUpCache(SampleControls*, SamplePlaybackGuide*, long, long, long, LoopType)"
+FUNC,logic,0x2014168c,240,1,3,2,SoundEditor::exitCompletely()
+FUNC,logic,0x2014817c,716,1,2,3,"ArrangerView::handleAuditionPadAction(long, long, UI*)"
+FUNC,logic,0x2007c26c,258,1,4,0,PadLEDs::clearTickSquares(bool)
+FUNC,logic,0x20086644,692,1,4,0,SessionView::gridPulseSelectedClip()
+FUNC,logic,0x20090684,68,1,4,0,deluge::gui::context_menu::sample_browser::Kit::getOptions()
+FUNC,logic,0x200aa020,132,1,2,2,WaveTable::numReasonsDecreasedToZero(char const*)
+FUNC,logic,0x200ab110,76,1,2,2,"allocLowSpeed(unsigned long, void*)"
+FUNC,logic,0x200ab15c,76,1,2,2,"allocMaxSpeed(unsigned long, void*)"
+FUNC,logic,0x200ab5bc,108,1,2,2,ModControllableAudio::enableGrain()
+FUNC,logic,0x200ae03c,76,1,2,2,delugeDealloc
+FUNC,logic,0x200b3c18,288,1,2,2,"AudioClip::clone(ModelStackWithTimelineCounter*, bool) const"
+FUNC,logic,0x200b56d8,76,1,2,2,FileReader::~FileReader() [clone .part.0]
+FUNC,logic,0x200b5a78,76,1,2,2,"deluge::allocate_unique<std::byte, deluge::memory::sdram_allocator>(unsigned int)::{lambda(std::byte*)#1}::_FUN(std::byte*)"
+FUNC,logic,0x200b63a0,84,1,2,2,deluge::gui::menu_item::gate::Mode::~Mode()
+FUNC,logic,0x200b63f4,92,1,2,2,deluge::gui::menu_item::gate::Mode::~Mode()
+FUNC,logic,0x200b6450,72,1,2,2,deluge::gui::menu_item::PatchCables::~PatchCables()
+FUNC,logic,0x200b6498,76,1,2,2,deluge::gui::menu_item::PatchCables::~PatchCables()
+FUNC,logic,0x200b6618,72,1,2,2,deluge::gui::menu_item::HorizontalMenu::~HorizontalMenu()
+FUNC,logic,0x200b6660,72,1,2,2,deluge::gui::menu_item::runtime_feature::Settings::~Settings()
+FUNC,logic,0x200b66a8,72,1,2,2,deluge::gui::menu_item::Submenu::~Submenu()
+FUNC,logic,0x200b66f0,72,1,2,2,deluge::gui::menu_item::submenu::Modulator::~Modulator()
+FUNC,logic,0x200b6738,72,1,2,2,deluge::gui::menu_item::eq::EqMenu::~EqMenu()
+FUNC,logic,0x200b6780,72,1,2,2,deluge::gui::menu_item::submenu::ModFxHorizontalMenu::~ModFxHorizontalMenu()
+FUNC,logic,0x200b67c8,72,1,2,2,deluge::gui::menu_item::midi::ProgramSubMenu::~ProgramSubMenu()
+FUNC,logic,0x200b6810,72,1,2,2,deluge::gui::menu_item::submenu::ArpMpeSubmenu::~ArpMpeSubmenu()
+FUNC,logic,0x200b6858,72,1,2,2,deluge::gui::menu_item::submenu::Bend::~Bend()
+FUNC,logic,0x200b68a0,72,1,2,2,deluge::gui::menu_item::midi::device_definition::DeviceDefinitionSubmenu::~DeviceDefinitionSubmenu()
+FUNC,logic,0x200b68e8,72,1,2,2,deluge::gui::menu_item::submenu::PolyMonoConversion::~PolyMonoConversion()
+FUNC,logic,0x200b6930,72,1,2,2,deluge::gui::menu_item::midi::Device::~Device()
+FUNC,logic,0x200b6978,72,1,2,2,deluge::gui::menu_item::defaults::ScreensaverSubmenu::~ScreensaverSubmenu()
+FUNC,logic,0x200b69c0,72,1,2,2,deluge::gui::menu_item::HorizontalMenuContainer::~HorizontalMenuContainer()
+FUNC,logic,0x200b6a08,72,1,2,2,deluge::gui::menu_item::filter::FilterContainer::~FilterContainer()
+FUNC,logic,0x200b6a50,76,1,2,2,deluge::gui::menu_item::HorizontalMenu::~HorizontalMenu()
+FUNC,logic,0x200b6a9c,76,1,2,2,deluge::gui::menu_item::runtime_feature::Settings::~Settings()
+FUNC,logic,0x200b6ae8,76,1,2,2,deluge::gui::menu_item::Submenu::~Submenu()
+FUNC,logic,0x200b6b34,76,1,2,2,deluge::gui::menu_item::submenu::Modulator::~Modulator()
+FUNC,logic,0x200b6b80,76,1,2,2,deluge::gui::menu_item::eq::EqMenu::~EqMenu()
+FUNC,logic,0x200b6bcc,76,1,2,2,deluge::gui::menu_item::submenu::ModFxHorizontalMenu::~ModFxHorizontalMenu()
+FUNC,logic,0x200b6c18,76,1,2,2,deluge::gui::menu_item::midi::ProgramSubMenu::~ProgramSubMenu()
+FUNC,logic,0x200b6c64,76,1,2,2,deluge::gui::menu_item::submenu::ArpMpeSubmenu::~ArpMpeSubmenu()
+FUNC,logic,0x200b6cb0,76,1,2,2,deluge::gui::menu_item::submenu::Bend::~Bend()
+FUNC,logic,0x200b6cfc,76,1,2,2,deluge::gui::menu_item::midi::device_definition::DeviceDefinitionSubmenu::~DeviceDefinitionSubmenu()
+FUNC,logic,0x200b6d48,76,1,2,2,deluge::gui::menu_item::submenu::PolyMonoConversion::~PolyMonoConversion()
+FUNC,logic,0x200b6d94,76,1,2,2,deluge::gui::menu_item::midi::Device::~Device()
+FUNC,logic,0x200b6de0,76,1,2,2,deluge::gui::menu_item::defaults::ScreensaverSubmenu::~ScreensaverSubmenu()
+FUNC,logic,0x200b6e2c,76,1,2,2,deluge::gui::menu_item::HorizontalMenuContainer::~HorizontalMenuContainer()
+FUNC,logic,0x200b6e78,76,1,2,2,deluge::gui::menu_item::filter::FilterContainer::~FilterContainer()
+FUNC,logic,0x200b6f78,92,1,2,2,deluge::gui::menu_item::envelope::EnvelopeMenu::~EnvelopeMenu()
+FUNC,logic,0x200b6fd4,92,1,2,2,deluge::gui::menu_item::cv::Submenu::~Submenu()
+FUNC,logic,0x200b708c,100,1,2,2,deluge::gui::menu_item::cv::Submenu::~Submenu()
+FUNC,logic,0x200b7154,100,1,2,2,deluge::gui::menu_item::envelope::EnvelopeMenu::~EnvelopeMenu()
+FUNC,logic,0x200baf08,200,1,2,2,"ResizeableArray::copyElementsFromOldMemory(void*, long, long)"
+FUNC,logic,0x200bb55c,72,1,2,2,delugeAlloc.constprop.0
+FUNC,logic,0x200bed54,424,1,2,2,SessionView::redrawNumericDisplay()
+FUNC,logic,0x200ccbf4,120,1,2,2,String::shorten(long)
+FUNC,logic,0x200cfd78,200,1,3,1,"AudioFileManager::setupAlternateAudioFilePath(String&, long, String&) [clone .constprop.0] [clone .isra.0]"
+FUNC,logic,0x200d0444,68,1,2,2,deluge::memory::external_allocator<deluge::gui::menu_item::HorizontalMenu*>::allocate(unsigned int) [clone .isra.0]
+FUNC,logic,0x200d0770,68,1,2,2,deluge::memory::external_allocator<MenuItem*>::allocate(unsigned int) [clone .isra.0]
+FUNC,logic,0x200d1a70,148,1,2,2,deluge::gui::menu_item::mpe::DirectionSelector::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d1b04,144,1,2,2,deluge::gui::menu_item::mpe::ZoneSelector::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d1b94,144,1,2,2,deluge::gui::menu_item::shortcuts::Version::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d1cb8,148,1,2,2,deluge::gui::menu_item::record::LoopCommand::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d1e74,148,1,2,2,deluge::gui::menu_item::defaults::SessionLayout::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d1f9c,152,1,2,2,deluge::gui::menu_item::delay::Analog::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d20d8,160,1,2,2,deluge::gui::menu_item::sample::browser_preview::Mode::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d221c,160,1,2,2,deluge::gui::menu_item::monitor::Mode::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d22bc,160,1,2,2,deluge::gui::menu_item::flash::Status::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d2400,164,1,2,2,deluge::gui::menu_item::defaults::KeyboardLayout::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d2690,160,1,2,2,deluge::gui::menu_item::arpeggiator::ArpMpeVelocity::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d2954,168,1,2,2,deluge::gui::menu_item::modulator::Destination::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d2b60,172,1,2,2,deluge::gui::menu_item::midi::Takeover::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d2c0c,180,1,2,2,deluge::gui::menu_item::defaults::StartupSongModeMenu::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d2fe0,224,1,2,2,deluge::gui::menu_item::arpeggiator::NoteModeForDrums::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d30c0,228,1,2,2,deluge::gui::menu_item::lfo::Type::getOptions(deluge::gui::menu_item::Selection::OptType)
+FUNC,logic,0x200d4a70,264,1,2,2,"PatchCableSet::beenCloned(bool, long)"
+FUNC,logic,0x200d5200,112,1,2,2,ParamManager::setupUnpatched()
+FUNC,logic,0x200da2d4,380,1,2,2,"AutoParam::stealNodes(ModelStackWithAutoParam const*, long, long, long, Action*, StolenParamNodes*)"
+FUNC,logic,0x200e06a0,346,1,0,4,Song::commandTranspose(long)
+FUNC,logic,0x200f61cc,764,1,0,4,"AutomationView::modEncoderAction(long, long)"
+FUNC,logic,0x200fe330,176,1,2,2,"StorageManager::createNewInstrument(OutputType, ParamManager*)"
+FUNC,logic,0x200ffc68,492,1,2,2,"Song::replaceInstrumentClipWithAudioClip(Clip*, long)"
+FUNC,logic,0x201196dc,452,1,0,4,LoadSongUI::drawSongPreview(bool) [clone .part.0]
+FUNC,logic,0x2012549c,820,1,2,2,"openFile(std::basic_string_view<char, std::char_traits<char> >, DX7Cartridge*) [clone .isra.0]"
+FUNC,logic,0x201257d0,216,1,4,0,DxSyxBrowser::enterKeyPress()
+FUNC,logic,0x2012bb44,200,1,2,2,"SessionView::createNewInstrumentClip(OutputType, long)"
+FUNC,logic,0x20146000,304,1,2,2,"deluge::gui::menu_item::Automation::buttonAction(unsigned char, bool, bool)"
+FUNC,logic,0x20147fe8,404,1,2,2,"ArrangerView::createNewClipForClipInstance(Output*, ClipInstance*)"
+FUNC,logic,0x20152504,64,1,2,2,"std::vector<MIDIKnob, deluge::memory::fast_allocator<MIDIKnob> >::_M_realloc_append<>()::_Guard::~_Guard() [clone .isra.0]"
+FUNC,logic,0x20152544,64,1,2,2,"std::_Vector_base<TimeStretcher*, deluge::memory::fast_allocator<TimeStretcher*> >::~_Vector_base() [clone .isra.0]"
+FUNC,logic,0x20152584,64,1,2,2,"std::_Vector_base<VoiceSample*, deluge::memory::fast_allocator<VoiceSample*> >::~_Vector_base() [clone .isra.0]"
+FUNC,logic,0x201525c4,64,1,2,2,"std::_Vector_base<Voice*, deluge::memory::fast_allocator<Voice*> >::~_Vector_base() [clone .isra.0]"
+FUNC,logic,0x20152620,140,1,2,2,Sound::~Sound()
+FUNC,logic,0x20077984,64,1,3,0,(anonymous namespace)::setUpKeyboardSidebarMorph(long) [clone .part.0]
+FUNC,logic,0x2007e2a4,252,1,3,0,AutomationView::blinkShortcuts()
+FUNC,logic,0x2009ad84,360,1,2,1,View::potentiallyRenderVUMeter(RGB (*) [18]) [clone .constprop.0]
+FUNC,logic,0x2009b15c,568,1,3,0,"ArrangerView::renderSidebar(unsigned long, RGB (*) [18], unsigned char (*) [18])"
+FUNC,logic,0x200a0564,204,1,0,3,"Kit::compensateInstrumentVolumeForResonance(ParamManagerForTimeline*, Song*)"
+FUNC,logic,0x200aee98,444,1,2,1,"ParamManager::cloneParamCollectionsFrom(ParamManager const*, bool, bool, long)"
+FUNC,logic,0x200b5ac4,112,1,2,1,"std::_Rb_tree<unsigned char, std::pair<unsigned char const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::_Select1st<std::pair<unsigned char const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >, std::less<unsigned char>, deluge::memory::fast_allocator<std::pair<unsigned char const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > >::_M_erase(std::_Rb_tree_node<std::pair<unsigned char const, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > >*) [clone .isra.0]"
+FUNC,logic,0x200b5b34,84,1,2,1,"std::_Rb_tree<short, std::pair<short const, MelodicInstrument::EarlyNoteInfo>, std::_Select1st<std::pair<short const, MelodicInstrument::EarlyNoteInfo> >, std::less<short>, deluge::memory::fast_allocator<std::pair<short const, MelodicInstrument::EarlyNoteInfo> > >::_M_erase(std::_Rb_tree_node<std::pair<short const, MelodicInstrument::EarlyNoteInfo> >*) [clone .isra.0]"
+FUNC,logic,0x200b5b88,256,1,2,1,"std::_Rb_tree<short, std::pair<short const, MelodicInstrument::EarlyNoteInfo>, std::_Select1st<std::pair<short const, MelodicInstrument::EarlyNoteInfo> >, std::less<short>, deluge::memory::fast_allocator<std::pair<short const, MelodicInstrument::EarlyNoteInfo> > >::erase(short const&) [clone .isra.0]"
+FUNC,logic,0x200b62a8,92,1,2,1,"std::array<RuntimeFeatureSetting, 25u>::~array() [clone .constprop.0] [clone .isra.0]"
+FUNC,logic,0x200b6344,92,1,2,1,"std::_Deque_base<SysExDataEntry, deluge::memory::external_allocator<SysExDataEntry> >::_M_destroy_nodes(SysExDataEntry**, SysExDataEntry**) [clone .constprop.0]"
+FUNC,logic,0x200c15ec,196,1,3,0,Song::displayCurrentRootNoteAndScaleName()
+FUNC,logic,0x200cd0f4,180,1,1,2,Browser::goIntoFolder(char const*)
+FUNC,logic,0x200e3ec0,56,1,2,1,deluge::gui::context_menu::clip_settings::NewClipType::acceptCurrentOption()
+FUNC,logic,0x20116518,152,1,1,2,FatFS::Directory::read_and_get_filepointer() [clone .constprop.0]
+FUNC,logic,0x20119b7c,128,1,0,3,StorageManager::initSD()
+FUNC,logic,0x20123e98,272,1,1,2,LoadInstrumentPresetUI::opened()
+FUNC,logic,0x2013ea8c,1590,1,2,1,"InstrumentClipView::verticalEncoderAction(long, bool)"
+FUNC,logic,0x2014afe4,620,1,1,2,Session::considerLaunchEvent(long)
+FUNC,logic,0x2015d528,2184,1,2,1,"AudioOutput::renderGlobalEffectableForClip(ModelStackWithTimelineCounter*, std::span<StereoSample, 4294967295u>, long*, long*, long, long, bool, bool, long, long, long)"
+FUNC,logic,0x2016be40,1316,1,0,3,"RMSFeedbackCompressor::render(std::span<StereoSample, 4294967295u>, long, long, long)"
+FUNC,logic,0x20079fcc,68,1,1,1,void deluge::hid::encoders::(anonymous namespace)::encoderIrqHandler<2u>(unsigned long)
+FUNC,logic,0x2007a010,68,1,1,1,void deluge::hid::encoders::(anonymous namespace)::encoderIrqHandler<1u>(unsigned long)
+FUNC,logic,0x2007a054,68,1,1,1,void deluge::hid::encoders::(anonymous namespace)::encoderIrqHandler<0u>(unsigned long)
+FUNC,logic,0x2008307c,136,1,2,0,PadLEDs::renderNoteRowExpandOrCollapse()
+FUNC,logic,0x2008f86c,136,1,0,2,deluge::gui::menu_item::filter::UnpatchedFilterParam::getColumnLabel(StringBuf&)
+FUNC,logic,0x2008fbe8,122,1,0,2,non-virtual thunk to deluge::gui::menu_item::filter::FilterParam::getName() const
+FUNC,logic,0x2008fc64,122,1,0,2,non-virtual thunk to deluge::gui::menu_item::filter::UnpatchedFilterParam::getName() const
+FUNC,logic,0x2008fce0,122,1,0,2,non-virtual thunk to deluge::gui::menu_item::filter::FilterParam::getTitle() const
+FUNC,logic,0x2008fd5c,122,1,0,2,non-virtual thunk to deluge::gui::menu_item::filter::UnpatchedFilterParam::getTitle() const
+FUNC,logic,0x2008fdd8,132,1,0,2,non-virtual thunk to deluge::gui::menu_item::filter::FilterParam::getColumnLabel(StringBuf&)
+FUNC,logic,0x2008fe5c,132,1,0,2,non-virtual thunk to deluge::gui::menu_item::filter::UnpatchedFilterParam::getColumnLabel(StringBuf&)
+FUNC,logic,0x2008fee0,126,1,0,2,deluge::gui::menu_item::filter::FilterParam::getName() const
+FUNC,logic,0x2008ff60,126,1,0,2,deluge::gui::menu_item::filter::UnpatchedFilterParam::getName() const
+FUNC,logic,0x2008ffe0,126,1,0,2,deluge::gui::menu_item::filter::FilterParam::getTitle() const
+FUNC,logic,0x20090060,126,1,0,2,deluge::gui::menu_item::filter::UnpatchedFilterParam::getTitle() const
+FUNC,logic,0x200900e0,136,1,0,2,deluge::gui::menu_item::filter::FilterParam::getColumnLabel(StringBuf&)
+FUNC,logic,0x200904e8,52,1,2,0,deluge::gui::context_menu::LoadInstrumentPreset::getOptions()
+FUNC,logic,0x20091938,166,1,0,2,deluge::gui::menu_item::midi::FollowChannel::drawValue()
+FUNC,logic,0x200bef68,156,1,1,1,Session::launchSchedulingMightNeedCancelling()
+FUNC,logic,0x200e5990,72,1,2,0,ArrangerView::renderOLED(deluge::hid::display::oled_canvas::Canvas&)
+FUNC,logic,0x200f59f8,648,1,0,2,"View::modEncoderAction(long, long) [clone .constprop.0]"
+FUNC,logic,0x20119c64,200,1,2,0,LoadInstrumentPresetUI::timerCallback()
+FUNC,logic,0x2011f84c,632,1,1,1,ArrangerView::selectEncoderAction(signed char)
+FUNC,logic,0x2012df4c,1004,1,2,0,deluge::gui::ui::keyboard::KeyboardScreen::updateActiveNotes()
+FUNC,logic,0x2012e50c,92,1,1,1,deluge::gui::menu_item::sample::LoopPoint::beginSession(MenuItem*)
+FUNC,logic,0x20140f18,326,1,0,2,AudioClipView::setClipLengthEqualToSampleLength()
+FUNC,logic,0x201430d4,256,1,2,0,SoundEditor::horizontalEncoderAction(long)
+FUNC,logic,0x20144ba0,120,1,2,0,deluge::gui::menu_item::stem_export::Start::selectButtonPress()
+FUNC,logic,0x2014b398,236,1,0,2,deluge::gui::context_menu::ResetSettings::acceptCurrentOption()
+FUNC,logic,0x20073cd0,84,1,1,0,deluge::gui::menu_item::DxParam::blinkSideColumn()
+FUNC,logic,0x20079964,96,1,1,0,deluge::gui::menu_item::defaults::MetronomeVolume::writeCurrentValue()
+FUNC,logic,0x2007cccc,72,1,1,0,"deluge::gui::ContextMenu::padAction(long, long, long)"
+FUNC,logic,0x2008f8f4,32,1,0,1,deluge::gui::menu_item::mpe::DirectionSelector::getTitle() const
+FUNC,logic,0x2008f9c0,36,1,0,1,deluge::gui::menu_item::reverb::Width::getName() const
+FUNC,logic,0x2008fba0,36,1,0,1,deluge::gui::menu_item::reverb::Width::getTitle() const
+FUNC,logic,0x20090aec,118,1,0,1,deluge::gui::menu_item::midi::Command::unlearnAction()
+FUNC,logic,0x20090cd4,148,1,0,1,deluge::gui::menu_item::SyncLevel::drawValue()
+FUNC,logic,0x2009146c,118,1,0,1,deluge::gui::menu_item::midi::sound::OutputMidiChannel::drawValue()
+FUNC,logic,0x200914e4,64,1,0,1,deluge::gui::menu_item::reverb::Width::getColumnLabel(StringBuf&)
+FUNC,logic,0x20091b44,292,1,1,0,SampleMarkerEditor::opened()
+FUNC,logic,0x200b2188,316,1,1,0,ModControllableAudio::ModControllableAudio() [clone .isra.0]
+FUNC,logic,0x200b3a30,296,1,0,1,AudioClip::AudioClip()
+FUNC,logic,0x200be544,92,1,0,1,"deluge::gui::menu_item::midi::sound::OutputMidiChannel::drawInteger(long, long, long)"
+FUNC,logic,0x200e4070,36,1,1,0,deluge::gui::context_menu::ConfigureSongMacros::horizontalEncoderAction(long)
+FUNC,logic,0x200ffa4c,224,1,1,0,Session::endPlayback()
+FUNC,logic,0x2011a24c,144,1,1,0,PerformanceView::focusRegained()
+FUNC,logic,0x20142ffc,164,1,1,0,InstrumentClipView::horizontalEncoderAction(long)
+FUNC,logic,0x2014f648,72,1,1,0,"deluge::gui::context_menu::MidiLearnMode::padAction(long, long, long)"
+FUNC,logic,0x2014f690,72,1,1,0,"deluge::gui::context_menu::ConfigureSongMacros::padAction(long, long, long)"
+FUNC,logic,0x20154c4c,44,1,1,0,RenameUI::RenameUI(char const*) [clone .isra.0]
+FUNC,logic,0x2015ca6c,320,1,1,0,AutomationView::focusRegained()
+FUNC,logic,0x2006dc3c,44,1,0,0,getSystemTime
+FUNC,logic,0x2008f924,16,1,0,0,deluge::gui::menu_item::MultiRange::getTitle() const
+FUNC,logic,0x2008f98c,16,1,0,0,deluge::gui::menu_item::source_selection::Regular::getTitle() const
+FUNC,logic,0x20090594,6,1,0,0,deluge::gui::context_menu::MidiLearnMode::getTitle()
+FUNC,logic,0x20090bfc,42,1,0,0,deluge::gui::menu_item::SyncLevel::getShortOption(StringBuf&) [clone .part.0]
+FUNC,logic,0x20091300,108,1,0,0,deluge::gui::menu_item::midi::FollowChannel::unlearnAction()
+FUNC,logic,0x20091424,72,1,0,0,deluge::gui::menu_item::osc::RetriggerPhase::getNotificationValue(StringBuf&)
+FUNC,logic,0x200915cc,44,1,0,0,deluge::gui::menu_item::audio_clip::Reverse::getNotificationValue(StringBuf&)
+FUNC,logic,0x200915f8,44,1,0,0,deluge::gui::menu_item::sample::Reverse::getNotificationValue(StringBuf&)
+FUNC,logic,0x200916c4,42,1,0,0,deluge::gui::menu_item::sidechain::VolumeShortcut::getColumnLabel(StringBuf&)
+FUNC,logic,0x200916f0,42,1,0,0,deluge::gui::menu_item::delay::Amount::getColumnLabel(StringBuf&)
+FUNC,logic,0x200917cc,42,1,0,0,deluge::gui::menu_item::osc::RetriggerPhase::getColumnLabel(StringBuf&)
+FUNC,logic,0x20091d10,68,1,0,0,modfx::modFXToString(ModFXType)
+FUNC,logic,0x200930ac,42,1,0,0,non-virtual thunk to deluge::gui::menu_item::voice::Portamento::getColumnLabel(StringBuf&)
+FUNC,logic,0x200958b4,60,1,0,0,"OrderedResizeableArrayWith32bitKey::OrderedResizeableArrayWith32bitKey(long, long, long) [clone .constprop.0] [clone .isra.0]"
+FUNC,logic,0x200be4c0,80,1,0,0,deluge::gui::menu_item::SyncLevel::drawPixelsForOled()
+FUNC,logic,0x200bf5ec,48,1,0,0,deluge::gui::menu_item::osc::RetriggerPhase::drawPixelsForOled()
+FUNC,logic,0x200c32d4,46,1,0,0,deluge::gui::menu_item::osc::RetriggerPhase::renderInHorizontalMenu(SlotPosition const&)
+FUNC,logic,0x200c3338,46,1,0,0,deluge::gui::menu_item::arpeggiator::midi_cv::SequenceLength::renderInHorizontalMenu(SlotPosition const&)
+FUNC,logic,0x200c3368,48,1,0,0,deluge::gui::menu_item::arpeggiator::SequenceLength::renderInHorizontalMenu(SlotPosition const&)
+FUNC,logic,0x200c3398,46,1,0,0,non-virtual thunk to deluge::gui::menu_item::arpeggiator::SequenceLength::renderInHorizontalMenu(SlotPosition const&)
+FUNC,logic,0x200e4544,316,1,0,0,MenuItemWithCCLearning::unlearnAction()
+FUNC,logic,0x200e4738,176,1,0,0,AutomationView::initParameterSelection(bool)
+FUNC,logic,0x200ee370,88,1,0,0,Slicer::focusRegained()
+FUNC,logic,0x20105a08,14,1,0,0,deluge::gui::context_menu::CancelStemExport::acceptCurrentOption()
+FUNC,logic,0x2012ea80,98,1,0,0,"StemExport::startCurrentStemExport(StemExportType, Output*, bool&, long, bool, SoundDrum*) [clone .constprop.0]"
+FUNC,struct+const,0x20099624,1308,0,55,1,"ModControllableAudio::processStutter(std::span<StereoSample, 4294967295u>, ParamManager*)"
+FUNC,struct+const,0x2012119c,1164,0,4,47,MidiFollow::writeDefaultsToFile() [clone .constprop.0]
+FUNC,struct+const,0x2009a76c,1558,0,32,14,"View::displayModEncoderValuePopup(deluge::modulation::params::Kind, long, long, PatchSource, PatchSource) [clone .constprop.0]"
+FUNC,const,0x20160c80,5312,0,0,39,"TimeStretcher::hopEnd(SamplePlaybackGuide*, VoiceSample*, Sample*, long, long, long, unsigned long long, long, LoopType, long)"
+FUNC,struct+const,0x200cfff8,1100,0,1,37,RuntimeFeatureSettings::init() [clone .constprop.0]
+FUNC,struct,0x20112224,646,0,33,0,spibsc_transfer.constprop.0
+FUNC,struct+const,0x20095c98,372,0,27,5,deluge::hid::display::OLED::sendMainImage() [clone .part.0]
+FUNC,struct+const,0x200c404c,650,0,27,2,"deluge::gui::menu_item::HorizontalMenu::preparePaging(std::span<MenuItem*, 4294967295u>, MenuItem const*)"
+FUNC,struct+const,0x200bd984,628,0,25,2,"deluge::gui::menu_item::HorizontalMenuGroup::preparePaging(std::span<MenuItem*, 4294967295u>, MenuItem const*)"
+FUNC,struct+const,0x20131f14,1232,0,24,1,AudioEngine::doSomeOutputting()
+FUNC,struct+const,0x200cf76c,644,0,2,21,"StemExport::setWavFileNameForStemExport(StemExportType, Output*, long, SoundDrum*) [clone .constprop.0]"
+FUNC,struct+const,0x20096694,440,0,19,2,FlashStorage::resetSettings()
+FUNC,struct+const,0x20121d10,808,0,2,19,setupStartupSong()
+FUNC,struct+const,0x20095f18,308,0,18,2,oledRoutine
+FUNC,struct+const,0x2007c5e4,564,0,14,5,QwertyUI::renderFavourites()
+FUNC,struct+const,0x2008952c,128,0,14,4,usb_hstd_enum_set_configuration
+FUNC,struct+const,0x200895ac,128,0,14,4,usb_hstd_enum_set_address
+FUNC,struct+const,0x200cbd30,1402,0,3,15,FavouritesManager::getFilenameForSave[abi:cxx11]() const [clone .constprop.0]
+FUNC,struct+const,0x200e6c10,354,0,12,6,AudioEngine::renderSongFX(unsigned int)
+FUNC,struct+const,0x200897a4,148,0,13,4,usb_hhub_port_set_feature.constprop.0
+FUNC,struct+const,0x200898c8,148,0,13,4,usb_hhub_port_clr_feature.constprop.0
+FUNC,struct+const,0x200aabb0,1186,0,10,7,"MemoryRegion::alloc(unsigned long, bool, void*)"
+FUNC,struct+const,0x200e2400,3308,0,8,9,"InstrumentClip::processCurrentPos(ModelStackWithTimelineCounter*, unsigned long)"
+FUNC,const,0x2016b7b4,680,0,0,17,"deluge::memory::ObjectPool<DxVoice, deluge::memory::fast_allocator>::get() [clone .part.0]"
+FUNC,struct,0x2010f580,420,0,16,0,usb_pstd_usb_handler
+FUNC,struct+const,0x20112da8,1240,0,2,14,"AudioFileManager::loadCluster(Cluster&, long) [clone .constprop.0]"
+FUNC,const,0x2016ba5c,500,0,0,16,"deluge::memory::ObjectPool<DxVoice, deluge::memory::fast_allocator>::recycle(DxVoice*)"
+FUNC,struct+const,0x20089838,142,0,11,4,usb_hhub_get_port_information.constprop.0
+FUNC,struct+const,0x20089ff0,106,0,12,3,usb_hstd_clr_feature.isra.0
+FUNC,struct+const,0x2008a7fc,228,0,13,2,flushUSBMIDIToHostedDevice.constprop.0
+FUNC,struct+const,0x200c1830,556,0,11,3,"deluge::hid::display::OLED::displayNotification(std::basic_string_view<char, std::char_traits<char> >, std::optional<std::basic_string_view<char, std::char_traits<char> > >)"
+FUNC,struct+const,0x200d0488,744,0,7,7,deluge::gui::menu_item::gate::Selection::selectButtonPress()
+FUNC,struct+const,0x2014dfe0,2546,0,9,5,"SessionView::gridHandlePads(long, long, long)"
+FUNC,struct+const,0x2008e0b0,544,0,12,1,deluge::hid::display::updateWorkingAnimation()
+FUNC,struct+const,0x20095e20,188,0,11,2,oledSelectingComplete
+FUNC,struct+const,0x200ce6c4,364,0,6,7,deluge::gui::menu_item::Selection::drawPixelsForOled()
+FUNC,struct+const,0x20122038,272,0,7,6,FavouritesManager::saveFavouriteBank() const [clone .constprop.0]
+FUNC,struct+const,0x201234f4,636,0,9,4,LoadSongUI::opened()
+FUNC,struct+const,0x20089a40,104,0,9,3,usb_hstd_cmd_submit.isra.0
+FUNC,struct+const,0x200b8990,552,0,7,5,"GeneralMemoryAllocator::extend(void*, unsigned long, unsigned long, unsigned long*, unsigned long*, void*) [clone .constprop.0]"
+FUNC,struct+const,0x200be838,600,0,2,10,"PerformanceView::renderFXDisplay(deluge::modulation::params::Kind, long, long)"
+FUNC,struct+const,0x200c025c,544,0,6,6,deluge::hid::display::OLED::freezeWithError(char const*)
+FUNC,struct,0x20100890,368,0,12,0,Browser::sortFileItems() [clone .isra.0]
+FUNC,struct+const,0x2007e98c,674,0,9,2,"indicator_leds::actuallySetKnobIndicatorLevel(unsigned char, unsigned char, bool)"
+FUNC,struct,0x2007f06c,268,0,11,0,usb_cstd_clr_pipe_cnfg
+FUNC,struct,0x2011b4d0,942,0,11,0,Browser::selectEncoderAction(signed char)
+FUNC,struct+const,0x20089aa8,150,0,9,1,usb_hstd_get_string_desc.constprop.0.isra.0
+FUNC,struct+const,0x20089f00,240,0,8,2,usb_hstd_susp_cont
+FUNC,struct+const,0x2008a204,404,0,9,1,usb_hstd_resu_cont
+FUNC,struct+const,0x2008b344,388,0,9,1,usb_hhub_close
+FUNC,struct+const,0x200c011c,320,0,8,2,"deluge::hid::display::OLED::popupText(char const*, bool, PopupType)"
+FUNC,struct,0x2011540c,374,0,10,0,create_chain
+FUNC,struct+const,0x2006e99c,152,0,8,1,Song::getMaxMIDIChannelSuffix(long) [clone .isra.0]
+FUNC,struct+const,0x20071fc0,548,0,5,4,"View::getClipMuteSquareColour(Clip*, RGB, bool) [clone .constprop.0]"
+FUNC,struct+const,0x2007b944,684,0,8,1,PadLEDs::horizontal::renderScroll()
+FUNC,struct,0x2008a398,364,0,9,0,usb_cstd_pipe_init
+FUNC,const,0x2008e7fc,2010,0,0,9,fault_handler_print_freeze_pointers
+FUNC,struct+const,0x200a0ac0,184,0,7,2,StemExport::stopOutputRecording() [clone .constprop.0]
+FUNC,struct+const,0x200c4b2c,274,0,8,1,FavouritesManager::resetFavourites() [clone .constprop.0]
+FUNC,struct+const,0x200c63c0,1998,0,1,8,deluge::gui::menu_item::HorizontalMenu::renderOLED()
+FUNC,struct+const,0x20122470,480,0,7,2,LoadSongUI::timerCallback()
+FUNC,struct+const,0x2012ea08,120,0,8,1,StemExport::startOutputRecordingUntilLoopEndAndSilence() [clone .constprop.0]
+FUNC,const,0x2016e740,1488,0,0,9,"EngineMkI::render(long*, int, FmOpParams*, int, long*, long)"
+FUNC,struct,0x20073468,124,0,8,0,usb_hhub_check_class
+FUNC,struct+const,0x2007f6d0,304,0,6,2,StemExport::disarmAllInstrumentsForStemExport(StemExportType) [clone .constprop.0]
+FUNC,struct+const,0x2008a14c,184,0,7,1,usb_hhub_trans_complete
+FUNC,struct+const,0x2008ae6c,122,0,5,3,usbSendCompleteAsHost.constprop.0
+FUNC,struct,0x2008b574,886,0,8,0,usb_hstd_write_data
+FUNC,struct+const,0x200c0790,238,0,3,5,StemExport::displayStemExportProgressOLED(StemExportType) [clone .constprop.0]
+FUNC,struct+const,0x200d9e3c,696,0,6,2,InstrumentClipView::enterScaleMode(unsigned char)
+FUNC,struct+const,0x200e13a0,822,0,3,5,"MIDIInstrument::noteOnPostArp(long, ArpNote*, long)"
+FUNC,struct+const,0x200ed740,1102,0,7,1,"InstrumentClipView::handleScaleButtonAction(bool, bool) [clone .part.0]"
+FUNC,struct,0x2010e100,138,0,8,0,routineForSD
+FUNC,struct+const,0x20112500,160,0,4,4,read_status.constprop.0
+FUNC,struct+const,0x2011908c,148,0,6,2,AudioRecorder::finishRecording() [clone .constprop.0]
+FUNC,struct+const,0x20130ce4,380,0,5,3,AudioRecorder::process() [clone .constprop.0]
+FUNC,const,0x2016f61c,228,0,0,8,DxEngine::solicitDxVoice()
+FUNC,struct+const,0x20075c60,102,0,6,1,deluge::hid::display::OLED::removeWorkingAnimation()
+FUNC,struct,0x20076dc8,134,0,7,0,R_USB_HmidiClassCheck
+FUNC,struct+const,0x2007fc08,172,0,6,1,QwertyUI::timerCallback()
+FUNC,struct+const,0x20088280,86,0,6,1,usb_hstd_usb_handler
+FUNC,struct,0x2008b964,298,0,7,0,usb_hstd_ctrl_write_start
+FUNC,struct,0x2008d334,622,0,7,0,PlaybackHandler::actionSwungTick() [clone .constprop.0]
+FUNC,struct+const,0x2008e304,92,0,6,1,deluge::hid::display::OLED::displayWorkingAnimation(char const*)
+FUNC,struct+const,0x20095c38,94,0,6,1,sendSPITransferFromQueue
+FUNC,struct+const,0x2009e298,336,0,3,4,"Patcher::recalculateFinalValueForParamWithNoCables(long, Sound&, ParamManagerForTimeline&)"
+FUNC,const,0x200ab628,2632,0,0,7,"ModControllableAudio::processFX(std::span<StereoSample, 4294967295u>, ModFXType, long, long, Delay::State const&, long*, ParamManager*, bool, long)"
+FUNC,struct+const,0x200aea50,656,0,6,1,InstrumentClipView::exitScaleMode()
+FUNC,struct+const,0x200b1608,132,0,5,2,QwertyUI::opened()
+FUNC,struct+const,0x200b37e0,268,0,2,5,"AudioFileManager::removeReasonFromCluster(Cluster&, char const*, bool)"
+FUNC,struct,0x2010272c,376,0,7,0,"PlaybackHandler::setupPlayback(long, long, bool, bool, long) [clone .constprop.0]"
+FUNC,struct,0x20106244,228,0,7,0,PlaybackHandler::routine() [clone .constprop.0]
+FUNC,struct,0x201068d8,440,0,7,0,TimelineView::horizontalEncoderAction(long)
+FUNC,struct+const,0x20113280,684,0,4,3,"AudioFileManager::loadAnyEnqueuedClusters(long, bool) [clone .constprop.0]"
+FUNC,struct+const,0x201199ec,400,0,6,1,AudioFileManager::cardReinserted() [clone .constprop.0]
+FUNC,struct+const,0x2011e724,1042,0,1,6,InstrumentClipMinder::selectEncoderAction(long)
+FUNC,struct+const,0x201205d8,1752,0,3,4,LoadInstrumentPresetUI::performLoad(bool)
+FUNC,struct+const,0x20131b0c,952,0,5,2,"Kit::renderOutput(ModelStack*, std::span<StereoSample, 4294967295u>, long*, long, long, bool, bool)"
+FUNC,struct+const,0x2013f354,274,0,4,3,PlaybackHandler::slowRoutine() [clone .constprop.0]
+FUNC,const,0x2016297c,2420,0,0,7,"deluge::dsp::filter::LpLadderFilter::doFilter(long*, long*, long)"
+FUNC,const,0x201632f0,4460,0,0,7,"deluge::dsp::filter::LpLadderFilter::doFilterStereo(long*, long*)"
+FUNC,const,0x2016b6d8,220,0,0,7,"deluge::memory::ObjectPool<DxVoice, deluge::memory::fast_allocator>::~ObjectPool()"
+FUNC,struct,0x20075e98,76,0,6,0,PadLEDs::setupInstrumentClipCollapseAnimation(bool)
+FUNC,struct+const,0x20077000,144,0,2,4,usb_peri_configured
+FUNC,struct+const,0x20079b60,360,0,5,1,"InstrumentClipView::drawMuteSquare(NoteRow*, RGB*, unsigned char*) [clone .isra.0]"
+FUNC,struct+const,0x20088c74,194,0,1,5,deluge::gui::menu_item::battery::Level::timerCallback()
+FUNC,struct+const,0x2008933c,166,0,1,5,deluge::gui::menu_item::battery::Level::beginSession(MenuItem*)
+FUNC,struct,0x20095edc,58,0,6,0,oledTransferComplete
+FUNC,struct+const,0x200b10b4,186,0,2,4,String::set(String const*)
+FUNC,struct+const,0x200b16c8,64,0,4,2,deluge::hid::display::OLED::stopScrollingAnimation() [clone .part.0]
+FUNC,struct,0x200b1708,80,0,6,0,deluge::hid::display::OLED::clearMainImage()
+FUNC,struct+const,0x200c1568,132,0,1,5,deluge::gui::menu_item::battery::Level::drawPixelsForOled()
+FUNC,struct+const,0x200c3614,668,0,3,3,PlaybackHandler::displayTempoBPM(float) [clone .constprop.0]
+FUNC,struct+const,0x200c3ba0,736,0,5,1,SessionView::graphicsRoutine()
+FUNC,const,0x200dc6bc,126,0,0,6,non-virtual thunk to MIDIInstrument::~MIDIInstrument()
+FUNC,const,0x200dc73c,118,0,0,6,MIDIInstrument::~MIDIInstrument()
+FUNC,const,0x200dc7b4,124,0,0,6,MIDIInstrument::~MIDIInstrument()
+FUNC,const,0x200dc830,132,0,0,6,non-virtual thunk to MIDIInstrument::~MIDIInstrument()
+FUNC,struct+const,0x20103cc8,808,0,5,1,PlaybackHandler::doSongSwap(bool) [clone .constprop.0]
+FUNC,struct+const,0x20123fa8,332,0,4,2,"LoadInstrumentPresetUI::buttonAction(unsigned char, bool, bool)"
+FUNC,const,0x201608f0,596,0,0,6,"TimeStretcher::init(Sample*, VoiceSample*, SamplePlaybackGuide*, long long, long, long, long, long, long, long, LoopType)"
+FUNC,struct+const,0x2006df3c,168,0,4,1,"std::_Rb_tree<unsigned char, std::pair<unsigned char const, long>, std::_Select1st<std::pair<unsigned char const, long> >, std::less<unsigned char>, std::allocator<std::pair<unsigned char const, long> > >::_M_get_insert_hint_unique_pos(std::_Rb_tree_const_iterator<std::pair<unsigned char const, long> >, unsigned char const&) [clone .constprop.0] [clone .isra.0]"
+FUNC,struct+const,0x2006e044,168,0,4,1,"std::_Rb_tree<unsigned char, std::pair<unsigned char const, Polarity>, std::_Select1st<std::pair<unsigned char const, Polarity> >, std::less<unsigned char>, std::allocator<std::pair<unsigned char const, Polarity> > >::_M_get_insert_hint_unique_pos(std::_Rb_tree_const_iterator<std::pair<unsigned char const, Polarity> >, unsigned char const&) [clone .constprop.0] [clone .isra.0]"
+FUNC,struct,0x2006e400,64,0,5,0,enqueueCVMessage.isra.0
+FUNC,struct+const,0x2006f618,156,0,1,4,MIDIDeviceManager::recountSmallestMPEZones()
+FUNC,struct+const,0x2006f714,76,0,1,4,detachedAsPeripheral.constprop.0
+FUNC,struct+const,0x20070fa4,80,0,3,2,deluge::hid::display::OLED::drawConsoleTopLine()
+FUNC,struct,0x200798cc,150,0,5,0,usb_receive_start_rohan_midi
+FUNC,struct,0x2007a99c,152,0,5,0,usb_hstd_ctrl_read_start
+FUNC,struct,0x2007c134,312,0,5,0,PadLEDs::sortLedsForCol(long)
+FUNC,struct,0x2007c974,106,0,5,0,"Browser::verticalEncoderAction(long, bool)"
+FUNC,struct+const,0x20089e94,108,0,3,2,usb_hstd_get_config_desc.constprop.0.isra.0
+FUNC,struct,0x2008ba90,180,0,5,0,usb_hstd_status_start
+FUNC,struct+const,0x20094adc,300,0,4,1,Browser::displayText(bool)
+FUNC,struct,0x20095bd0,104,0,5,0,cvSPITransferComplete
+FUNC,struct+const,0x200a9cac,164,0,2,3,"SamplePlaybackGuide::getFinalClusterIndex(Sample*, bool, long*)"
+FUNC,struct+const,0x200a9f54,120,0,2,3,AudioFile::removeReason(char const*)
+FUNC,struct,0x200bfeec,316,0,5,0,"QwertyUI::drawTextForOLEDEditing(long, long, long, long, deluge::hid::display::oled_canvas::Canvas&)"
+FUNC,struct+const,0x200deea8,436,0,1,4,"ArpeggiatorForDrum::switchNoteOn(ArpeggiatorSettings*, ArpReturnInstruction*, bool)"
+FUNC,struct+const,0x200ed1d8,408,0,4,1,"SessionView::verticalEncoderAction(long, bool)"
+FUNC,struct+const,0x20101870,1592,0,4,1,"InstrumentClip::changeInstrument(ModelStackWithTimelineCounter*, Instrument*, ParamManagerForTimeline*, InstrumentRemoval, InstrumentClip*, bool, bool)"
+FUNC,struct+const,0x201028a4,668,0,2,3,"PlaybackHandler::setupPlaybackUsingInternalClock(long, bool, bool, bool) [clone .part.0] [clone .constprop.0]"
+FUNC,struct+const,0x20104460,600,0,3,2,Session::doTickForward(long)
+FUNC,struct+const,0x201124ac,84,0,2,3,Userdef_SFLASH_Write_Enable.constprop.0
+FUNC,struct+const,0x201125a0,2054,0,4,1,disk_read_without_streaming_first.isra.0
+FUNC,struct+const,0x20115128,144,0,4,1,"FatFS::Filesystem::mount(unsigned char, char const*) [clone .constprop.0]"
+FUNC,struct+const,0x20119120,120,0,4,1,registerTasks()::{lambda()#6}::_FUN()
+FUNC,struct+const,0x2012cce8,452,0,3,2,AudioRecorder::opened()
+FUNC,struct,0x2012ceec,432,0,5,0,"InstrumentClipView::startAuditioningRow(long, long, bool, bool, NoteRow*, Drum*, bool)"
+FUNC,struct,0x20130c44,160,0,5,0,AudioEngine::slowRoutine()
+FUNC,struct+const,0x2013f46c,262,0,4,1,ClipView::lengthenClip(long) [clone .isra.0]
+FUNC,struct,0x201409c0,156,0,5,0,"LoadPatternUI::setupLoadPatternUI(bool, bool) [clone .constprop.0]"
+FUNC,struct,0x20143a5c,854,0,5,0,"AudioClipView::padAction(long, long, long)"
+FUNC,struct+const,0x20144304,244,0,4,1,"SampleBrowser::padAction(long, long, long)"
+FUNC,const,0x2016b4b4,348,0,0,5,"Env::advance(EnvParams const&, int, int) [clone .part.0]"
+FUNC,struct+const,0x2006c0c8,88,0,2,2,deluge::hid::display::Starfield::scatter() [clone .constprop.0]
+FUNC,struct,0x2006d608,60,0,4,0,"UITimerManager::setTimer(TimerName, long) [clone .constprop.0]"
+FUNC,struct+const,0x2006f5e8,48,0,2,2,MIDIDeviceManager::recountSmallestMPEZonesForCable(MIDICable&) [clone .part.0] [clone .isra.0]
+FUNC,struct,0x200717ac,82,0,4,0,NumericLayerBasicText::isNowOnTop()
+FUNC,struct,0x20075c34,44,0,4,0,deluge::hid::display::OLED::removePopup()
+FUNC,struct,0x20075ccc,62,0,4,0,deluge::hid::display::Screensaver::settingsChanged()
+FUNC,struct+const,0x20076d60,102,0,3,1,usb_hhub_specified_path_wait
+FUNC,struct+const,0x20077164,160,0,2,2,StemExport::disarmAllClipsForStemExport() [clone .constprop.0]
+FUNC,struct+const,0x2007b814,302,0,3,1,"PadLEDs::prepareColour(long, long, RGB)"
+FUNC,struct,0x2007bbf0,80,0,4,0,"PadLEDs::horizontal::setupScroll(signed char, unsigned char, bool, long)"
+FUNC,struct,0x2007edc0,140,0,4,0,SessionView::potentiallyUpdateCompressorLEDs() [clone .part.0]
+FUNC,struct+const,0x200808f8,180,0,3,1,TaskManager::runHighestPriTask() [clone .constprop.0]
+FUNC,struct,0x20088f4c,196,0,4,0,ClipView::getTickSquare()
+FUNC,struct,0x2008b4c8,170,0,4,0,usb_hhub_port_detach
+FUNC,struct,0x2008bb44,176,0,4,0,usb_hstd_mgr_suspend.isra.0
+FUNC,struct+const,0x20093000,128,0,3,1,usb_hhub_new_connect.constprop.0.isra.0
+FUNC,struct+const,0x20095b94,60,0,2,2,initiateSelectingOled
+FUNC,struct,0x20096b38,438,0,4,0,AudioEngine::tickSongFinalizeWindows(unsigned int&) [clone .part.0]
+FUNC,struct+const,0x20099594,142,0,3,1,"Stutterer::getStutterRate(ParamManager*, long, unsigned long) [clone .constprop.0]"
+FUNC,struct+const,0x2009aeec,624,0,2,2,"SessionView::renderSidebar(unsigned long, RGB (*) [18], unsigned char (*) [18])"
+FUNC,struct+const,0x200a08b0,136,0,3,1,"SampleRecorder::totalSampleLengthNowKnown(unsigned long, unsigned long)"
+FUNC,struct+const,0x200a2500,776,0,3,1,"Sound::reassessRenderSkippingStatus(ModelStackWithSoundFlags*, bool)"
+FUNC,struct+const,0x200a2f04,356,0,2,2,Sound::renderingVoicesInStereo(ModelStackWithSoundFlags*)
+FUNC,struct+const,0x200a7328,92,0,3,1,"InstrumentClipView::commandSaveKitRow(InstrumentClip*, Output*, OutputType, long) [clone .part.0]"
+FUNC,struct,0x200a9544,140,0,4,0,yieldingRoutineWithTimeoutForSD
+FUNC,struct,0x200b48a0,52,0,4,0,etl::ivector<FavouritesManager::Favourite>::initialise() [clone .constprop.0]
+FUNC,struct+const,0x200b61d8,56,0,2,2,"deluge::memory::external_allocator<SysExDataEntry*>::deallocate(SysExDataEntry**, unsigned int) [clone .isra.0]"
+FUNC,struct+const,0x200b6210,56,0,2,2,"deluge::memory::external_allocator<deluge::l10n::String>::deallocate(deluge::l10n::String*, unsigned int) [clone .isra.0]"
+FUNC,struct+const,0x200b6268,62,0,2,2,"std::_Vector_base<MenuItem*, deluge::memory::external_allocator<MenuItem*> >::~_Vector_base()"
+FUNC,struct+const,0x200b6304,62,0,2,2,"std::_Vector_base<std::basic_string_view<char, std::char_traits<char> >, deluge::memory::external_allocator<std::basic_string_view<char, std::char_traits<char> > > >::~_Vector_base()"
+FUNC,struct+const,0x200b64e4,84,0,2,2,deluge::gui::menu_item::Selection::size()
+FUNC,struct+const,0x200b6538,112,0,2,2,deluge::gui::menu_item::Selection::getShortOption(StringBuf&)
+FUNC,struct+const,0x200b65a8,112,0,2,2,deluge::gui::menu_item::Selection::getNotificationValue(StringBuf&)
+FUNC,struct+const,0x200b71b8,158,0,2,2,deluge::gui::menu_item::Selection::drawValue()
+FUNC,struct+const,0x200cdae8,196,0,3,1,Browser::backButtonAction()
+FUNC,struct+const,0x200d3350,144,0,2,2,deluge::gui::menu_item::submenu::ModFxHorizontalMenu::getTitle() const
+FUNC,const,0x200dc53c,88,0,0,4,CVInstrument::~CVInstrument()
+FUNC,const,0x200dc594,96,0,0,4,non-virtual thunk to CVInstrument::~CVInstrument()
+FUNC,const,0x200dc5f4,94,0,0,4,CVInstrument::~CVInstrument()
+FUNC,const,0x200dc654,102,0,0,4,non-virtual thunk to CVInstrument::~CVInstrument()
+FUNC,struct+const,0x20100b6c,216,0,3,1,Song::addInstrumentsToFileItems(OutputType)
+FUNC,struct+const,0x20106638,248,0,2,2,"TimelineView::initiateXZoom(long, long, unsigned long)"
+FUNC,struct+const,0x20113564,2134,0,3,1,disk_write.isra.0
+FUNC,struct+const,0x20118e50,50,0,3,1,"smSysex::sendMsg(MIDICable&, JsonSerializer&) [clone .constprop.0]"
+FUNC,struct+const,0x2011b90c,680,0,3,1,Browser::predictExtendedText()
+FUNC,struct,0x20122148,58,0,4,0,Browser::close()
+FUNC,struct+const,0x201221e0,288,0,2,2,LoadMidiDeviceDefinitionUI::enterKeyPress()
+FUNC,struct+const,0x2012e840,426,0,1,3,deluge::gui::ui::keyboard::KeyboardScreen::selectEncoderAction(signed char)
+FUNC,struct+const,0x20130b94,174,0,2,2,AudioEngine::doRecorderCardRoutines()
+FUNC,struct,0x2013be50,260,0,4,0,SampleBrowser::folderContentsReady(long)
+FUNC,struct+const,0x2013e734,788,0,1,3,"InstrumentClipView::editNumEuclideanEvents(ModelStackWithNoteRow*, long, long)"
+FUNC,struct+const,0x20141a28,316,0,2,2,deluge::gui::menu_item::HorizontalMenu::selectEncoderAction(long)
+FUNC,struct,0x20143884,470,0,4,0,"deluge::gui::ui::keyboard::KeyboardScreen::padAction(long, long, long)"
+FUNC,struct+const,0x2014b250,120,0,1,3,"SessionView::gridHandlePadsWithMidiLearnPressed(long, long, Clip*) [clone .isra.0]"
+FUNC,struct+const,0x2015036c,122,0,3,1,INTC_Handler_Interrupt
+FUNC,const,0x20160b44,216,0,0,4,TimeStretcher::beenUnassigned()
+FUNC,const,0x20162410,492,0,0,4,"TimeStretcher::setupCrossfadeFromCache(SampleCache*, long, long)"
+FUNC,const,0x20169568,392,0,0,4,"deluge::dsp::filter::FilterSet::renderLPFLongStereo(long*, long*) [clone .part.0]"
+FUNC,const,0x201696f0,408,0,0,4,"deluge::dsp::filter::FilterSet::renderLPFLong(long*, long*, long) [clone .part.0]"
+FUNC,const,0x2016a868,432,0,0,4,"deluge::dsp::filter::FilterSet::renderHPFLong(long*, long*, long) [clone .part.0]"
+FUNC,const,0x2016aef8,416,0,0,4,"deluge::dsp::filter::FilterSet::renderHPFLongStereo(long*, long*) [clone .part.0]"
+FUNC,const,0x20176acc,136,0,0,4,__register_exitproc
+FUNC,struct,0x2006d80c,52,0,3,0,deluge::hid::display::Screensaver::noteActivity()
+FUNC,struct,0x2006daf8,68,0,3,0,batteryLEDBlink()
+FUNC,struct+const,0x2006dedc,94,0,2,1,"std::_Rb_tree<unsigned char, std::pair<unsigned char const, long>, std::_Select1st<std::pair<unsigned char const, long> >, std::less<unsigned char>, std::allocator<std::pair<unsigned char const, long> > >::_M_get_insert_unique_pos(unsigned char const&) [clone .constprop.0] [clone .isra.0]"
+FUNC,struct+const,0x2006dfe4,94,0,2,1,"std::_Rb_tree<unsigned char, std::pair<unsigned char const, Polarity>, std::_Select1st<std::pair<unsigned char const, Polarity> >, std::less<unsigned char>, std::allocator<std::pair<unsigned char const, Polarity> > >::_M_get_insert_unique_pos(unsigned char const&) [clone .constprop.0] [clone .isra.0]"
+FUNC,struct,0x200708b8,172,0,3,0,"std::vector<Sound*, deluge::memory::fast_allocator<Sound*> >::size_type std::erase<Sound*, deluge::memory::fast_allocator<Sound*>, Sound*>(std::vector<Sound*, deluge::memory::fast_allocator<Sound*> >&, Sound* const&) [clone .constprop.0] [clone .isra.0]"
+FUNC,struct,0x20071818,252,0,3,0,PadLEDs::reassessGreyout(bool)
+FUNC,struct,0x20072428,70,0,3,0,triggerClockInputHandler
+FUNC,struct,0x20073718,104,0,3,0,usb_hstd_mgr_resume.isra.0
+FUNC,struct,0x2007478c,116,0,3,0,Browser::mainButtonAction(bool)
+FUNC,struct,0x20074800,172,0,3,0,SlotBrowser::horizontalEncoderAction(long)
+FUNC,struct+const,0x2007588c,44,0,1,2,deluge::gui::menu_item::audio_clip::AudioSourceSelector::selectButtonPress()
+FUNC,struct+const,0x200758e4,40,0,1,2,deluge::gui::menu_item::reset_settings::Reset::selectButtonPress()
+FUNC,struct,0x200773c4,60,0,3,0,AutomationView::resetShortcutBlinking()
+FUNC,struct+const,0x20079ef0,76,0,1,2,void deluge::hid::encoders::(anonymous namespace)::encoderIrqHandler<5u>(unsigned long)
+FUNC,struct+const,0x20079f3c,76,0,1,2,void deluge::hid::encoders::(anonymous namespace)::encoderIrqHandler<4u>(unsigned long)
+FUNC,struct+const,0x2007afc0,132,0,1,2,deluge::gui::context_menu::clip_settings::NewClipType::setupAndCheckAvailability()
+FUNC,struct+const,0x2007f888,420,0,1,2,"PadLEDs::setTickSquares(unsigned char const*, unsigned char const*)"
+FUNC,struct+const,0x2008201c,148,0,2,1,PadLEDs::setDimmerInterval(long)
+FUNC,struct,0x20087f9c,252,0,3,0,usb_hstd_ctrl_end
+FUNC,struct,0x2008948c,160,0,3,0,usb_hstd_transfer_start
+FUNC,struct,0x2008af44,356,0,3,0,usb_pstd_read_data.constprop.0
+FUNC,struct+const,0x2008b290,180,0,1,2,usb_hhub_selective_detach
+FUNC,struct+const,0x2008e01c,146,0,2,1,"AutomationEditorLayoutModControllable::setAutomationKnobIndicatorLevels(ModelStackWithAutoParam*, long, long) [clone .constprop.0]"
+FUNC,struct,0x2008e2d0,50,0,3,0,deluge::hid::display::OLED::timerRoutine()
+FUNC,struct+const,0x20095078,56,0,2,1,GeneralMemoryAllocator::checkStack(char const*) [clone .constprop.0]
+FUNC,struct+const,0x200a071c,56,0,2,1,GeneralMemoryAllocator::checkStack(char const*)
+FUNC,struct+const,0x200a9f2c,40,0,1,2,GeneralMemoryAllocator::get() [clone .part.0] [clone .lto_priv.39]
+FUNC,struct+const,0x200b0244,94,0,1,2,MIDIInstrument::allNotesOff()
+FUNC,struct,0x200b0a54,1096,0,3,0,Browser::deleteFolderAndDuplicateItems(Availability)
+FUNC,struct+const,0x200b7ef4,144,0,1,2,deluge::gui::menu_item::PatchCableStrength::selectEncoderAction(long)
+FUNC,struct+const,0x200bb5c4,292,0,2,1,"GlobalEffectable::processFXForGlobalEffectable(std::span<StereoSample, 4294967295u>, long*, ParamManager*, Delay::State const&, bool, long)"
+FUNC,struct+const,0x200de2a8,48,0,2,1,instantTan(long)
+FUNC,struct+const,0x200e1244,346,0,2,1,"MIDIInstrument::noteOffPostArp(long, long, long, long)"
+FUNC,struct+const,0x200e1b18,188,0,1,2,"NoteRow::setLength(ModelStackWithNoteRow*, long, Action*, long, bool)"
+FUNC,struct+const,0x200e3e64,90,0,2,1,"SessionView::clipCreationButtonPressed(unsigned char, bool, bool)"
+FUNC,struct+const,0x200e674c,386,0,1,2,"ModControllableAudio::processReverbSendAndVolume(std::span<StereoSample, 4294967295u>, long*, long, long, long, long, bool)"
+FUNC,struct,0x200ecfbc,64,0,3,0,ActionLogger::deleteLog(long) [clone .constprop.0]
+FUNC,struct+const,0x2010f724,190,0,2,1,usb_hstd_suspend
+FUNC,struct,0x20112200,34,0,3,0,MidiEngine::check_incoming_usb()
+FUNC,struct,0x20113530,50,0,3,0,disk_read.isra.0
+FUNC,const,0x20117d14,52,0,0,3,WaveTableReader::readNewCluster()
+FUNC,struct+const,0x20117fc4,68,0,1,2,"smSysex::startReply(JsonSerializer&, JsonDeserializer&) [clone .constprop.0]"
+FUNC,struct,0x20118e84,114,0,3,0,"SampleRecorder::writeCluster(long, unsigned int)"
+FUNC,struct+const,0x2011ab80,108,0,1,2,AudioFileManager::init() [clone .constprop.0]
+FUNC,struct+const,0x201203ac,556,0,2,1,LoadInstrumentPresetUI::revertToInitialPreset()
+FUNC,struct,0x20122650,150,0,3,0,LoadSongUI::exitAction()
+FUNC,struct+const,0x201233a8,106,0,2,1,"LoadSongUI::padAction(long, long, long)"
+FUNC,struct+const,0x201312e4,568,0,2,1,"SampleBrowser::buttonAction(unsigned char, bool, bool)"
+FUNC,struct+const,0x2013abd0,768,0,2,1,"WaveformBasicNavigator::zoom(long, bool, MarkerColumn*, MarkerType) [clone .constprop.0]"
+FUNC,struct,0x2013d4fc,156,0,3,0,ActionLogger::undoJustOneConsequencePerNoteRow(ModelStack*) [clone .constprop.0]
+FUNC,struct+const,0x2013e15c,52,0,1,2,deluge::hid::encoders::interpretEncodersTask()
+FUNC,struct,0x201408c0,256,0,3,0,"LoadPatternUI::buttonAction(unsigned char, bool, bool)"
+FUNC,const,0x20162314,252,0,0,3,"TimeStretcher::updateClustersForPercLookahead(Sample*, unsigned long, long)"
+FUNC,const,0x20169888,328,0,0,3,"FmOpKernel::compute(long*, int, long const*, long, long, long, long, long, bool, bool)"
+FUNC,const,0x201699d0,308,0,0,3,"FmOpKernel::compute_pure(long*, int, long, long, long, long, long, bool, bool)"
+FUNC,const,0x20169fa0,112,0,0,3,PitchEnv::set(EnvParams const&)
+FUNC,const,0x2016a010,208,0,0,3,"PitchEnv::getsample(EnvParams const&, int)"
+FUNC,const,0x2016a0e0,120,0,0,3,"PitchEnv::keydown(EnvParams const&, bool)"
+FUNC,const,0x2016a66c,504,0,0,3,"deluge::dsp::filter::HpLadderFilter::doFilter(long*, long*, long)"
+FUNC,const,0x2016ab58,924,0,0,3,"deluge::dsp::filter::HpLadderFilter::doFilterStereo(long*, long*)"
+FUNC,const,0x2016e12c,300,0,0,3,"EngineMkI::compute_fb(long*, int, long, long, long, long, long, long*, int, bool)"
+FUNC,struct,0x2006bdd4,76,0,2,0,"MatrixDriver::padAction(long, long, long) [clone .constprop.0]"
+FUNC,struct,0x2006be20,36,0,2,0,AudioRecorder::isCurrentlyResampling() [clone .constprop.0]
+FUNC,struct,0x2006c060,104,0,2,0,"deluge::hid::display::Starfield::respawn(deluge::hid::display::Starfield::Star&, float) [clone .constprop.0]"
+FUNC,struct,0x2006cbdc,156,0,2,0,AudioEngine::getNumVoices()
+FUNC,struct+const,0x2006cc78,30,0,1,1,LoadSongUI::isLoadingSong() [clone .constprop.0]
+FUNC,struct+const,0x2006d5c0,72,0,1,1,UITimerManager::workOutNextEventTime() [clone .constprop.0]
+FUNC,struct,0x2006d840,84,0,2,0,"deluge::hid::display::OLED::setupBlink(long, long, long, long, bool)"
+FUNC,struct,0x2006ddcc,84,0,2,0,sendPriorityCVIfPending.part.0
+FUNC,struct+const,0x2006f760,16,0,1,1,usb_peri_detach
+FUNC,struct+const,0x20070148,84,0,1,1,"WaveformRenderer::renderOneColForCollapseAnimationInterpolation(long, long, long, long, long, RGB (*) [18], std::optional<RGB>) [clone .constprop.0]"
+FUNC,struct,0x20070278,48,0,2,0,InstrumentClipView::flashDefaultRootNote() [clone .isra.0]
+FUNC,struct+const,0x20070eb0,54,0,1,1,deluge::hid::display::OLED::isLayerCurrentlyOnTop(NumericLayer*)
+FUNC,struct,0x2007194c,106,0,2,0,"View::notifyParamAutomationOccurred(ParamManager*, bool) [clone .constprop.0]"
+FUNC,struct+const,0x20075734,102,0,1,1,changeRootUI(UI*)
+FUNC,struct+const,0x2007579c,148,0,1,1,openUI(UI*)
+FUNC,struct+const,0x20075830,52,0,1,1,deluge::gui::menu_item::audio_clip::SampleMarkerEditor::beginSession(MenuItem*)
+FUNC,struct,0x200776c0,88,0,2,0,usb_cstd_chg_curpipe.part.0
+FUNC,struct,0x20077d0c,280,0,2,0,SessionView::setupScroll(unsigned long)
+FUNC,struct+const,0x20079f88,68,0,1,1,void deluge::hid::encoders::(anonymous namespace)::encoderIrqHandler<3u>(unsigned long)
+FUNC,struct,0x2007a0f4,58,0,2,0,PadLEDs::recordTransitionBegin(unsigned long)
+FUNC,struct+const,0x2007a45c,64,0,1,1,setupAndEnableInterrupt
+FUNC,struct,0x2007a73c,28,0,2,0,deluge::hid::display::OLED::hasPopupOfType(PopupType)
+FUNC,struct,0x2007adec,174,0,2,0,usb_pstd_forced_termination
+FUNC,struct,0x2007bf54,108,0,2,0,usb_cstd_is_set_frdy_rohan
+FUNC,struct,0x2007bfc0,114,0,2,0,usb_read_data_fast_rohan
+FUNC,struct,0x2007c39c,82,0,2,0,PadLEDs::sendOutMainPadColours()
+FUNC,struct,0x2007c9e0,62,0,2,0,PadLEDs::sendOutSidebarColours()
+FUNC,struct+const,0x2008136c,224,0,1,1,"deluge::gui::ui::keyboard::controls::VelocityColumn::handlePad(ModelStackWithTimelineCounter*, deluge::gui::ui::keyboard::PressedPad, deluge::gui::ui::keyboard::KeyboardLayout*)"
+FUNC,struct+const,0x200837ec,220,0,1,1,"deluge::gui::ui::keyboard::controls::ModColumn::handlePad(ModelStackWithTimelineCounter*, deluge::gui::ui::keyboard::PressedPad, deluge::gui::ui::keyboard::KeyboardLayout*)"
+FUNC,struct,0x200869b4,166,0,2,0,SessionView::selectLayout(signed char)
+FUNC,struct+const,0x20086b10,358,0,1,1,deluge::gui::context_menu::AudioInputSelector::selectEncoderAction(signed char)
+FUNC,struct,0x2008a5f8,308,0,2,0,usb_hstd_forced_termination
+FUNC,struct+const,0x2008aabc,256,0,1,1,"MIDICableUSB::sendSysex(unsigned char const*, long)"
+FUNC,struct,0x2008b0a8,378,0,2,0,usb_pstd_write_data.constprop.0
+FUNC,struct,0x2008d098,596,0,2,0,PlaybackHandler::actionTimerTickPart2() [clone .constprop.0]
+FUNC,const,0x20094d40,410,0,0,2,"deluge::hid::display::copyBackgroundAroundForeground(unsigned char (*) [128], unsigned char (*) [128], long, long, long, long)"
+FUNC,struct,0x200a0b78,66,0,2,0,StemExport::exportMixdownStem(StemExportType)::{lambda()#1}::_FUN()
+FUNC,struct,0x200a0bbc,66,0,2,0,StemExport::exportInstrumentStems(StemExportType)::{lambda()#1}::_FUN()
+FUNC,struct,0x200a0c00,66,0,2,0,StemExport::exportClipStems(StemExportType)::{lambda()#1}::_FUN()
+FUNC,struct,0x200a0c44,66,0,2,0,StemExport::exportDrumStems(StemExportType)::{lambda()#1}::_FUN()
+FUNC,struct,0x200a8c10,24,0,2,0,"AudioEngine::feedReverbBackdoorForGrain(int, long)"
+FUNC,struct,0x200aa900,78,0,2,0,"Sound::deleteMultiRange(long, long)"
+FUNC,struct+const,0x200ab230,226,0,1,1,"Song::setClipLength(Clip*, unsigned long, Action*, bool)"
+FUNC,const,0x200b48d4,28,0,0,2,__tcf_0.lto_priv.29
+FUNC,struct,0x200bcb78,304,0,2,0,AudioEngine::forceReleaseOneVoice(unsigned int) [clone .isra.0]
+FUNC,struct,0x200bcca8,244,0,2,0,AudioEngine::terminateOneVoice(unsigned int) [clone .isra.0]
+FUNC,struct,0x200bd018,64,0,2,0,AudioEngine::stopAnyPreviewing()
+FUNC,struct+const,0x200bf488,312,0,1,1,deluge::gui::menu_item::Decimal::drawPixelsForOled()
+FUNC,struct,0x200c0880,128,0,2,0,StemExport::displayStemExportProgress(StemExportType) [clone .constprop.0]
+FUNC,struct+const,0x200d5b38,88,0,1,1,"MelodicInstrument::getParamToControlFromInputMIDIChannel(long, ModelStackWithThreeMainThings*)"
+FUNC,struct,0x200d9d5c,222,0,2,0,"InstrumentClipView::setupForEnteringScaleMode(long, long) [clone .isra.0]"
+FUNC,struct,0x200e5454,112,0,2,0,"View::displayOutputName(Output*, bool, Clip*) [clone .constprop.0]"
+FUNC,struct,0x200ecf50,36,0,2,0,AudioEngine::routineWithClusterLoading(bool) [clone .constprop.0]
+FUNC,struct+const,0x200ed00c,460,0,1,1,AudioClipView::selectEncoderAction(signed char)
+FUNC,struct,0x200ee3c8,50,0,2,0,ActionLogger::deleteLastAction() [clone .constprop.0]
+FUNC,struct+const,0x200f6ee0,84,0,1,1,"Song::setTempoFromParams(long, signed char, bool) [clone .constprop.0]"
+FUNC,struct+const,0x200f8a84,220,0,1,1,AutomationView::initializeView()
+FUNC,struct,0x200f900c,84,0,2,0,AudioEngine::killAllVoices(bool) [clone .isra.0]
+FUNC,struct+const,0x20103a90,568,0,1,1,"Arrangement::resetPlayPos(long, bool, long)"
+FUNC,struct,0x2010599c,106,0,2,0,StemExport::abortStemExportProcess(deluge::l10n::String) [clone .constprop.0]
+FUNC,struct+const,0x2010e474,210,0,1,1,usb_hstd_chk_attach.isra.0
+FUNC,struct+const,0x2011f684,456,0,1,1,SessionView::selectEncoderAction(signed char)
+FUNC,struct+const,0x20122300,96,0,1,1,"LoadMidiDeviceDefinitionUI::buttonAction(unsigned char, bool, bool)"
+FUNC,struct+const,0x20122744,96,0,1,1,"SaveMidiDeviceDefinitionUI::buttonAction(unsigned char, bool, bool)"
+FUNC,struct,0x201227a4,100,0,2,0,"SavePatternUI::buttonAction(unsigned char, bool, bool)"
+FUNC,struct+const,0x2012cb54,268,0,1,1,"AudioClip::beginLinearRecording(ModelStackWithTimelineCounter*, long)"
+FUNC,struct+const,0x2012ceac,64,0,1,1,"AudioRecorder::beginOutputRecording(AudioRecordingFolder, AudioInputChannel, bool, bool) [clone .constprop.0] [clone .isra.0]"
+FUNC,struct,0x2012d09c,524,0,2,0,"InstrumentClipView::auditionPadAction(long, long, bool)"
+FUNC,struct,0x2012d5b4,624,0,2,0,"AutomationView::auditionPadAction(InstrumentClip*, Output*, OutputType, long, long, bool)"
+FUNC,struct,0x20137a84,172,0,2,0,LoadInstrumentPresetUI::enterKeyPress()
+FUNC,struct+const,0x2013f728,250,0,1,1,AudioClipView::editClipLengthWithoutTimestretching(long)
+FUNC,struct+const,0x20141dcc,132,0,1,1,deluge::gui::menu_item::osc::AudioRecorder::beginSession(MenuItem*)
+FUNC,struct+const,0x2014478c,1024,0,1,1,"SampleMarkerEditor::padAction(long, long, long)"
+FUNC,struct,0x20144c1c,112,0,2,0,View::endMIDILearn() [clone .constprop.0]
+FUNC,struct,0x2015d144,118,0,2,0,deluge::gui::menu_item::stutter::Rate::selectEncoderAction(long)
+FUNC,const,0x20160c1c,100,0,0,2,TimeStretcher::unassignAllReasonsForPercLookahead()
+FUNC,const,0x201626b0,716,0,0,2,"deluge::dsp::filter::LpLadderFilter::setConfig(long, long, FilterMode, long, long)"
+FUNC,const,0x20169b04,368,0,0,2,"FmOpKernel::compute_fb(long*, int, long, long, long, long, long, long*, int, bool)"
+FUNC,const,0x2016aa18,320,0,0,2,"deluge::dsp::filter::FilterSet::renderLong(long*, long*, long, long)"
+FUNC,const,0x2016b098,292,0,0,2,"deluge::dsp::filter::FilterSet::renderLongStereo(long*, long*)"
+FUNC,const,0x2016b1f4,704,0,0,2,"FmCore::render(long*, int, FmOpParams*, int, long*, long)"
+FUNC,const,0x2016e258,520,0,0,2,"EngineMkI::compute_fb2(long*, int, FmOpParams*, long, long, long, long*, int)"
+FUNC,const,0x2016e460,736,0,0,2,"EngineMkI::compute_fb3(long*, int, FmOpParams*, long, long, long, long*, int)"
+FUNC,const,0x2016f70c,136,0,0,2,DxEngine::newPatch()
+FUNC,const,0x2016f990,908,0,0,2,"DxVoice::compute(long*, int, int, DxPatch const*, DxVoiceCtrl const*)"
+FUNC,struct,0x2005d320,20,0,1,0,std::bad_variant_access::~bad_variant_access()
+FUNC,struct,0x2005e1d8,16,0,1,0,deluge::gui::ui::keyboard::controls::ChordColumn::setActiveChord(deluge::gui::ui::keyboard::controls::ChordModeChord)
+FUNC,struct,0x20060140,20,0,1,0,std::bad_expected_access<void>::~bad_expected_access()
+FUNC,struct,0x20060154,20,0,1,0,std::bad_expected_access<Error>::~bad_expected_access()
+FUNC,struct,0x2006c30c,32,0,1,0,"MatrixDriver::isPadPressed(long, long) [clone .constprop.0]"
+FUNC,struct,0x2006ca7c,26,0,1,0,ActionLogger::closeAction(ActionType) [clone .constprop.0]
+FUNC,struct,0x2006ca98,104,0,1,0,PlaybackHandler::setLedStates() [clone .constprop.0]
+FUNC,struct,0x2006d498,42,0,1,0,MidiEngine::anythingInOutputBuffer() [clone .constprop.0]
+FUNC,struct,0x2006e440,56,0,1,0,"CVEngine::sendVoltageOut(unsigned char, unsigned short) [clone .constprop.0]"
+FUNC,struct,0x20070964,78,0,1,0,deluge::gui::menu_item::stutter::Rate::getClosestQuantizedOptionIndex(long) const [clone .isra.0]
+FUNC,struct,0x200709b4,26,0,1,0,deluge::gui::menu_item::stutter::Rate::getQuantizedOptionLabel()
+FUNC,struct,0x20071800,24,0,1,0,PadLEDs::setTimerForSoon()
+FUNC,struct,0x20072284,124,0,1,0,SideChain::SideChain() [clone .isra.0]
+FUNC,struct,0x200728dc,18,0,1,0,ClipView::focusRegained()
+FUNC,struct,0x2007398c,18,0,1,0,deluge::gui::menu_item::audio_clip::SampleMarkerEditor::beginSession(MenuItem*) [clone .part.0]
+FUNC,struct,0x20073a10,154,0,1,0,deluge::gui::menu_item::Decimal::horizontalEncoderAction(long)
+FUNC,struct,0x2007450c,20,0,1,0,deluge::hid::display::OLED::hasPopup()
+FUNC,struct,0x200756b4,126,0,1,0,"changeUIAtLevel(UI*, long)"
+FUNC,struct,0x20075994,48,0,1,0,AutomationView::initPadSelection()
+FUNC,struct,0x20075b10,30,0,1,0,SessionView::beginEditingSectionRepeatsNum()
+FUNC,struct,0x20076c4c,30,0,1,0,usb_hstd_return_enu_mgr
+FUNC,struct,0x20076c84,80,0,1,0,usb_hhub_class_request_complete
+FUNC,struct,0x20076d10,78,0,1,0,usb_hhub_specified_path
+FUNC,struct,0x20077104,94,0,1,0,View::focusRegained() [clone .constprop.0]
+FUNC,struct,0x200773a4,32,0,1,0,InstrumentClipView::resetSelectedNoteRowBlinking() [clone .constprop.0]
+FUNC,struct,0x2007a130,42,0,1,0,Buttons::isButtonPressed(unsigned char)
+FUNC,struct,0x2007a1f4,130,0,1,0,"AudioClipView::verticalEncoderAction(long, bool)"
+FUNC,struct,0x2007cd14,64,0,1,0,"deluge::gui::context_menu::OverwriteFile::padAction(long, long, long)"
+FUNC,struct,0x2007db38,368,0,1,0,ArpeggiatorSettings::ArpeggiatorSettings() [clone .isra.0]
+FUNC,struct,0x2007e3a0,456,0,1,0,deluge::gui::menu_item::DxParam::readValueAgain()
+FUNC,struct,0x2007ec30,62,0,1,0,"indicator_leds::setKnobIndicatorLevel(unsigned char, unsigned char, bool)"
+FUNC,struct,0x20086f44,262,0,1,0,"NonAudioInstrument::renderOutput(ModelStack*, std::span<StereoSample, 4294967295u>, long*, long, long, bool, bool)"
+FUNC,struct,0x20088104,380,0,1,0,usb_hstd_interrupt_handler
+FUNC,struct,0x2008a72c,208,0,1,0,usb_send_start_rohan
+FUNC,struct,0x2008b224,106,0,1,0,usb_pstd_ctrl_read.isra.0
+FUNC,struct,0x2008b8ec,120,0,1,0,usb_hstd_buf2fifo
+FUNC,struct,0x2008e528,86,0,1,0,deluge::gui::menu_item::Toggle::selectEncoderAction(long)
+FUNC,struct,0x2008f830,26,0,1,0,deluge::l10n::getView(deluge::l10n::String)
+FUNC,struct,0x20090168,32,0,1,0,deluge::l10n::get(deluge::l10n::String)
+FUNC,const,0x20090b64,108,0,0,1,deluge::gui::menu_item::sample::LoopPoint::getColumnLabel(StringBuf&)
+FUNC,const,0x2009166c,42,0,0,1,deluge::gui::menu_item::MasterTranspose::getColumnLabel(StringBuf&)
+FUNC,struct,0x20093a4c,74,0,1,0,deluge::gui::menu_item::Value<long>::selectEncoderAction(long)
+FUNC,struct,0x20095e0c,18,0,1,0,deluge::hid::display::OLED::sendMainImage()
+FUNC,struct,0x20097390,44,0,1,0,PlaybackHandler::getNumSwungTicksInSinceLastActionedSwungTick(unsigned long*) [clone .constprop.0]
+FUNC,struct,0x20098054,68,0,1,0,PlaybackHandler::expectEvent() [clone .constprop.0]
+FUNC,struct,0x200a7274,178,0,1,0,"InstrumentClipView::commandLearnAuditionPad(InstrumentClip*, Output*, OutputType, long, long)"
+FUNC,struct,0x200b1930,38,0,1,0,deluge::hid::display::SevenSegment::setTopLayer(NumericLayer*) [clone .part.0]
+FUNC,struct,0x200b1d7c,50,0,1,0,deluge::hid::display::SevenSegment::cancelPopup()
+FUNC,struct,0x200b2610,28,0,1,0,std::bad_variant_access::~bad_variant_access()
+FUNC,struct,0x200b262c,22,0,1,0,__tcf_1.lto_priv.1
+FUNC,struct,0x200b3570,14,0,1,0,__tcf_1.lto_priv.2
+FUNC,struct,0x200b359c,14,0,1,0,__tcf_2
+FUNC,struct,0x200b35c8,14,0,1,0,__tcf_1.lto_priv.0
+FUNC,struct,0x200b35d8,22,0,1,0,__tcf_3
+FUNC,struct,0x200bd660,64,0,1,0,deluge::gui::menu_item::runtime_feature::EmulatedDisplay::writeCurrentValue()
+FUNC,struct,0x200bf44c,60,0,1,0,MenuItem::renderOLED()
+FUNC,struct,0x200c04e4,168,0,1,0,deluge::hid::display::OLED::drawPermanentPopupLookingText(char const*)
+FUNC,struct,0x200c38bc,110,0,1,0,SessionView::displayPotentialTempoChange(UI*) [clone .part.0]
+FUNC,const,0x200c5980,258,0,0,1,deluge::gui::menu_item::FileSelector::getColumnLabel(StringBuf&)
+FUNC,struct,0x200cd73c,52,0,1,0,"RenameUI::padAction(long, long, long)"
+FUNC,struct,0x200e4094,162,0,1,0,SessionView::focusRegained()
+FUNC,struct,0x200e44a4,48,0,1,0,SoundEditor::opened()
+FUNC,struct,0x200e54c4,52,0,1,0,InstrumentClipMinder::renderOLED(deluge::hid::display::oled_canvas::Canvas&)
+FUNC,struct,0x200e572c,56,0,1,0,InstrumentClipMinder::redrawNumericDisplay()
+FUNC,struct,0x200e5910,76,0,1,0,AudioClipView::focusRegained()
+FUNC,struct,0x200ee3fc,30,0,1,0,ActionLogger::deleteLastActionIfEmpty() [clone .constprop.0]
+FUNC,struct,0x200f2a74,622,0,1,0,ArrangerView::putDraggedClipInstanceInNewPosition(Output*)
+FUNC,struct,0x200f41a4,164,0,1,0,InstrumentClipView::exitNoteEditor() [clone .constprop.0]
+FUNC,struct,0x200f8a20,98,0,1,0,"AutomationView::potentiallyVerticalScrollToSelectedDrum(InstrumentClip*, Output*) [clone .isra.0]"
+FUNC,struct,0x200f8cb4,118,0,1,0,ClipView::shortenClip(long) [clone .isra.0]
+FUNC,struct,0x200f8d2c,104,0,1,0,AudioClip::abortRecording()
+FUNC,struct,0x2010035c,530,0,1,0,AudioEngine::songSwapAboutToHappen()
+FUNC,struct,0x20103ff0,222,0,1,0,PlaybackHandler::endPlayback() [clone .constprop.0]
+FUNC,struct,0x20105acc,772,0,1,0,"PlaybackHandler::inputTick(bool, unsigned long) [clone .constprop.0]"
+FUNC,struct,0x20106a90,92,0,1,0,SessionView::horizontalEncoderAction(long)
+FUNC,struct,0x2010e5d4,60,0,1,0,usb_hstd_chk_clk.isra.0
+FUNC,struct,0x2010e610,228,0,1,0,usb_hstd_detach_process
+FUNC,struct,0x2011aadc,32,0,1,0,isCardReady()
+FUNC,struct,0x2011ab50,46,0,1,0,registerTasks()::{lambda()#5}::_FUN()
+FUNC,struct,0x20122360,96,0,1,0,LoadSongUI::enterKeyPress()
+FUNC,struct,0x2012d4cc,72,0,1,0,InstrumentClipView::exitNoteRowEditor() [clone .constprop.0]
+FUNC,struct,0x2013bf54,128,0,1,0,SampleBrowser::currentFileChanged(long)
+FUNC,struct,0x2013d4bc,64,0,1,0,LoadPatternUI::currentFileChanged(long)
+FUNC,struct,0x201417f8,72,0,1,0,SoundEditor::focusRegained()
+FUNC,struct,0x20144704,136,0,1,0,"LoadInstrumentPresetUI::padAction(long, long, long)"
+FUNC,struct,0x20147f14,210,0,1,0,ArrangerView::exitSubModeWithoutAction(UI*)
+FUNC,struct,0x2014a078,572,0,1,0,"Session::resetPlayPos(long, bool, long)"
+FUNC,struct,0x2014b338,96,0,1,0,"std::_Function_handler<long (PIC::Response), deluge_main::{lambda(auto:1)#1}>::_M_invoke(std::_Any_data const&, PIC::Response&&)"
+FUNC,const,0x20154ce8,64,0,0,1,JsonSerializer::JsonSerializer() [clone .isra.0]
+FUNC,struct,0x2015cbac,52,0,1,0,InstrumentClipView::focusRegained()
+FUNC,struct,0x2015cd04,142,0,1,0,"MIDIInstrument::modEncoderButtonAction(unsigned char, bool, ModelStackWithThreeMainThings*)"
+FUNC,const,0x201622b4,96,0,0,1,TimeStretcher::rememberPercCacheCluster(Cluster*)
+FUNC,const,0x2016445c,528,0,0,1,"deluge::dsp::filter::SVFilter::doFilter(long*, long*, long)"
+FUNC,const,0x2016466c,968,0,0,1,"deluge::dsp::filter::SVFilter::doFilterStereo(long*, long*)"
+FUNC,const,0x20165584,276,0,0,1,"deluge::dsp::Interpolator::interpolate(unsigned int, long, unsigned long)"
+FUNC,const,0x20169c74,68,0,0,1,Freqlut::lookup(long)
+FUNC,const,0x20169cb8,696,0,0,1,dx_init_lut_data()
+FUNC,const,0x20169f70,48,0,0,1,PitchEnv::init(double)
+FUNC,const,0x2016a290,64,0,0,1,FFTConfigManager::getConfig(long)
+FUNC,const,0x2016b610,32,0,0,1,deluge::memory::fast_allocator<DxVoice>::allocate(unsigned int) [clone .part.0]
+FUNC,const,0x2016ed10,108,0,0,1,"DxPatch::setEngineMode(int, bool)"
+FUNC,const,0x2016ee78,304,0,0,1,"DxVoice::osc_freq(int, int, int, int, int, int)"
+FUNC,reloc,0x20062f00,12,0,0,0,ModControllableAudio::disableGrain()
+FUNC,reloc,0x20066d34,22,0,0,0,Source::ensureDxPatch()
+FUNC,reloc,0x20067b68,106,0,0,0,"ResizeableArray::copyToNewMemory(void*, unsigned long, void*, unsigned long, unsigned long, unsigned long)"
+FUNC,reloc,0x20069468,70,0,0,0,invalidate_range_all_caches
+FUNC,reloc,0x20093eb8,22,0,0,0,"std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_S_copy_chars(char*, char const*, char const*)"
+FUNC,reloc,0x20093ed4,28,0,0,0,deluge::dsp::reverb::Freeverb::setRoomSize(float)
+FUNC,reloc,0x20093ef0,20,0,0,0,deluge::dsp::reverb::Freeverb::setDamping(float)
+FUNC,reloc,0x20093f04,8,0,0,0,deluge::dsp::reverb::Freeverb::setWidth(float)
+FUNC,reloc,0x20093fd4,22,0,0,0,"std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_S_copy_chars(char*, char*, char*)"
+FUNC,reloc,0x200a7e4c,252,0,0,0,deluge::gui::ui::keyboard::layout::KeyboardLayoutInKey::precalculate()
+FUNC,reloc,0x200a8754,42,0,0,0,"VoiceSample::getPlaySample(Sample*, SamplePlaybackGuide*)"
+FUNC,reloc,0x200bb6e8,116,0,0,0,Sound::setModFXType(ModFXType)
+FUNC,reloc,0x200c14c0,152,0,0,0,"deluge::hid::display::oled_canvas::Canvas::drawStringCentredShrinkIfNecessary(char const*, long, long, long) [clone .constprop.0]"
+FUNC,reloc,0x200d4b78,60,0,0,0,PatchCableSet::~PatchCableSet()
+FUNC,reloc,0x200d4ca0,48,0,0,0,ExpressionParamSet::~ExpressionParamSet()
+FUNC,reloc,0x200d4cd0,44,0,0,0,PatchedParamSet::~PatchedParamSet()
+FUNC,reloc,0x200d4cfc,40,0,0,0,UnpatchedParamSet::~UnpatchedParamSet()
+FUNC,reloc,0x200d519c,100,0,0,0,UnpatchedParamSet::UnpatchedParamSet(ParamCollectionSummary*) [clone .isra.0]
+FUNC,reloc,0x200dc42c,44,0,0,0,UnpatchedParamSet::~UnpatchedParamSet()
+FUNC,reloc,0x200dc458,44,0,0,0,PatchedParamSet::~PatchedParamSet()
+FUNC,reloc,0x200dc484,56,0,0,0,ExpressionParamSet::~ExpressionParamSet()
+FUNC,reloc,0x20117f38,106,0,0,0,FileWriter::writeByte(signed char)
+FUNC,reloc,0x20141074,36,0,0,0,Userdef_SFLASH_Busy_Wait.constprop.0.isra.0
+FUNC,reloc,0x2016265c,32,0,0,0,GrainBuffer::~GrainBuffer()
+FUNC,reloc,0x2016267c,48,0,0,0,GrainBuffer::~GrainBuffer()
+FUNC,reloc,0x20164a38,264,0,0,0,"deluge::dsp::filter::SVFilter::setConfig(long, long, FilterMode, long, long)"
+FUNC,reloc,0x20164b40,384,0,0,0,"GranularProcessor::setupGrainFX(long, long, long, long, long*, float)"
+FUNC,reloc,0x20165070,384,0,0,0,GranularProcessor::processOneGrainSample(StereoSample)
+FUNC,reloc,0x201652e0,176,0,0,0,GranularProcessor::GranularProcessor()
+FUNC,reloc,0x20165390,432,0,0,0,"GranularProcessor::processGrainFX(std::span<StereoSample, 4294967295u>, long, long, long, long, long*, bool, float, long)"
+FUNC,reloc,0x20165540,48,0,0,0,GranularProcessor::~GranularProcessor()
+FUNC,reloc,0x201690f0,144,0,0,0,deluge::dsp::reverb::Freeverb::mute()
+FUNC,reloc,0x2016a158,312,0,0,0,"AbsValueFollower::calcApproxRMS(std::span<StereoSample, 4294967295u>)"
+FUNC,reloc,0x2016a2d0,344,0,0,0,"deluge::dsp::filter::HpLadderFilter::setConfig(long, long, FilterMode, long, long)"
+FUNC,reloc,0x2016b1c4,24,0,0,0,EngineMkI::~EngineMkI()
+FUNC,reloc,0x2016b1dc,24,0,0,0,FmCore::~FmCore()
+FUNC,reloc,0x2016bd28,280,0,0,0,"RMSFeedbackCompressor::calcRMS(std::span<StereoSample, 4294967295u>)"
+FUNC,reloc,0x2016c390,100,0,0,0,Delay::hasWrapped()
+FUNC,reloc,0x2016c3f4,72,0,0,0,Delay::discardBuffers()
+FUNC,reloc,0x2016c43c,260,0,0,0,"DelayBuffer::init(unsigned long, unsigned long, bool)"
+FUNC,reloc,0x2016c540,276,0,0,0,"Delay::informWhetherActive(bool, long)"
+FUNC,reloc,0x2016c798,160,0,0,0,"Delay::initializeSecondaryBuffer(long, bool)"
+FUNC,reloc,0x2016c838,36,0,0,0,DelayBuffer::discard()
+FUNC,reloc,0x2016c8d8,272,0,0,0,DelayBuffer::setupForRender(long)
+FUNC,reloc,0x2016f340,104,0,0,0,DxVoice::keyup()
+FUNC,reloc,0x2016f700,12,0,0,0,DxEngine::dxVoiceUnassigned(DxVoice*)
+FUNC,reloc,0x201714d0,198,0,0,0,"std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_replace_cold(char*, unsigned int, char const*, unsigned int, unsigned int)"
+OBJECT,data,0xc007198,11980,,,,deluge::l10n::built_in::english
+OBJECT,data,0xc0042cc,11980,,,,deluge::l10n::built_in::seven_segment
+OBJECT,data,0x2017b18c,116,,,,CSWTCH.2148
+OBJECT,data,0x20185c8c,304,,,,vtable for deluge::gui::menu_item::sidechain::VolumeShortcut
+OBJECT,data,0x2018c81c,304,,,,vtable for deluge::gui::menu_item::patch_cable_strength::Fixed
+OBJECT,data,0x2019202c,304,,,,vtable for deluge::gui::menu_item::patch_cable_strength::Regular
+OBJECT,data,0x20185130,384,,,,vtable for deluge::gui::menu_item::delay::Amount
+OBJECT,data,0x2019215c,304,,,,vtable for deluge::gui::menu_item::patch_cable_strength::Range
+OBJECT,data,0x2017b2e0,104,,,,"deluge::modulation::params::getParamDisplayName(deluge::modulation::params::Kind, long)::NAMES"
+OBJECT,data,0x20180300,396,,,,vtable for deluge::gui::menu_item::filter::FilterParam
+OBJECT,data,0x20181680,372,,,,vtable for deluge::gui::menu_item::patched_param::Integer
+OBJECT,data,0x20181ab4,376,,,,vtable for deluge::gui::menu_item::arpeggiator::Rate
+OBJECT,data,0x201847d8,376,,,,vtable for deluge::gui::menu_item::mod_fx::Rate
+OBJECT,data,0x20186408,376,,,,vtable for deluge::gui::menu_item::reverb::Amount
+OBJECT,data,0x2018c6dc,320,,,,vtable for deluge::gui::menu_item::MasterTranspose
+OBJECT,data,0x2018ca38,372,,,,vtable for deluge::gui::menu_item::patched_param::Pan
+OBJECT,data,0x2017d7f0,380,,,,vtable for deluge::gui::menu_item::envelope::Segment
+OBJECT,data,0x20181430,376,,,,vtable for deluge::gui::menu_item::patched_param::IntegerNonFM
+OBJECT,data,0x20184ac4,388,,,,vtable for deluge::gui::menu_item::mod_fx::Depth_Patched
+OBJECT,data,0x201779e0,36,,,,chordTypeSemitoneOffsets
+OBJECT,data,0x2017cf28,384,,,,vtable for deluge::gui::menu_item::osc::PulseWidth
+OBJECT,data,0x20184448,364,,,,vtable for deluge::gui::menu_item::voice::Portamento
+OBJECT,data,0x20185748,380,,,,vtable for deluge::gui::menu_item::stutter::Rate
+OBJECT,data,0x2018608c,360,,,,vtable for deluge::gui::menu_item::sidechain::Shape
+OBJECT,data,0x2017cdac,380,,,,vtable for deluge::gui::menu_item::osc::source::WaveIndex
+OBJECT,data,0x2017d0a8,380,,,,vtable for deluge::gui::menu_item::osc::source::Feedback
+OBJECT,data,0x2017d224,328,,,,vtable for deluge::gui::menu_item::modulator::Transpose
+OBJECT,data,0x2017d36c,380,,,,vtable for deluge::gui::menu_item::source::patched_param::ModulatorFeedback
+OBJECT,data,0x2017d4e8,388,,,,vtable for deluge::gui::menu_item::osc::source::Volume
+OBJECT,data,0x2017d66c,388,,,,vtable for deluge::gui::menu_item::source::patched_param::ModulatorLevel
+OBJECT,data,0x20182a30,376,,,,vtable for deluge::gui::menu_item::arpeggiator::Rhythm
+OBJECT,data,0x20187b80,360,,,,vtable for deluge::gui::menu_item::unpatched_param::Pan
+OBJECT,data,0x20187ec0,368,,,,vtable for deluge::gui::menu_item::delay::Amount_Unpatched
+OBJECT,data,0x20188508,360,,,,vtable for deluge::gui::menu_item::sidechain::GlobalVolume
+OBJECT,data,0x20180578,356,,,,vtable for deluge::gui::menu_item::audio_compressor::CompParam
+OBJECT,data,0x20181c2c,360,,,,vtable for deluge::gui::menu_item::arpeggiator::KitRate
+OBJECT,data,0x20182c9c,372,,,,vtable for deluge::gui::menu_item::arpeggiator::SequenceLength
+OBJECT,data,0x2018333c,364,,,,vtable for deluge::gui::menu_item::randomizer::RandomizerSoundOnlyUnpatchedParam
+OBJECT,data,0x20184950,372,,,,vtable for deluge::gui::menu_item::mod_fx::Feedback
+OBJECT,data,0x20184c48,372,,,,vtable for deluge::gui::menu_item::mod_fx::Offset
+OBJECT,data,0x20184ec4,360,,,,vtable for deluge::gui::menu_item::eq::EqUnpatchedParam
+OBJECT,data,0x20186d70,356,,,,vtable for deluge::gui::menu_item::UnpatchedParam
+OBJECT,data,0x20187cfc,380,,,,vtable for deluge::gui::menu_item::filter::UnpatchedFilterParam
+OBJECT,data,0x20188044,360,,,,vtable for deluge::gui::menu_item::reverb::Amount_Unpatched
+OBJECT,data,0x2018836c,360,,,,vtable for deluge::gui::menu_item::mod_fx::Rate_Unpatched
+OBJECT,data,0x2017cc64,328,,,,vtable for deluge::gui::menu_item::sample::Transpose
+OBJECT,data,0x2017de38,244,,,,vtable for deluge::gui::menu_item::HorizontalMenuGroup
+OBJECT,data,0x201808f4,268,,,,vtable for deluge::gui::menu_item::audio_compressor::Attack
+OBJECT,data,0x201827d0,364,,,,vtable for deluge::gui::menu_item::arpeggiator::ArpUnpatchedParam
+OBJECT,data,0x201830dc,364,,,,vtable for deluge::gui::menu_item::randomizer::RandomizerUnpatchedParam
+OBJECT,data,0x20183878,364,,,,vtable for deluge::gui::menu_item::randomizer::RandomizerNonKitSoundUnpatchedParam
+OBJECT,data,0x20184354,244,,,,vtable for deluge::gui::menu_item::voice::VoiceCount
+OBJECT,data,0x2018685c,244,,,,vtable for deluge::gui::menu_item::reverb::Pan
+OBJECT,data,0x201881f8,372,,,,vtable for deluge::gui::menu_item::mod_fx::Depth_Unpatched
+OBJECT,data,0x20192458,244,,,,vtable for deluge::gui::menu_item::mpe::ZoneNumMemberChannels
+OBJECT,data,0x2017c8bc,252,,,,vtable for deluge::gui::menu_item::cv::Volts
+OBJECT,data,0x2017c9b8,252,,,,vtable for deluge::gui::menu_item::cv::Transpose
+OBJECT,data,0x201806dc,268,,,,vtable for deluge::gui::menu_item::audio_compressor::Ratio
+OBJECT,data,0x201807e8,268,,,,vtable for deluge::gui::menu_item::audio_compressor::Blend
+OBJECT,data,0x20180b0c,268,,,,vtable for deluge::gui::menu_item::audio_compressor::SideHPF
+OBJECT,data,0x20182ba8,244,,,,vtable for deluge::gui::menu_item::arpeggiator::midi_cv::Rhythm
+OBJECT,data,0x20182e10,244,,,,vtable for deluge::gui::menu_item::arpeggiator::midi_cv::SequenceLength
+OBJECT,data,0x20186300,244,,,,vtable for deluge::gui::menu_item::reverb::sidechain::Shape
+OBJECT,data,0x201889d4,268,,,,vtable for deluge::gui::menu_item::audio_clip::Transpose
+OBJECT,data,0x2018a554,244,,,,vtable for deluge::gui::menu_item::midi::DefaultVelocityToLevel
+OBJECT,data,0x2018ced0,244,,,,vtable for deluge::gui::menu_item::note::Velocity
+OBJECT,data,0x2018d1ac,244,,,,vtable for deluge::gui::menu_item::note::Fill
+OBJECT,data,0x2018d688,244,,,,vtable for deluge::gui::menu_item::note_row::Fill
+OBJECT,data,0x2017c40c,244,,,,vtable for deluge::gui::menu_item::sample::TimeStretch
+OBJECT,data,0x2017c500,236,,,,vtable for deluge::gui::menu_item::sample::Interpolation
+OBJECT,data,0x20180a00,268,,,,vtable for deluge::gui::menu_item::audio_compressor::Release
+OBJECT,data,0x20180d0c,244,,,,vtable for deluge::gui::menu_item::unison::Detune
+OBJECT,data,0x20180e00,244,,,,vtable for deluge::gui::menu_item::unison::StereoSpread
+OBJECT,data,0x20181d94,244,,,,vtable for deluge::gui::menu_item::arpeggiator::midi_cv::Rate
+OBJECT,data,0x20181e88,244,,,,vtable for deluge::gui::menu_item::arpeggiator::Octaves
+OBJECT,data,0x2018293c,244,,,,vtable for deluge::gui::menu_item::arpeggiator::midi_cv::Gate
+OBJECT,data,0x20183248,244,,,,vtable for deluge::gui::menu_item::randomizer::midi_cv::SpreadGate
+OBJECT,data,0x201834a8,244,,,,vtable for deluge::gui::menu_item::randomizer::midi_cv::SpreadOctave
+OBJECT,data,0x2018359c,244,,,,vtable for deluge::gui::menu_item::randomizer::midi_cv::SpreadVelocity
+OBJECT,data,0x20183690,244,,,,vtable for deluge::gui::menu_item::randomizer::midi_cv::RatchetAmount
+OBJECT,data,0x20183784,244,,,,vtable for deluge::gui::menu_item::randomizer::midi_cv::RatchetProbability
+OBJECT,data,0x201839e4,244,,,,vtable for deluge::gui::menu_item::randomizer::midi_cv::ChordPolyphony
+OBJECT,data,0x20183ad8,244,,,,vtable for deluge::gui::menu_item::randomizer::midi_cv::ChordProbability
+OBJECT,data,0x20183bcc,244,,,,vtable for deluge::gui::menu_item::randomizer::midi_cv::NoteProbability
+OBJECT,data,0x20183cc0,244,,,,vtable for deluge::gui::menu_item::randomizer::midi_cv::SwapProbability
+OBJECT,data,0x20183db4,244,,,,vtable for deluge::gui::menu_item::randomizer::midi_cv::BassProbability
+OBJECT,data,0x20183ea8,244,,,,vtable for deluge::gui::menu_item::randomizer::midi_cv::GlideProbability
+OBJECT,data,0x20184158,216,,,,vtable for deluge::gui::menu_item::submenu::ArpMpeSubmenu
+OBJECT,data,0x20185b98,244,,,,vtable for deluge::gui::menu_item::sidechain::Send
+OBJECT,data,0x20185ea4,244,,,,vtable for deluge::gui::menu_item::sidechain::Attack
+OBJECT,data,0x20185f98,244,,,,vtable for deluge::gui::menu_item::sidechain::Release
+OBJECT,data,0x2018620c,244,,,,vtable for deluge::gui::menu_item::reverb::sidechain::Volume
+OBJECT,data,0x20186580,244,,,,vtable for deluge::gui::menu_item::reverb::RoomSize
+OBJECT,data,0x20186674,244,,,,vtable for deluge::gui::menu_item::reverb::Damping
+OBJECT,data,0x20186768,244,,,,vtable for deluge::gui::menu_item::reverb::Width
+OBJECT,data,0x20186a3c,244,,,,vtable for deluge::gui::menu_item::reverb::HPF
+OBJECT,data,0x20186b30,244,,,,vtable for deluge::gui::menu_item::reverb::LPF
+OBJECT,data,0x20186c7c,244,,,,vtable for deluge::gui::menu_item::fx::Clipping
+OBJECT,data,0x20188db8,244,,,,vtable for deluge::gui::menu_item::audio_clip::Attack
+OBJECT,data,0x20189634,244,,,,vtable for deluge::gui::menu_item::record::CountIn
+OBJECT,data,0x2018c5bc,216,,,,vtable for deluge::gui::menu_item::defaults::ScreensaverSubmenu
+OBJECT,data,0x2018cce0,244,,,,vtable for deluge::gui::menu_item::note::IteranceDivisor
+OBJECT,data,0x2018d0b8,244,,,,vtable for deluge::gui::menu_item::note::IterancePreset
+OBJECT,data,0x2018d594,244,,,,vtable for deluge::gui::menu_item::note_row::IterancePreset
+OBJECT,data,0x201919b8,236,,,,vtable for deluge::gui::menu_item::runtime_feature::SettingToggle
+OBJECT,data,0x20191aa4,236,,,,vtable for deluge::gui::menu_item::runtime_feature::Setting
+OBJECT,data,0x20191e54,236,,,,vtable for deluge::gui::menu_item::runtime_feature::OledOnlySettingToggle
+OBJECT,data,0x2019236c,236,,,,vtable for deluge::gui::menu_item::mpe::ZoneSelector
+OBJECT,data,0x2017dd4c,216,,,,vtable for deluge::gui::menu_item::Submenu
+OBJECT,data,0x2017e114,216,,,,vtable for deluge::gui::menu_item::cv::Submenu
+OBJECT,data,0x20180fc4,236,,,,vtable for deluge::gui::menu_item::sample::PitchSpeed
+OBJECT,data,0x201817f4,236,,,,vtable for deluge::gui::menu_item::arpeggiator::PresetMode
+OBJECT,data,0x20181f7c,236,,,,vtable for deluge::gui::menu_item::arpeggiator::OctaveMode
+OBJECT,data,0x20182068,236,,,,vtable for deluge::gui::menu_item::arpeggiator::OctaveModeToNoteMode
+OBJECT,data,0x20182154,236,,,,vtable for deluge::gui::menu_item::arpeggiator::OctaveModeToNoteModeForDrums
+OBJECT,data,0x201826dc,244,,,,vtable for deluge::gui::menu_item::arpeggiator::StepRepeat
+OBJECT,data,0x20182ff0,236,,,,vtable for deluge::gui::menu_item::randomizer::RandomizerLock
+OBJECT,data,0x20184268,236,,,,vtable for deluge::gui::menu_item::voice::PolyphonyType
+OBJECT,data,0x201858d0,244,,,,vtable for deluge::gui::menu_item::bend_range::Main
+OBJECT,data,0x201859c4,244,,,,vtable for deluge::gui::menu_item::bend_range::PerFinger
+OBJECT,data,0x20185ac0,216,,,,vtable for deluge::gui::menu_item::submenu::Bend
+OBJECT,data,0x20186950,236,,,,vtable for deluge::gui::menu_item::reverb::Model
+OBJECT,data,0x20186ee4,244,,,,vtable for deluge::gui::menu_item::midi::sound::OutputMidiChannel
+OBJECT,data,0x20186fd8,244,,,,vtable for deluge::gui::menu_item::midi::sound::OutputMidiNoteForDrum
+OBJECT,data,0x2018728c,216,,,,vtable for deluge::gui::menu_item::midi::device_definition::DeviceDefinitionSubmenu
+OBJECT,data,0x201879bc,216,,,,vtable for deluge::gui::menu_item::submenu::PolyMonoConversion
+OBJECT,data,0x20189d7c,216,,,,vtable for deluge::gui::menu_item::runtime_feature::Settings
+OBJECT,data,0x2018a034,244,,,,vtable for deluge::gui::menu_item::midi::FollowKitRootNote
+OBJECT,data,0x2018a128,236,,,,vtable for deluge::gui::menu_item::midi::FollowFeedbackChannelType
+OBJECT,data,0x2018a9c0,216,,,,vtable for deluge::gui::menu_item::midi::Device
+OBJECT,data,0x2018af38,244,,,,vtable for deluge::gui::menu_item::trigger::out::PPQN
+OBJECT,data,0x2018bc68,244,,,,vtable for deluge::gui::menu_item::defaults::BendRange
+OBJECT,data,0x2018bd5c,244,,,,vtable for deluge::gui::menu_item::defaults::MetronomeVolume
+OBJECT,data,0x2018c3d4,236,,,,vtable for deluge::gui::menu_item::defaults::ScreensaverModeMenu
+OBJECT,data,0x2018cfc4,244,,,,vtable for deluge::gui::menu_item::note::Probability
+OBJECT,data,0x2018d2b0,244,,,,vtable for deluge::gui::menu_item::note_row::IteranceDivisor
+OBJECT,data,0x20191b90,236,,,,vtable for deluge::gui::menu_item::runtime_feature::DevSysexSetting
+OBJECT,data,0x20191d68,236,,,,vtable for deluge::gui::menu_item::runtime_feature::EmulatedDisplay
+OBJECT,data,0x20191f40,236,,,,vtable for deluge::gui::menu_item::runtime_feature::RoundedCornersSettingToggle
+OBJECT,data,0x2019228c,224,,,,vtable for deluge::gui::menu_item::MultiRange
+OBJECT,data,0x2019254c,208,,,,vtable for deluge::gui::menu_item::DxParam
+OBJECT,data,0x2019295c,236,,,,vtable for deluge::gui::menu_item::Colour
+OBJECT,data,0x20177998,20,,,,vtable for std::bad_variant_access
+OBJECT,data,0x2017ac6c,60,,,,vtable for deluge::dsp::reverb::Mutable
+OBJECT,data,0x2017aca8,60,,,,vtable for deluge::dsp::reverb::Digital
+OBJECT,data,0x2017e020,244,,,,vtable for deluge::gui::menu_item::envelope::EnvelopeMenu
+OBJECT,data,0x20180120,244,,,,vtable for deluge::gui::menu_item::HorizontalMenu
+OBJECT,data,0x20180214,236,,,,vtable for deluge::gui::menu_item::filter::FilterModeSelection
+OBJECT,data,0x2018048c,236,,,,vtable for deluge::gui::menu_item::FilterRouting
+OBJECT,data,0x20180c18,244,,,,vtable for deluge::gui::menu_item::unison::CountToStereoSpread
+OBJECT,data,0x20181250,244,,,,vtable for deluge::gui::menu_item::submenu::Modulator
+OBJECT,data,0x20181344,236,,,,vtable for deluge::gui::menu_item::modulator::Destination
+OBJECT,data,0x201818e0,236,,,,vtable for deluge::gui::menu_item::arpeggiator::Mode
+OBJECT,data,0x201819cc,232,,,,vtable for deluge::gui::menu_item::arpeggiator::Sync
+OBJECT,data,0x20182240,236,,,,vtable for deluge::gui::menu_item::arpeggiator::NoteMode
+OBJECT,data,0x2018232c,236,,,,vtable for deluge::gui::menu_item::arpeggiator::NoteModeForDrums
+OBJECT,data,0x20182418,236,,,,vtable for deluge::gui::menu_item::arpeggiator::NoteModeFromOctaveMode
+OBJECT,data,0x20182504,236,,,,vtable for deluge::gui::menu_item::arpeggiator::NoteModeFromOctaveModeForDrums
+OBJECT,data,0x201825f0,236,,,,vtable for deluge::gui::menu_item::arpeggiator::ChordType
+OBJECT,data,0x20182f04,236,,,,vtable for deluge::gui::menu_item::arpeggiator::IncludeInKitArp
+OBJECT,data,0x2018406c,236,,,,vtable for deluge::gui::menu_item::arpeggiator::ArpMpeVelocity
+OBJECT,data,0x201845b4,236,,,,vtable for deluge::gui::menu_item::voice::Priority
+OBJECT,data,0x201846ec,236,,,,vtable for deluge::gui::menu_item::mod_fx::Type
+OBJECT,data,0x20184dd0,244,,,,vtable for deluge::gui::menu_item::submenu::ModFxHorizontalMenu
+OBJECT,data,0x2018503c,244,,,,vtable for deluge::gui::menu_item::eq::EqMenu
+OBJECT,data,0x201852b0,236,,,,vtable for deluge::gui::menu_item::delay::PingPong
+OBJECT,data,0x2018539c,236,,,,vtable for deluge::gui::menu_item::delay::Analog
+OBJECT,data,0x20185488,232,,,,vtable for deluge::gui::menu_item::delay::Sync
+OBJECT,data,0x20185584,236,,,,vtable for deluge::gui::menu_item::stutter::StutterDirection
+OBJECT,data,0x20185dbc,232,,,,vtable for deluge::gui::menu_item::sidechain::Sync
+OBJECT,data,0x20187364,244,,,,vtable for deluge::gui::menu_item::midi::Bank
+OBJECT,data,0x20187458,244,,,,vtable for deluge::gui::menu_item::midi::Sub
+OBJECT,data,0x2018754c,244,,,,vtable for deluge::gui::menu_item::midi::PGM
+OBJECT,data,0x20187718,236,,,,vtable for deluge::gui::menu_item::cv::DualCVSelection
+OBJECT,data,0x20188cb4,236,,,,vtable for deluge::gui::menu_item::AudioInterpolation
+OBJECT,data,0x20188eb4,252,,,,vtable for deluge::gui::menu_item::gate::OffTime
+OBJECT,data,0x201890a4,236,,,,vtable for deluge::gui::menu_item::gate::Selection
+OBJECT,data,0x20189190,232,,,,vtable for deluge::gui::menu_item::swing::Interval
+OBJECT,data,0x20189278,236,,,,vtable for deluge::gui::menu_item::shortcuts::Version
+OBJECT,data,0x20189364,236,,,,vtable for deluge::gui::menu_item::keyboard::Layout
+OBJECT,data,0x20189474,232,,,,vtable for deluge::gui::menu_item::record::Quantize
+OBJECT,data,0x2018955c,216,,,,vtable for deluge::gui::menu_item::ToggleBool
+OBJECT,data,0x20189728,236,,,,vtable for deluge::gui::menu_item::monitor::Mode
+OBJECT,data,0x20189814,236,,,,vtable for deluge::gui::menu_item::record::ThresholdMode
+OBJECT,data,0x20189900,236,,,,vtable for deluge::gui::menu_item::record::LoopCommand
+OBJECT,data,0x20189a04,236,,,,vtable for deluge::gui::menu_item::sample::browser_preview::Mode
+OBJECT,data,0x20189af0,236,,,,vtable for deluge::gui::menu_item::flash::Status
+OBJECT,data,0x20189e54,236,,,,vtable for deluge::gui::menu_item::midi::Takeover
+OBJECT,data,0x2018a214,236,,,,vtable for deluge::gui::menu_item::midi::FollowFeedbackAutomation
+OBJECT,data,0x2018a368,236,,,,vtable for deluge::gui::menu_item::midi::Transpose
+OBJECT,data,0x2018ae3c,244,,,,vtable for deluge::gui::menu_item::trigger::in::PPQN
+OBJECT,data,0x2018b034,236,,,,vtable for deluge::gui::menu_item::defaults::KeyboardLayout
+OBJECT,data,0x2018b120,236,,,,vtable for deluge::gui::menu_item::defaults::DefaultFavouritesLayout
+OBJECT,data,0x2018b20c,216,,,,vtable for deluge::gui::menu_item::InvertedToggleBool
+OBJECT,data,0x2018b300,236,,,,vtable for deluge::gui::menu_item::defaults::DefaultGridDefaultActiveMode
+OBJECT,data,0x2018b3f8,236,,,,vtable for deluge::gui::menu_item::defaults::SessionLayout
+OBJECT,data,0x2018b4ec,236,,,,vtable for deluge::gui::menu_item::defaults::AccessibilityMenuHighlighting
+OBJECT,data,0x2018b5e0,236,,,,vtable for deluge::gui::menu_item::defaults::ui::clip_type::DefaultNewClipType
+OBJECT,data,0x2018b7dc,232,,,,vtable for deluge::gui::menu_item::defaults::SwingInterval
+OBJECT,data,0x2018b8c4,224,,,,vtable for deluge::gui::menu_item::KeyRange
+OBJECT,data,0x2018ba90,244,,,,vtable for deluge::gui::menu_item::defaults::Velocity
+OBJECT,data,0x2018be50,236,,,,vtable for deluge::gui::menu_item::defaults::PatchCablePolarity
+OBJECT,data,0x2018bf3c,236,,,,vtable for deluge::gui::menu_item::defaults::StartupSongModeMenu
+OBJECT,data,0x2018c028,244,,,,vtable for deluge::gui::menu_item::defaults::PadBrightness
+OBJECT,data,0x2018c11c,236,,,,vtable for deluge::gui::menu_item::defaults::SliceMode
+OBJECT,data,0x2018c4c0,244,,,,vtable for deluge::gui::menu_item::defaults::ScreensaverTimeout
+OBJECT,data,0x2018c94c,236,,,,vtable for deluge::gui::menu_item::SynthModeSelection
+OBJECT,data,0x2018d4a0,244,,,,vtable for deluge::gui::menu_item::note_row::Probability
+OBJECT,data,0x2018d798,244,,,,vtable for deluge::gui::menu_item::midi::ProgramSubMenu
+OBJECT,data,0x2018d8f8,236,,,,vtable for deluge::gui::menu_item::performance_session_view::EditingMode
+OBJECT,data,0x20191800,220,,,,vtable for deluge::gui::menu_item::source_selection::Regular
+OBJECT,data,0x201918dc,220,,,,vtable for deluge::gui::menu_item::source_selection::Range
+OBJECT,data,0x20191c7c,236,,,,vtable for deluge::gui::menu_item::runtime_feature::ShiftIsSticky
+OBJECT,data,0x201926ec,208,,,,vtable for deluge::gui::menu_item::DxEngineSelect
+OBJECT,data,0x2017bf00,208,,,,vtable for deluge::gui::menu_item::DxOperatorParams
+OBJECT,data,0x2017c15c,236,,,,vtable for deluge::gui::menu_item::osc::Type
+OBJECT,data,0x2017c320,236,,,,vtable for deluge::gui::menu_item::sample::Repeat
+OBJECT,data,0x2017c5ec,252,,,,vtable for deluge::gui::menu_item::osc::RetriggerPhase
+OBJECT,data,0x2017c6e8,236,,,,vtable for deluge::gui::menu_item::lfo::Type
+OBJECT,data,0x2017c7d4,232,,,,vtable for deluge::gui::menu_item::lfo::Sync
+OBJECT,data,0x2017cab4,244,,,,vtable for deluge::gui::menu_item::midi::FollowChannelTrack
+OBJECT,data,0x2017db90,236,,,,vtable for deluge::gui::menu_item::gate::Mode
+OBJECT,data,0x2017df2c,244,,,,vtable for deluge::gui::menu_item::submenu::ActualSource
+OBJECT,data,0x20180ef4,208,,,,vtable for deluge::gui::menu_item::FileSelector
+OBJECT,data,0x201815a8,216,,,,vtable for deluge::gui::menu_item::osc::Sync
+OBJECT,data,0x20187a94,236,,,,vtable for deluge::gui::menu_item::sequence::Direction
+OBJECT,data,0x20188fb8,236,,,,vtable for deluge::gui::menu_item::cv::Selection
+OBJECT,data,0x20189f40,244,,,,vtable for deluge::gui::menu_item::midi::FollowChannel
+OBJECT,data,0x2018aa98,216,,,,vtable for deluge::gui::menu_item::midi::SendClock
+OBJECT,data,0x2018ab70,216,,,,vtable for deluge::gui::menu_item::midi::ReceiveClock
+OBJECT,data,0x2018b6fc,224,,,,vtable for deluge::gui::menu_item::IntegerRange
+OBJECT,data,0x2018b9a4,236,,,,vtable for deluge::gui::menu_item::defaults::DefaultScale
+OBJECT,data,0x2018bb84,228,,,,vtable for deluge::gui::menu_item::defaults::Magnitude
+OBJECT,data,0x2018c208,244,,,,vtable for deluge::gui::menu_item::defaults::HoldTime
+OBJECT,data,0x2019261c,208,,,,vtable for deluge::gui::menu_item::DxGlobalParams
+OBJECT,data,0x201927bc,208,,,,vtable for deluge::gui::menu_item::DxCartridge
+OBJECT,data,0x201779b8,12,,,,noteCodeToNoteLetter
+OBJECT,data,0x201779c4,12,,,,noteCodeToNoteLetterFlats
+OBJECT,data,0x201779d0,12,,,,noteCodeIsSharp
+OBJECT,data,0x2017a0a8,196,,,,vtable for deluge::gui::ui::keyboard::KeyboardScreen
+OBJECT,data,0x2017c248,216,,,,vtable for deluge::gui::menu_item::sample::Reverse
+OBJECT,data,0x2017dc7c,208,,,,vtable for deluge::gui::menu_item::PatchCables
+OBJECT,data,0x201810b0,208,,,,vtable for deluge::gui::menu_item::sample::Start
+OBJECT,data,0x20181180,208,,,,vtable for deluge::gui::menu_item::sample::End
+OBJECT,data,0x20185670,216,,,,vtable for deluge::gui::menu_item::stutter::QuantizedStutter
+OBJECT,data,0x201870d4,216,,,,vtable for deluge::gui::menu_item::midi::device_definition::Linked
+OBJECT,data,0x201871ac,216,,,,vtable for deluge::gui::menu_item::midi::device_definition::HideUnlabeled
+OBJECT,data,0x20187640,216,,,,vtable for deluge::gui::menu_item::midi::MPEYToModWheel
+OBJECT,data,0x20187804,216,,,,vtable for deluge::gui::menu_item::midi::AftertouchToMono
+OBJECT,data,0x201878dc,216,,,,vtable for deluge::gui::menu_item::midi::MPEToMono
+OBJECT,data,0x2018a648,216,,,,vtable for deluge::gui::menu_item::midi::DeviceSendClock
+OBJECT,data,0x2018a720,216,,,,vtable for deluge::gui::menu_item::midi::DeviceReceiveClock
+OBJECT,data,0x2018a7f8,216,,,,vtable for deluge::gui::menu_item::midi::DeviceIsRelative
+OBJECT,data,0x2018a8d0,216,,,,vtable for deluge::gui::menu_item::midi::DeviceSendThru
+OBJECT,data,0x2018ac48,216,,,,vtable for deluge::gui::menu_item::midi::Devices
+OBJECT,data,0x2018ad20,236,,,,vtable for deluge::gui::menu_item::mpe::DirectionSelector
+OBJECT,data,0x2018cdd4,216,,,,vtable for deluge::gui::menu_item::note::IteranceStepToggle
+OBJECT,data,0x2018d3a4,216,,,,vtable for deluge::gui::menu_item::note_row::IteranceStepToggle
+OBJECT,data,0x2019288c,208,,,,vtable for deluge::gui::menu_item::DxBrowseMenu
+OBJECT,data,0x201d84fc,72,,,,vtable for deluge::gui::ui::keyboard::layout::KeyboardLayoutChordLibrary
+OBJECT,data,0x201779ac,12,,,,typeinfo for std::bad_variant_access
+OBJECT,data,0x2017b358,68,,,,"deluge::modulation::params::getParamDisplayName(deluge::modulation::params::Kind, long)::NAMES"
+OBJECT,data,0x2017c08c,208,,,,vtable for deluge::gui::menu_item::osc::AudioRecorder
+OBJECT,data,0x2017e3c4,124,,,,vtable for deluge::hid::display::OLED
+OBJECT,data,0x20188684,208,,,,vtable for deluge::gui::menu_item::EditName
+OBJECT,data,0x20188754,208,,,,vtable for deluge::gui::menu_item::audio_clip::SetClipLengthEqualToSampleLength
+OBJECT,data,0x20188834,208,,,,vtable for deluge::gui::menu_item::audio_clip::AudioSourceSelector
+OBJECT,data,0x20188904,208,,,,vtable for deluge::gui::menu_item::audio_clip::SpecificSourceOutputSelector
+OBJECT,data,0x20188b0c,216,,,,vtable for deluge::gui::menu_item::audio_clip::Reverse
+OBJECT,data,0x20188be4,208,,,,vtable for deluge::gui::menu_item::audio_clip::SampleMarkerEditor
+OBJECT,data,0x20189bdc,208,,,,vtable for deluge::gui::menu_item::firmware::Version
+OBJECT,data,0x20189cac,208,,,,vtable for deluge::gui::menu_item::battery::Level
+OBJECT,data,0x2018c2fc,208,,,,vtable for deluge::gui::menu_item::ActiveScaleMenu
+OBJECT,data,0x2018d9f0,208,,,,vtable for deluge::gui::menu_item::stem_export::Start
+OBJECT,data,0x2018daf8,208,,,,vtable for deluge::gui::menu_item::song::ConfigureMacros
+OBJECT,data,0x2018dbc8,208,,,,vtable for deluge::gui::menu_item::song::MidiLearn
+OBJECT,data,0x2018dcc4,208,,,,vtable for deluge::gui::menu_item::reset_settings::Reset
+OBJECT,data,0x20191548,72,,,,vtable for deluge::gui::ui::keyboard::layout::KeyboardLayoutIsomorphic
+OBJECT,data,0x201915d8,72,,,,vtable for deluge::gui::ui::keyboard::layout::KeyboardLayoutPiano
+OBJECT,data,0x201d8474,68,,,,vtable for deluge::gui::ui::keyboard::layout::KeyboardLayoutVelocityDrums
+OBJECT,data,0x201d84b8,68,,,,vtable for deluge::gui::ui::keyboard::layout::KeyboardLayoutNorns
+OBJECT,data,0x2017bd24,72,,,,vtable for deluge::gui::ui::keyboard::layout::KeyboardLayoutChord
+OBJECT,data,0x2017e348,124,,,,vtable for deluge::hid::display::SevenSegment
+OBJECT,data,0x2018a454,208,,,,vtable for deluge::gui::menu_item::midi::Command
+OBJECT,data,0x2018e100,116,,,,vtable for ExpressionParamSet
+OBJECT,data,0x20190bc4,200,,,,vtable for ArrangerView
+OBJECT,data,0x20191590,72,,,,vtable for deluge::gui::ui::keyboard::layout::KeyboardLayoutInKey
+OBJECT,data,0x2017ba94,32,,,,vtable for NumericLayerScrollTransition
+OBJECT,data,0x2018fb5c,24,,,,vtable for deluge::gui::ui::keyboard::controls::ChordColumn
+OBJECT,data,0x2018fb74,24,,,,vtable for deluge::gui::ui::keyboard::controls::SongChordMemColumn
+OBJECT,data,0x2018fb8c,24,,,,vtable for deluge::gui::ui::keyboard::controls::ChordMemColumn
+OBJECT,data,0x2018fbc4,24,,,,vtable for deluge::gui::ui::keyboard::controls::DXColumn
+OBJECT,data,0x201907a8,200,,,,vtable for SessionView
+OBJECT,data,0x20190870,200,,,,vtable for PerformanceView
+OBJECT,data,0x20190938,224,,,,vtable for InstrumentClipView
+OBJECT,data,0x20190af8,204,,,,vtable for AudioClipView
+OBJECT,data,0x20192c34,164,,,,vtable for deluge::gui::context_menu::sample_browser::Synth
+OBJECT,data,0x20192cd8,164,,,,vtable for deluge::gui::context_menu::sample_browser::Kit
+OBJECT,data,0x20192ec4,164,,,,vtable for deluge::gui::context_menu::MidiLearnMode
+OBJECT,data,0x2017b6fc,180,,,,vtable for SampleBrowser
+OBJECT,data,0x2017b86c,88,,,,vtable for MIDICableUSBHosted
+OBJECT,data,0x2017baf4,32,,,,vtable for NumericLayerBasicText
+OBJECT,data,0x2017bb78,116,,,,vtable for GlobalEffectableForClip
+OBJECT,data,0x2017e22c,88,,,,vtable for MIDIDeviceLumiKeys
+OBJECT,data,0x2018ddc4,52,,,,C.118.102
+OBJECT,data,0x2018e174,116,,,,vtable for PatchedParamSet
+OBJECT,data,0x2018e1e8,116,,,,vtable for UnpatchedParamSet
+OBJECT,data,0x2018fb2c,24,,,,vtable for deluge::gui::ui::keyboard::controls::VelocityColumn
+OBJECT,data,0x20190c8c,140,,,,vtable for SoundEditor
+OBJECT,data,0x20190d18,140,,,,vtable for Slicer
+OBJECT,data,0x20191094,140,,,,vtable for SampleMarkerEditor
+OBJECT,data,0x20191698,180,,,,vtable for DxSyxBrowser
+OBJECT,data,0x201930b0,164,,,,vtable for deluge::gui::context_menu::ConfigureSongMacros
+OBJECT,data,0x201ddac0,4,,,,voltageReadingLastTime
+OBJECT,data,0x20177af0,20,,,,vtable for std::bad_expected_access<void>
+OBJECT,data,0x20177b04,20,,,,vtable for std::bad_expected_access<Error>
+OBJECT,data,0x2017a078,32,,,,CSWTCH.171
+OBJECT,data,0x2017a098,16,,,,CSWTCH.174
+OBJECT,data,0x2017b140,36,,,,chordNames
+OBJECT,data,0x2017b200,220,,,,deluge::modulation::params::getPatchedParamDisplayName(long)::NAMES
+OBJECT,data,0x2017b5d4,24,,,,vtable for ConsequenceClipLength
+OBJECT,data,0x2017b5ec,24,,,,vtable for ConsequenceClipInstanceExistence
+OBJECT,data,0x2017b604,24,,,,vtable for ConsequenceNoteExistence
+OBJECT,data,0x2017b61c,24,,,,vtable for ConsequenceClipInstanceChange
+OBJECT,data,0x2017b6c4,16,,,,vtable for CopiedNoteRow
+OBJECT,data,0x2017b8c4,24,,,,vtable for ConsequenceAudioClipSetSample
+OBJECT,data,0x2017b8dc,16,,,,vtable for DrumName
+OBJECT,data,0x2017b8ec,40,,,,vtable for AudioFile
+OBJECT,data,0x2017bab4,32,,,,vtable for NumericLayerLoadingAnimation
+OBJECT,data,0x2017bad4,32,,,,vtable for NumericLayerScrollingText
+OBJECT,data,0x2017bb14,100,,,,vtable for ModControllableAudio
+OBJECT,data,0x2017bbf4,48,,,,vtable for ArpeggiatorForDrum
+OBJECT,data,0x2017bc60,196,,,,vtable for GateDrum
+OBJECT,data,0x2017db28,104,,,,vtable for GlobalEffectable
+OBJECT,data,0x2017de24,20,,,,vtable for deluge::gui::menu_item::HorizontalMenuContainer
+OBJECT,data,0x2018df90,48,,,,vtable for Arpeggiator
+OBJECT,data,0x2018e08c,116,,,,vtable for PatchCableSet
+OBJECT,data,0x2018e304,292,,,,vtable for AudioOutput
+OBJECT,data,0x2018e4e8,324,,,,vtable for Kit
+OBJECT,data,0x2018e870,300,,,,vtable for CVInstrument
+OBJECT,data,0x2018ef58,24,,,,vtable for ConsequenceScaleAddNote
+OBJECT,data,0x2018f2e0,24,,,,vtable for ConsequenceNoteRowHorizontalShift
+OBJECT,data,0x2018f2f8,24,,,,vtable for ConsequencePerformanceViewPress
+OBJECT,data,0x2018f310,24,,,,vtable for ConsequenceNoteRowMute
+OBJECT,data,0x2018f33c,24,,,,vtable for ConsequenceTempoChange
+OBJECT,data,0x2018f710,200,,,,vtable for MIDIDrum
+OBJECT,data,0x2018f7d8,208,,,,construction vtable for Sound-in-SoundDrum
+OBJECT,data,0x2018f8a8,208,,,,construction vtable for Sound-in-SoundInstrument
+OBJECT,data,0x2018f9a8,24,,,,vtable for ConsequenceClipExistence
+OBJECT,data,0x2018f9c0,24,,,,vtable for ConsequenceBeginPlayback
+OBJECT,data,0x2018f9d8,24,,,,vtable for ConsequenceSwingChange
+OBJECT,data,0x2018f9f0,24,,,,vtable for ConsequenceInstrumentClipMultiply
+OBJECT,data,0x2018fa08,24,,,,vtable for ConsequenceArrangerParamsTimeInserted
+OBJECT,data,0x2018fa44,232,,,,vtable for InstrumentClip
+OBJECT,data,0x2018fb44,24,,,,vtable for deluge::gui::ui::keyboard::controls::ModColumn
+OBJECT,data,0x2018fbdc,24,,,,vtable for deluge::gui::ui::keyboard::controls::SessionColumn
+OBJECT,data,0x2018fe88,36,,,,vtable for MIDICableUSBUpstream
+OBJECT,data,0x20190274,24,,,,vtable for ConsequenceNoteRowLength
+OBJECT,data,0x201902d0,24,,,,vtable for ConsequenceClipHorizontalShift
+OBJECT,data,0x20190378,24,,,,vtable for ConsequenceOutputExistence
+OBJECT,data,0x20190390,24,,,,vtable for ConsequenceClipBeginLinearRecord
+OBJECT,data,0x20190698,72,,,,vtable for Session
+OBJECT,data,0x201906e0,72,,,,vtable for Arrangement
+OBJECT,data,0x20190a18,224,,,,vtable for AutomationView
+OBJECT,data,0x20190da4,188,,,,vtable for SaveSongUI
+OBJECT,data,0x20190e60,188,,,,vtable for SaveMidiDeviceDefinitionUI
+OBJECT,data,0x20190f1c,188,,,,vtable for SaveKitRowUI
+OBJECT,data,0x20190fd8,188,,,,vtable for SaveInstrumentPresetUI
+OBJECT,data,0x20191120,172,,,,vtable for RenameOutputUI
+OBJECT,data,0x201911cc,172,,,,vtable for RenameMidiCCUI
+OBJECT,data,0x20191278,172,,,,vtable for RenameDrumUI
+OBJECT,data,0x20191324,172,,,,vtable for RenameClipUI
+OBJECT,data,0x2019174c,140,,,,vtable for AudioRecorder
+OBJECT,data,0x20192a48,164,,,,vtable for deluge::gui::context_menu::DoneStemExport
+OBJECT,data,0x20192aec,164,,,,vtable for deluge::gui::context_menu::CancelStemExport
+OBJECT,data,0x20192b90,164,,,,vtable for deluge::gui::context_menu::SaveSongOrInstrument
+OBJECT,data,0x20192d7c,164,,,,vtable for deluge::gui::context_menu::ResetSettings
+OBJECT,data,0x20192e20,164,,,,vtable for deluge::gui::context_menu::OverwriteFile
+OBJECT,data,0x20192f68,164,,,,vtable for deluge::gui::context_menu::LoadInstrumentPreset
+OBJECT,data,0x2019300c,164,,,,vtable for deluge::gui::context_menu::DeleteFile
+OBJECT,data,0x201ddac4,1,,,,batteryCurrentRegion
+OBJECT,data,0x201ddac5,1,,,,deluge::hid::encoders::EncoderTaskID
+OBJECT,data,0x201de50c,24,,,,FavouritesManager::getFavouriteFilename[abi:cxx11](unsigned char)::emptyString
+OBJECT,data,0x201dfe30,80,,,,deluge::dsp::sawTables
