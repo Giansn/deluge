@@ -1,0 +1,815 @@
+From 19514d076e5b8af8484cb4a438a6b7fff6908689 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 25 Sep 2026 21:54:01 +0000
+Subject: [PATCH] Add master tune (A4 reference pitch 415.3-466.2 Hz)
+
+Settings > Tuning > Master tune (Hz) sets the reference pitch of A4 in
+0.1 Hz steps (default 440.0).
+
+- Synth tracks follow it: every oscillator type (waveforms, wavetables,
+  samples, inputs, DX7) and the FM modulators, applied once at the end of
+  Voice::calculatePhaseIncrements with an exact 64-bit multiply.
+- Kit rows keep their exact pitch, audio clips are not touched.
+- Changing it retunes notes that are already sounding (synth voices,
+  CV outputs, external MIDI).
+- CV outputs add the offset in cents.
+- External MIDI instruments get RPN 1 (Channel Fine Tuning) on every
+  channel they play, before the first note after a change or after
+  playback starts. Nothing is sent while the firmware was never retuned.
+- Stored as "masterTune" in CommunityFeatures.XML on the SD card (firmware
+  that doesn't know it keeps it as an unknown setting). A value left in
+  flash bytes 198-199 by earlier master-tune builds is migrated and those
+  bytes are zero again once the settings file holds the value.
+- At 440.0 Hz all paths are identical to the unmodified firmware.
+- Project version set to 1.2.1 to match the release this is based on.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ CMakeLists.txt                                |   2 +-
+ src/deluge/gui/l10n/english.json              |   4 +-
+ src/deluge/gui/l10n/g_english.cpp             |   2 +
+ src/deluge/gui/l10n/g_seven_segment.cpp       |   2 +
+ src/deluge/gui/l10n/seven_segment.json        |   4 +-
+ src/deluge/gui/l10n/strings.h                 |   4 +
+ src/deluge/gui/menu_item/master_tune.h        |  35 +++
+ src/deluge/gui/ui/menus.cpp                   |  12 +
+ .../model/instrument/midi_instrument.cpp      |   2 +
+ src/deluge/model/instrument/midi_instrument.h |   4 +
+ .../settings/runtime_feature_settings.cpp     |  13 +-
+ src/deluge/model/tuning/master_tune.cpp       | 211 ++++++++++++++++++
+ src/deluge/model/tuning/master_tune.h         |  69 ++++++
+ src/deluge/model/tuning/master_tune_math.h    |  61 +++++
+ src/deluge/model/voice/voice.cpp              |  10 +
+ src/deluge/playback/playback_handler.cpp      |   3 +
+ src/deluge/processing/engines/cv_engine.cpp   |  11 +-
+ src/deluge/processing/engines/cv_engine.h     |   3 +
+ src/deluge/storage/flash_storage.cpp          |  13 ++
+ 19 files changed, 459 insertions(+), 6 deletions(-)
+ create mode 100644 src/deluge/gui/menu_item/master_tune.h
+ create mode 100644 src/deluge/model/tuning/master_tune.cpp
+ create mode 100644 src/deluge/model/tuning/master_tune.h
+ create mode 100644 src/deluge/model/tuning/master_tune_math.h
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index b115b20b..105fd6fc 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -5,7 +5,7 @@ set(CMAKE_TOOLCHAIN_FILE ${CMAKE_CURRENT_LIST_DIR}/scripts/cmake/CMakeToolchainD
+ 
+ project(Deluge
+     LANGUAGES CXX C ASM
+-    VERSION 1.2.0
++    VERSION 1.2.1
+ )
+ include(FetchContent)
+ include(ProcessorCount)
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index 3fe1039d..2d2ee133 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -867,6 +867,8 @@
+         "STRING_FOR_CLIP_NAME": "Clip Name",
+         "STRING_FOR_DEFAULT_CLIP_TYPE": "Clip Type",
+         "STRING_FOR_DEFAULT_NEW_CLIP_TYPE": "New Clip Type",
+-        "STRING_FOR_DEFAULT_USE_LAST_CLIP_TYPE": "Use Last Clip Type"
++        "STRING_FOR_DEFAULT_USE_LAST_CLIP_TYPE": "Use Last Clip Type",
++        "STRING_FOR_TUNING": "Tuning",
++        "STRING_FOR_MASTER_TUNE": "Master tune (Hz)"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index 1b51b44b..402ba960 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -796,6 +796,8 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_DEFAULT_CLIP_TYPE, "Clip Type"},
+         {STRING_FOR_DEFAULT_NEW_CLIP_TYPE, "New Clip Type"},
+         {STRING_FOR_DEFAULT_USE_LAST_CLIP_TYPE, "Use Last Clip Type"},
++        {STRING_FOR_TUNING, "Tuning"},
++        {STRING_FOR_MASTER_TUNE, "Master tune (Hz)"},
+     },
+ };
+ } // namespace deluge::l10n::built_in
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index d7daa2b8..9ed77ae7 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -455,6 +455,8 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_CLIP_NAME, "NAME"},
+         {STRING_FOR_DEFAULT_NEW_CLIP_TYPE, "TYPE"},
+         {STRING_FOR_DEFAULT_USE_LAST_CLIP_TYPE, "LAST"},
++        {STRING_FOR_TUNING, "TUNE"},
++        {STRING_FOR_MASTER_TUNE, "MTUN"},
+     },
+     &built_in::english,
+ };
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index 1ec1aab1..9d1d404d 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -489,6 +489,8 @@
+         "STRING_FOR_CLIP_MODE": "MODE",
+         "STRING_FOR_CLIP_NAME": "NAME",
+         "STRING_FOR_DEFAULT_NEW_CLIP_TYPE": "TYPE",
+-        "STRING_FOR_DEFAULT_USE_LAST_CLIP_TYPE": "LAST"
++        "STRING_FOR_DEFAULT_USE_LAST_CLIP_TYPE": "LAST",
++        "STRING_FOR_TUNING": "TUNE",
++        "STRING_FOR_MASTER_TUNE": "MTUN"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index 0c11ca42..bfb0cdcc 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -908,6 +908,10 @@ enum class String : size_t {
+ 	STRING_FOR_DEFAULT_NEW_CLIP_TYPE,
+ 	STRING_FOR_DEFAULT_USE_LAST_CLIP_TYPE,
+ 
++	// master tune
++	STRING_FOR_TUNING,
++	STRING_FOR_MASTER_TUNE,
++
+ 	STRING_LAST
+ };
+ 
+diff --git a/src/deluge/gui/menu_item/master_tune.h b/src/deluge/gui/menu_item/master_tune.h
+new file mode 100644
+index 00000000..2723e660
+--- /dev/null
++++ b/src/deluge/gui/menu_item/master_tune.h
+@@ -0,0 +1,35 @@
++/*
++ * Copyright © 2026 Deluge community contributors
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include "gui/menu_item/decimal.h"
++#include "model/tuning/master_tune.h"
++
++namespace deluge::gui::menu_item {
++
++/// Settings > Tuning > Master tune (Hz): reference pitch of A4, shown as 440.0
++class MasterTuneHz final : public Decimal {
++public:
++	using Decimal::Decimal;
++	[[nodiscard]] int32_t getMinValue() const override { return ::MasterTune::kMinTenthsHz; }
++	[[nodiscard]] int32_t getMaxValue() const override { return ::MasterTune::kMaxTenthsHz; }
++	[[nodiscard]] int32_t getNumDecimalPlaces() const override { return 1; }
++	[[nodiscard]] int32_t getDefaultEditPos() const override { return 1; }
++	void readCurrentValue() override { this->setValue(::MasterTune::getTenthsHz()); }
++	void writeCurrentValue() override { ::MasterTune::set(this->getValue()); }
++};
++
++} // namespace deluge::gui::menu_item
+diff --git a/src/deluge/gui/ui/menus.cpp b/src/deluge/gui/ui/menus.cpp
+index d04561e5..3369fc79 100644
+--- a/src/deluge/gui/ui/menus.cpp
++++ b/src/deluge/gui/ui/menus.cpp
+@@ -74,6 +74,7 @@
+ #include "gui/menu_item/lfo/sync.h"
+ #include "gui/menu_item/lfo/type.h"
+ #include "gui/menu_item/master_transpose.h"
++#include "gui/menu_item/master_tune.h"
+ #include "gui/menu_item/menu_item.h"
+ #include "gui/menu_item/midi/after_touch_to_mono.h"
+ #include "gui/menu_item/midi/bank.h"
+@@ -1265,6 +1266,16 @@ menu_item::Submenu soundEditorRootMenuKitGlobalFX{
+     },
+ };
+ 
++// Tuning
++MasterTuneHz masterTuneMenu{STRING_FOR_MASTER_TUNE, STRING_FOR_MASTER_TUNE};
++
++Submenu tuningSubmenu{
++    STRING_FOR_TUNING,
++    {
++        &masterTuneMenu,
++    },
++};
++
+ // Root Menu
+ Submenu settingsRootMenu{
+     STRING_FOR_SETTINGS,
+@@ -1273,6 +1284,7 @@ Submenu settingsRootMenu{
+         &gateSelectionMenu,
+         &triggerClockMenu,
+         &midiMenu,
++        &tuningSubmenu,
+         &defaultsSubmenu,
+         &padsSubmenu,
+         &sampleBrowserPreviewModeMenu,
+diff --git a/src/deluge/model/instrument/midi_instrument.cpp b/src/deluge/model/instrument/midi_instrument.cpp
+index 4169bda8..f4e1667b 100644
+--- a/src/deluge/model/instrument/midi_instrument.cpp
++++ b/src/deluge/model/instrument/midi_instrument.cpp
+@@ -27,6 +27,7 @@
+ #include "model/clip/clip_instance.h"
+ #include "model/clip/instrument_clip.h"
+ #include "model/song/song.h"
++#include "model/tuning/master_tune.h"
+ #include "modulation/midi/midi_param.h"
+ #include "modulation/midi/midi_param_collection.h"
+ #include "modulation/params/param_set.h"
+@@ -830,6 +831,7 @@ void MIDIInstrument::noteOnPostArp(int32_t noteCodePostArp, ArpNote* arpNote) {
+ 		sendNoteToInternal(true, noteCodePostArp, arpNote->velocity, outputMemberChannel);
+ 	}
+ 	else {
++		MasterTune::prepareMIDIChannel(*this, outputMemberChannel);
+ 		midiEngine.sendNote(this, true, noteCodePostArp, arpNote->velocity, outputMemberChannel, channel);
+ 	}
+ }
+diff --git a/src/deluge/model/instrument/midi_instrument.h b/src/deluge/model/instrument/midi_instrument.h
+index 3c91fad6..e6c3a8ba 100644
+--- a/src/deluge/model/instrument/midi_instrument.h
++++ b/src/deluge/model/instrument/midi_instrument.h
+@@ -77,6 +77,10 @@ public:
+ 	}
+ 	inline bool sendsToInternal() { return (channel >= IS_A_DEST); }
+ 
++	// Master tune: which output channels already got the current Channel Fine Tuning (see MasterTune)
++	uint32_t masterTuneGenerationSent{0};
++	uint16_t masterTuneChannelsSent{0};
++
+ 	int32_t channelSuffix{-1};
+ 	int32_t lastNoteCode{32767};
+ 	bool collapseAftertouch{false};
+diff --git a/src/deluge/model/settings/runtime_feature_settings.cpp b/src/deluge/model/settings/runtime_feature_settings.cpp
+index 5b6f3d46..02f1064f 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.cpp
++++ b/src/deluge/model/settings/runtime_feature_settings.cpp
+@@ -19,6 +19,7 @@
+ #include "gui/l10n/l10n.h"
+ #include "hid/display/display.h"
+ #include "model/song/song.h"
++#include "model/tuning/master_tune.h"
+ #include "storage/storage_manager.h"
+ #include "util/d_string.h"
+ #include <cstring>
+@@ -239,7 +240,7 @@ void RuntimeFeatureSettings::readSettingsFromFile(StorageManager& bdsm) {
+ 			currentValue = reader.readTagOrAttributeValueInt();
+ 			reader.exitTag();
+ 
+-			bool found = false;
++			bool found = MasterTune::readSetting(currentName.get(), currentValue);
+ 			for (auto& setting : settings) {
+ 				if (strcmp(setting.xmlName.data(), currentName.get()) == 0) {
+ 					found = true;
+@@ -287,6 +288,12 @@ void RuntimeFeatureSettings::writeSettingsToFile(StorageManager& bdsm) {
+ 		writer.writeClosingTag(TAG_RUNTIME_FEATURE_SETTING, false);
+ 	}
+ 
++	writer.writeOpeningTagBeginning(TAG_RUNTIME_FEATURE_SETTING);
++	writer.writeAttribute(TAG_RUNTIME_FEATURE_SETTING_ATTR_NAME, MasterTune::kSettingName, false);
++	writer.writeAttribute(TAG_RUNTIME_FEATURE_SETTING_ATTR_VALUE, MasterTune::getTenthsHz(), false);
++	writer.writeOpeningTagEnd(false);
++	writer.writeClosingTag(TAG_RUNTIME_FEATURE_SETTING, false);
++
+ 	// Write unknown elements
+ 	for (uint32_t idxUnknownSetting = 0; idxUnknownSetting < unknownSettings.getNumElements(); idxUnknownSetting++) {
+ 		UnknownSetting* unknownSetting = (UnknownSetting*)unknownSettings.getElementAddress(idxUnknownSetting);
+@@ -298,5 +305,7 @@ void RuntimeFeatureSettings::writeSettingsToFile(StorageManager& bdsm) {
+ 	}
+ 
+ 	writer.writeClosingTag(TAG_RUNTIME_FEATURE_SETTINGS);
+-	writer.closeFileAfterWriting();
++	if (writer.closeFileAfterWriting() == Error::NONE) {
++		MasterTune::savedToSettingsFile();
++	}
+ }
+diff --git a/src/deluge/model/tuning/master_tune.cpp b/src/deluge/model/tuning/master_tune.cpp
+new file mode 100644
+index 00000000..fcb4ec91
+--- /dev/null
++++ b/src/deluge/model/tuning/master_tune.cpp
+@@ -0,0 +1,211 @@
++/*
++ * Copyright © 2026 Deluge community contributors
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "model/tuning/master_tune.h"
++#include "definitions_cxx.hpp"
++#include "io/midi/midi_device_manager.h"
++#include "io/midi/midi_engine.h"
++#include "model/clip/clip.h"
++#include "model/instrument/midi_instrument.h"
++#include "model/model_stack.h"
++#include "model/output.h"
++#include "model/song/song.h"
++#include "model/tuning/master_tune_math.h"
++#include "processing/engines/cv_engine.h"
++#include "processing/sound/sound.h"
++#include "processing/sound/sound_instrument.h"
++#include <algorithm>
++#include <cstring>
++
++namespace MasterTune {
++
++namespace {
++
++int32_t tenthsHz = kDefaultTenthsHz;
++uint32_t ratioQ30 = math::kUnityRatioQ30; // tenthsHz / 4400 as unsigned Q2.30
++double cents = 0;
++int32_t midiFineTuning = math::kMIDIFineTuningCentre; // 14 bits, 8192 +- 8192 per 100 cents
++
++// Bumped whenever external MIDI devices have to be (re)tuned. Each MIDIInstrument remembers for which generation it
++// has already sent the fine tuning on which channels.
++uint32_t midiGeneration = 1;
++// Stays false as long as no device has ever been sent a tuning other than 0 cents, so a firmware that is never
++// retuned sends nothing extra at all.
++bool midiTuningUsed = false;
++
++bool settingReadFromFile = false;
++bool legacyValuePending = false; // Adopted from flash, not yet in the settings file
++
++void recalculate() {
++	ratioQ30 = math::ratioQ30(tenthsHz);
++	cents = math::cents(tenthsHz);
++	midiFineTuning = math::midiFineTuning(cents);
++}
++
++void sendFineTuning(MIDIInstrument& instrument, int32_t outputChannel) {
++	// Same device filter as the notes of this instrument
++	int32_t filter = instrument.channel;
++	midiEngine.sendCC(instrument, outputChannel, 101, 0, filter); // RPN MSB
++	midiEngine.sendCC(instrument, outputChannel, 100, 1, filter); // RPN LSB: 1 = Channel Fine Tuning
++	midiEngine.sendCC(instrument, outputChannel, 6, midiFineTuning >> 7, filter);
++	midiEngine.sendCC(instrument, outputChannel, 38, midiFineTuning & 127, filter);
++	midiEngine.sendCC(instrument, outputChannel, 101, 127, filter); // RPN null, so later data entry goes nowhere
++	midiEngine.sendCC(instrument, outputChannel, 100, 127, filter);
++}
++
++void prepareAllChannelsOf(MIDIInstrument& instrument) {
++	if (instrument.sendsToInternal()) {
++		return;
++	}
++	if (!instrument.sendsToMPE()) {
++		prepareMIDIChannel(instrument, instrument.channel);
++		return;
++	}
++	// Same member channel range as MIDIInstrument::noteOnPostArp()
++	bool lowerZone = (instrument.channel == MIDI_CHANNEL_MPE_LOWER_ZONE);
++	int32_t lowest = lowerZone ? 1 : MIDIDeviceManager::highestLastMemberChannelOfUpperZoneOnConnectedOutput;
++	int32_t highest = lowerZone ? MIDIDeviceManager::lowestLastMemberChannelOfLowerZoneOnConnectedOutput : 14;
++	for (int32_t memberChannel = lowest; memberChannel <= highest; memberChannel++) {
++		prepareMIDIChannel(instrument, memberChannel);
++	}
++}
++
++// Held notes must not keep the old tuning.
++void retuneSoundingNotes() {
++	midiGeneration++;
++
++	if (currentSong == nullptr) {
++		return; // Still booting
++	}
++
++	for (Output* output = currentSong->firstOutput; output; output = output->next) {
++		switch (output->type) {
++		case OutputType::SYNTH: {
++			SoundInstrument* sound = static_cast<SoundInstrument*>(output);
++			if (!sound->numVoicesAssigned) {
++				break;
++			}
++			// Like Output::getParamManager(), but skip instead of freezing if there is none
++			Clip* clip = output->getActiveClip();
++			ParamManager* paramManager =
++			    clip ? &clip->paramManager : currentSong->getBackedUpParamManagerPreferablyWithClip(sound, nullptr);
++			if (!paramManager) {
++				break;
++			}
++			char modelStackMemory[MODEL_STACK_MAX_SIZE];
++			ModelStackWithSoundFlags* modelStack =
++			    setupModelStackWithThreeMainThingsButNoNoteRow(modelStackMemory, currentSong, sound, clip, paramManager)
++			        ->addSoundFlags();
++			sound->recalculateAllVoicePhaseIncrements(modelStack);
++			break;
++		}
++		case OutputType::MIDI_OUT:
++			prepareAllChannelsOf(*static_cast<MIDIInstrument*>(output));
++			break;
++		default:
++			break;
++		}
++	}
++
++	cvEngine.recalculateAllCVChannelVoltages();
++}
++
++} // namespace
++
++void set(int32_t newTenthsHz) {
++	newTenthsHz = std::clamp(newTenthsHz, kMinTenthsHz, kMaxTenthsHz);
++	if (newTenthsHz == tenthsHz) {
++		return;
++	}
++	tenthsHz = newTenthsHz;
++	recalculate();
++	retuneSoundingNotes();
++}
++
++int32_t getTenthsHz() {
++	return tenthsHz;
++}
++
++double getCents() {
++	return cents;
++}
++
++bool appliesTo(Sound& sound) {
++	return !sound.isDrum();
++}
++
++uint32_t applyToPhaseIncrement(uint32_t phaseIncrement) {
++	return math::scalePhaseIncrement(phaseIncrement, ratioQ30);
++}
++
++void prepareMIDIChannel(MIDIInstrument& instrument, int32_t outputChannel) {
++	if (outputChannel < 0 || outputChannel > 15) {
++		return;
++	}
++
++	if (instrument.masterTuneGenerationSent != midiGeneration) {
++		instrument.masterTuneGenerationSent = midiGeneration;
++		instrument.masterTuneChannelsSent = 0;
++	}
++
++	bool neutral = (midiFineTuning == math::kMIDIFineTuningCentre);
++	if (neutral && !midiTuningUsed) {
++		return; // Never retuned anything, so behave exactly like the unmodified firmware
++	}
++
++	uint16_t channelBit = 1u << outputChannel;
++	if (instrument.masterTuneChannelsSent & channelBit) {
++		return;
++	}
++	instrument.masterTuneChannelsSent |= channelBit;
++	if (!neutral) {
++		midiTuningUsed = true;
++	}
++	sendFineTuning(instrument, outputChannel);
++}
++
++void playbackBegun() {
++	midiGeneration++;
++}
++
++bool readSetting(char const* name, int32_t value) {
++	if (strcmp(name, kSettingName) != 0) {
++		return false;
++	}
++	settingReadFromFile = true;
++	legacyValuePending = false;
++	set(value);
++	return true;
++}
++
++void adoptLegacyFlashValue(int32_t legacyTenthsHz) {
++	if (settingReadFromFile || legacyTenthsHz < kMinTenthsHz || legacyTenthsHz > kMaxTenthsHz) {
++		return;
++	}
++	legacyValuePending = true;
++	set(legacyTenthsHz);
++}
++
++bool keepLegacyFlashValue() {
++	return legacyValuePending;
++}
++
++void savedToSettingsFile() {
++	legacyValuePending = false;
++}
++
++} // namespace MasterTune
+diff --git a/src/deluge/model/tuning/master_tune.h b/src/deluge/model/tuning/master_tune.h
+new file mode 100644
+index 00000000..bc18a344
+--- /dev/null
++++ b/src/deluge/model/tuning/master_tune.h
+@@ -0,0 +1,69 @@
++/*
++ * Copyright © 2026 Deluge community contributors
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include <cstdint>
++
++class MIDIInstrument;
++class Sound;
++
++/// Global reference pitch ("master tune"), A4 = 415.3 ... 466.2 Hz in steps of 0.1 Hz.
++///
++/// It retunes everything that plays notes: synth tracks (all oscillator types including samples, wavetables, FM and
++/// DX7), the CV outputs and external MIDI instruments (via RPN 1, Channel Fine Tuning). Kit rows and audio clips keep
++/// their exact recorded pitch. At 440.0 Hz every path is bit-identical to the unmodified firmware and nothing extra is
++/// sent over MIDI.
++namespace MasterTune {
++
++constexpr int32_t kDefaultTenthsHz = 4400;
++constexpr int32_t kMinTenthsHz = 4153; // 440 Hz one semitone down
++constexpr int32_t kMaxTenthsHz = 4662; // 440 Hz one semitone up
++
++/// Name of the entry in CommunityFeatures.XML on the SD card. Firmware that doesn't know it keeps it as an unknown
++/// setting.
++constexpr char const* kSettingName = "masterTune";
++
++/// Sets the reference pitch (clamped to the valid range) and immediately retunes all currently sounding notes.
++void set(int32_t tenthsHz);
++int32_t getTenthsHz();
++
++/// Offset from 440 Hz in cents.
++double getCents();
++
++/// Whether a sound follows the master tune. Kit rows keep their exact pitch.
++bool appliesTo(Sound& sound);
++
++/// Scales an oscillator phase increment by the tuning ratio. Exact (64-bit) and a no-op at 440 Hz.
++uint32_t applyToPhaseIncrement(uint32_t phaseIncrement);
++
++/// Makes sure an external MIDI channel has received the current Channel Fine Tuning before a note is sent on it.
++void prepareMIDIChannel(MIDIInstrument& instrument, int32_t outputChannel);
++
++/// External devices may have been switched on or reconnected since we last tuned them.
++void playbackBegun();
++
++/// Reads our entry from the community settings file. Returns false if the entry is not ours.
++bool readSetting(char const* name, int32_t value);
++
++/// Earlier master-tune builds kept the value in bytes 198-199 of the flash settings. It is adopted unless the settings
++/// file provides a value, and kept in flash only until it has been written to the settings file once.
++void adoptLegacyFlashValue(int32_t tenthsHz);
++bool keepLegacyFlashValue();
++void savedToSettingsFile();
++
++} // namespace MasterTune
+diff --git a/src/deluge/model/tuning/master_tune_math.h b/src/deluge/model/tuning/master_tune_math.h
+new file mode 100644
+index 00000000..cecee0f9
+--- /dev/null
++++ b/src/deluge/model/tuning/master_tune_math.h
+@@ -0,0 +1,61 @@
++/*
++ * Copyright © 2026 Deluge community contributors
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++// Pure master tune arithmetic, kept free of firmware dependencies so it can be checked on a host machine.
++
++#include <algorithm>
++#include <cmath>
++#include <cstdint>
++
++namespace MasterTune::math {
++
++constexpr int32_t kReferenceTenthsHz = 4400;
++constexpr uint32_t kUnityRatioQ30 = 1u << 30;
++constexpr int32_t kMIDIFineTuningCentre = 8192; // RPN 1 "Channel Fine Tuning": 8192 = 0 cents, +-8192 = +-100 cents
++constexpr double kCentsPerNaturalLog = 1200.0 / 0.693147180559945309417; // 1200 / ln(2)
++
++inline int32_t roundToInt(double value) {
++	return (int32_t)std::floor(value + 0.5);
++}
++
++/// tenthsHz / 4400 as unsigned Q2.30
++inline uint32_t ratioQ30(int32_t tenthsHz) {
++	return (uint32_t)roundToInt(tenthsHz * (double)kUnityRatioQ30 / kReferenceTenthsHz);
++}
++
++/// Offset from 440 Hz in cents
++inline double cents(int32_t tenthsHz) {
++	return std::log(tenthsHz / (double)kReferenceTenthsHz) * kCentsPerNaturalLog;
++}
++
++/// 14-bit value for RPN 1, clamped to what the message can carry (+-100 cents)
++inline int32_t midiFineTuning(double centsOffset) {
++	return std::clamp<int32_t>(kMIDIFineTuningCentre + roundToInt(centsOffset * 8192.0 / 100.0), 0, 16383);
++}
++
++/// Exact (rounded) multiplication of a phase increment by a Q2.30 ratio, saturating instead of wrapping around
++inline uint32_t scalePhaseIncrement(uint32_t phaseIncrement, uint32_t ratio) {
++	if (ratio == kUnityRatioQ30) {
++		return phaseIncrement;
++	}
++	uint64_t scaled = ((uint64_t)phaseIncrement * ratio + (kUnityRatioQ30 >> 1)) >> 30;
++	return (scaled > UINT32_MAX) ? UINT32_MAX : (uint32_t)scaled;
++}
++
++} // namespace MasterTune::math
+diff --git a/src/deluge/model/voice/voice.cpp b/src/deluge/model/voice/voice.cpp
+index 8d486e75..d0c38442 100644
+--- a/src/deluge/model/voice/voice.cpp
++++ b/src/deluge/model/voice/voice.cpp
+@@ -31,6 +31,7 @@
+ #include "model/sample/sample_cache.h"
+ #include "model/sample/sample_holder_for_voice.h"
+ #include "model/song/song.h"
++#include "model/tuning/master_tune.h"
+ #include "model/voice/voice_sample.h"
+ #include "modulation/params/param_set.h"
+ #include "modulation/patch/patch_cable_set.h"
+@@ -419,6 +420,7 @@ void Voice::calculatePhaseIncrements(ModelStackWithVoice* modelStack) {
+ 	Sound* sound = (Sound*)modelStack->modControllable;
+ 
+ 	int32_t noteCodeWithMasterTranspose = noteCodeAfterArpeggiation + sound->transpose;
++	bool followsMasterTune = MasterTune::appliesTo(*sound);
+ 
+ 	for (int32_t s = 0; s < kNumSources; s++) {
+ 
+@@ -510,6 +512,10 @@ makeInactive: // Frequency too high to render! (Higher than 22.05kHz)
+ 			phaseIncrement = source->fineTuner.detune(phaseIncrement);
+ 		}
+ 
++		if (followsMasterTune) {
++			phaseIncrement = MasterTune::applyToPhaseIncrement(phaseIncrement);
++		}
++
+ 		// If only one unison
+ 		if (sound->numUnison == 1) {
+ 			unisonParts[0].sources[s].phaseIncrementStoredValue = phaseIncrement;
+@@ -554,6 +560,10 @@ makeInactive: // Frequency too high to render! (Higher than 22.05kHz)
+ 			// Cents
+ 			phaseIncrement = sound->modulatorTransposers[m].detune(phaseIncrement);
+ 
++			if (followsMasterTune) {
++				phaseIncrement = (int32_t)MasterTune::applyToPhaseIncrement((uint32_t)phaseIncrement);
++			}
++
+ 			// If only one unison
+ 			if (sound->numUnison == 1) {
+ 				unisonParts[0].modulatorPhaseIncrement[m] = phaseIncrement;
+diff --git a/src/deluge/playback/playback_handler.cpp b/src/deluge/playback/playback_handler.cpp
+index d7ce52a9..a815f57e 100644
+--- a/src/deluge/playback/playback_handler.cpp
++++ b/src/deluge/playback/playback_handler.cpp
+@@ -59,6 +59,7 @@
+ #include "model/settings/runtime_feature_settings.h"
+ #include "model/song/song.h"
+ #include "model/sync.h"
++#include "model/tuning/master_tune.h"
+ #include "playback/mode/arrangement.h"
+ #include "playback/mode/session.h"
+ #include "processing/audio_output.h"
+@@ -473,6 +474,7 @@ void PlaybackHandler::setupPlayback(int32_t newPlaybackState, int32_t playFromPo
+ 
+ 	playbackState = newPlaybackState;
+ 	cvEngine.playbackBegun(); // Call this *after* playbackState is set. If there's a count-in, nothing will happen
++	MasterTune::playbackBegun();
+ 
+ 	if (getRootUI() && getCurrentUI() == getRootUI()) {
+ 		getRootUI()->notifyPlaybackBegun();
+@@ -824,6 +826,7 @@ void PlaybackHandler::actionSwungTick() {
+ 
+ 			// Perhaps we'd like to send a MIDI "start" message, cos we didn't before
+ 			cvEngine.playbackBegun();
++			MasterTune::playbackBegun();
+ 
+ 			if (currentlySendingMIDIOutputClocks()) {
+ 				if (posToNextContinuePlaybackFrom) {
+diff --git a/src/deluge/processing/engines/cv_engine.cpp b/src/deluge/processing/engines/cv_engine.cpp
+index cc4cad95..74e9b890 100644
+--- a/src/deluge/processing/engines/cv_engine.cpp
++++ b/src/deluge/processing/engines/cv_engine.cpp
+@@ -19,6 +19,7 @@
+ #include "definitions_cxx.hpp"
+ #include "hid/display/display.h"
+ #include "io/debug/log.h"
++#include "model/tuning/master_tune.h"
+ #include "processing/engines/audio_engine.h"
+ #include "util/comparison.h"
+ #include "util/functions.h"
+@@ -240,11 +241,19 @@ void CVEngine::recalculateCVChannelVoltage(uint8_t channel) {
+ 	sendVoltageOut(channel, voltage);
+ }
+ 
++void CVEngine::recalculateAllCVChannelVoltages() {
++	for (int32_t channel = 0; channel < NUM_CV_CHANNELS; channel++) {
++		if (cvChannels[channel].noteCurrentlyPlaying != ALL_NOTES_OFF) {
++			recalculateCVChannelVoltage(channel);
++		}
++	}
++}
++
+ // Represents 1V as 6552. So 10V is 65520.
+ int32_t CVEngine::calculateVoltage(int32_t note, uint8_t channel) {
+ 	double transposedNoteCode = (double)(note + cvChannels[channel].transpose)
+ 	                            + (double)cvChannels[channel].cents * 0.01
+-	                            + (double)cvChannels[channel].pitchBend / (1 << 23);
++	                            + (double)cvChannels[channel].pitchBend / (1 << 23) + MasterTune::getCents() * 0.01;
+ 
+ 	int32_t voltage;
+ 	// Hz per volt
+diff --git a/src/deluge/processing/engines/cv_engine.h b/src/deluge/processing/engines/cv_engine.h
+index 4f280d4e..d9b1c64f 100644
+--- a/src/deluge/processing/engines/cv_engine.h
++++ b/src/deluge/processing/engines/cv_engine.h
+@@ -100,6 +100,9 @@ public:
+ 		return (gateChannels[channel].on && cvChannels[channel].noteCurrentlyPlaying == note);
+ 	}
+ 
++	/// Re-outputs the pitch voltage of every CV channel that has played a note, e.g. after a master tune change.
++	void recalculateAllCVChannelVoltages();
++
+ private:
+ 	void recalculateCVChannelVoltage(uint8_t channel);
+ 	void switchGateOff(int32_t channel);
+diff --git a/src/deluge/storage/flash_storage.cpp b/src/deluge/storage/flash_storage.cpp
+index 27a0b4ac..9c56cbbd 100644
+--- a/src/deluge/storage/flash_storage.cpp
++++ b/src/deluge/storage/flash_storage.cpp
+@@ -24,6 +24,7 @@
+ #include "io/midi/midi_engine.h"
+ #include "io/midi/midi_transpose.h"
+ #include "model/scale/preset_scales.h"
++#include "model/tuning/master_tune.h"
+ #include "processing/engines/audio_engine.h"
+ #include "processing/engines/cv_engine.h"
+ #include "processing/metronome/metronome.h"
+@@ -64,6 +65,10 @@ enum Entries {
+ 	CV_CENTS = 18,
+ 
+ 	GATE_TYPE = 22,
++
++	// Earlier master-tune builds stored the tuning here (int16, little endian). Only read to migrate it to the
++	// settings file, see MasterTune.
++	LEGACY_MASTER_TUNE = 198,
+ };
+ 
+ /* Settings as stored in flash memory, byte by byte:
+@@ -380,6 +385,8 @@ void readSettings() {
+ 	                                       .patch = buffer[VERSION_PATCH],
+ 	                                   });
+ 
++	MasterTune::adoptLegacyFlashValue(buffer[LEGACY_MASTER_TUNE] | (buffer[LEGACY_MASTER_TUNE + 1] << 8));
++
+ 	for (int chan = 0; chan < NUM_CV_CHANNELS; ++chan) {
+ 		cvEngine.setCVVoltsPerOctave(chan, buffer[CV_VOLTS_PER_OCTAVE + chan]);
+ 		cvEngine.setCVTranspose(chan, buffer[CV_TRANSPOSE + chan], buffer[CV_CENTS + chan]);
+@@ -796,6 +803,12 @@ void writeSettings() {
+ 	std::fill(buffer.begin(), buffer.end(), 0);
+ 
+ 	buffer[FIRMWARE_TYPE] = util::to_underlying(FirmwareVersion::current().type());
++
++	// Keep a migrated tuning until it has made it into the settings file, then these bytes stay zero
++	if (MasterTune::keepLegacyFlashValue()) {
++		buffer[LEGACY_MASTER_TUNE] = MasterTune::getTenthsHz() & 0xFF;
++		buffer[LEGACY_MASTER_TUNE + 1] = MasterTune::getTenthsHz() >> 8;
++	}
+ 	buffer[VERSION_MAJOR] = FirmwareVersion::current().version().major;
+ 	buffer[VERSION_MINOR] = FirmwareVersion::current().version().minor;
+ 	buffer[VERSION_PATCH] = FirmwareVersion::current().version().patch;
+-- 
+2.43.0
+
