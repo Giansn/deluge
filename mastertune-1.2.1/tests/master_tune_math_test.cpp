@@ -1,6 +1,7 @@
 // Host-side check of the master tune arithmetic used by the firmware (model/tuning/master_tune_math.h).
 // Build: g++ -std=c++20 -O2 -I<firmware>/src/deluge master_tune_math_test.cpp -o test && ./test
 #include "model/tuning/master_tune_math.h"
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 
@@ -59,12 +60,49 @@ int main() {
 	CHECK(worstHz < 0.0001, "A4 frequency off by %g Hz", worstHz);
 	CHECK(worstCents < 0.01, "phase increment off by %g cents", worstCents);
 
+	// Audio recorded on the Deluge at tuning R and played at tuning T is shifted by exactly T / R, not at all at T == R
+	double worstRecordedCents = 0;
+	for (int32_t recorded = 4153; recorded <= 4662; recorded += 7) {
+		CHECK(ratioQ30(recorded, recorded) == kUnityRatioQ30, "no shift at the recording tuning %d", recorded);
+		for (int32_t tenths = 4153; tenths <= 4662; tenths += 3) {
+			double ratio = ratioQ30(tenths, recorded) / (double)kUnityRatioQ30;
+			double error = 1200.0 * std::log2(ratio * recorded / tenths);
+			worstRecordedCents = std::max(worstRecordedCents, std::fabs(error));
+		}
+	}
+	CHECK(worstRecordedCents < 0.00001, "recorded tuning ratio off by %g cents", worstRecordedCents);
+
+	// Whole chain, never tuned twice: note m recorded at tuning R, found by the pitch detection
+	// (Sample::workOutMIDINote(), float like the firmware) and played as note n at tuning T must sound like note n of a
+	// synth at tuning T. R = 440 Hz also stands for every sample that wasn't recorded on the Deluge.
+	double worstChainCents = 0;
+	for (int32_t recorded : {4153, 4320, 4400, 4420, 4662}) {
+		for (int32_t tenths : {4153, 4320, 4400, 4420, 4662}) {
+			for (int32_t recordedNote : {33, 57, 69, 81, 100}) {
+				double contained = recorded / 10.0 * std::pow(2.0, (recordedNote - 69) / 12.0);
+				float midiNote = 69 + log2f((float)contained / 440) * 12;
+				if (recorded != 4400) {
+					midiNote -= cents(recorded) / 100;
+				}
+				for (int32_t playedNote : {24, 60, 69, 72, 108}) {
+					double played = contained * std::pow(2.0, (playedNote - midiNote) / 12.0)
+					                * (ratioQ30(tenths, recorded) / (double)kUnityRatioQ30);
+					double expected = tenths / 10.0 * std::pow(2.0, (playedNote - 69) / 12.0);
+					worstChainCents = std::max(worstChainCents, std::fabs(1200.0 * std::log2(played / expected)));
+				}
+			}
+		}
+	}
+	CHECK(worstChainCents < 0.01, "recorded sample off by %g cents", worstChainCents);
+
 	// Never wraps around at the top
 	CHECK(scalePhaseIncrement(UINT32_MAX, ratioQ30(4662)) == UINT32_MAX, "saturates");
 
 	std::printf("worst A4 error %.7f Hz, worst phase increment error %.6f cents, RPN at 415.3/440/466.2: %d/%d/%d\n",
 	            worstHz, worstCents, midiFineTuning(cents(4153)), midiFineTuning(cents(4400)),
 	            midiFineTuning(cents(4662)));
+	std::printf("recorded tuning: worst ratio error %.7f cents, worst error of a detected recorded note %.5f cents\n",
+	            worstRecordedCents, worstChainCents);
 	std::printf(failures ? "%d FAILURES\n" : "all checks passed\n", failures);
 	return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 }
