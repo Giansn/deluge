@@ -1,0 +1,143 @@
+From 09dcce0152e781aad256b73e908e42241593f220 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 25 Sep 2026 23:05:45 +0000
+Subject: [PATCH 3/4] Fix clicks on sidechain ducking
+
+The per-sample volume ramp in processReverbSendAndVolume() started at the
+new post-reverb-send volume and then added the whole change once more over
+the buffer, so each buffer began with a step and ended at 2 * new - old.
+A duck of more than 6 dB within one buffer (a kick with strong sidechain)
+even drove the gain negative, and every release step overshot. The ramp now
+starts where the last buffer ended and reaches the new value at its end.
+Unchanged volumes render exactly as before.
+
+The reverb return, ducked by its own sidechain, got its level once per
+buffer. It now ramps to the new level across the buffer as well
+(startPanRamp/advancePanRamp/endPanRamp in the reverb base), again
+identical when the level doesn't change.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/reverb/base.hpp                | 30 +++++++++++++++++--
+ src/deluge/dsp/reverb/freeverb/freeverb.hpp   |  3 ++
+ src/deluge/dsp/reverb/mutable/reverb.hpp      |  4 +++
+ .../mod_controllable_audio.cpp                |  8 ++++-
+ 4 files changed, 42 insertions(+), 3 deletions(-)
+
+diff --git a/src/deluge/dsp/reverb/base.hpp b/src/deluge/dsp/reverb/base.hpp
+index 5e53d1b6..2956e1de 100644
+--- a/src/deluge/dsp/reverb/base.hpp
++++ b/src/deluge/dsp/reverb/base.hpp
+@@ -10,9 +10,11 @@ struct Base {
+ 
+ 	virtual void process(std::span<int32_t> input, std::span<StereoSample> output) = 0;
+ 
++	/// New output levels. process() moves to them over its buffer, so changes (like sidechain ducking of the reverb)
++	/// don't step once per buffer and click.
+ 	constexpr void setPanLevels(const int32_t amplitude_left, const int32_t amplitude_right) {
+-		amplitude_right_ = amplitude_right;
+-		amplitude_left_ = amplitude_left;
++		target_right_ = amplitude_right;
++		target_left_ = amplitude_left;
+ 	}
+ 
+ 	static constexpr float calcFilterCutoff(float f) {
+@@ -41,8 +43,32 @@ struct Base {
+ 	[[nodiscard]] constexpr int32_t getPanLeft() const { return amplitude_left_; }
+ 	[[nodiscard]] constexpr int32_t getPanRight() const { return amplitude_right_; }
+ 
++protected:
++	// Level ramp over one buffer: startPanRamp() before the loop, advancePanRamp() before each sample's mix,
++	// endPanRamp() after the loop. Unchanged levels give steps of 0, so the output is exactly what it was.
++	constexpr void startPanRamp(size_t numSamples) {
++		if (numSamples == 0) {
++			step_left_ = step_right_ = 0;
++			return;
++		}
++		step_left_ = (int32_t)(((int64_t)target_left_ - amplitude_left_) / (int64_t)numSamples);
++		step_right_ = (int32_t)(((int64_t)target_right_ - amplitude_right_) / (int64_t)numSamples);
++	}
++	[[gnu::always_inline]] constexpr void advancePanRamp() {
++		amplitude_left_ += step_left_;
++		amplitude_right_ += step_right_;
++	}
++	constexpr void endPanRamp() {
++		amplitude_left_ = target_left_;
++		amplitude_right_ = target_right_;
++	}
++
+ private:
+ 	int32_t amplitude_right_ = 0;
+ 	int32_t amplitude_left_ = 0;
++	int32_t target_right_ = 0;
++	int32_t target_left_ = 0;
++	int32_t step_right_ = 0;
++	int32_t step_left_ = 0;
+ };
+ } // namespace deluge::dsp::reverb
+diff --git a/src/deluge/dsp/reverb/freeverb/freeverb.hpp b/src/deluge/dsp/reverb/freeverb/freeverb.hpp
+index 1b9a2e1f..6838f583 100644
+--- a/src/deluge/dsp/reverb/freeverb/freeverb.hpp
++++ b/src/deluge/dsp/reverb/freeverb/freeverb.hpp
+@@ -103,9 +103,12 @@ public:
+ 			reverb_sample -= reverb_send_post_lpf_;
+ 		}
+ 
++		startPanRamp(input.size());
+ 		for (size_t frame = 0; frame < input.size(); frame++) {
++			advancePanRamp();
+ 			ProcessOne(input[frame], output[frame]);
+ 		}
++		endPanRamp();
+ 	}
+ 
+ private:
+diff --git a/src/deluge/dsp/reverb/mutable/reverb.hpp b/src/deluge/dsp/reverb/mutable/reverb.hpp
+index 3caedcf0..b70bfa2f 100644
+--- a/src/deluge/dsp/reverb/mutable/reverb.hpp
++++ b/src/deluge/dsp/reverb/mutable/reverb.hpp
+@@ -54,7 +54,9 @@ public:
+ 		float lp_1 = lp_decay_1_;
+ 		float lp_2 = lp_decay_2_;
+ 
++		startPanRamp(in.size());
+ 		for (size_t frame = 0; frame < in.size(); frame++) {
++			advancePanRamp();
+ 			StereoSample& s = output[frame];
+ 			float wet = 0;
+ 			float apout = 0.0f;
+@@ -108,6 +110,8 @@ public:
+ 			s.r += multiply_32x32_rshift32_rounded(output_right, getPanRight());
+ 		}
+ 
++		endPanRamp();
++
+ 		lp_decay_1_ = lp_1;
+ 		lp_decay_2_ = lp_2;
+ 	}
+diff --git a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+index 5c803490..597a9947 100644
+--- a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
++++ b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+@@ -547,10 +547,16 @@ void ModControllableAudio::processReverbSendAndVolume(StereoSample* buffer, int3
+ 	int32_t reverbSendAmountAndPostFXVolume = multiply_32x32_rshift32(postFXVolume, reverbSendAmount) << 5;
+ 
+ 	int32_t postFXAndReverbVolumeL, postFXAndReverbVolumeR, amplitudeIncrementL, amplitudeIncrementR;
+-	postFXAndReverbVolumeL = postFXAndReverbVolumeR = (multiply_32x32_rshift32(postReverbVolume, postFXVolume) << 5);
+ 
+ 	// The amplitude increment applies to the post-FX volume. We want to have it just so that we can respond better to
+ 	// sidechain volume ducking, which is done through post-FX volume.
++	// The ramp starts where the last buffer ended and reaches the new volume at the end of this one. (It used to start
++	// at the new volume and overshoot it by the whole change, which clicked on strong sidechain ducking - by more than
++	// 6 dB within one buffer, the gain even went negative.)
++	int32_t postReverbVolumeAtStart = doAmplitudeIncrement ? postReverbVolumeLastTime : postReverbVolume;
++	postFXAndReverbVolumeL = postFXAndReverbVolumeR =
++	    (multiply_32x32_rshift32(postReverbVolumeAtStart, postFXVolume) << 5);
++
+ 	if (doAmplitudeIncrement) {
+ 		auto postReverbSendVolumeIncrement =
+ 		    (int32_t)((double)(postReverbVolume - postReverbVolumeLastTime) / (double)numSamples);
+-- 
+2.43.0
+

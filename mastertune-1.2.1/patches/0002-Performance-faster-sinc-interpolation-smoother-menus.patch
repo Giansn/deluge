@@ -1,0 +1,253 @@
+From 2b01931d59436f62880a88e36e90a2c74da1c2a2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 25 Sep 2026 23:05:44 +0000
+Subject: [PATCH 2/4] Performance: faster sinc interpolation, smoother menus
+
+- Sinc interpolation moves its 16-value history with two NEON vext
+  instructions per channel instead of up to 15 halfword loads/stores per
+  position (shiftInterpolationBuffer). Same buffer contents, verified
+  against the old loop on Cortex-A9 code for every shift distance. This
+  is most of the per-sample cost of every resampled sample voice that
+  isn't playing from a cache (transposed samples, master tune != 440 Hz,
+  pitch modulation, first hits, time stretching).
+- UI tasks get short maximum intervals (PIC flush, OLED routine, UI timer
+  routine, pending UI rendering), so menu changes reach the display
+  quickly while audio is busy. The audio routine keeps its priority.
+- The sound editor gets every select-encoder detent turned since the last
+  time, up to 5 (what its menus already get with shift held), so turns made
+  while the card routine held actioning back are not lost.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/deluge.cpp                         | 10 ++-
+ src/deluge/dsp/interpolation/shift_buffer.h   | 77 +++++++++++++++++++
+ src/deluge/hid/encoders.cpp                   | 10 ++-
+ .../model/sample/sample_low_level_reader.cpp  | 29 +++----
+ 4 files changed, 101 insertions(+), 25 deletions(-)
+ create mode 100644 src/deluge/dsp/interpolation/shift_buffer.h
+
+diff --git a/src/deluge/deluge.cpp b/src/deluge/deluge.cpp
+index 002d0c67..e140b7e7 100644
+--- a/src/deluge/deluge.cpp
++++ b/src/deluge/deluge.cpp
+@@ -589,7 +589,9 @@ void registerTasks() {
+ 	p = 11;
+ 	addRepeatingTask([]() { encoders::interpretEncoders(true); }, p++, 0.005, 0.005, 0.01, "interpret encoders fast");
+ 	// 30 Hz update desired?
+-	addRepeatingTask(&doAnyPendingUIRendering, p++, 0.01, 0.01, 0.03, "pending UI");
++	// Max intervals of the UI tasks kept short, so a menu change reaches the OLED quickly even while audio is busy.
++	// These tasks take microseconds unless there is something to draw or send.
++	addRepeatingTask(&doAnyPendingUIRendering, p++, 0.01, 0.01, 0.015, "pending UI");
+ 	// this one actually actions them
+ 	addRepeatingTask([]() { encoders::interpretEncoders(false); }, p++, 0.005, 0.005, 0.01, "interpret encoders slow");
+ 
+@@ -604,14 +606,14 @@ void registerTasks() {
+ 	addRepeatingTask([]() { MasterTune::routine(); }, p++, 0.002, 0.005, 0.02, "master tune");
+ 	// 31-39: Idle priority (40 for dyn tasks)
+ 	p = 31;
+-	addRepeatingTask(&(PIC::flush), p++, 0.001, 0.001, 0.02, "PIC flush");
++	addRepeatingTask(&(PIC::flush), p++, 0.0005, 0.001, 0.002, "PIC flush");
+ 	if (hid::display::have_oled_screen) {
+-		addRepeatingTask(&(oledRoutine), p++, 0.01, 0.01, 0.02, "oled routine");
++		addRepeatingTask(&(oledRoutine), p++, 0.001, 0.002, 0.003, "oled routine");
+ 	}
+ 	// needs to be called very frequently,
+ 	// handles animations and checks on the timers for any infrequent actions
+ 	// long term this should probably be made into an idle task
+-	addRepeatingTask([]() { uiTimerManager.routine(); }, p++, 0.0001, 0.0007, 0.01, "ui routine");
++	addRepeatingTask([]() { uiTimerManager.routine(); }, p++, 0.0001, 0.0007, 0.002, "ui routine");
+ 
+ 	// addRepeatingTask([]() { AudioEngine::routineWithClusterLoading(true); }, 0, 1 / 44100., 16 / 44100., 32 / 44100.,
+ 	// true); addRepeatingTask(&(AudioEngine::routine), 0, 16 / 44100., 64 / 44100., true);
+diff --git a/src/deluge/dsp/interpolation/shift_buffer.h b/src/deluge/dsp/interpolation/shift_buffer.h
+new file mode 100644
+index 00000000..5b9d6433
+--- /dev/null
++++ b/src/deluge/dsp/interpolation/shift_buffer.h
+@@ -0,0 +1,77 @@
++/*
++ * Copyright © 2026 Deluge community contributors
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include <arm_neon.h>
++#include <cstdint>
++
++namespace deluge::dsp {
++
++/// Moves the 16 values of one channel of a sinc interpolation buffer up by numPositions (1 ... 15): the value at i ends
++/// up at i + numPositions and the highest ones fall off. The positions below numPositions are left with unspecified
++/// values - the caller fills them with the new samples. Gives exactly the same buffer as moving the values along one by
++/// one, but takes a handful of NEON instructions instead of up to 15 loads and stores per position.
++[[gnu::always_inline]] inline void shiftInterpolationBuffer(int16x4_t* __restrict__ buffer, int32_t numPositions) {
++	int16x8_t low = vcombine_s16(buffer[0], buffer[1]);  // Positions 0 - 7
++	int16x8_t high = vcombine_s16(buffer[2], buffer[3]); // Positions 8 - 15
++
++	switch (numPositions) {
++		// Up to 8: the top half takes the upper end of the bottom half, the bottom half moves up within itself
++#define DELUGE_SHIFT_BY_UP_TO_8(n)                                                                                     \
++	case n:                                                                                                            \
++		high = vextq_s16(low, high, 8 - (n));                                                                          \
++		low = vextq_s16(low, low, 8 - (n));                                                                            \
++		break;
++		DELUGE_SHIFT_BY_UP_TO_8(1)
++		DELUGE_SHIFT_BY_UP_TO_8(2)
++		DELUGE_SHIFT_BY_UP_TO_8(3)
++		DELUGE_SHIFT_BY_UP_TO_8(4)
++		DELUGE_SHIFT_BY_UP_TO_8(5)
++		DELUGE_SHIFT_BY_UP_TO_8(6)
++		DELUGE_SHIFT_BY_UP_TO_8(7)
++#undef DELUGE_SHIFT_BY_UP_TO_8
++
++	case 8:
++		high = low;
++		break;
++
++		// More than 8: only the top half keeps anything, taken from the bottom half
++#define DELUGE_SHIFT_BY_MORE_THAN_8(n)                                                                                 \
++	case n:                                                                                                            \
++		high = vextq_s16(low, low, 16 - (n));                                                                          \
++		break;
++		DELUGE_SHIFT_BY_MORE_THAN_8(9)
++		DELUGE_SHIFT_BY_MORE_THAN_8(10)
++		DELUGE_SHIFT_BY_MORE_THAN_8(11)
++		DELUGE_SHIFT_BY_MORE_THAN_8(12)
++		DELUGE_SHIFT_BY_MORE_THAN_8(13)
++		DELUGE_SHIFT_BY_MORE_THAN_8(14)
++		DELUGE_SHIFT_BY_MORE_THAN_8(15)
++#undef DELUGE_SHIFT_BY_MORE_THAN_8
++
++	default: // 0: nothing moves. 16 and more: nothing stays, the caller refills every position anyway
++		return;
++	}
++
++	buffer[0] = vget_low_s16(low);
++	buffer[1] = vget_high_s16(low);
++	buffer[2] = vget_low_s16(high);
++	buffer[3] = vget_high_s16(high);
++}
++
++} // namespace deluge::dsp
+diff --git a/src/deluge/hid/encoders.cpp b/src/deluge/hid/encoders.cpp
+index f6d97ae0..ead62f09 100644
+--- a/src/deluge/hid/encoders.cpp
++++ b/src/deluge/hid/encoders.cpp
+@@ -18,6 +18,7 @@
+ #include "hid/encoders.h"
+ #include "definitions_cxx.hpp"
+ #include "extern.h"
++#include "gui/ui/sound_editor.h"
+ #include "gui/ui/ui.h"
+ #include "gui/views/automation_view.h"
+ #include "gui/views/instrument_clip_view.h"
+@@ -30,6 +31,7 @@
+ #include "processing/engines/audio_engine.h"
+ #include "processing/stem_export/stem_export.h"
+ #include "util/functions.h"
++#include <algorithm>
+ #include <new>
+ 
+ namespace deluge::hid::encoders {
+@@ -112,7 +114,8 @@ bool interpretEncoders(bool skipActioning) {
+ 			anything = true;
+ 
+ 			// Limit. Some functions can break if they receive bigger numbers, e.g. LoadSongUI::selectEncoderAction()
+-			int32_t limitedDetentPos = encoders[e].detentPos;
++			int32_t detentsTurned = encoders[e].detentPos;
++			int32_t limitedDetentPos = detentsTurned;
+ 			encoders[e].detentPos = 0; // Reset. Crucial that this happens before we call selectEncoderAction()
+ 			if (limitedDetentPos >= 0) {
+ 				limitedDetentPos = 1;
+@@ -167,6 +170,11 @@ checkResult:
+ 				if (Buttons::isButtonPressed(deluge::hid::button::CLIP_VIEW)) {
+ 					PadLEDs::changeRefreshTime(limitedDetentPos);
+ 				}
++				// The sound editor gets every detent turned since last time (up to 5, which its menus already get
++				// with shift held), so turns made while the card routine held actioning back aren't lost
++				else if (getCurrentUI() == &soundEditor && !Buttons::isShiftButtonPressed()) {
++					soundEditor.selectEncoderAction(std::clamp<int32_t>(detentsTurned, -5, 5));
++				}
+ 				else {
+ 					getCurrentUI()->selectEncoderAction(limitedDetentPos);
+ 				}
+diff --git a/src/deluge/model/sample/sample_low_level_reader.cpp b/src/deluge/model/sample/sample_low_level_reader.cpp
+index 590cb68c..43895851 100644
+--- a/src/deluge/model/sample/sample_low_level_reader.cpp
++++ b/src/deluge/model/sample/sample_low_level_reader.cpp
+@@ -29,6 +29,7 @@
+ #include "storage/cluster/cluster.h"
+ 
+ #include "arm_neon.h"
++#include "dsp/interpolation/shift_buffer.h"
+ 
+ SampleLowLevelReader::SampleLowLevelReader() {
+ 	for (int32_t l = 0; l < kNumClustersLoadedAhead; l++) {
+@@ -883,13 +884,9 @@ doZeroes:
+ void SampleLowLevelReader::bufferIndividualSampleForInterpolation(uint32_t bitMask, int32_t numChannels,
+                                                                   int32_t byteDepth, char* __restrict__ playPosNow) {
+ 
+-	// This works better than using memmoves. Ideally we'd switch this off if not smoothly interpolating - check that
+-	// that's actually more efficient though
+-	for (int32_t i = kInterpolationMaxNumSamples - 1; i >= 1; i--) {
+-		interpolationBuffer[0][0][i] = interpolationBuffer[0][0][i - 1];
+-		if (numChannels == 2) {
+-			interpolationBuffer[1][0][i] = interpolationBuffer[1][0][i - 1];
+-		}
++	deluge::dsp::shiftInterpolationBuffer(interpolationBuffer[0], 1);
++	if (numChannels == 2) {
++		deluge::dsp::shiftInterpolationBuffer(interpolationBuffer[1], 1);
+ 	}
+ 
+ 	interpolationBuffer[0][0][0] = *(int16_t*)(playPosNow + 2);
+@@ -903,13 +900,9 @@ void SampleLowLevelReader::bufferIndividualSampleForInterpolation(uint32_t bitMa
+ 
+ void SampleLowLevelReader::bufferZeroForInterpolation(int32_t numChannels) {
+ 
+-	// This works better than using memmoves. Ideally we'd switch this off if not smoothly interpolating - check that
+-	// that's actually more efficient though
+-	for (int32_t i = kInterpolationMaxNumSamples - 1; i >= 1; i--) {
+-		interpolationBuffer[0][0][i] = interpolationBuffer[0][0][i - 1];
+-		if (numChannels == 2) {
+-			interpolationBuffer[1][0][i] = interpolationBuffer[1][0][i - 1];
+-		}
++	deluge::dsp::shiftInterpolationBuffer(interpolationBuffer[0], 1);
++	if (numChannels == 2) {
++		deluge::dsp::shiftInterpolationBuffer(interpolationBuffer[1], 1);
+ 	}
+ 
+ 	interpolationBuffer[0][0][0] = 0;
+@@ -1043,14 +1036,10 @@ void SampleLowLevelReader::readSamplesResampled(int32_t** __restrict__ oscBuffer
+ 
+ 					int16_t sourceL = *(int16_t*)currentPlayPosNow;
+ 
+-					for (int32_t i = kInterpolationMaxNumSamples - 1; i >= numSamplesToJumpForward; i--) {
+-						interpolationBuffer[0][0][i] = interpolationBuffer[0][0][i - numSamplesToJumpForward];
+-					}
++					deluge::dsp::shiftInterpolationBuffer(interpolationBuffer[0], numSamplesToJumpForward);
+ 
+ 					if (numChannels == 2) {
+-						for (int32_t i = kInterpolationMaxNumSamples - 1; i >= numSamplesToJumpForward; i--) {
+-							interpolationBuffer[1][0][i] = interpolationBuffer[1][0][i - numSamplesToJumpForward];
+-						}
++						deluge::dsp::shiftInterpolationBuffer(interpolationBuffer[1], numSamplesToJumpForward);
+ 
+ 						numSamplesToJumpForward--;
+ 
+-- 
+2.43.0
+

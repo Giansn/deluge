@@ -1,14 +1,41 @@
 # Deluge 1.2.1 mit Master Tune
 
-Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung.
-Der Quellcode der bisherigen Master-Tune-Version war nicht verfügbar. Die Funktion ist deshalb neu umgesetzt und behebt die Punkte, die in der Analyse aufgefallen sind.
+Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in drei Stufen.
 
-| | |
-|---|---|
-| Datei | `deluge-1.2.1-mastertune-49e71650.bin` (Version 2) |
-| SHA-256 | `05b457a03b782b9668e19fcb2ffbe28eff267429a063b7c8115dd47d2ce7e0cb` |
-| Anzeige unter Settings → Firmware version | `1.2.1-mastertune-49e71650` |
-| Quellcode | `0001-Add-master-tune.patch` (gegen `release_1_2_1`) |
+| Datei | Version (Settings → Firmware version) | Inhalt |
+|---|---|---|
+| `deluge-1.2.1-mastertune-49e71650.bin` | `1.2.1-mastertune-49e71650` (v2) | Master Tune |
+| `deluge-1.2.1-mastertune-v3-09dcce01.bin` | `1.2.1-mastertune-v3-09dcce01` | v2 + Leistungspaket A + Sidechain-Fix |
+| `deluge-1.2.1-mastertune-v4-6cb344e2.bin` | `1.2.1-mastertune-v4-6cb344e2` | v3 + Leistungspaket B |
+
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209` (vollständig: `sha256sum *.bin`).
+Quellcode: `patches/0001` bis `0004` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004.
+
+## v3 und v4: Unterschiede
+
+| | v3 | v4 |
+|---|---|---|
+| Sinc-Interpolation mit NEON-Pufferverschiebung: jede umgestimmte, transponierte oder zeitgestreckte Sample-Stimme ohne Cache-Treffer ca. 40 % billiger | ja | ja |
+| Menü: kürzere Wartezeiten der UI-Aufgaben, keine verschluckten Encoder-Rasten im Sound-Editor (bis 5 pro Abfrage, wie bisher mit SHIFT) | ja | ja |
+| Sidechain-Fix: kein Knacken mehr beim Ducking, auch der Reverb-Rücklauf wird weich nachgeführt | ja | ja |
+| Culling wie aktuelle Community-Firmware: seltener, weniger Stimmen, die Hälfte ausgeblendet statt abgeschnitten | nein | ja |
+| Stille Kits und Audio-Spuren ohne zeitabhängige Effekte überspringen ihre Effektkette | nein | ja |
+| Lautstärkestufe schreibt direkt in den Mix (ein Durchgang weniger), kein doppeltes Nullsetzen | nein | ja |
+| Klang im Normalbetrieb | bitgleich zu v2, ausser dem Sidechain-Fix (knackfrei statt Sprung) | wie v3; unter Überlast andere, weichere Culling-Reaktion |
+
+**Leistungspaket A (v3):**
+- **NEON-Pufferverschiebung:** Die Verschiebung des 16er-Interpolationspuffers geschieht mit NEON-Befehlen statt Wert für Wert. Das war etwa die Hälfte der Sinc-Kosten.
+- **Geprüft:** Auf echtem Cortex-A9-Maschinencode im Emulator ergibt sie für alle Verschiebeweiten dieselben Puffer (`tests/run_neon_shift_test.py`).
+- **Verworfen:** Zwei zusätzliche Compiler-Flags (`-funswitch-loops -fsplit-loops`) änderten den Fliesskomma-Code in 81 Funktionen, darunter Audio. Damit war Bitgleichheit nicht beweisbar, deshalb sind sie nicht enthalten.
+
+**Sidechain-Fix (v3, v4):**
+- **Fehler:** Die Lautstärkerampe pro Puffer startete beim neuen Wert und lief um die ganze Änderung darüber hinaus. Bei einem Ducking von mehr als 6 dB innerhalb eines Puffers kippte die Verstärkung sogar ins Negative, also mit umgekehrter Polarität.
+- **Jetzt:** Die Rampe läuft vom alten zum neuen Wert. Der Fehler steckt auch in der aktuellen Community-Firmware.
+
+**Leistungspaket B (v4):**
+- **Gewinn:** Er ist kleiner als bei A. Geschätzt spart es 0,2–0,6 % CPU pro stiller Kit- oder Audio-Spur und rund 0,05 % pro klingendem Sound durch den gesparten Durchgang.
+- **Culling:** Der Hauptnutzen ist das neue Culling: Unter Last werden weniger Noten abgeschnitten, und dafür steigt das Knackrisiko bei echter Dauerüberlast leicht.
+- **Übersprungene Effektkette:** Sie greift nur, wenn Mod-FX, Delay, Stutter, Sample-Rate-Reduktion, Sättigung und Kompressor aus sind, keine Aufnahme läuft und die Kette seit 4096 Samples exakt null ausgibt. Das Ergebnis ist dann wieder Stille.
 
 ## Bedienung
 
@@ -58,9 +85,9 @@ Die Stimmung geht als RPN 1 (6 Control-Change-Meldungen) hinaus:
 
 ## Installation
 
-1. Kopiere `deluge-1.2.1-mastertune-49e71650.bin` ins Hauptverzeichnis der SD-Karte. Lass dort keine andere `.bin`-Datei liegen.
+1. Kopiere die gewünschte `.bin`-Datei ins Hauptverzeichnis der SD-Karte. Lass dort keine andere `.bin`-Datei liegen.
 2. Halte wie gewohnt beim Einschalten **SHIFT** gedrückt. Der Deluge installiert dann die Firmware.
-3. Kontrolliere danach unter Settings → Firmware version, dass dort `1.2.1-mastertune-49e71650` steht.
+3. Kontrolliere danach unter Settings → Firmware version die Versionsbezeichnung aus der Tabelle oben.
 
 ## Grenzen
 
@@ -95,7 +122,7 @@ Version 1 liegt weiterhin in der Git-Historie dieses Ordners.
 ```sh
 git clone https://github.com/SynthstromAudible/DelugeFirmware && cd DelugeFirmware
 git checkout release_1_2_1
-git am /pfad/zu/0001-Add-master-tune.patch
+git am /pfad/zu/patches/*.patch        # oder nur 0001 (v2) bzw. 0001-0003 (v3)
 ./dbt configure -DRELEASE_TYPE:STRING=mastertune
 ./dbt build release                      # Ergebnis: build/Release/deluge.bin
 
@@ -104,4 +131,7 @@ g++ -std=c++20 -O2 -Isrc/deluge /pfad/zu/tests/master_tune_math_test.cpp -o mt_t
 
 # WAV-Test (pip install soundfile scipy)
 python3 /pfad/zu/tests/wav_mtun_chunk_test.py
+
+# NEON-Pufferverschiebung auf Cortex-A9-Code im Emulator (pip install unicorn)
+python3 /pfad/zu/tests/run_neon_shift_test.py .
 ```

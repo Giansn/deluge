@@ -1,0 +1,360 @@
+From 6cb344e208949bf0ce501402fffa47e07b5cf700 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 25 Sep 2026 23:15:38 +0000
+Subject: [PATCH 4/4] Performance B: gentler culling, skip silent effect
+ chains, one pass less
+
+- Culling (ported from upstream #4819 and its predecessors onto 1.2.1's
+  cullVoice()): soft culls only while the overload persists and isn't
+  falling; hard culls from 32 samples over the limit (was 20) with half as
+  many voices (over >> 4), one released softly, half of the rest faded out
+  within a few ms and half stopped at once (was: all stopped at once);
+  20 samples of extra allowance per voice started in the measured render
+  (up to 4).
+- Kits and audio tracks skip their effect chain while nothing comes in and
+  the chain has given out exact silence for 4096 samples, as long as it
+  holds nothing that could still sound or move on (mod FX, delay, stutter,
+  sample rate reduction, saturation, compressor, recording). Sidechain,
+  volume ramp state, reverb activity and parameter ticking carry on.
+- Without compressor and recording, the post-FX volume stage of sounds,
+  kits and audio tracks adds straight into the output instead of writing
+  the buffer back and adding it in a second pass.
+- The kit/audio-track effects buffer is raw storage, so it isn't zeroed a
+  second time by StereoSample's initialisers.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ .../global_effectable_for_clip.cpp            | 57 +++++++++++++++++--
+ .../global_effectable_for_clip.h              |  4 ++
+ .../mod_controllable_audio.cpp                | 19 +++++--
+ .../mod_controllable/mod_controllable_audio.h |  3 +-
+ .../processing/engines/audio_engine.cpp       | 55 +++++++++++-------
+ src/deluge/processing/sound/sound.cpp         | 34 +++++++----
+ 6 files changed, 131 insertions(+), 41 deletions(-)
+
+diff --git a/src/deluge/model/global_effectable/global_effectable_for_clip.cpp b/src/deluge/model/global_effectable/global_effectable_for_clip.cpp
+index 05fa69de..beed982e 100644
+--- a/src/deluge/model/global_effectable/global_effectable_for_clip.cpp
++++ b/src/deluge/model/global_effectable/global_effectable_for_clip.cpp
+@@ -38,6 +38,17 @@ extern "C" {
+ 
+ namespace params = deluge::modulation::params;
+ 
++namespace {
++bool isSilent(StereoSample const* buffer, int32_t numSamples) {
++	for (int32_t i = 0; i < numSamples; i++) {
++		if (buffer[i].l | buffer[i].r) {
++			return false;
++		}
++	}
++	return true;
++}
++} // namespace
++
+ GlobalEffectableForClip::GlobalEffectableForClip() {
+ 	postReverbVolumeLastTime = paramNeutralValues[params::GLOBAL_VOLUME_POST_REVERB_SEND];
+ 
+@@ -112,7 +123,9 @@ GlobalEffectableForClip::GlobalEffectableForClip() {
+ 	}
+ 	q31_t compThreshold = unpatchedParams->getValue(params::UNPATCHED_COMPRESSOR_THRESHOLD);
+ 	compressor.setThreshold(compThreshold);
+-	StereoSample globalEffectableBuffer[SSI_TX_BUFFER_NUM_SAMPLES] __attribute__((aligned(CACHE_LINE_SIZE)));
++	// Raw storage: StereoSample's zero-initialisers would clear all 128 samples on top of the memset below
++	alignas(CACHE_LINE_SIZE) char globalEffectableBufferMemory[SSI_TX_BUFFER_NUM_SAMPLES * sizeof(StereoSample)];
++	StereoSample* globalEffectableBuffer = reinterpret_cast<StereoSample*>(globalEffectableBufferMemory);
+ 
+ 	memset(globalEffectableBuffer, 0, sizeof(StereoSample) * numSamples);
+ 
+@@ -121,6 +134,20 @@ GlobalEffectableForClip::GlobalEffectableForClip() {
+ 	    modelStack, globalEffectableBuffer, NULL, numSamples, reverbBuffer, reverbAmountAdjustForDrums,
+ 	    sideChainHitPending, shouldLimitDelayFeedback, isClipActive, pitchAdjust, 134217728, 134217728);
+ 
++	// Nothing came in, and the effects have given out exact silence for a while and hold nothing that could still make
++	// sound or move on over time (no mod FX, delay, stutter, sample rate reduction, saturation, compressor, recording).
++	// Then running them would give silence again, so skip them.
++	bool recording = (recorder && recorder->status < RecorderStatus::FINISHED_CAPTURING_BUT_STILL_WRITING);
++	if (!renderedLastTime && samplesOfSilentEffects >= kSilentSamplesBeforeSkippingEffects && !clippingAmount
++	    && compThreshold <= 0 && !recording && !delayWorkingState.doDelay && !stutterer.isStuttering(this)
++	    && !isSRREnabled(paramManagerForClip) && getActiveModFXType(paramManagerForClip) == ModFXType::NONE) {
++		compressor.reset();
++		if (reverbSendAmount != 0) {
++			AudioEngine::timeThereWasLastSomeReverb = AudioEngine::audioSampleTimer; // As the volume stage would
++		}
++		goto effectsDone;
++	}
++
+ 	// Render saturation
+ 	if (clippingAmount) {
+ 		StereoSample const* const bufferEnd = globalEffectableBuffer + numSamples;
+@@ -146,17 +173,37 @@ GlobalEffectableForClip::GlobalEffectableForClip() {
+ 		recorder->feedAudio((int32_t*)globalEffectableBuffer, numSamples, true, 2);
+ 	}
+ 
+-	processReverbSendAndVolume(globalEffectableBuffer, numSamples, reverbBuffer, volumePostFX, postReverbVolume,
+-	                           reverbSendAmount, pan, true);
+ 	if (compThreshold > 0) {
++		processReverbSendAndVolume(globalEffectableBuffer, numSamples, reverbBuffer, volumePostFX, postReverbVolume,
++		                           reverbSendAmount, pan, true);
+ 		compressor.renderVolNeutral(globalEffectableBuffer, numSamples, volumePostFX);
++		samplesOfSilentEffects = 0;
++		addAudio(globalEffectableBuffer, outputBuffer, numSamples);
+ 	}
+ 	else {
+ 		compressor.reset();
++		if (renderedLastTime) {
++			samplesOfSilentEffects = 0;
++			// Nothing needs the processed buffer, so the volume stage adds straight into the output
++			processReverbSendAndVolume(globalEffectableBuffer, numSamples, reverbBuffer, volumePostFX, postReverbVolume,
++			                           reverbSendAmount, pan, true, outputBuffer);
++		}
++		else {
++			// Silent input: see whether the effects gave out exact silence too
++			processReverbSendAndVolume(globalEffectableBuffer, numSamples, reverbBuffer, volumePostFX, postReverbVolume,
++			                           reverbSendAmount, pan, true);
++			if (isSilent(globalEffectableBuffer, numSamples)) {
++				samplesOfSilentEffects =
++				    std::min<int32_t>(samplesOfSilentEffects + numSamples, kSilentSamplesBeforeSkippingEffects);
++			}
++			else {
++				samplesOfSilentEffects = 0;
++				addAudio(globalEffectableBuffer, outputBuffer, numSamples);
++			}
++		}
+ 	}
+ 
+-	addAudio(globalEffectableBuffer, outputBuffer, numSamples);
+-
++effectsDone:
+ 	postReverbVolumeLastTime = postReverbVolume;
+ 
+ 	if (playbackHandler.isEitherClockActive() && !playbackHandler.ticksLeftInCountIn && isClipActive) {
+diff --git a/src/deluge/model/global_effectable/global_effectable_for_clip.h b/src/deluge/model/global_effectable/global_effectable_for_clip.h
+index 862a6bce..20bc461b 100644
+--- a/src/deluge/model/global_effectable/global_effectable_for_clip.h
++++ b/src/deluge/model/global_effectable/global_effectable_for_clip.h
+@@ -71,4 +71,8 @@ protected:
+ 
+ private:
+ 	bool renderedLastTime;
++
++	// How long the effects have given out exact silence for silent input, to know when they can be skipped
++	static constexpr int32_t kSilentSamplesBeforeSkippingEffects = 4096;
++	int32_t samplesOfSilentEffects = 0;
+ };
+diff --git a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+index 597a9947..ffed0f97 100644
+--- a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
++++ b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+@@ -539,8 +539,8 @@ void ModControllableAudio::processFX(StereoSample* buffer, int32_t numSamples, M
+ 
+ void ModControllableAudio::processReverbSendAndVolume(StereoSample* buffer, int32_t numSamples, int32_t* reverbBuffer,
+                                                       int32_t postFXVolume, int32_t postReverbVolume,
+-                                                      int32_t reverbSendAmount, int32_t pan,
+-                                                      bool doAmplitudeIncrement) {
++                                                      int32_t reverbSendAmount, int32_t pan, bool doAmplitudeIncrement,
++                                                      StereoSample* addToBuffer) {
+ 
+ 	StereoSample* bufferEnd = buffer + numSamples;
+ 
+@@ -594,8 +594,19 @@ void ModControllableAudio::processReverbSendAndVolume(StereoSample* buffer, int3
+ 		}
+ 
+ 		// Apply post-fx and post-reverb-send volume
+-		inputSample->l = multiply_32x32_rshift32(processingSample.l, postFXAndReverbVolumeL) << 5;
+-		inputSample->r = multiply_32x32_rshift32(processingSample.r, postFXAndReverbVolumeR) << 5;
++		int32_t outputL = multiply_32x32_rshift32(processingSample.l, postFXAndReverbVolumeL) << 5;
++		int32_t outputR = multiply_32x32_rshift32(processingSample.r, postFXAndReverbVolumeR) << 5;
++
++		// Either straight into the mix (saves the separate addAudio() pass), or back into the buffer
++		if (addToBuffer) {
++			addToBuffer->l += outputL;
++			addToBuffer->r += outputR;
++			addToBuffer++;
++		}
++		else {
++			inputSample->l = outputL;
++			inputSample->r = outputR;
++		}
+ 
+ 	} while (++inputSample != bufferEnd);
+ 
+diff --git a/src/deluge/model/mod_controllable/mod_controllable_audio.h b/src/deluge/model/mod_controllable/mod_controllable_audio.h
+index 73229eda..83d8d87d 100644
+--- a/src/deluge/model/mod_controllable/mod_controllable_audio.h
++++ b/src/deluge/model/mod_controllable/mod_controllable_audio.h
+@@ -61,7 +61,8 @@ public:
+ 	void processStutter(StereoSample* buffer, int32_t numSamples, ParamManager* paramManager);
+ 	void processReverbSendAndVolume(StereoSample* buffer, int32_t numSamples, int32_t* reverbBuffer,
+ 	                                int32_t postFXVolume, int32_t postReverbVolume, int32_t reverbSendAmount,
+-	                                int32_t pan = 0, bool doAmplitudeIncrement = false);
++	                                int32_t pan = 0, bool doAmplitudeIncrement = false,
++	                                StereoSample* addToBuffer = nullptr);
+ 	void writeAttributesToFile(Serializer& writer);
+ 	void writeTagsToFile(Serializer& writer);
+ 	Error readTagFromFile(Deserializer& reader, char const* tagName, ParamManagerForTimeline* paramManager,
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index 4040f72a..b204f171 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -399,27 +399,38 @@ Debug::AverageDT rvb("reverb", Debug::uS);
+ #endif
+ 
+ uint8_t numRoutines = 0;
++int32_t voicesStartedThisRender = 0; // Voices started since the last render began, see cullVoices()
+ 
+ // not in header (private to audio engine)
+ /// determines how many voices to cull based on num audio samples, current voices and numSamplesLimit
+ inline void cullVoices(size_t numSamples, int32_t numAudio, int32_t numVoice) {
+ 	bool culled = false;
+-	int32_t numToCull = 0;
+-	if (numAudio + numVoice > MIN_VOICES) {
+ 
+-		int32_t numSamplesOverLimit = numSamples - numSamplesLimit;
+-		// If it's real dire, do a proper immediate cull
+-		if (numSamplesOverLimit >= 20) {
++	// Starting voices is a heavy but passing load, so allow a little more for each voice started in the render that was
++	// measured (at most 4 of them, like upstream)
++	int32_t maxNumSamples = numSamplesLimit + 20 * std::min<int32_t>(voicesStartedThisRender, 4);
++	static int32_t lastNumSamplesOverLimit = 0;
++	int32_t numSamplesOverLimit = (int32_t)numSamples - maxNumSamples;
++
++	if (numAudio + numVoice > MIN_VOICES) {
+ 
+-			numToCull = (numSamplesOverLimit >> 3);
++		// If it's real dire, do a proper cull
++		if (numSamplesOverLimit >= 32) {
+ 
+ 			// leave at least 7 - below this point culling won't save us
+ 			// if they can't load their sample in time they'll stop the same way anyway
+-			numToCull = std::min(numToCull, numAudio + numVoice - MIN_VOICES);
+-			for (int32_t i = 0; i < numToCull; i++) {
+-				// hard cull (no release)
++			int32_t numToCull = std::min(numSamplesOverLimit >> 4, numAudio + numVoice - MIN_VOICES);
++
++			// Release one voice softly. Of the rest, half fade out within a few milliseconds and half stop at once
++			int32_t numToHardCull = numToCull - 1;
++			int32_t numToStop = numToHardCull / 2;
++			int32_t numToFade = numToHardCull - numToStop;
++			for (int32_t i = 0; i < numToStop; i++) {
+ 				cullVoice(false, FORCE, numSamples, nullptr);
+ 			}
++			for (int32_t i = 0; i < numToFade; i++) {
++				cullVoice(false, SOFT_ALWAYS, numSamples, nullptr);
++			}
+ 			cullVoice(false, SOFT_ALWAYS, numSamples, nullptr);
+ #if ALPHA_OR_BETA_VERSION
+ 
+@@ -430,22 +441,20 @@ inline void cullVoices(size_t numSamples, int32_t numAudio, int32_t numVoice) {
+ 			culled = true;
+ 		}
+ 
+-		// Or if it's just a little bit dire, do a soft cull with fade-out, but only cull for sure if numSamples
+-		// is increasing
++		// Or if it's just a little bit dire, do a soft cull with fade-out - but only while the overload persists and
++		// isn't already falling, so short spikes don't cost notes
+ 		else if (numSamplesOverLimit >= 0) {
+-
+-			// If not in first routine call this is inaccurate, so just release another voice since things are
+-			// probably bad
+-			cullVoice(false, numRoutines == 0 ? SOFT : SOFT_ALWAYS, numSamples, nullptr);
+-			logAction("soft cull");
+-			if (numRoutines > 0) {
+-				culled = true;
+-				D_PRINTLN("culling in second routine");
++			if (lastNumSamplesOverLimit > 0 && numSamplesOverLimit >= lastNumSamplesOverLimit) {
++				cullVoice(false, SOFT_ALWAYS, numSamples, nullptr);
++				logAction("soft cull");
++				if (numRoutines > 0) {
++					culled = true;
++					D_PRINTLN("culling in second routine");
++				}
+ 			}
+ 		}
+ 	}
+ 	else {
+-		int32_t numSamplesOverLimit = numSamples - numSamplesLimit;
+ 		// Cull anyway if things are bad
+ 		if (numSamplesOverLimit >= 40) {
+ 			D_PRINTLN("under min voices but culling anyway");
+@@ -453,6 +462,8 @@ inline void cullVoices(size_t numSamples, int32_t numAudio, int32_t numVoice) {
+ 			culled = true;
+ 		}
+ 	}
++	lastNumSamplesOverLimit = numSamplesOverLimit;
++
+ 	// blink LED to alert the user
+ 	if (culled && FlashStorage::highCPUUsageIndicator && false) {
+ 		if (indicator_leds::getLedBlinkerIndex(IndicatorLED::PLAY) == 255) {
+@@ -577,6 +588,8 @@ void renderAudioForStemExport(size_t numSamples);
+ 		numSamples = (numSamples + 2) & ~3;
+ 	}
+ 
++	voicesStartedThisRender = 0;
++
+ 	int32_t timeWithinWindowAtWhichMIDIOrGateOccurs;
+ 	tickSongFinalizeWindows(numSamples, timeWithinWindowAtWhichMIDIOrGateOccurs);
+ 
+@@ -1359,6 +1372,8 @@ void getReverbParamsFromSong(Song* song) {
+ Voice* solicitVoice(Sound* forSound) {
+ 	Voice* newVoice;
+ 
++	voicesStartedThisRender++;
++
+ 	if (firstUnassignedVoice) {
+ 		newVoice = firstUnassignedVoice;
+ 		// reconstruct it
+diff --git a/src/deluge/processing/sound/sound.cpp b/src/deluge/processing/sound/sound.cpp
+index f9a0be30..5693e32f 100644
+--- a/src/deluge/processing/sound/sound.cpp
++++ b/src/deluge/processing/sound/sound.cpp
+@@ -2419,23 +2419,35 @@ void Sound::render(ModelStackWithThreeMainThings* modelStack, StereoSample* outp
+ 	          &postFXVolume, paramManager);
+ 	processStutter((StereoSample*)soundBuffer, numSamples, paramManager);
+ 
+-	processReverbSendAndVolume((StereoSample*)soundBuffer, numSamples, reverbBuffer, postFXVolume, postReverbVolume,
+-	                           reverbSendAmount, 0, true);
+-
+ 	q31_t compThreshold = paramManager->getUnpatchedParamSet()->getValue(params::UNPATCHED_COMPRESSOR_THRESHOLD);
+ 	compressor.setThreshold(compThreshold);
+-	if (compThreshold > 0) {
+-		compressor.renderVolNeutral((StereoSample*)soundBuffer, numSamples, postFXVolume);
+-	}
+-	else {
++	bool recording = (recorder && recorder->status < RecorderStatus::FINISHED_CAPTURING_BUT_STILL_WRITING);
++
++	// Without compressor and recording nothing needs the processed buffer, so the volume stage adds straight into the
++	// output - one pass less, same result
++	if (compThreshold <= 0 && !recording) {
++		processReverbSendAndVolume((StereoSample*)soundBuffer, numSamples, reverbBuffer, postFXVolume, postReverbVolume,
++		                           reverbSendAmount, 0, true, outputBuffer);
+ 		compressor.reset();
+ 	}
++	else {
++		processReverbSendAndVolume((StereoSample*)soundBuffer, numSamples, reverbBuffer, postFXVolume, postReverbVolume,
++		                           reverbSendAmount, 0, true);
+ 
+-	if (recorder && recorder->status < RecorderStatus::FINISHED_CAPTURING_BUT_STILL_WRITING) {
+-		// we need to double it because for reasons I don't understand audio clips max volume is half the sample volume
+-		recorder->feedAudio(soundBuffer, numSamples, true, 2);
++		if (compThreshold > 0) {
++			compressor.renderVolNeutral((StereoSample*)soundBuffer, numSamples, postFXVolume);
++		}
++		else {
++			compressor.reset();
++		}
++
++		if (recording) {
++			// we need to double it because for reasons I don't understand audio clips max volume is half the sample
++			// volume
++			recorder->feedAudio(soundBuffer, numSamples, true, 2);
++		}
++		addAudio((StereoSample*)soundBuffer, outputBuffer, numSamples);
+ 	}
+-	addAudio((StereoSample*)soundBuffer, outputBuffer, numSamples);
+ 
+ 	postReverbVolumeLastTime = postReverbVolume;
+ 
+-- 
+2.43.0
+
