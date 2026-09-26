@@ -328,6 +328,17 @@ Das OLED zeigt Ton, Modus, Tonhöhe und den Beat mit seinem Bereich (Delta, Thet
   - Einer ist nicht hörbar (externe Clock), wurde aber trotzdem verbessert.
   - Einer ist widerlegt (MIDI Follow verhält sich wie im Song-View).
 
+## Leistungsversion und Messversion (zu v12)
+
+- **`perf/`:** v12-perf, `deluge-1.2.1-mastertune-v12-perf-ef5caee8.bin`, SHA-256 `d08b09bc…19ce4060c`.
+  - v12 mit bitgleich schnelleren Filtern und Oszillatoren: im Volllast-Test −20 % Rechenlast.
+  - Mit Culling wie auf dem Gerät klingen 38 % mehr Stimmen.
+  - Enthält den CPU-Monitor. Details, Beweise und Vergleich auf dem Gerät: `perf/README.md`.
+- **`diag/`:** die Messversion v12-diag, v12 plus CPU-Monitor.
+  - Zeigt CPU-Last, Stimmen, Qualitätsabsenkung und SD-Zeiten auf dem OLED und per USB-MIDI.
+  - Dazu `tools/cpu_monitor.html` und ein Test-Song. Details: `diag/README.md`.
+- **`research/OPTIMIERUNG.md`:** alle Messungen und Erkenntnisse zur Optimierung.
+
 ## Bedienung
 
 Das Menü liegt unter **Settings → Tuning → Master tune (Hz)**. Die 7-Segment-Anzeige zeigt `TUNE` → `MTUN`.

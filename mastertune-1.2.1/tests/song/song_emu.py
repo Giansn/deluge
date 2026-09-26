@@ -125,8 +125,9 @@ class Symbols:
 
 
 class Emulator:
-    def __init__(self, elf, sd_image, tool_prefix, build_dir, log):
+    def __init__(self, elf, sd_image, tool_prefix, build_dir, log, fill=None):
         self.elf = elf
+        self.fill = fill  # 32-bit word the RAM holds before boot (None: zeros), see --fill
         self.log = log
         self.tool_prefix = tool_prefix
         self.sym = Symbols(elf, tool_prefix)
@@ -143,6 +144,9 @@ class Emulator:
         # Internal RAM and SDRAM, each also at its uncached mirror (the same host memory)
         self.iram = ctypes.create_string_buffer(INTERNAL_RAM_SIZE)
         self.sdram = ctypes.create_string_buffer(SDRAM_SIZE)
+        if fill is not None:  # What the RAM holds at power-on isn't zero: see --fill
+            for buf, size in ((self.iram, INTERNAL_RAM_SIZE), (self.sdram, SDRAM_SIZE)):
+                ctypes.memmove(buf, struct.pack("<I", fill) * (size // 4), size)
         for base, buf, size in ((INTERNAL_RAM, self.iram, INTERNAL_RAM_SIZE), (SDRAM, self.sdram, SDRAM_SIZE)):
             uc.mem_map_ptr(base, size, UC_PROT_ALL, ctypes.addressof(buf))
             uc.mem_map_ptr(base + UNCACHED_MIRROR_OFFSET, size, UC_PROT_ALL, ctypes.addressof(buf))
@@ -162,6 +166,8 @@ class Emulator:
         uc.hook_add(UC_HOOK_INTR, self.on_interrupt)
         for paddr, content in self.segments:  # As the bootloader leaves it: every segment at its load address
             uc.mem_write(paddr, content)
+        # What reset_handler does before resetprg() (initsct: .bss cleared; resetprg() clears .frunk_bss itself)
+        uc.mem_write(*self.section(data, ".bss"))
         uc.reg_write(UC_ARM_REG_C1_C0_2, uc.reg_read(UC_ARM_REG_C1_C0_2) | (0xF << 20))  # CP10/CP11 (VFP/NEON)
         uc.reg_write(UC_ARM_REG_FPEXC, 0x40000000)
 
@@ -178,6 +184,62 @@ class Emulator:
         self.sd_reads = self.sd_writes = 0
         self.dma_free = 0  # See ssi_position()
         self.stopped = False
+        self.uninit = None  # See track_uninitialised_reads()
+
+    def track_uninitialised_reads(self, build_dir):
+        """--uninit: uninit.c's shadow of the RAM, with what's written so far (the ELF's segments, .bss) and from here
+        on everything this harness writes into the RAM marked as written."""
+        so = os.path.join(build_dir, "uninit.so")
+        uc_dir = os.path.dirname(unicorn.__file__)
+        subprocess.run(["cc", "-O2", "-shared", "-fPIC", f"-I{uc_dir}/include", os.path.join(HERE, "uninit.c"), "-o", so,
+                        f"-L{uc_dir}/lib", "-l:libunicorn.so.2", f"-Wl,-rpath,{uc_dir}/lib"], check=True)
+        lib = ctypes.CDLL(so)
+        lib.un_dump.restype = ctypes.c_uint32
+        if lib.un_install(self.uc._uch, int(os.environ.get("UNINIT_HOOKS", "0"))) != 0:
+            raise SystemExit("could not install the memory hooks")
+        data = open(self.elf, "rb").read()
+        for paddr, content in self.segments:
+            lib.un_mark(paddr, len(content))
+        bss, zeros = self.section(data, ".bss")
+        lib.un_mark(bss, len(zeros))
+        write = self.uc.mem_write
+
+        def mem_write(address, content):
+            write(address, content)
+            lib.un_mark(address & 0xFFFFFFFF, len(content))
+        self.uc.mem_write = mem_write
+        self.uninit = lib
+
+    def report_uninitialised_reads(self, path):
+        n = 1 << 16
+        buf = (ctypes.c_uint32 * (7 * n))()
+        k = self.uninit.un_dump(buf, n)
+        entries = sorted((tuple(buf[7 * i:7 * i + 7]) for i in range(k)), key=lambda e: (e[5], e[6], e[0]))
+        pcs = sorted({e[0] for e in entries} | {e[4] & ~1 for e in entries})
+        lines = subprocess.run([self.tool_prefix + "addr2line", "-e", self.elf, "-C"] + [f"{a:#x}" for a in pcs],
+                               capture_output=True, text=True).stdout.splitlines()
+        where = {a: os.path.relpath(l.split(" (")[0], os.path.dirname(os.path.dirname(os.path.dirname(self.elf))))
+                 if l.startswith("/") else l for a, l in zip(pcs, lines)}
+        phases = {0: "boot", 1: "load", 2: "playback"}
+        with open(path, "w") as f:
+            f.write("# reads of RAM never written, per PC: phase, window (playback), count, first data address/size, "
+                    "function, source, caller (LR)\n")
+            for pc, count, address, size, lr, phase, window in entries:
+                f.write(f"{phases.get(phase, phase)}\t{window}\t{count}\t{address:#010x}/{size}\t{self.sym.name_at(pc)}"
+                        f"\t{where.get(pc)}\tlr {self.sym.name_at(lr & ~1)} {where.get(lr & ~1)}\n")
+        self.log(f"uninitialised reads: {len(entries)} instructions, written to {path}")
+
+    @staticmethod
+    def section(data, wanted):
+        """(address, bytes(size)) of the ELF section with that name."""
+        shoff, = struct.unpack_from("<I", data, 32)
+        shentsize, shnum, shstrndx = struct.unpack_from("<HHH", data, 46)
+        strtab = struct.unpack_from("<IIIIII", data, shoff + shstrndx * shentsize)[4]
+        for i in range(shnum):
+            name, _, _, addr, _, size = struct.unpack_from("<IIIIII", data, shoff + i * shentsize)
+            if data[strtab + name:data.index(b"\0", strtab + name)].decode() == wanted:
+                return addr, bytes(size)
+        raise KeyError(wanted)
 
     def seconds(self):
         """Emulated time: instructions at 400 MHz."""
@@ -432,7 +494,11 @@ def task_stats_address(emu):
     """Where routine() reads getLastRunTimeforCurrentTask() (inlined): taskManager.list[currentID].durationStats
     .average. From the code: movs r1, #sizeof(Task); ldrsb.w r2, [r3, #offsetof(currentID)]; mla r3, r1, r2, r3;
     vldr d16, [r3, #offsetof(average)]; vmul.f64 (by 44100)."""
+    # The measurement version (CPU monitor) wraps the v12 routine() as routineUnmeasured(), where the read then is
     code = disassemble(emu, "_ZN11AudioEngine7routineEv")
+    for name in ("_ZN11AudioEngineL17routineUnmeasuredEv", "_ZN11AudioEngine17routineUnmeasuredEv"):
+        if name in emu.sym.by_name:
+            code = code + disassemble(emu, name)
     for i in range(5, len(code) - 1):
         if (code[i][1] == "vldr" and code[i + 1][1] == "vmul.f64" and code[i - 1][1] == "mla"
                 and code[i - 2][1].startswith("ldrsb")):
@@ -514,6 +580,9 @@ class Player:
         voices per Sound*)."""
         emu = self.emu
         emu.dma_free = 127
+        if emu.uninit:
+            self.window_number = getattr(self, "window_number", 0) + 1
+            emu.uninit.un_set_window(self.window_number)
         if self.culling:
             emu.uc.mem_write(self.task_average_address, struct.pack("<d", self.task_average))
         self.window_culls = 0
@@ -784,6 +853,18 @@ def main():
     ap.add_argument("--culling", action="store_true",
                     help="as on the Deluge: routine() culls voices and sets cpuDireness by its emulated duration")
     ap.add_argument("--write-back", help="also save the song as the firmware writes it after loading, to this file")
+    ap.add_argument("--fill", type=lambda x: int(x, 0),
+                    help="fill the internal RAM and the SDRAM (not the peripherals) with this 32-bit word before boot "
+                         "(default: zeros); two different words give the same measured.wav unless the firmware reads "
+                         "memory it never wrote")
+    ap.add_argument("--uninit", metavar="FILE",
+                    help="track which bytes of the RAM were written (uninit.c, compiled into --build; slow: use few "
+                         "bars) and write every instruction that reads bytes never written to FILE")
+    ap.add_argument("--seed", type=lambda x: int(x, 0),
+                    help="set the random generator (jcong) to this after boot, before the song loads: Song::"
+                         "setupDefault() seeds it from the MTU2's fast timer (TCNT_0), i.e. from the emulated time, "
+                         "which depends on the build's code and data layout. With it, measured.wav is bit-exact "
+                         "across builds that render the same")
     args = ap.parse_args()
     tools = args.tools or os.path.join(os.path.dirname(os.path.abspath(args.elf)),
                                        "../../toolchain/v16/linux-x86_64/arm-none-eabi-gcc/bin/arm-none-eabi-")
@@ -792,9 +873,18 @@ def main():
     def log(s):
         print(s, flush=True)
 
-    emu = Emulator(args.elf, args.sd, tools, args.build, log)
+    emu = Emulator(args.elf, args.sd, tools, args.build, log, fill=args.fill)
+    if args.uninit:
+        emu.track_uninitialised_reads(args.build)
     setup_sd(emu)
     boot(emu)
+    if emu.uninit:
+        emu.uninit.un_set_phase(1)
+    jcong = emu.sym["jcong"]
+    log(f"random seed after boot (jcong, from TCNT_0 in Song::setupDefault()): {emu.u32(jcong):#010x}"
+        + (f", set to {args.seed:#010x} (--seed)" if args.seed is not None else ""))
+    if args.seed is not None:
+        emu.w32(jcong, args.seed)
     load_startup_song(emu)
     if args.write_back:
         write_back_song(emu, args.write_back)
@@ -802,9 +892,13 @@ def main():
     xml = fat32.read_file(args.sd, "SONGS/DEFAULT.XML").decode(errors="replace")
     song_names = list(dict.fromkeys(re.findall(r'<sound\b[^>]*?\b(?:presetName|name)="([^"]+)"', xml)))
     player = Player(emu, culling=args.culling)
+    if emu.uninit:
+        emu.uninit.un_set_phase(2)
     player.start()
     result = measure(emu, player, args.warmup_bars, args.bars, args.out, log, song_names)
     json.dump(result, open(os.path.join(args.out, "result.json"), "w"), indent=1)
+    if emu.uninit:
+        emu.report_uninitialised_reads(args.uninit)
     report(result, log)
 
 

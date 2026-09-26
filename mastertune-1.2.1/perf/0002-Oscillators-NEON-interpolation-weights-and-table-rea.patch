@@ -1,7 +1,7 @@
-From a63fc069fa5df5f86237da5866f2e136925a0308 Mon Sep 17 00:00:00 2001
+From 2b9ae2b22bfcdf822441f921d01947b4f6abe949 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 26 Sep 2026 17:36:24 +0000
-Subject: [PATCH] Oscillators: NEON interpolation weights and table reads,
+Subject: [PATCH 2/3] Oscillators: NEON interpolation weights and table reads,
  unswitched amplitude, NEON crude saw/square/triangle, exact VFP divisions,
  clz table number
 
