@@ -10,8 +10,11 @@ The program is built with the firmware's toolchain and flags (see arm_build.py) 
 - An undefined instruction (what -fsanitize-undefined-trap-on-error puts where UndefinedBehaviorSanitizer found
   something) stops it with the place in the source.
 - Between EMU_COUNT_BEGIN() and EMU_COUNT_END() (emu_count.h), every instruction executed is counted, so a test can
-  report what its DSP costs on the real instruction set.
+  report what its DSP costs on the real instruction set. With ARM_PROFILE=1 in the environment, also by function:
+  where those instructions go, the functions that cost the most first.
 """
+import bisect
+import collections
 import os
 import struct
 import subprocess
@@ -21,6 +24,9 @@ import time
 from unicorn import UC_ARCH_ARM, UC_HOOK_CODE, UC_HOOK_INTR, UC_MODE_ARM, Uc, UcError
 from unicorn.arm_const import (UC_ARM_REG_C1_C0_2, UC_ARM_REG_CPSR, UC_ARM_REG_FPEXC, UC_ARM_REG_PC, UC_ARM_REG_R0,
                                UC_ARM_REG_R1, UC_ARM_REG_SP, UC_CPU_ARM_CORTEX_A9)
+
+PROFILE = bool(os.environ.get("ARM_PROFILE"))
+PROFILE_TOP = 12
 
 RAM_SIZE = 0x20000000  # 512 MB from address 0, mapped lazily by the host
 STACK_TOP = RAM_SIZE
@@ -49,6 +55,7 @@ class Program:
         self.files = {}  # Semihosting handle -> file object
         self.next_handle = 3
         self.counts = {}  # Label -> [instructions, calls]
+        self.profiles = {}  # Label -> Counter of instructions by address (ARM_PROFILE)
         self.counting = None  # [label, count, hook]
         self.start_time = time.time()
         data = open(path, "rb").read()
@@ -239,19 +246,25 @@ class Program:
                 return
             if number == SVC_COUNT_BEGIN:
                 label = self.cstring(uc.reg_read(UC_ARM_REG_R0), 200).decode("latin-1")
-                state = [label, 0, None]
+                state = [label, 0, None, None]
 
                 def count(_uc, _address, _size, s):
                     s[1] += 1
 
-                state[2] = uc.hook_add(UC_HOOK_CODE, count, user_data=state, begin=self.text_range[0],
-                                       end=self.text_range[1])
+                def count_and_profile(_uc, address, _size, s):
+                    s[1] += 1
+                    s[3][address] += 1
+
+                if PROFILE:
+                    state[3] = self.profiles.setdefault(label, collections.Counter())
+                state[2] = uc.hook_add(UC_HOOK_CODE, count_and_profile if PROFILE else count, user_data=state,
+                                       begin=self.text_range[0], end=self.text_range[1])
                 uc.ctl_flush_tb()  # Code translated before has no hook in it
                 self.counting = state
                 return
             if number == SVC_COUNT_END:
                 if self.counting:
-                    label, n, hook = self.counting
+                    label, n, hook, _ = self.counting
                     uc.hook_del(hook)
                     uc.ctl_flush_tb()  # Back to full speed
                     entry = self.counts.setdefault(label, [0, 0])
@@ -300,9 +313,38 @@ class Program:
             # 128 samples at 44.1 kHz on the 400 MHz Cortex-A9: 1.16 million cycles
             print(f"[arm] {label}: {per:,.0f} instructions per call ({calls} calls), "
                   f"about {per / 1161000 * 100:.2f}% of the CPU per block of 128 at 1 instruction per cycle")
+        if self.profiles:
+            self.print_profiles()
         if self.exit_code is None:
             self.exit_code = 1
         return self.exit_code
+
+    def print_profiles(self):
+        prefix = toolchain_prefix()
+        if not prefix:
+            print("[arm-profile] needs DELUGE_FIRMWARE for the symbols")
+            return
+        out = subprocess.run([prefix + "nm", "-C", "-S", "-n", "--defined-only", self.path], capture_output=True,
+                             text=True).stdout
+        starts, ends, names = [], [], []
+        for line in out.splitlines():
+            parts = line.split(maxsplit=3)
+            if len(parts) == 4 and parts[2] in "TtWw":
+                start = int(parts[0], 16) & ~1
+                starts.append(start)
+                ends.append(start + int(parts[1], 16))
+                names.append(parts[3])
+        for label, histogram in self.profiles.items():
+            calls = self.counts.get(label, [0, 1])[1] or 1
+            total = sum(histogram.values())
+            by_function = collections.Counter()
+            for address, n in histogram.items():
+                i = bisect.bisect_right(starts, address) - 1
+                name = names[i] if i >= 0 and address < ends[i] else f"?{address:#x}"
+                by_function[name] += n
+            print(f"[arm-profile] {label}: {total / calls:,.0f} instructions per call")
+            for name, n in by_function.most_common(PROFILE_TOP):
+                print(f"[arm-profile]   {n / total * 100:5.1f}%  {n / calls:10,.0f}  {name[:110]}")
 
 
 class FeatureFile:
