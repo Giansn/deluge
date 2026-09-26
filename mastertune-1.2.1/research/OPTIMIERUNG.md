@@ -362,17 +362,42 @@ Grundlage: Anteil im vollen Song mal geschätzte Einsparung aus den Benchmarks. 
 2. Ein Gegenprüfer kontrolliert.
 3. Zum Schluss der ganze Song vorher/nachher: gleicher Ausgang (`measured.wav`), weniger Befehle.
 
-## 7a. Umsetzung (läuft)
+## 7a. Umsetzung: Filter und Oszillatoren (bitgleich, gegengeprüft)
 
-- **Referenz:** `/home/user/work/baseline-v12/song`, der Volllast-Test mit der v12-ELF.
-  - Bedarf ohne CPU-Schutz: 1 370 014 Befehle pro 128 Samples.
-  - `measured.wav` SHA-256 `b6766a67…`.
-  - Jede bitgleiche Optimierung muss diesen `measured.wav` exakt reproduzieren.
-- **Workflow `perf-filters-oscillators`:**
-  - Filter und Oszillatoren, je in einer eigenen Arbeitskopie (Branch `perf-filters`, `perf-oscillators`).
-  - Pro Bereich ein Umsetzer und ein Gegenprüfer.
-  - Nachweis: Prüfsummen der Benchmarks inklusive Zufallsfällen (ARM gegen ARM), gleicher Song-Ausgang und ein Argument pro Änderung.
-  - Patches kommen nach `perf/`.
+Rohdaten: `raw/perf-filters-oscillators.json`. Patches: `perf/`. Branches `perf-filters` (`1de85ade`) und `perf-oscillators` (`a63fc069`), kombiniert auf `mastertune-v12-perf`.
+
+| | Benchmark (Befehle pro Block) | ganzer Song, Bedarf pro 128 Samples |
+|---|---|---|
+| Filter | LP24 mono 10 830 → 7 414; HP 7 748 → 3 427; SVF 7 869 → 5 717; LP24 stereo 17 991 → 12 162 | 1 370 014 → 1 173 302 (**−14 %**); LP `doFilter` 403k → 271k, HP 121k → 57k |
+| Oszillatoren | Säge 1 578 → 1 112; Dreieck 1 662 → 606; Analog-Square-PW 2 569 → 1 416 | 1 370 014 → 1 292 117 (**−6 %**); `renderOsc` 280k → 202k |
+
+**Filter-Änderungen:**
+- Zustand, Koeffizienten und `jcong` lokal halten.
+- Feste Verzweigungen einmal pro Block entscheiden.
+- Bei Morph 0 wegfallende Terme weglassen.
+- `hpfLastWorkingValue` nur am Blockende schreiben.
+- Rückkopplung über `smmlar`/`smmla`.
+- Stereo in einem Durchgang pro Kanal. Das Rauschen springt dabei per exaktem LCG-Doppelschritt, gesichert mit `static_assert`.
+- NEON-Addition beim parallelen Routing.
+
+**Oszillator-Änderungen:**
+- NEON-Interpolationsgewichte aus dem Phasenvektor, Tabellenlesen mit `vld2.16`, `applyAmplitude` ausserhalb der Schleife.
+- Crude Saw/Square und Dreieck mit 4 Lanes.
+- Sync- und PW-Divisionen über `vdiv.f64`: bei 32 Bit exakt, bei 64 Bit mit Korrekturschritt.
+- `getTableNumber` über `clz`, für alle 2^32 Eingaben geprüft.
+
+**Nachweis:**
+- Benchmarks ARM gegen ARM mit allen festen und zufälligen Fällen identisch: Filter 2 048 × 64 Blöcke, Oszillatoren 30 000 Fälle, dazu je gut 6 000 bzw. 24 000 eigene Fälle der Gegenprüfer. Absichtlich eingebaute Fehler werden erkannt.
+- Im Song sind alle 650 108 `renderOsc`-Aufrufe und alle geprüften Filter-Aufrufe identisch.
+- Keine neuen Warnungen, keine gefährlichen NEON-Ausrichtungshinweise.
+
+**Offene Befunde der Gegenprüfer:**
+- **Der Song-Ausgang hängt vom Speicher-Layout ab.** Schon unveränderter v12-Code mit anderem Versionsnamen ergibt eine andere `measured.wav`. Der Vergleich der ganzen WAV taugt darum nicht als Beweis, ein layout-gleicher Kontroll-Build schon. Die Ursache wird untersucht (Workflow `layout-dependence`): nicht initialisierter Speicher oder eine Reihenfolge nach Adressen.
+- **Filtercode +17,8 KB** (Templates inline). Der Stack von `doFilterStereo` wächst von 104 auf 528 B, der interne Heap wird entsprechend kleiner.
+  - Im Emulator unsichtbar, auf dem Gerät möglicherweise mehr I-Cache-Fehlzugriffe (L1 32 KB).
+  - Möglich: seltene Pfade mit `[[gnu::cold]]`/`noinline` markieren. Erst nach der Messung auf dem Gerät entscheiden.
+- **Zwei Hänger, schon in 1.2.1:** Analog-Square mit PW bei `phaseIncrement` 1 und Sync bei `resetterPhaseIncrement` 1 (`samplesIncludingNextCrossoverSample` läuft auf 0 über). Praktisch kaum erreichbar, weil so tiefe Frequenzen nötig sind. Optional die Inkremente nach unten begrenzen.
+- Der Test-Song deckt Dreieck unter 711 Hz, Analog-Square mit PW, Osc-Sync und Ringmod nicht ab. Diese Pfade sind nur per Benchmark bewiesen.
 
 ## 8. Offen
 

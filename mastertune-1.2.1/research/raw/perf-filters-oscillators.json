@@ -1,0 +1,142 @@
+[
+ {
+  "works": true,
+  "commit": "1de85ade on perf-filters (/home/user/work/perf-filters). Patch: /home/user/deluge/mastertune-1.2.1/perf/0001-Filters-state-in-registers-invariant-branches-out-of.patch (applies to v12)",
+  "changes": [
+   {
+    "what": "Loops run on local copies of coefficients, state and jcong, written back after the block",
+    "where": "lpladder, hpladder, svf",
+    "saving": "LP24 about 62 to 46 instr/sample",
+    "whyExact": "The output buffers are render buffers and never alias a filter or jcong. Nothing is called inside the loops. The arithmetic is unchanged."
+   },
+   {
+    "what": "Invariant branches taken once per block (LP saturation, HP AA/tanh/none, SVF mix)",
+    "where": "all three filters",
+    "saving": "branch plus loads per sample",
+    "whyExact": "They depend only on the configuration. With sampleIncrement != 1 the branch stays per sample, as before."
+   },
+   {
+    "what": "Morph 0 cases: LP morph term dropped, HP temp_fc = max(fc, limit); SVF terms with a zero coefficient skipped",
+    "where": "lpladder, hpladder, svf",
+    "saving": "2-5 instr/sample",
+    "whyExact": "smmlar(x,y,0) = x + ((0 + 2^31) >> 32) = x, and 2*smmul(in,0) = 0"
+   },
+   {
+    "what": "hpfLastWorkingValue written only at block end when not antialiasing",
+    "where": "hpladder",
+    "saving": "3 instr/sample",
+    "whyExact": "In those modes nothing reads it during the block, so only the last value survives"
+   },
+   {
+    "what": "smmlar feedback chains, smmla for noisy_m",
+    "where": "lpladder, hpladder",
+    "saving": "4-5 instr/sample",
+    "whyExact": "(s<<32 + p) >> 32 = s + (p >> 32) mod 2^32, same rounding. (a<<2)+(b<<2) = (a+b)<<2 mod 2^32"
+   },
+   {
+    "what": "Stereo: one pass per channel; LP noise stepped by the 2-step LCG, left pass starts from the modular inverse",
+    "where": "all three (oversampled drive keeps its joint loop)",
+    "saving": "LP stereo about 15%",
+    "whyExact": "The channels are independent. The LCG jump is exact mod 2^32 and checked by static_assert. The final jcong is unchanged."
+   },
+   {
+    "what": "Unit-stride specialisation; NEON add for parallel routing",
+    "where": "all three; filter_set",
+    "saving": "1 register; ~500 instr/block",
+    "whyExact": "Same loop. vaddq wraps like add, and the two buffers never overlap."
+   }
+  ],
+  "bench": "ARM vs ARM: all 34 fixed hashes and all 8 random-group hashes plus the total identical (PC vs PC too, with UBSan). LP24 mono 9038→5870, res30 10830→7414, HP 7748→3427, SVF 7869→5717, stereo LP24 17991→12162.",
+  "song": {
+   "wavIdentical": false,
+   "demandBefore": 1370014,
+   "demandAfter": 1173302,
+   "areaNote": "LP doFilter 403k→271k, HP 121k→57k. The WAV (aa3cec96…) differs only because of the memory layout. Proof: v12 plus 17,744 B of padding code that never runs (/home/user/work/filters-ctl, same .data and heap addresses) produces exactly aa3cec96…. Every filter call with identical inputs produced identical outputs (348/348 traced)."
+  },
+  "notes": "Important for all perf patches: the song's demand WAV depends on the addresses after .text. Any change in code size shifts .data and __heap_start and changes the WAV, even with bit-exact code. Compare against a layout-matched control instead. No new warnings (checked with -Wall -Wextra). All filter source files formatted with clang-format.",
+  "randomized": "2048 cases × 64 blocks: random modes switched between blocks (including OFF, so resets and fades run), routing, parameters that drift or jump, cpuDireness (oversampling), input (noise, saw, silence, full scale), 1-128 frames per block (odd ones included), mono with stride 1/2/3, and stereo. The hash covers the output, jcong and the FilterSet bytes. gcov: everything covered except the oversampled NONE loop, which setConfig cannot reach.",
+  "dropped": "L/R in NEON lanes (rounds differently). Precomputing noisy_m in a separate pass (about 2 instr/sample net). Hand-written asm loop. Changes to the tanh table lookup (shared function)."
+ },
+ {
+  "works": true,
+  "commit": "a63fc069 auf perf-oscillators; Patch: /home/user/deluge/mastertune-1.2.1/perf/0001-Oscillators-NEON-interpolation-weights-and-table-rea.patch",
+  "changes": [
+   {
+    "what": "Interpolationsgewichte per NEON aus einem Phasenvektor (<<tsm, vshrn #16), Tabellenlesen mit vld2.16, keine {0}-Inits, applyAmplitude ausserhalb der Schleife",
+    "where": "vector_rendering_function.h, render_wave.h (renderWave, renderPulseWave, Sync-Schleifen)",
+    "saving": "Tabellenpfad −28 bis −30 %, 42→29 Instruktionen pro 4 Samples",
+    "whyExact": "Linksshift ist modulo 2^32 linear, also gleiche Bits 16..31 wie phase>>(16−tsm) (tsm≤13). vld2 liest dieselben zwei int16 wie der 32-Bit-Lane-Load. Die Arithmetik bleibt unverändert."
+   },
+   {
+    "what": "Crude Saw und Square (<72 Hz) sowie Dreieck (<711 Hz) mit 4 Lanes",
+    "where": "voice.cpp: renderCrudeSawWaveWithAmplitude, renderOsc",
+    "saving": "−41 / −56 / −64 %",
+    "whyExact": "smmlar = Bits 32..63 von (sum<<32)+a·b+2^31 = vmull+vrshrn#32+vadd mod 2^32. Dreieck = min(p,−p)−2^30, Square = INT32_MAX xor Maske. Der Rest (numSamples&3) läuft zuerst skalar, Phasen und Amplituden unsigned mod 2^32."
+   },
+   {
+    "what": "Divisionen in Sync und PW über vdiv.f64",
+    "where": "render_wave.h (RENDER_OSC_SYNC), voice.cpp (Sync-Setup, Analog-Square-PW)",
+    "saving": "Sync/PW −28 bis −45 %",
+    "whyExact": "Die korrekt gerundete Double-Division ergibt abgeschnitten den Ganzzahlquotienten (32-Bit-Operanden). Bei 64 Bit ist das Ergebnis q oder q+1, eine Restkorrektur gleicht aus. Sonderfälle (Divisor 0, Phase im nächsten Zyklus) laufen über den alten Code."
+   },
+   {
+    "what": "getTableNumber über clz",
+    "where": "voice.cpp",
+    "saving": "≈20 Instruktionen pro Aufruf",
+    "whyExact": "Für alle 2^32 Eingaben identisch geprüft"
+   }
+  ],
+  "bench": "17 feste und 30'000 zufällige Fälle: alle 18 Hashes ARM alt = neu. 800k Divisionen, 0 falsch. Eingebaute Fehler (Mutationen) werden erkannt. Instruktionen: Saw 1578→1112, Dreieck 1662→606, Analog Square PW 2569→1416.",
+  "song": {
+   "wavIdentical": false,
+   "demandBefore": 1370014,
+   "demandAfter": 1292117,
+   "areaNote": "renderOsc 279'575→201'681. Der WAV-Vergleich taugt nicht als Beweis. Unveränderter v12-Code mit RELEASE_TYPE …-perf ergibt 345c0e… statt b6766a…. Mit nie ausgeführtem Padding ergibt er bb8fbf…. Die Demand-WAV hängt also vom Binärlayout ab. Timer und Stack-Müll sind ausgeschlossen. Stattdessen sind alle 650'108 renderOsc-Aufrufe per Wert identisch (song_trace.sh)."
+  },
+  "notes": "Mit -Wall -Wextra gibt es keine neuen Warnungen. Alignment-Hints stehen nur auf Stack-Arrays und auf dem ausgerichteten oscSyncRenderingBuffer. Der Commit fa71231 enthält bereits meine Stub-Änderungen. Offen und nicht committet sind bench.cpp sowie song_trace.py/.sh. Die Ausgaben liegen in /home/user/work/perf-osc-out.",
+  "randomized": "Zufällig gewählt werden Typ, Tonhöhe (log-uniform plus Schwellen ±2), PW, Sync, Unison 1–4, cpuDireness, Amplitude und Steigung sowie Blockgrössen 1–128. Zwischen den Blöcken ändern sich die Parameter. Es gibt Mono-, Stereo- und Fälle ohne Amplitude. Der Hash deckt den ganzen Puffer inklusive Überlauf und die Phasen ab.",
+  "dropped": "WaveTable::doRenderingLoop: kein Wavetable-Bench vorhanden, Gewinn nur ≈5–8 % und nur mit Umbau. Die Ringmod-Pfade ohne Amplitude und die Sync-Crude-Schleifen bleiben skalar."
+ },
+ {
+  "ok": true,
+  "reproduced": "Ich habe den Diff Änderung für Änderung geprüft und nichts Nicht-Exaktes gefunden. Geprüft wurden die Äquivalenz von smmla/smmlar, das Weglassen der Terme bei Morph 0, der LCG-Doppelschritt mit Inverse (per static_assert gesichert), hpfLastWorkingValue am Blockende, Aliasing, UB durch Überlauf und alle Pfade (Oversampling, Strided, Stereo).\nARM=1-Bench v12 gegen perf-filters: alle 41 Hashes identisch.\nEigene adversariale Fälle (12x512 Fälle x 48 Blöcke): Rechteck mit Vollausschlag INT32_MIN/MAX, Gleichspannung, Impulse, zufälliges jcong, freq 0 und INT32_MAX, Resonanz bis 2^30, Morph ±1, voll oder zufällig über 32 Bit, reset() mitten im Lauf, häufig 1-5 Frames, sampleIncrement 2-4, Stereo 50 %. Ergebnis: ARM und PC (UBSan) jeweils identisch, keine UB-Meldung.\nDer Build stammt aus Commit 1de85ade (Unity-Objekt neu kompiliert, alle Symbolgrössen gleich wie im ELF). Das Patch-File entspricht format-patch und lässt sich auf v12 anwenden.\nSong neu gelaufen: demand 1'173'302 statt 1'370'014, WAV aa3cec96 reproduziert. Das ist gleich wie bei der Kontrolle filters-ctl (Adressen von .rodata, .data, __heap_start und jcong verifiziert), aber ungleich zur Baseline.\nKeine neuen Warnungen bei -Wall -Wextra (zwei weniger), clang-format sauber. Einziger NEON-Hint ist ein vom Compiler gesetztes :64 auf tempRenderBuffer; das ist durch das .bss-Alignment 8 gedeckt (Adresse 0x20085070).",
+  "problems": [
+   {
+    "problem": "measured.wav ist nicht byteidentisch mit der Baseline. Kriterium 2 ist damit formal nicht erfüllt.",
+    "where": "tests/song, demand-Lauf",
+    "evidence": "Mein Lauf ergibt aa3cec96…, die Baseline b6766a67…. Die Kontrolle mit v12-Filtercode und identischem Daten- und Heap-Layout ergibt ebenfalls aa3cec96. Die Abweichung kommt also vom Layout, nicht vom Filter.",
+    "fix": "Für Patches, die die Codegrösse ändern, als Referenz eine layout-gleiche Kontrolle verwenden. Separat untersuchen, warum die Firmware vom Layout abhängt (vermutlich uninitialisierter Speicher oder eine adressabhängige Reihenfolge). Am Patch selbst ist nichts zu ändern."
+   },
+   {
+    "problem": "Code und Stack sind deutlich gewachsen. Das ist nicht blockierend.",
+    "where": "lpladder.cpp: doFilterStereo und doFilter (alle Template-Instanzen inline)",
+    "evidence": "Filtercode 13'380 → 31'188 B (+17,8 KB). Dadurch verschieben sich .rodata, .data und __heap_start um 0x4580, der interne Heap wird entsprechend kleiner. Stack von LP doFilterStereo 104 → 528 B, doFilter 104 → 304 B. Das liegt unter -Wstack-usage=2000 (Programmstack 32 KB).",
+    "fix": "renderLoop-Instanzen mit [[gnu::noinline]] versehen (kostet einen Call pro Block). Seltene Pfade (MONO_STRIDED, Oversampling) mit [[gnu::cold]] markieren oder nicht als Template ausführen."
+   }
+  ]
+ },
+ {
+  "ok": true,
+  "reproduced": "Diff geprüft (Worktree sauber, ELF bd8196… = Commit a63fc069, Patch in perf/ identisch). ARM-Bench mit Kopie plus 24'000 eigenen Fällen (harte Divisionen, Grenze «nächster Zyklus», PW-Extreme, Sync am Crossover, Amplitudenüberlauf, alle Blockgrössen, mono/stereo/ohne Amplitude, cpuDireness 0–14): alle 22 Hashes alt = neu, Instruktionen überall tiefer (z. B. Dreieck 1662→606). getTableNumber für alle 2^32 Eingaben identisch. Mit -Wall -Wextra gibt es keine neuen Warnungen. Der Stackframe von renderOsc bleibt bei 272 B. Alignment-Hints :64 liegen nur auf sp+184, :128 nur auf oscSyncRenderingBuffer. Keine Stores mit Hint, vld2 ohne Hint. Song: final 0e7481… ≠ b6766a…. Den unveränderten v12-Code mit RELEASE_TYPE -perf (alle Symbolgrössen gleich, 1'370'014 Instr.) habe ich selbst laufen lassen: 345c0e…, also hängt die WAV vom Layout ab. Die Traces von 650'108 renderOsc-Aufrufen sind identisch.",
+  "problems": [
+   {
+    "problem": "Das Song-Kriterium (measured.wav byte-identisch) ist nicht erfüllt und für jeden Neubuild unerreichbar",
+    "where": "tests/song (Demand-Lauf)",
+    "evidence": "Unveränderter v12-Code, nur mit anderem Versionsstring (16 B), ergibt reproduzierbar 345c0e… statt b6766a…",
+    "fix": "Ursache der Layoutabhängigkeit suchen (Pointer-Reihenfolge, uninitialisierter Speicher). Bis dahin die Baseline mit gleichem RELEASE_TYPE bauen und per song_trace.sh vergleichen"
+   },
+   {
+    "problem": "Die Song-Trace deckt die geänderten Sonderpfade nicht ab",
+    "where": "song_trace.sh, strace-*.txt",
+    "evidence": "Im Song kommen nur SQUARE, SAW und WAVETABLE vor, ohne PW, Sync und ohne-Amplitude-Aufrufe. Dreieck, Analog-Square-PW-Division und Sync-Division sind nur durch Bench und Argument belegt",
+    "fix": "Dem Testsong Dreieck <711 Hz, Analog Square mit PW, Osc-Sync und Ringmod hinzufügen"
+   },
+   {
+    "problem": "Zwei Hänger bestehen schon vorher (keine Regression): Analog Square mit PW und phaseIncrement 1 sowie Sync mit resetterPhaseIncrement 1 (samplesIncludingNextCrossoverSample läuft auf 0 über)",
+    "where": "voice.cpp PW-Setup, render_wave.h RENDER_OSC_SYNC",
+    "evidence": "Beide Bäume hängen bei denselben Parametern (PC und ARM)",
+    "fix": "Optional die Inkremente nach unten begrenzen. Der Bench muss unter 256 meiden, wie es der Zufallsgenerator bereits tut"
+   }
+  ]
+ }
+]
