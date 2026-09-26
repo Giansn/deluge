@@ -217,6 +217,18 @@ static double tone440(size_t t) {
 	return 0.25 * fadeIn * std::sin(2 * M_PI * 440 * t / kFs);
 }
 
+// The rate for a free delay time in seconds, and the loudest sample of a stretch in dB against a 0.25 tone
+static int32_t rateFor(double seconds) {
+	return (int32_t)(16384.0 * (1 << 24) / (seconds * kFs));
+}
+static double peakDb(const std::vector<double>& x, size_t from, size_t to) {
+	double m = 0;
+	for (size_t i = from; i < std::min(to, x.size()); i++) {
+		m = std::max(m, std::abs(x[i]));
+	}
+	return 20 * std::log10(m / 0.25 + 1e-30);
+}
+
 // The loudest treble (above 4 kHz) in frames of 1024 samples (hop 256) over a stretch, in dB against a 0.25 sine in
 // such a frame: what a click or a step leaves. A 440 Hz tone leaves nothing there (below -130 dB).
 static double trebleLevel(const std::vector<double>& x, size_t from, size_t to) {
@@ -898,8 +910,117 @@ int main() {
 				}
 			}
 		}
+
+		// 20. (v14) Fade mode: the end of the repeats counted by the buffer the sound goes round. A change to a shorter
+		// time after the sound stopped: the old buffer still has repeats to play out, and counting the new, shorter
+		// buffer's times round gave up on them first (at feedback 0.2 and 0.5 to 0.12 s, the second repeat, 28 dB
+		// down, was missing; at 0.5 and 1 to 0.05 s, the one on its way was cut off). With the countdown, the same as
+		// with sound coming in all along (no countdown), until the end. And a time an LFO keeps changing, which keeps
+		// the delay fading from one buffer to the next, still lets it give up.
+		{
+			// A 60 ms burst at 440 Hz with 5 ms edges
+			auto burst60 = [](size_t t) {
+				if (t >= 2646) {
+					return 0.0;
+				}
+				double edge = std::min(1.0, std::min(t, 2646 - t) / 220.0);
+				return 0.25 * (0.5 - 0.5 * std::cos(M_PI * edge)) * std::sin(2 * M_PI * 440 * t / kFs);
+			};
+			struct Case {
+				const char* name;
+				double feedback, from, to, changeAt, windowFrom, windowTo, seconds;
+			};
+			for (const Case& c :
+			     {Case{"0.5 to 0.12 s at feedback 0.2, the second repeat", 0.2, 0.5, 0.12, 0.6, 0.98, 1.1, 2},
+			      Case{"1 to 0.05 s at feedback 0.5, the repeat on its way", 0.5, 1.0, 0.05, 1.5, 2.0, 2.5, 4}}) {
+				double peak[2];
+				bool freed = false;
+				for (int countdown = 0; countdown < 2; countdown++) {
+					Runner r(true);
+					r.feedback = (int32_t)(c.feedback * (1 << 30));
+					size_t change = (size_t)(c.changeAt * kFs);
+					Wet w = playWet(
+					    r, (size_t)(c.seconds * kFs), burst60,
+					    [&](size_t pos) { return rateFor(pos < change ? c.from : c.to); },
+					    [&](size_t pos) { r.soundComingIn = !countdown || pos < 2646; });
+					peak[countdown] = peakDb(w.l, (size_t)(c.windowFrom * kFs), (size_t)(c.windowTo * kFs));
+					freed = !r.delay.isActive();
+				}
+				printf("fade mode, end of the repeats, %s: %.1f dB (no countdown %.1f dB), freed at the end %d\n",
+				       c.name, peak[1], peak[0], freed);
+				CHECK(std::abs(peak[1] - peak[0]) < 0.5, "%s: %.1f dB, should be %.1f dB", c.name, peak[1], peak[0]);
+				CHECK(freed, "%s: the delay should have given up", c.name);
+			}
+
+			Runner r(true);
+			r.feedback = 1 << 29;
+			Wet w = playWet(
+			    r, 44100 * 12, [](size_t t) { return t < 44100 ? tone440(t) : 0; },
+			    [](size_t pos) { return rateFor(0.4 * (1 + 0.03 * std::sin(2 * M_PI * pos / kFs))); },
+			    [&](size_t pos) { r.soundComingIn = pos < 44100; });
+			printf("fade mode, time moved by an LFO, 11 s after the sound: delay freed %d\n", !r.delay.isActive());
+			CHECK(!r.delay.isActive(), "fade mode with an LFO on the time: the delay should give up");
+		}
 	}
 #endif
+
+	// 21. (v14) The end of the repeats when the last time round begins partway through it: feedback below 3 %, where
+	// the first time round is the last, or turned down after the sound stopped. The fade was set for a whole time
+	// round, and cut off at full level when it came round (33.8 dB under the sound at feedback 0.025); now it reaches
+	// 0 by then, or a time round later where that would be quicker than from full in 1024 samples. And below 3 %, the
+	// delay no longer gives up while sound is coming in: it did at every time round, the repeats cut off a block
+	// after they came round.
+	for (bool fade : {false, true}) {
+		double worstEnd = -200, worstEndTurnedDown = -200, weakestWhilePlaying = 0;
+		int shortestFade = 1 << 30;
+		bool allFreed = true;
+		for (int k = 0; k < 10; k++) {
+			Runner r(fade);
+			bool turnedDown = k >= 8; // Feedback 0.5 until 0.3 or 0.45 s after the sound, then 0.02
+			r.feedback = (int32_t)((turnedDown ? 0.5 : 0.025) * (1 << 30));
+			size_t stop = 44100 + (k % 8) * 2756;
+			size_t turn = stop + (size_t)((k == 8 ? 0.3 : 0.45) * kFs);
+			int fadeBlocks = 0;
+			Wet w = playWet(
+			    r, 44100 * 4, [&](size_t t) { return t < stop ? tone440(t) : 0; }, [](size_t) { return rateFor(0.5); },
+			    [&](size_t pos) {
+				    r.soundComingIn = pos < stop;
+				    if (turnedDown && pos >= turn) {
+					    r.feedback = (int32_t)(0.02 * (1 << 30));
+				    }
+				    fadeBlocks += (r.delay.isActive() && r.delay.tailGain < 2147483647);
+			    });
+			size_t last = 0;
+			for (size_t i = 0; i < w.l.size(); i++) {
+				if (std::abs(w.l[i]) > 1e-9) {
+					last = i;
+				}
+			}
+			double end = 20 * std::log10(std::abs(w.l[last]) / 0.25 + 1e-30);
+			double& worst = turnedDown ? worstEndTurnedDown : worstEnd;
+			worst = std::max(worst, end);
+			shortestFade = std::min(shortestFade, fadeBlocks * kBlock);
+			allFreed = allFreed && !r.delay.isActive();
+			if (!turnedDown) {
+				// The repeats while the sound goes on (from 0.6 s, a repeat of it at 0.025: -32 dB), the quietest 10 ms
+				double weakest = 0;
+				for (size_t from = 26460; from + 441 <= 44100; from += 441) {
+					weakest = std::min(weakest, peakDb(w.l, from, from + 441));
+				}
+				weakestWhilePlaying = std::min(weakestWhilePlaying, weakest);
+			}
+		}
+		printf("%s mode, end of the repeats begun partway: last sample %.1f dB under the sound (feedback turned down "
+		       "%.1f dB), shortest fade %d samples, freed %d; feedback 0.025 while playing, repeats at least %.1f dB\n",
+		       fade ? "fade" : "tape", -worstEnd, -worstEndTurnedDown, shortestFade, allFreed, weakestWhilePlaying);
+		CHECK(worstEnd < -90, "the repeats stop with a step (%.1f dB)", worstEnd);
+		CHECK(worstEndTurnedDown < -90, "feedback turned down: the repeats stop with a step (%.1f dB)",
+		      worstEndTurnedDown);
+		CHECK(shortestFade >= 1024, "the fade out should take at least 1024 samples (%d)", shortestFade);
+		CHECK(allFreed, "the delay should have freed its buffer");
+		CHECK(weakestWhilePlaying > -33, "feedback 0.025: the repeats while playing should stay (%.1f dB)",
+		      weakestWhilePlaying);
+	}
 
 	// Cost of the delay per block of 128 samples, on the Deluge's Cortex-A9 when this runs in the emulator (tests/arm;
 	// on the PC nothing is counted): steady (native), with the time modulated (resampling), with the filters on, and
