@@ -1,0 +1,112 @@
+{
+ "research": {
+  "busLimit": "4 Bit, CMD6-Highspeed-Umschaltung aktiv (sd_mount.c:_sd_set_mem_speed). SD_CLK_50MHz ergibt P1φ 66,67 MHz / 2 = 33,3 MHz, also 16,7 MB/s brutto und etwa 15,5 MB/s netto. Kein Spielraum: P1φ ist fest (FRQCR 0x1035 stellt nur I und P0), der kleinste Teiler ist /2 (SDIP_SUPPORT_DIV1 ist nicht definiert). Kein CMD11, Mount mit SD_VOLT_3_3, also kein UHS/1,8 V. Karten ohne Highspeed laufen mit 16,7 MHz.",
+  "readPath": "Pro 32-KB-Cluster ein sd_read_sect über 64 Sektoren: CMD13, CMD18 mit automatischem CMD12, DMA mit 64-Byte-Bursts (Puffer ausgerichtet, dank Dummy-Cachezeile immer DMA) und nochmals CMD13. Grobe Schätzung: Übertragung etwa 2,0 ms, Zugriffslatenz der Karte 0,1–0,5 ms (Spitzen 10–100 ms), Befehle und Software 30–50 µs, Cache-Invalidierung etwa 20 µs. Total 2,2–2,6 ms, das sind rund 13 MB/s oder etwa 70 Stereo-16-Bit-Stimmen.",
+  "scheduling": "Synchron, Hardware-Warteschlangentiefe 1, höchstens 128 Cluster pro Aufruf. Die Wartezeiten sind Busy-Loops mit routineForSD: Rendern, playbackHandler (MIDI) und UI laufen weiter, DMA und Rendern überlappen. Blockiert sind die slowRoutines der Hauptschleife und weitere Kartenzugriffe. Der nächste Befehl wartet höchstens auf ein laufendes Rendern.",
+  "writePath": "sd_write_sect mit SD_WRITE_OVERWRITE, also kein ACMD23. Der Recorder schreibt 32 KB per CMD25, FAT- und Verzeichnissektoren einzeln per CMD24. Auf das Ende der Busy-Phase wird in der Schleife mit routineForSD gewartet (Timeout 1–2 s): Das Audio läuft weiter, die Hauptschleife steht typisch 3–10 ms, bei Garbage Collection der Karte bis 250/500 ms.",
+  "upstreamChanges": "In main nur Cache-Kohärenz für L2 (invalidate_range_all_caches), FF_FS_TINY 0, CHMOD und Umbenennungen im Scheduler. 9cd09fb7 betrifft nur den Taskmanager. Keine Treiberbeschleunigung, nichts zu portieren.",
+  "improvements": [
+   {
+    "what": "Takt über 33,3 MHz oder UHS",
+    "where": "sd_dev_low.c:sddev_get_clockdiv",
+    "gain": "keiner möglich",
+    "risk": "Hardware erlaubt es nicht",
+    "testable": "nein",
+    "recommend": false
+   },
+   {
+    "what": "CMD13 vor und nach dem Lesen weglassen",
+    "where": "sd_read.c:sd_read_sect",
+    "gain": "10–20 µs pro Cluster (<1 %)",
+    "risk": "Zustandsprüfung geht verloren",
+    "testable": "nein",
+    "recommend": false
+   },
+   {
+    "what": "Aufeinanderfolgende Cluster mit einem CMD18 lesen",
+    "where": "sd_read.c, audio_file_manager.cpp:loadCluster",
+    "gain": "0,1–0,5 ms pro Folgecluster, 10–20 % Durchsatz",
+    "risk": "nur Lesen, kein Datenrisiko auf der Karte; DMA-Umprogrammierung kann hängen",
+    "testable": "nein",
+    "recommend": false
+   },
+   {
+    "what": "Asynchrones, interruptgesteuertes Lesen",
+    "where": "sd_read.c, diskio.c",
+    "gain": "Hauptschleife 2–3 ms pro Cluster frei",
+    "risk": "hoch: Reentranz, FatFs",
+    "testable": "nein",
+    "recommend": false
+   },
+   {
+    "what": "ACMD23-Vorlöschen",
+    "where": "diskio.c:disk_write",
+    "gain": "0–20 % Schreibtempo, kartenabhängig",
+    "risk": "abgebrochener Schreibvorgang hinterlässt gelöschte Blöcke",
+    "testable": "nein",
+    "recommend": false
+   },
+   {
+    "what": "Grössere Schreibbursts beim Aufnehmen (128 KB)",
+    "where": "sample_recorder.cpp:writeCluster",
+    "gain": "weniger Busy-Phasen",
+    "risk": "mittel (RAM, Logik)",
+    "testable": "nein",
+    "recommend": false
+   },
+   {
+    "what": "REPORT_LOAD_TIME in einem Testbuild messen",
+    "where": "audio_file_manager.cpp:loadCluster",
+    "gain": "echte Latenzwerte statt Schätzung",
+    "risk": "keines",
+    "testable": "nur mit Hardware",
+    "recommend": true
+   }
+  ]
+ },
+ "verdict": {
+  "checks": [
+   {
+    "claim": "Bus: 4 Bit, CMD6-Highspeed, SD_CLK_50MHz = P1φ/2 = 33,3 MHz, kein /1, kein UHS, ohne HS 16,7 MHz",
+    "holds": true,
+    "evidence": "sd_dev_low.c:397 SD_DIV_2; sd_util.c:77 SDIP_SUPPORT_DIV1 nicht gesetzt; SD_DIV_1 (sdif.h:188) ergäbe 66,7 MHz, über der HS-Grenze von 50 MHz; peripheral_init_basic.c:97 FRQCR=0x1035; diskio.c:164 SD_VOLT_3_3; sd_mount.c:629. Ob die Platine 1,8 V kann, lässt sich im Code nicht prüfen."
+   },
+   {
+    "claim": "Pro Cluster CMD13, CMD18 mit Auto-CMD12, DMA64, CMD13",
+    "holds": true,
+    "evidence": "sd_read.c:203, 263-287 (SD_STOP 0x0100), 273, 345. Dazu kommen pro Lesevorgang Takt ein/aus (sd_read.c:198, 385). Die Clustergrösse ist csize*512 der Karte und nicht fest 32 KB (audio_file_manager.cpp:86)."
+   },
+   {
+    "claim": "Wartezeiten sind Busy-Loops mit routineForSD, slowRoutines blockiert",
+    "holds": false,
+    "evidence": "USE_TASK_MANAGER ist aktiv (CMakeLists.txt:189). sddev_int_wait (drivers/sd/sd.c:73) und die DMA-Wartezeit (sd_dev_low.c:1116) rufen TaskManager::yield auf (task_scheduler.cpp:346-380). Dort laufen alle Tasks, auch UI und slowRoutines. routineForSD läuft nur einmal pro Lesevorgang (sd_read.c:140). Echte Busy-Waits gibt es nur verschachtelt bei gesetztem sdRoutineLock (deluge.cpp:974-981)."
+   },
+   {
+    "claim": "Nächster Befehl wartet höchstens auf ein laufendes Rendern",
+    "holds": false,
+    "evidence": "yield prüft das DMA-Ende nur zwischen Tasks, also verzögert jeder gerade laufende Task den nächsten Befehl, etwa OLED/UI-Rendern (deluge.cpp:597, 620)."
+   },
+   {
+    "claim": "Schreiben ohne ACMD23, Timeout 1–2 s",
+    "holds": true,
+    "evidence": "diskio.c:256 übergibt 0x0001 = SD_WRITE_OVERWRITE (sdif.h:151); der ACMD23-Pfad existiert (sd_write.c:211-214); SD_TIMEOUT_RESP 1000 (sd.h:262); DMA mindestens 2 s (sd_dev_low.c:1112). Das Risiko ist überzeichnet: Vorlöschen betrifft nur Blöcke, die ohnehin überschrieben werden."
+   },
+   {
+    "claim": "Upstream: nichts zu portieren",
+    "holds": true,
+    "evidence": "git diff release_1_2_1..main: in sd_read.c und sd_write.c nur invalidate_range_all_caches für L2 (a2f8bc51, 260ac76c). 1.2.1 hat den Flush vor dem Schreiben bereits (sd_write.c:164)."
+   },
+   {
+    "claim": "Ein CMD18 über Folgecluster bringt 10–20 %",
+    "holds": false,
+    "evidence": "Nicht belegt: Die Clusterpuffer liegen nicht zusammenhängend im RAM, und die Warteschlange ist nach Priorität über viele Stimmen sortiert. Benachbarte Sektoren sind darin selten. Der Gewinn ist unbekannt."
+   },
+   {
+    "claim": "REPORT_LOAD_TIME misst Latenz",
+    "holds": false,
+    "evidence": "Das trifft nur teilweise zu: Ausgegeben werden nur Werte über 7 ms, und das nur mit Debug-Ausgabe (audio_file_manager.cpp:975, 1066-1071). Für typische Werte muss die Schwelle gesenkt werden."
+   }
+  ],
+  "missed": "Das Streaming umgeht FatFs, weil sdAddress vorberechnet ist (audio_file_manager.cpp:1063). FASTSEEK und exFAT sind deshalb für die Wiedergabe irrelevant. Die eigentliche Latenzstellschraube ist das Scheduling: Die Latenz zwischen DMA-Ende und nächstem Befehl hängt von der Dauer der anderen Tasks ab. Zu prüfen wäre, während einer SD-Wartezeit nur kurze Tasks zuzulassen. Messbar ist das mit REPORT_AWAY_TIME und einer tieferen REPORT_LOAD_TIME-Schwelle."
+ }
+}

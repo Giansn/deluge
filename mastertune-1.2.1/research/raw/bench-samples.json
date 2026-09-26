@@ -1,0 +1,133 @@
+{
+ "area": "Sample playback (sinc/linear, time stretcher) and the DX7 engine, per voice and 128-sample block",
+ "benchPath": "/home/user/deluge/mastertune-1.2.1/tests/bench/samples/run.sh",
+ "measured": [
+  {
+   "case": "native stereo (no pitch)",
+   "instructions": 3530,
+   "cpuPercent": 0.3
+  },
+  {
+   "case": "linear stereo +7 st",
+   "instructions": 11986,
+   "cpuPercent": 1.03
+  },
+  {
+   "case": "sinc mono +7 st",
+   "instructions": 15764,
+   "cpuPercent": 1.36
+  },
+  {
+   "case": "sinc stereo -5 st",
+   "instructions": 18321,
+   "cpuPercent": 1.58
+  },
+  {
+   "case": "sinc stereo +7 st",
+   "instructions": 20755,
+   "cpuPercent": 1.79
+  },
+  {
+   "case": "sinc stereo +12 st",
+   "instructions": 21718,
+   "cpuPercent": 1.87
+  },
+  {
+   "case": "sinc stereo +7 st, writing cache",
+   "instructions": 22419,
+   "cpuPercent": 1.93
+  },
+  {
+   "case": "timestretch 2 heads native stereo",
+   "instructions": 7044,
+   "cpuPercent": 0.61
+  },
+  {
+   "case": "timestretch 2 heads sinc stereo +3 st",
+   "instructions": 40306,
+   "cpuPercent": 3.47
+  },
+  {
+   "case": "timestretch readFromBuffer stereo",
+   "instructions": 3476,
+   "cpuPercent": 0.3
+  },
+  {
+   "case": "dx7 alg5 fb6 (modern, NEON)",
+   "instructions": 8651,
+   "cpuPercent": 0.75
+  },
+  {
+   "case": "dx7 alg32 fb6 (6 carriers)",
+   "instructions": 8870,
+   "cpuPercent": 0.76
+  },
+  {
+   "case": "dx7 alg5 fb6 + LFO amp mod",
+   "instructions": 9138,
+   "cpuPercent": 0.79
+  },
+  {
+   "case": "dx7 alg5 fb6 (MkI engine)",
+   "instructions": 26578,
+   "cpuPercent": 2.29
+  },
+  {
+   "case": "dx7 alg4 fb6 (MkI fb loop)",
+   "instructions": 27135,
+   "cpuPercent": 2.34
+  }
+ ],
+ "topFunctions": [
+  "SampleLowLevelReader::readSamplesResampled (sinc stereo +7: 13,278/block, about 104 per sample in the loop itself)",
+  "SampleLowLevelReader::interpolate (7,424 stereo / 5,760 mono: an out-of-line call per sample, 58/45 instr)",
+  "SampleLowLevelReader::jumpForwardLinear + interpolateLinear (3,968 + 2,432: out-of-line calls per sample)",
+  "EngineMkI::compute / compute_pure / compute_fb3 (about 30 instr per sample and op, switch branches)",
+  "neon_fm_kernel (3,945 for 5 ops) + FmOpKernel::compute_fb (3,220, scalar feedback op)"
+ ],
+ "proposals": [
+  {
+   "title": "Sinc loop: inline interpolate(), keep oscPos and *amplitude in locals, specialise the loop (template) on numChannels, condensing and writingCache",
+   "where": "model/sample/sample_low_level_reader.cpp: readSamplesResampled + interpolate (interpolate.h)",
+   "estSavingPerBlock": "about 3,000-4,500 per sinc voice (15-20%), twice that for a time-stretch crossfade",
+   "bitExact": true,
+   "risk": "low-medium: keep the goto skipFirstSmooth entry and the >16 jump path"
+  },
+  {
+   "title": "Keep the interpolation buffer in NEON registers for the whole block (shift by vext, insert lane 0 per new sample), store it back once",
+   "where": "readSamplesResampled + dsp/interpolation/shift_buffer.h",
+   "estSavingPerBlock": "about 1,500-2,000 (stereo), because the 8 vstr + 8 vldr per sample go away",
+   "bitExact": true,
+   "risk": "medium: more code, register pressure"
+  },
+  {
+   "title": "Stereo reduction with vpadd and one vmov r,r,d instead of 2x(vadd, 2 vmov, add, str)",
+   "where": "dsp/interpolation/interpolate.h",
+   "estSavingPerBlock": "about 650, plus fewer A9 NEON-to-core stalls (not counted)",
+   "bitExact": true,
+   "risk": "low"
+  },
+  {
+   "title": "Linear loop: inline jumpForwardLinear and interpolateLinear, oscPos/amplitude in locals",
+   "where": "sample_low_level_reader.cpp: readSamplesResampled (else branch)",
+   "estSavingPerBlock": "about 5,000-6,000 (roughly 45%)",
+   "bitExact": true,
+   "risk": "low"
+  },
+  {
+   "title": "MkI engine: branchless sinLog (quadrant by bit masks instead of switch), sign by XOR mask, add/no-add specialised",
+   "where": "dsp/dx/EngineMkI.cpp: sinLog, mkiSin, compute, compute_pure, compute_fb*",
+   "estSavingPerBlock": "about 5,000-6,000 per MkI voice (20%) plus fewer mispredicts",
+   "bitExact": true,
+   "risk": "low"
+  },
+  {
+   "title": "Allow n=128 in neon_fm_kernel (today simd_n=132 because n%12==8 is refused); trim the compute_fb stack reloads",
+   "where": "dsp/dx/fm_core.cpp FmCore::render, neon_fm_kernel.s, fm_op_kernel.cpp compute_fb",
+   "estSavingPerBlock": "about 150 + 400",
+   "bitExact": true,
+   "risk": "medium (asm) for little gain"
+  }
+ ],
+ "notes": "What the bench runs is the firmware code itself. run.sh cuts bufferIndividualSampleForInterpolation through readSamplesNative out of sample_low_level_reader.cpp, plus TimeStretcher::readFromBuffer and getWhichKernel. It compiles dsp/dx completely, and on ARM also neon_fm_kernel.s. Two things are not measured: considerUpcomingWindow/clusters and TimeStretcher::hopEnd. hopEnd runs once per hop and needs Sample and the perc cache. For time stretching I measured two crossfading play heads instead. The readFromBuffer case is dead code in this build (TIME_STRETCH_ENABLE_BUFFER=0). On the PC the build runs without the alignment and signed-overflow checks, because the firmware reads misaligned on purpose and msfa wraps its phase. KEEP=dir keeps the ELF for objdump. MkI is chosen with engine mode MkI, or in auto mode for algorithms 4/6 with feedback: 2.3% vs 0.75% per voice."
+}

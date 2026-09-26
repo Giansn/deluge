@@ -117,6 +117,13 @@ class Emulator:
         self.log = log
         self.tool_prefix = tool_prefix
         self.sym = Symbols(elf, tool_prefix)
+        data = open(elf, "rb").read()
+        _, phoff, _, _, _, phentsize, phnum = struct.unpack_from("<IIIIHHH", data, 24)
+        self.segments = []
+        for i in range(phnum):
+            p_type, p_offset, p_vaddr, p_paddr, p_filesz, _ = struct.unpack_from("<IIIIII", data, phoff + i * phentsize)
+            if p_type == 1 and p_filesz:
+                self.segments.append((p_vaddr, p_paddr, data[p_offset:p_offset + p_filesz]))
         self.uc = uc = Uc(UC_ARCH_ARM, UC_MODE_ARM)
         uc.ctl_set_cpu_model(UC_CPU_ARM_CORTEX_A9)
 
@@ -141,12 +148,8 @@ class Emulator:
         uc.hook_add(UC_HOOK_INTR, self.on_interrupt)
 
         # The image, as the bootloader leaves it: every segment at its load address
-        data = open(elf, "rb").read()
-        _, phoff, _, _, _, phentsize, phnum = struct.unpack_from("<IIIIHHH", data, 24)
-        for i in range(phnum):
-            p_type, p_offset, p_vaddr, p_paddr, p_filesz, _ = struct.unpack_from("<IIIIII", data, phoff + i * phentsize)
-            if p_type == 1 and p_filesz:
-                uc.mem_write(p_paddr, data[p_offset:p_offset + p_filesz])
+        for vaddr, paddr, content in self.segments:
+            uc.mem_write(paddr, content)
 
         uc.reg_write(UC_ARM_REG_C1_C0_2, uc.reg_read(UC_ARM_REG_C1_C0_2) | (0xF << 20))  # CP10/CP11 (VFP/NEON)
         uc.reg_write(UC_ARM_REG_FPEXC, 0x40000000)
@@ -160,9 +163,9 @@ class Emulator:
         if lib.bc_install(uc._uch, ctypes.addressof(self.iram), INTERNAL_RAM, INTERNAL_RAM_SIZE) != 0:
             raise SystemExit("could not install the block hook")
 
-        # SD card
-        self.sd = bytearray(open(sd_image, "rb").read())
+        # SD card: an image file (read and written in place)
         self.sd_path = sd_image
+        self.sd_fd = os.open(sd_image, os.O_RDWR)
         self.sd_reads = self.sd_writes = 0
 
         self.intercepts = {}
@@ -188,6 +191,12 @@ class Emulator:
             r[base + 0x1C] = lambda size, b=base: self.plain_read(b + 4, 4)
             r[base + 0x24] = lambda size: 0x60  # CHSTAT: transfer ended (END, TC), not enabled
         r[DMAC + dmac_channel_base(SSI_TX_DMA_CHANNEL) + 0x18] = lambda size: self.ssi_position()
+        # The UARTs' receive DMA (PIC, MIDI): nothing new arrived, i.e. it writes where the reader is
+        rx_channels = self.sym["rxDmaChannels"]
+        rx_read_addresses = self.sym["rxBufferReadAddr"]
+        for item in range(2):
+            channel = struct.unpack_from("<B", self.elf_bytes_at(rx_channels + item, 1))[0]
+            r[DMAC + dmac_channel_base(channel) + 0x1C] = lambda size, a=rx_read_addresses + 4 * item: self.u32(a)
         # RSPI0 (CV, OLED): transmit buffer always empty, the receive buffer full after each write until read
         spi = 0xE800C800
         self.spi_rx_full = False
@@ -208,6 +217,12 @@ class Emulator:
         r[spi + 3] = spsr
         r[spi + 4] = spdr_read
         w[spi + 4] = spdr_write
+
+    def elf_bytes_at(self, address, n):
+        for vaddr, paddr, content in self.segments:
+            if paddr <= address < paddr + len(content):
+                return content[address - paddr:address - paddr + n]
+        raise KeyError(hex(address))
 
     def mmio_read(self, uc, offset, size, page):
         address = page + offset
@@ -342,6 +357,73 @@ class Emulator:
         self.uc.emu_stop()
 
 
+def disassemble(emu, name):
+    """(address, mnemonic, operands) of a function, from the toolchain's objdump."""
+    start, size = emu.sym.by_name[name]
+    start &= ~1
+    out = subprocess.run([emu.tool_prefix + "objdump", "-d", "--no-show-raw-insn", f"--start-address={start:#x}",
+                          f"--stop-address={start + size:#x}", emu.elf], capture_output=True, text=True).stdout
+    lines = []
+    for line in out.splitlines():
+        parts = line.strip().split("\t")
+        if len(parts) >= 2 and parts[0].endswith(":"):
+            try:
+                address = int(parts[0][:-1], 16)
+            except ValueError:
+                continue
+            lines.append((address, parts[1].strip(), parts[2].strip() if len(parts) > 2 else ""))
+    return lines
+
+
+def setup_sd(emu):
+    """The SD card: FatFS's own code on top of the image. Its sector reads and writes go to the image file, and its
+    mount skips the card's initialisation (the SDHI driver, inlined into mount_volume) as if the card said ready."""
+    sym = emu.sym
+    uc = emu.uc
+
+    def read_sectors(e):
+        buf, sector, count = (uc.reg_read(r) for r in (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2))
+        data = os.pread(e.sd_fd, count * 512, sector * 512)
+        uc.mem_write(buf, data.ljust(count * 512, b"\0"))
+        e.sd_reads += count
+        return 0
+
+    def write_sectors(e):
+        buf, sector, count = (uc.reg_read(r) for r in (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2))
+        os.pwrite(e.sd_fd, bytes(uc.mem_read(buf, count * 512)), sector * 512)
+        e.sd_writes += count
+        return 0
+
+    emu.intercept(sym.find("sd_read_sect"), read_sectors)
+    emu.intercept(sym.find("disk_write"), write_sectors)
+
+    # In mount_volume: from where it has cleared fs->fs_type (strb r3, [r5]) and starts disk_initialize(), to where
+    # it calls check_fs(fs, 0) for sector 0 (mov r0, r5 and movs r1, #0 before it)
+    code = disassemble(emu, "mount_volume.lto_priv.0")
+    begin = next(code[i + 1][0] for i, (a, m, o) in enumerate(code) if m == "strb" and o.startswith("r3, [r5, #0]"))
+    call = next(i for i, (a, m, o) in enumerate(code) if m == "bl" and "<check_fs>" in o)
+    target = code[call - 2][0]
+    assert {code[call - 2][1], code[call - 1][1]} == {"movs", "mov"}, code[call - 3:call + 1]
+    disk_status = sym["diskStatus"]
+
+    def card_ready(e):
+        e.w8(disk_status, 0)
+
+    emu.skip_to(begin, target, card_ready)
+
+
+def load_startup_song(emu):
+    """What the task manager would run once the card is ready: setupStartupSong(), in the template mode, which loads
+    SONGS/DEFAULT.XML (or writes the blank song there first if there's none)."""
+    sym = emu.sym
+    emu.w32(sym["_ZN12FlashStorage22defaultStartupSongModeE"], 1)  # StartupSongMode::TEMPLATE
+    t = time.time()
+    before = emu.bc.bc_total()
+    emu.call(sym["_Z16setupStartupSongv"], timeout_s=10)
+    emu.log(f"song loaded: {(emu.bc.bc_total() - before) / 1e6:,.1f}M instructions, {time.time() - t:.1f} s, "
+            f"{emu.sd_reads} sectors read, {emu.sd_writes} written")
+
+
 def boot(emu):
     """resetprg up to where deluge_main registers the task manager's tasks."""
     sym = emu.sym
@@ -366,7 +448,9 @@ def main():
         print(s, flush=True)
 
     emu = Emulator(args.elf, args.sd, tools, log)
+    setup_sd(emu)
     boot(emu)
+    load_startup_song(emu)
 
 
 if __name__ == "__main__":

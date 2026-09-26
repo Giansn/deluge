@@ -1,0 +1,137 @@
+{
+ "area": "Oszillatoren / Voice::renderOsc (render_wave.h, vector_rendering_function.h, voice.cpp)",
+ "benchPath": "/home/user/deluge/mastertune-1.2.1/tests/bench/oscillators/ (bench.cpp, run.sh, stubs/osc_shim.h, stubs_pc/arm_neon.h)",
+ "measured": [
+  {
+   "case": "saw 220 Hz (Tabelle)",
+   "instructions": 1579,
+   "cpuPercent": 0.136
+  },
+  {
+   "case": "saw 55 Hz (crude)",
+   "instructions": 973,
+   "cpuPercent": 0.084
+  },
+  {
+   "case": "saw 1760 Hz",
+   "instructions": 1559,
+   "cpuPercent": 0.134
+  },
+  {
+   "case": "square 220 Hz",
+   "instructions": 1569,
+   "cpuPercent": 0.135
+  },
+  {
+   "case": "square 55 Hz (crude)",
+   "instructions": 1401,
+   "cpuPercent": 0.121
+  },
+  {
+   "case": "square 220 Hz PW",
+   "instructions": 2667,
+   "cpuPercent": 0.23
+  },
+  {
+   "case": "sine 220 Hz",
+   "instructions": 1484,
+   "cpuPercent": 0.128
+  },
+  {
+   "case": "triangle 220 Hz (skalare Schleife)",
+   "instructions": 1663,
+   "cpuPercent": 0.143
+  },
+  {
+   "case": "triangle 1760 Hz (Tabelle)",
+   "instructions": 1524,
+   "cpuPercent": 0.131
+  },
+  {
+   "case": "analog saw 220 Hz",
+   "instructions": 1578,
+   "cpuPercent": 0.136
+  },
+  {
+   "case": "analog square 220 Hz",
+   "instructions": 1572,
+   "cpuPercent": 0.135
+  },
+  {
+   "case": "analog square 220 Hz PW",
+   "instructions": 2569,
+   "cpuPercent": 0.221
+  },
+  {
+   "case": "saw 220 Hz PW (Sync-Pfad)",
+   "instructions": 1941,
+   "cpuPercent": 0.167
+  },
+  {
+   "case": "saw 330 Hz sync auf 110 Hz",
+   "instructions": 1876,
+   "cpuPercent": 0.162
+  },
+  {
+   "case": "saw 220 Hz Unison 4",
+   "instructions": 6276,
+   "cpuPercent": 0.541
+  },
+  {
+   "case": "saw 220 Hz Unison 8",
+   "instructions": 12540,
+   "cpuPercent": 1.08
+  },
+  {
+   "case": "square PW Unison 4",
+   "instructions": 10629,
+   "cpuPercent": 0.916
+  }
+ ],
+ "topFunctions": [
+  "renderWave: 1371/Aufruf (87 %), 42 Instr. pro 4 Samples",
+  "renderPulseWave: 2468/Aufruf (93 % bei Square-PW)",
+  "Voice::renderOsc inline: Dreieck <~711 Hz 1615, Crude-Square 1320, Sync-Pfad ~1600",
+  "renderCrudeSawWaveWithAmplitude: 795",
+  "__udivmoddi4 626 + __udivsi3 206 (Analog-Square-PW), __udivsi3 ~205 (Sync/PW)",
+  "getTableNumber 33-53, renderOsc-Overhead ~100 pro Aufruf"
+ ],
+ "proposals": [
+  {
+   "title": "Interpolationsgewichte per NEON aus Phasenvektor (vshlq_u32+vmovn) statt 4-8 lsr+vmov.16; {0}-Inits weg; applyAmplitude als Template-Parameter",
+   "where": "processing/vector_rendering_function.h (waveRenderingFunctionGeneral/Pulse), render_wave.h CREATE_WAVE_RENDER_FUNCTION_INSTANCE",
+   "estSavingPerBlock": "renderWave ~290/Aufruf (-21 %), renderPulseWave ~500/Aufruf; Unison 8: ~2300",
+   "bitExact": true,
+   "risk": "niedrig"
+  },
+  {
+   "title": "Dreieck-Schleife in NEON, smmlar exakt als vmull_s32+vrshrn_n_s64(#32)+vadd",
+   "where": "model/voice/voice.cpp Voice::renderOsc (TRIANGLE, ohne Sync)",
+   "estSavingPerBlock": "~1100/Aufruf (1615 -> ~500)",
+   "bitExact": true,
+   "risk": "niedrig-mittel (Rest-Samples wenn nicht Vielfaches von 4)"
+  },
+  {
+   "title": "Crude Saw/Square (<~72 Hz) gleich vektorisieren (vcgeq+vbsl fuer Square)",
+   "where": "voice.cpp renderCrudeSawWaveWithAmplitude, Voice::renderOsc (SQUARE crude)",
+   "estSavingPerBlock": "Saw ~430, Square ~850 pro Aufruf",
+   "bitExact": true,
+   "risk": "niedrig"
+  },
+  {
+   "title": "Divisionen im PW/Sync-Setup: 2^31/d per VFP-double (exakt, d<=65535); 64-bit-Divisionen per double-Schaetzung+Integer-Korrektur",
+   "where": "voice.cpp Voice::renderOsc (doOscSyncSetup, ANALOG_SQUARE-PW)",
+   "estSavingPerBlock": "~200 pro Sync/PW-Aufruf, ~550 zusaetzlich bei Analog-Square-PW",
+   "bitExact": true,
+   "risk": "mittel (Korrekturschritt, Vorzeichenfall)"
+  },
+  {
+   "title": "getTableNumber per clz+Tabelle",
+   "where": "voice.cpp getTableNumber",
+   "estSavingPerBlock": "~30/Aufruf",
+   "bitExact": true,
+   "risk": "niedrig, Nutzen klein"
+  }
+ ],
+ "notes": "voice.cpp ist zu verflochten. Deshalb schneidet run.sh den unveränderten Teil von voice.cpp aus (von der renderWave-Instanz bis zum Ende von Voice::renderOsc). Die Voice-Attrappe in stubs/osc_shim.h enthält nur die Member, die renderOsc braucht. Gebenchmarkt wird also echter Firmware-Code mit echten Tabellen. Es wird genau das gemessen, was renderBasicSource pro Unison-Teil aufruft (mono, applyAmplitude=true, 4 Blöcke Aufwärmen, 10 Blöcke gezählt). Der Wavetable-Oszillator ist nicht dabei, weil sein Setup ein Sample, Cluster und die FFT braucht. Die Pan-Schleife für Stereo-Unison in renderBasicSource (memset und skalares 2x smmul pro Sample und Teil) ist nicht gemessen. Ich schätze sie auf ~1300 pro Teil; mit NEON (vmull/vshrn) ginge das ebenfalls bit-exakt. Auf dem PC braucht es -m32 und einen skalaren NEON-Ersatz (stubs_pc). Die Prüfsummen stimmen mit ARM überein, ausser bei Crude, beim Dreieck <~711 Hz und bei Saw-PW: Die PC-Fallbacks der *_rounded-Funktionen in fixedpoint.h schneiden ab statt zu runden. Bit-Exaktheit darum immer ARM gegen ARM vergleichen. Einordnung: Ein Oszillator ohne Unison kostet ~0.13 % pro Voice. Relevant wird es erst mit Unison (8 Teile: 1.1 % pro Oszillator und Voice)."
+}

@@ -1,0 +1,163 @@
+{
+ "area": "Filter (dsp/filter: lpladder, hpladder, svf, filter_set)",
+ "benchPath": "/home/user/deluge/mastertune-1.2.1/tests/bench/filters/run.sh",
+ "measured": [
+  {
+   "case": "mono LP12 ladder res30",
+   "instructions": 9803,
+   "cpuPercent": 0.84
+  },
+  {
+   "case": "mono LP24 ladder res30",
+   "instructions": 10830,
+   "cpuPercent": 0.93
+  },
+  {
+   "case": "mono LP24 ladder res0 (no tanh)",
+   "instructions": 9038,
+   "cpuPercent": 0.78
+  },
+  {
+   "case": "mono LP24 res30 morph50",
+   "instructions": 10446,
+   "cpuPercent": 0.9
+  },
+  {
+   "case": "mono LP24 drive res30",
+   "instructions": 14165,
+   "cpuPercent": 1.22
+  },
+  {
+   "case": "mono LP24 drive 9k res60 oversampled",
+   "instructions": 26967,
+   "cpuPercent": 2.32
+  },
+  {
+   "case": "mono SVF LPF/BPF res30",
+   "instructions": 7869,
+   "cpuPercent": 0.68
+  },
+  {
+   "case": "mono SVF notch",
+   "instructions": 7485,
+   "cpuPercent": 0.64
+  },
+  {
+   "case": "mono HP ladder res0/res20",
+   "instructions": 7748,
+   "cpuPercent": 0.67
+  },
+  {
+   "case": "mono HP ladder res60 (2D tanh)",
+   "instructions": 11460,
+   "cpuPercent": 0.99
+  },
+  {
+   "case": "mono HP res20 morph50",
+   "instructions": 7801,
+   "cpuPercent": 0.67
+  },
+  {
+   "case": "mono LP24+HP serial",
+   "instructions": 18553,
+   "cpuPercent": 1.6
+  },
+  {
+   "case": "mono LP24+HP parallel",
+   "instructions": 19644,
+   "cpuPercent": 1.69
+  },
+  {
+   "case": "stereo LP12 res30",
+   "instructions": 18884,
+   "cpuPercent": 1.63
+  },
+  {
+   "case": "stereo LP24 res30",
+   "instructions": 21575,
+   "cpuPercent": 1.86
+  },
+  {
+   "case": "stereo LP24 drive res30",
+   "instructions": 27473,
+   "cpuPercent": 2.37
+  },
+  {
+   "case": "stereo SVF LPF res30",
+   "instructions": 15669,
+   "cpuPercent": 1.35
+  },
+  {
+   "case": "stereo HP res20",
+   "instructions": 14268,
+   "cpuPercent": 1.23
+  },
+  {
+   "case": "stereo LP24+HP serial",
+   "instructions": 35823,
+   "cpuPercent": 3.09
+  },
+  {
+   "case": "stereo LP24+HP parallel",
+   "instructions": 37931,
+   "cpuPercent": 3.27
+  },
+  {
+   "case": "setConfig LP24+HP (per block)",
+   "instructions": 276,
+   "cpuPercent": 0.02
+  }
+ ],
+ "topFunctions": [
+  "LpLadderFilter::doFilter / doFilterStereo (>99% of ladder cases; about 84 instr/sample for LP24)",
+  "HpLadderFilter::doFilter (about 60 instr/sample, 89 with the 2D tanh)",
+  "SVFilter::doFilter (about 61 instr/sample)",
+  "FilterSet::renderLong PARALLEL add loop (935 per mono block, scalar)",
+  "memcpy (179)"
+ ],
+ "proposals": [
+  {
+   "title": "Keep state, coefficients and jcong in locals; specialise sampleIncrement==1",
+   "where": "lpladder.cpp, hpladder.cpp, svf.cpp: doFilter/doFilterStereo",
+   "estSavingPerBlock": "6-10 instr/sample: LP24 about 1000 mono, 2000 stereo; HP/SVF about 500-700",
+   "bitExact": true,
+   "risk": "low-medium (the output store may alias members, so today every sample reloads about 20 values and stores 5-7; register pressure needs a check with the bench)"
+  },
+  {
+   "title": "Move the invariant saturate branch (morph>0 || processedResonance>510M) out of the loop",
+   "where": "lpladder.h scaleInput, called from doFilter (template<bool>)",
+   "estSavingPerBlock": "3-5 instr/sample, about 400-600 mono",
+   "bitExact": true,
+   "risk": "low"
+  },
+  {
+   "title": "Chain feedback sums with smmlar instead of smmulr+add",
+   "where": "lpladder.cpp do24dB/do12dB/doDrive; hpladder.cpp doHPF feedbacksValue",
+   "estSavingPerBlock": "about 384 (24dB), 250 (12dB), 128 (HP) mono",
+   "bitExact": true,
+   "risk": "low (acc<<32 has a zero low word, so rounding is identical)"
+  },
+  {
+   "title": "HP ladder: temp_fc=fc when morph_==0; move the resonance branches out of the loop; write hpfLastWorkingValue only for the block's last sample when not antialiasing",
+   "where": "hpladder.cpp doHPF/doFilter",
+   "estSavingPerBlock": "about 10 instr/sample, about 1300 mono (~17%)",
+   "bitExact": true,
+   "risk": "low"
+  },
+  {
+   "title": "SVF: skip the smmlar when c_band==0 or c_high==0; move band_mode out of the loop",
+   "where": "svf.cpp doSVF/doFilter",
+   "estSavingPerBlock": "about 5 instr/sample, about 640 mono (notch shows 384)",
+   "bitExact": true,
+   "risk": "low (smmlar with 0 returns acc exactly)"
+  },
+  {
+   "title": "NEON add loop for PARALLEL routing",
+   "where": "filter_set.cpp renderLong/renderLongStereo",
+   "estSavingPerBlock": "about 800 mono, 1600 stereo",
+   "bitExact": true,
+   "risk": "low"
+  }
+ ],
+ "notes": "Der Benchmark ruft den echten FilterSet so auf, wie die Voice es tut: pro Block setConfig, danach renderLong (mono) oder renderLongStereo (128 Frames). Er startet mit 10 Blöcken Warm-up und misst danach 10 Blöcke. quickLog und instantTan werden beim Build per sed aus functions.cpp gezogen. Nötig war nur ein Stub, stubs/processing/engines/audio_engine.h mit cpuDireness.\n\nKompiliert auf dem PC (g++) und auf ARM. Auf dem PC ist der UBSan-Check für signed overflow abgeschaltet, weil die Filter mit Absicht überlaufen. Jeder Fall gibt einen Output-Hash aus, damit lässt sich prüfen, ob eine Änderung bit-exakt bleibt. Die Hashes nur ARM gegen ARM vergleichen: auf dem PC rundet die Fallback-Version von smmulr nicht, deshalb unterscheiden sich die Werte.\n\nMorph und Drive:\n- Ladder-Morph kostet nichts extra. Ab etwa 10 % Resonanz läuft der Ladder immer über den tanh-Pfad (+14 Instruktionen pro Sample).\n- Drive kostet 31 % mehr als 24 dB. Bei hoher Cutoff und Resonanz verdoppelt Oversampling die Kosten (2,3 %).\n- HP-Morph kostet +53 pro Block. HP-Resonanz über etwa 50 % nimmt den 2D-tanh, das sind +48 %.\n\nNicht empfohlen: L und R in NEON-Lanes rechnen. vqrdmulh rundet anders, das Ergebnis wäre also nicht bit-exakt, und die tanh-Tabelle braucht Gathers.\n\nMögliche Einsparung insgesamt: LP24 etwa 15-20 %, HP etwa 20 %, SVF etwa 12 %. Bei 30 Voices mit Filter wären das rund 4-5 % CPU."
+}

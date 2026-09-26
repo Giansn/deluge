@@ -1,0 +1,114 @@
+{
+ "area": "Effects: Mod-FX (Chorus/Flanger/Phaser), EQ, SRR/Bitcrush, RMS-Kompressor, Analog-Delay-IR",
+ "benchPath": "/home/user/deluge/mastertune-1.2.1/tests/bench/effects/ (bench.cpp, run.sh, stubs/fx_shim.h)",
+ "measured": [
+  {
+   "case": "chorus",
+   "instructions": 8930,
+   "cpuPercent": 0.77
+  },
+  {
+   "case": "chorus stereo",
+   "instructions": 10338,
+   "cpuPercent": 0.89
+  },
+  {
+   "case": "flanger fb50/fb80",
+   "instructions": 9074,
+   "cpuPercent": 0.78
+  },
+  {
+   "case": "phaser fb50",
+   "instructions": 19949,
+   "cpuPercent": 1.72
+  },
+  {
+   "case": "EQ bass+treble",
+   "instructions": 7212,
+   "cpuPercent": 0.62
+  },
+  {
+   "case": "bitcrush preset4",
+   "instructions": 725,
+   "cpuPercent": 0.06
+  },
+  {
+   "case": "SRR 1/4 (+bitcrush)",
+   "instructions": 5400,
+   "cpuPercent": 0.46
+  },
+  {
+   "case": "chorus+EQ+SRR+bitcrush",
+   "instructions": 21396,
+   "cpuPercent": 1.84
+  },
+  {
+   "case": "compressor song full wet / volNeutral",
+   "instructions": 14906,
+   "cpuPercent": 1.28
+  },
+  {
+   "case": "compressor song blend50",
+   "instructions": 16862,
+   "cpuPercent": 1.45
+  },
+  {
+   "case": "analog delay IR (26 taps)",
+   "instructions": 42773,
+   "cpuPercent": 3.68
+  }
+ ],
+ "topFunctions": [
+  "main (inline ImpulseResponseProcessor::process): 42,774 = 334/Sample, Tap-Schleife nicht entrollt, 50 smmulr + Loads/Stores",
+  "ModControllableAudio::processFX: Phaser 19,900 (155/Sample, Allpass-State jede Stufe in den Speicher), Chorus 8,881",
+  "RMSFeedbackCompressor::render: 11,353 (2x getTanHAntialiased 2D-Tabelle, State und Volumen pro Sample gespeichert)",
+  "RMSFeedbackCompressor::calcRMS: 3,303 (zweiter Durchlauf über den Puffer)",
+  "ModControllableAudio::processSRRAndBitcrushing: 5,287 (SRR)",
+  "expf/logf/sqrtf pro Block: nur ~200"
+ ],
+ "proposals": [
+  {
+   "title": "IR mit NEON: vqrdmulhq_s32 mit halbierten Koeffizienten (alle 26 sind gerade, also gleich smmulr), L/R und Tap-Paare in einem Vektor, Blockmethode",
+   "where": "dsp/convolution/impulse_response_processor.h:process (+ delay.cpp Aufruf)",
+   "estSavingPerBlock": "~34,000-37,000 (von 42,773 auf ~6,000-8,000)",
+   "bitExact": true,
+   "risk": "niedrig; Integer-Addition bleibt assoziativ, Hash-Vergleich vorhanden"
+  },
+  {
+   "title": "Phaser: Allpass-State und phaserMemory in lokalen Registern, L und R getrennt, 6 Stufen entrollt",
+   "where": "model/mod_controllable/mod_controllable_audio.cpp:processFX (PHASER-Zweig)",
+   "estSavingPerBlock": "~6,000-7,500",
+   "bitExact": true,
+   "risk": "niedrig"
+  },
+  {
+   "title": "Kompressor: calcRMS in die render-Schleife ziehen, currentVolume/tanh-Arbeitswerte/HPF-State lokal halten, wet-Prüfung aus der Schleife; Blend ohne memcpy (dry vor dem Überschreiben lesen)",
+   "where": "dsp/compressor/rms_feedback.cpp:render, calcRMS",
+   "estSavingPerBlock": "~2,000 (+~400 bei Blend)",
+   "bitExact": true,
+   "risk": "niedrig; Reihenfolge hpfL(l) dann hpfL(r) beibehalten"
+  },
+  {
+   "title": "EQ: 4 Filterzustände lokal, Schleife nach doBass/doTreble spezialisieren",
+   "where": "mod_controllable_audio.cpp:processFX/doEQ",
+   "estSavingPerBlock": "~2,000",
+   "bitExact": true,
+   "risk": "niedrig"
+  },
+  {
+   "title": "Mod-FX-Schleife pro Typ spezialisieren (Template), LFO-Typ, Write-Index und LFO-Phase lokal",
+   "where": "mod_controllable_audio.cpp:processFX (Chorus/Flanger)",
+   "estSavingPerBlock": "~1,500-2,500",
+   "bitExact": true,
+   "risk": "niedrig, mehr Code"
+  },
+  {
+   "title": "SRR: lastSample/grabbedSample/Positionen lokal; Bitcrush mit NEON vand",
+   "where": "mod_controllable_audio.cpp:processSRRAndBitcrushing",
+   "estSavingPerBlock": "~1,000-1,500 (SRR), ~450 (Bitcrush)",
+   "bitExact": true,
+   "risk": "niedrig"
+  }
+ ],
+ "notes": "Benchmarkt echten Firmware-Code. processFX (Mod-FX und EQ, der Delay-Aufruf ist ein No-op), processSRRAndBitcrushing und doEQ schneidet run.sh unverändert aus mod_controllable_audio.cpp aus, weil die Datei die ganze Firmware mitzieht. rms_feedback.cpp und impulse_response_processor.h sind vollständig drin. Läuft auf dem PC mit UBSan und gibt dort Hashes für die Bit-Exaktheit aus, mit ARM=1 im Emulator. Grain wird nicht gemessen. Grösster Posten ist die Analog-Delay-IR mit 3.7 % pro Instanz. Beobachtet, nicht bit-exakt: calcRMS nutzt hpfL für beide Kanäle, hpfR bleibt ungenutzt (Bug)."
+}
