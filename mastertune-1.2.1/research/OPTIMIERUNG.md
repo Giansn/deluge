@@ -416,6 +416,40 @@ Rohdaten: `raw/perf-filters-oscillators.json`. Patches: `perf/`. Branches `perf-
   - Das geht nur mit Song-Nachweis und wartet darum auf das Ergebnis der Layout-Untersuchung.
 - **Später:** Wavetable-Schleife 88 073, FM 36 614.
 
+## 7c. Fehler gefunden: LFOs starten mit Zufallsphase (1.2.1), in v13 behoben
+
+Rohdaten: `raw/layout-dependence.json`.
+- **Ursache:** `LFO` (`modulation/lfo.h`) lässt `phase` und `holdValue` uninitialisiert. `Sound::Sound()` setzt die drei Zeitstempel `timeStartedSkippingRendering{ModFX,LFO,Arp}` nicht.
+- **Folge:** Beim ersten Ton schalten LFO, Mod-FX-LFO und Arp um «Timer minus Altwert» weiter. Freilaufende LFOs und Mod-FX starten also nach jedem Laden an einer zufälligen Stelle. Ein Random-Walk-LFO kann mit einem Versatz bis etwa zum Zehnfachen seines Bereichs beginnen, der nur langsam abklingt.
+- Upstream (main) hat dieselben Stellen.
+- **Korrektur in v13:**
+  - `phase = 0`, `holdValue = 0`
+  - Zeitstempel im Konstruktor wie in `startSkippingRendering()`
+  - `whichNoteCurrentlyOnPostArp = 0`
+- **Nachweis im Emulator:** derselbe Song mit zwei verschiedenen RAM-Füllungen vor dem Start (`--fill 0xA5A5A5A5` / `0x5A5A5A5A`).
+  - v12-perf: 352 580 von 352 896 Samples verschieden, −16,7 dB, bis 3 749 LSB.
+  - v13: 30 Samples um 1 LSB (−113 dB). Der Rest kommt aus kleinen, nie beschriebenen Heap-Blöcken beim Laden (FFT-Konfiguration, Wavetable-Bänder, Patch-Kabel) und ist unhörbar.
+- **Weiterer uninitialisierter Wert, gefunden bei der Spur-FX-Prüfung:** `modFXLFOWaveType` bei GRAIN in `processFX`. Wird in v13 mitkorrigiert.
+- **Vergleichsrezept für künftige Patches auf v12-Basis:** `EMU_OPTS="--init-sounds --seed 1"` (siehe `tests/song/run.sh`). Ab v13 ist `--init-sounds` nicht mehr nötig.
+
+## 7d. Spur-Effekte (bitgleich, gegengeprüft)
+
+Rohdaten: `raw/perf-trackfx.json`. Patch `perf/0004`.
+
+| Änderung | vorher | nachher |
+|---|---|---|
+| `processReverbSendAndVolume` mit NEON | 59 412 | 13 977 |
+| Phaser/Chorus/Flanger je eigene Schleife | 38 643 | 24 040 |
+| EQ spezialisiert | 7 210 | 4 021 (Bench) |
+| SRR lokal, Bitcrush NEON | 5 397 | 5 014 |
+
+- **Song:** Bedarf 1 095 537 → 1 035 101 (−5,5 %). Wie auf dem Gerät: 28,5 → 31,9 Stimmen.
+- **Nachweis:**
+  - 22 Prüfsummen mit 4 × 4 000 Zufallsfällen
+  - alle 165 312 Aufrufe im Song identisch (mit `--init-sounds --seed 1`)
+  - der Gegenprüfer mit eigenen Grenzfällen und einer absichtlich eingebauten Mutation
+- **Kompressor nicht geändert:** Die Gleitkomma-Rechnung wählte je nach Kontext andere Befehle, das Ergebnis wäre nicht bitgleich gewesen.
+
 ## 8. Offen
 
 - [x] Volllast-Test Lauf 1 eingetragen, Priorisierung angepasst.
