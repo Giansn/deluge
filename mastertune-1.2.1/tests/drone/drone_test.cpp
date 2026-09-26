@@ -463,6 +463,44 @@ int main() {
 		CHECK(worst / own < 1.2, "master tune change glides");
 	}
 
+	// 10a. Between two songs (no song while one loads, Clear Song): fadeOut()
+	// takes what's sounding down to silence where it is, and the next song's
+	// drone starts from silence
+	{
+		TestDrone d = makeDrone();
+		d.tones[0] = on(Mode::BINAURAL, Timbre::SOFT, 20000, 700, 0, 50, -10);
+		d.tones[3] = on(Mode::TONE, Timbre::SINE, 44000, 0, 0, 40, 20);
+		Drone::Context ducked;
+		ducked.duck = 0.5f;
+		Out o = run(d, 30000, nullptr, ducked);
+		size_t blocks = 0;
+		while (d.drone.isSounding() && blocks < 100) {
+			std::vector<StereoSample> buf(kBlock);
+			d.drone.fadeOut(std::span<StereoSample>(buf.data(), kBlock));
+			for (auto& s : buf) {
+				o.l.push_back(s.l);
+				o.r.push_back(s.r);
+			}
+			blocks++;
+		}
+		size_t at = 30000 - 30000 % kBlock + (30000 % kBlock ? kBlock : 0);
+		double before = std::max(maxD2(o.l, 20000, at), maxD2(o.r, 20000, at));
+		double during = std::max(maxD2(o.l, at - 8, o.l.size()), maxD2(o.r, at - 8, o.r.size()));
+		double firstBlock = std::max(maxAbs(o.l, at, at + kBlock), maxAbs(o.r, at, at + kBlock));
+		double lastBefore = std::max(maxAbs(o.l, at - kBlock, at), maxAbs(o.r, at - kBlock, at));
+		printf("fade out between songs: silent after %zu blocks, largest step %.2f times the steady one, first block "
+		       "%.2f of the last\n",
+		       blocks, during / before, firstBlock / lastBefore);
+		CHECK(blocks > 1 && blocks <= 40, "fades out in a few blocks, %zu", blocks);
+		CHECK(during / before < 1.2, "no step at the start of the fade");
+		CHECK(firstBlock / lastBefore < 1.05, "the fade doesn't jump up (it keeps the sidechain's gain)");
+		// The next song: from silence, gliding up
+		Out n = run(d, 2 * kBlock);
+		double start = std::max(maxAbs(n.l, 0, 4), maxAbs(n.r, 0, 4));
+		printf("  next song: first samples %.4f of full scale\n", start / kFullScale);
+		CHECK(start < 0.01 * kFullScale, "next song starts from silence");
+	}
+
 	// 10. Cost per block of 128 samples, on the Deluge's Cortex-A9 when this runs
 	// in the emulator (tests/arm; on the PC nothing is counted), and no overflow
 	// with all 16 tones at full level
