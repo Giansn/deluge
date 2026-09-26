@@ -1,0 +1,2256 @@
+From f89b478c2946e2c027936ab8f06c92f53803dd2d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 14:59:17 +0000
+Subject: [PATCH] Drone: up to 16 steady tones with binaural, monaural and
+ isochronic beats, in its own view
+
+A song-wide drone mixed under the music after the song's effects: 16 tones set in Hz or as a note
+(following the master tune), each steady, binaural, monaural or isochronic, with a beat in Hz or
+synced to the tempo, four band-limited timbres, level and pan. It ducks with the song's sidechain,
+gliding per sample, and is saved with the song.
+
+The Drone view (Scale in Song view, or Drone in the Song menu) is laid out like Song view: one row
+per tone, mute column on/off, audition column selects, level as a bar in the mode's colour; the gold
+knobs set pitch and beat, the select encoder the mode, and pressing it opens the tone's menu.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/definitions_cxx.hpp                       |   1 +
+ src/deluge/dsp/drone/drone.cpp                | 476 ++++++++++++++++
+ src/deluge/dsp/drone/drone.h                  | 202 +++++++
+ src/deluge/dsp/dx/aligned_buf.h               |   1 +
+ src/deluge/gui/l10n/english.json              |  18 +-
+ src/deluge/gui/l10n/g_english.cpp             |  16 +
+ src/deluge/gui/l10n/g_seven_segment.cpp       |  16 +
+ src/deluge/gui/l10n/seven_segment.json        |  18 +-
+ src/deluge/gui/l10n/strings.h                 |  18 +
+ src/deluge/gui/menu_item/drone/items.h        | 245 ++++++++
+ src/deluge/gui/ui/menus.cpp                   |  47 ++
+ src/deluge/gui/ui/menus.h                     |   1 +
+ src/deluge/gui/views/drone_view.cpp           | 523 ++++++++++++++++++
+ src/deluge/gui/views/drone_view.h             |  66 +++
+ src/deluge/gui/views/session_view.cpp         |  10 +
+ src/deluge/model/action/action_logger.cpp     |   5 +-
+ src/deluge/model/song/song.cpp                | 137 +++++
+ src/deluge/model/song/song.h                  |   7 +
+ src/deluge/playback/playback_handler.h        |   2 +-
+ .../processing/engines/audio_engine.cpp       |  80 ++-
+ src/deluge/processing/engines/audio_engine.h  |   5 +
+ 21 files changed, 1889 insertions(+), 5 deletions(-)
+ create mode 100644 src/deluge/dsp/drone/drone.cpp
+ create mode 100644 src/deluge/dsp/drone/drone.h
+ create mode 100644 src/deluge/gui/menu_item/drone/items.h
+ create mode 100644 src/deluge/gui/views/drone_view.cpp
+ create mode 100644 src/deluge/gui/views/drone_view.h
+
+diff --git a/src/definitions_cxx.hpp b/src/definitions_cxx.hpp
+index 6aa83a52..ccbbaa33 100644
+--- a/src/definitions_cxx.hpp
++++ b/src/definitions_cxx.hpp
+@@ -214,6 +214,7 @@ enum class UIType : uint8_t {
+ 	SOUND_EDITOR,
+ 	TIMELINE,
+ 	RENAME_CLIPNAME,
++	DRONE, // mastertune-v12
+ 	NONE = 255,
+ };
+ 
+diff --git a/src/deluge/dsp/drone/drone.cpp b/src/deluge/dsp/drone/drone.cpp
+new file mode 100644
+index 00000000..ef519ed9
+--- /dev/null
++++ b/src/deluge/dsp/drone/drone.cpp
+@@ -0,0 +1,476 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute
++ * it and/or modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation, either version 3 of the License,
++ * or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++ * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
++ * details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program. If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "dsp/drone/drone.h"
++#include "definitions_cxx.hpp"
++#include <algorithm>
++#include <cmath>
++
++namespace deluge::dsp {
++
++std::array<const float*, Drone::kNumTables> Drone::tables_{};
++
++namespace {
++
++using S = DroneSettings;
++
++constexpr float kPhasePerHz = 4294967296.f / (float)kSampleRate;
++
++/// Amplitude of a tone at level 50 with the drone's volume at 50: -12 dBFS (the
++/// output's full scale is 2^24 in the rendering buffer)
++constexpr float kFullScale = 4194304.f;
++
++/// Glides of level and frequency: this much of the way per block of 128
++/// samples, about 15 ms to get 63% there
++constexpr float kGlide = 0.18f;
++/// Fading out for a change of mode or timbre, or off: about 4 ms to 63%
++constexpr float kFade = 0.5f;
++/// Below this (in the rendering buffer's units, 144 dB below full scale), a
++/// fading tone is silent
++constexpr float kSilent = 1.f;
++
++/// Isochronic pulses: on half the time, with soft edges this long (at most a
++/// quarter of the cycle each)
++constexpr float kEdgeSeconds = 0.006f;
++
++constexpr size_t kChunk = 128;
++
++// Harmonics of each timbre, and which of them the band-limited versions keep
++struct TimbreSpec {
++	std::array<float, 9> amplitude; // By harmonic number, 1 to 8
++	std::array<int32_t, 5> levels;  // Highest harmonic of each version, best first; 0 ends the list
++	size_t firstTable;
++};
++
++constexpr std::array<TimbreSpec, S::kNumTimbres> kTimbres{{
++    // SINE
++    {{0.f, 1.f}, {1, 0}, 0},
++    // SOFT: 1 / n^2 up to the 5th
++    {{0.f, 1.f, 1.f / 4, 1.f / 9, 1.f / 16, 1.f / 25}, {5, 4, 3, 2, 0}, 1},
++    // ORGAN: octaves
++    {{0.f, 1.f, 0.5f, 0.f, 0.35f, 0.f, 0.f, 0.f, 0.25f}, {8, 4, 2, 0}, 5},
++    // RICH: 1 / n up to the 8th
++    {{0.f, 1.f, 1.f / 2, 1.f / 3, 1.f / 4, 1.f / 5, 1.f / 6, 1.f / 7, 1.f / 8}, {8, 6, 4, 3, 2}, 8},
++}};
++
++/// Harmonics stay below this, well clear of the Nyquist frequency
++constexpr float kHighestHarmonicHz = 18000.f;
++
++[[gnu::always_inline]] inline float readTable(const float* table, uint32_t phase) {
++	uint32_t index = phase >> 23; // 512 entries
++	float fraction = (float)(phase & 0x7FFFFF) * (1.f / 8388608.f);
++	float a = table[index];
++	return a + fraction * (table[index + 1] - a);
++}
++
++/// Isochronic pulse at a phase through its cycle (0 to 1)
++[[gnu::always_inline]] inline float pulse(float x, float edge, float inverseEdge) {
++	float t;
++	if (x < edge) {
++		t = x * inverseEdge;
++	}
++	else if (x < 0.5f) {
++		return 1.f;
++	}
++	else if (x < 0.5f + edge) {
++		t = 1.f - (x - 0.5f) * inverseEdge;
++	}
++	else {
++		return 0.f;
++	}
++	return t * t * (3.f - 2.f * t);
++}
++
++} // namespace
++
++void Drone::initTables(float* memory) {
++	// One sine, and each harmonic read from it at a multiple of the position:
++	// exact, and quick to make. A quarter of it is enough (and fits the stack).
++	constexpr size_t kQuarter = kTableSize / 4;
++	std::array<double, kQuarter + 1> quarterSine{};
++	for (size_t i = 0; i <= kQuarter; i++) {
++		quarterSine[i] = std::sin(2.0 * 3.14159265358979323846 * (double)i / (double)kTableSize);
++	}
++	auto sine = [&](size_t position) {
++		size_t quadrant = position / kQuarter;
++		size_t within = position % kQuarter;
++		double v = (quadrant & 1) ? quarterSine[kQuarter - within] : quarterSine[within];
++		return (quadrant & 2) ? -v : v;
++	};
++
++	for (const TimbreSpec& spec : kTimbres) {
++		// All versions of a timbre are scaled by the full one's peak, so the
++		// fundamental keeps its level when the highest harmonics drop out at high
++		// frequencies
++		double peak = 0;
++		for (size_t i = 0; i < kTableSize; i++) {
++			double v = 0;
++			for (int32_t h = 1; h <= spec.levels[0]; h++) {
++				v += spec.amplitude[h] * sine((i * h) % kTableSize);
++			}
++			peak = std::max(peak, std::abs(v));
++		}
++
++		size_t tableIndex = spec.firstTable;
++		for (int32_t highest : spec.levels) {
++			if (highest == 0 || (highest == 1 && tableIndex != 0)) {
++				break;
++			}
++			float* table = memory + tableIndex * (kTableSize + 1);
++			for (size_t i = 0; i < kTableSize; i++) {
++				double v = 0;
++				for (int32_t h = 1; h <= highest; h++) {
++					v += spec.amplitude[h] * sine((i * h) % kTableSize);
++				}
++				table[i] = (float)(v / peak);
++			}
++			table[kTableSize] = table[0]; // Guard point for the interpolation
++			tables_[tableIndex] = table;
++			tableIndex++;
++		}
++	}
++}
++
++const float* Drone::tableFor(Timbre timbre, float highestFrequencyHz) const {
++	const TimbreSpec& spec = kTimbres[static_cast<size_t>(timbre)];
++	float highestHarmonic = kHighestHarmonicHz / std::max(highestFrequencyHz, 1.f);
++	size_t tableIndex = spec.firstTable;
++	for (int32_t highest : spec.levels) {
++		if (highest == 0) {
++			break;
++		}
++		if ((float)highest <= highestHarmonic) {
++			return tables_[tableIndex];
++		}
++		tableIndex++;
++	}
++	return tables_[0]; // Too high for any harmonic: sine
++}
++
++float Drone::levelToGain(int32_t level) {
++	if (level <= 0) {
++		return 0.f;
++	}
++	return std::pow(10.f, (float)(std::min(level, S::kMaxLevel) - S::kMaxLevel) * 0.05f);
++}
++
++float Drone::noteToHz(int32_t note, int32_t cents, float a4Hz) {
++	float semitones = (float)(std::clamp(note, (int32_t)0, (int32_t)127) - 69)
++	                  + (float)std::clamp(cents, -S::kMaxCents, S::kMaxCents) * 0.01f;
++	return a4Hz * std::exp2(semitones * (1.f / 12.f));
++}
++
++int32_t Drone::clampSync(int32_t sync) {
++	return std::clamp(sync, (int32_t)1, S::kMaxSync);
++}
++
++float Drone::syncedBeatHz(int32_t sync, float quarterNotesPerSecond) {
++	// 1 is a whole note, each step half as long
++	return quarterNotesPerSecond * (float)(1 << (clampSync(sync) - 1)) * 0.25f;
++}
++
++bool Drone::isSounding(const Settings& settings) const {
++	for (size_t i = 0; i < kNumTones; i++) {
++		if (voices_[i].started || settings.tones[i].active) {
++			return true;
++		}
++	}
++	return false;
++}
++
++bool Drone::isSounding() const {
++	for (const Voice& voice : voices_) {
++		if (voice.started) {
++			return true;
++		}
++	}
++	return false;
++}
++
++void Drone::reset() {
++	voices_ = {};
++}
++
++void Drone::fadeOut(std::span<StereoSample> buffer) {
++	// Each tone off, at what its voice is playing (static: too big for the audio routine's stack)
++	static Settings fading;
++	bool any = false;
++	for (size_t i = 0; i < kNumTones; i++) {
++		const Voice& voice = voices_[i];
++		Tone& tone = fading.tones[i];
++		tone = Tone{};
++		if (voice.started) {
++			any = true;
++			tone.mode = voice.mode;
++			tone.timbre = voice.timbre;
++			tone.frequency = (int32_t)std::lround(voice.carrierIncrement * (100.f / kPhasePerHz));
++			tone.beat = (int32_t)std::lround(voice.halfBeatIncrement * (200.f / kPhasePerHz));
++			tone.pan = voice.gainsForPan;
++			tone.level = voice.gainForLevel;
++		}
++	}
++	if (!any) {
++		return;
++	}
++	fading.volume = gainForVolume_;
++	Context context;
++	context.duck = lastDuck_;
++	render(buffer, fading, context);
++}
++
++void Drone::render(std::span<StereoSample> buffer, const Settings& settings, const Context& context) {
++	if (!tablesReady()) {
++		return;
++	}
++	if (settings.volume != gainForVolume_) {
++		gainForVolume_ = settings.volume;
++		volumeGain_ = levelToGain(settings.volume);
++	}
++	float volumeGain = volumeGain_ * context.volume * kFullScale;
++	lastDuck_ = context.duck;
++
++	Context chunkContext = context;
++	for (size_t start = 0; start < buffer.size(); start += kChunk) {
++		std::span<StereoSample> chunk = buffer.subspan(start, std::min(kChunk, buffer.size() - start));
++		std::array<float, 2 * kChunk> mix{};
++		std::span<float> mixSpan{mix.data(), 2 * chunk.size()};
++
++		bool any = false;
++		for (size_t i = 0; i < kNumTones; i++) {
++			if (voices_[i].started || settings.tones[i].active) {
++				renderVoice(voices_[i], settings.tones[i], mixSpan, chunkContext, volumeGain);
++				any = true;
++			}
++		}
++		if (!any) {
++			return;
++		}
++
++		for (size_t s = 0; s < chunk.size(); s++) {
++			chunk[s].l += (int32_t)mix[2 * s];
++			chunk[s].r += (int32_t)mix[2 * s + 1];
++		}
++
++		if (chunkContext.position >= 0.) {
++			chunkContext.position += (double)chunk.size() * (double)context.quarterNotesPerSecond / (double)kSampleRate;
++		}
++	}
++}
++
++void Drone::updatePanGains(Voice& voice, int32_t pan) {
++	if (pan != voice.gainsForPan) {
++		voice.gainsForPan = pan;
++		// Constant power, 0 dB in the middle
++		float angle = ((float)std::clamp(pan, -S::kMaxPan, S::kMaxPan) / (float)S::kMaxPan + 1.f) * 0.785398163f;
++		voice.panGainL = std::cos(angle) * 1.41421356f;
++		voice.panGainR = std::sin(angle) * 1.41421356f;
++	}
++}
++
++void Drone::renderVoice(Voice& voice, const Tone& tone, std::span<float> mix, const Context& context,
++                        float volumeGain) {
++	size_t numSamples = mix.size() / 2;
++	float inverseNumSamples = 1.f / (float)numSamples;
++
++	// Settings, and where the glides get to by the end of this block
++	float frequencyHz;
++	if (tone.byNote) {
++		if (tone.note != voice.hzForNote || tone.cents != voice.hzForCents || context.a4Hz != voice.hzForA4) {
++			voice.hzForNote = tone.note;
++			voice.hzForCents = tone.cents;
++			voice.hzForA4 = context.a4Hz;
++			voice.noteHz = noteToHz(tone.note, tone.cents, context.a4Hz);
++		}
++		frequencyHz = voice.noteHz;
++	}
++	else {
++		frequencyHz = (float)std::clamp(tone.frequency, S::kMinFrequency, S::kMaxFrequency) * 0.01f;
++	}
++	float beatHz = (tone.sync > 0) ? syncedBeatHz(tone.sync, context.quarterNotesPerSecond)
++	                               : (float)std::clamp(tone.beat, (int32_t)0, S::kMaxBeat) * 0.01f;
++	beatHz = std::min(beatHz,
++	                  frequencyHz); // So the lower of the two tones doesn't go below 0 Hz
++	float carrierTarget = frequencyHz * kPhasePerHz;
++	float halfBeatTarget = beatHz * 0.5f * kPhasePerHz;
++
++	if (!voice.started) {
++		// From silence, at the setting straight away
++		voice.started = true;
++		voice.mode = tone.mode;
++		voice.timbre = tone.timbre;
++		voice.carrierIncrement = carrierTarget;
++		voice.halfBeatIncrement = halfBeatTarget;
++		voice.level = 0.f;
++		voice.gainL = voice.gainR = 0.f;
++		updatePanGains(voice, tone.pan);
++		voice.panL = voice.panGainL;
++		voice.panR = voice.panGainR;
++	}
++
++	// A new mode or timbre, or off, goes through silence
++	bool fadingOut = (!tone.active || tone.mode != voice.mode || tone.timbre != voice.timbre);
++	if (tone.level != voice.gainForLevel) {
++		voice.gainForLevel = tone.level;
++		voice.levelGain = levelToGain(tone.level);
++	}
++	float levelTarget = fadingOut ? 0.f : voice.levelGain * volumeGain;
++	float levelEnd = voice.level + (levelTarget - voice.level) * (fadingOut ? kFade : kGlide);
++	if (fadingOut && levelEnd < kSilent) {
++		levelEnd = 0.f;
++	}
++
++	float carrierStart = voice.carrierIncrement;
++	float carrierEnd = carrierStart + (carrierTarget - carrierStart) * kGlide;
++	float halfBeatStart = voice.halfBeatIncrement;
++	float halfBeatEnd = halfBeatStart + (halfBeatTarget - halfBeatStart) * kGlide;
++	voice.carrierIncrement = carrierEnd;
++	voice.halfBeatIncrement = halfBeatEnd;
++
++	// A synced beat locks to the song's beat grid while it plays, pulling a
++	// quarter of the way there each block
++	float lockCorrection = 0.f;
++	if (tone.sync > 0 && context.position >= 0.) {
++		double cyclesPerQuarter = (double)(1 << (clampSync(tone.sync) - 1)) * 0.25;
++		double halfBeats = context.position * cyclesPerQuarter * 0.5;
++		uint32_t target = (uint32_t)(uint64_t)((halfBeats - std::floor(halfBeats)) * 4294967296.0);
++		int32_t error = (int32_t)(target - voice.halfBeatPhase);
++		lockCorrection = std::clamp((float)error * 0.25f * inverseNumSamples, -0.5f * halfBeatEnd, 0.5f * halfBeatEnd);
++	}
++
++	// Gains: level, pan (constant power, 0 dB in the middle) and the sidechain,
++	// gliding over the block from where the last one ended, so ducking doesn't
++	// step
++	updatePanGains(voice, tone.pan);
++	voice.panL += (voice.panGainL - voice.panL) * kGlide;
++	voice.panR += (voice.panGainR - voice.panR) * kGlide;
++	float gainEndL = levelEnd * voice.panL * context.duck;
++	float gainEndR = levelEnd * voice.panR * context.duck;
++	float gainL = voice.gainL;
++	float gainR = voice.gainR;
++	float gainStepL = (gainEndL - gainL) * inverseNumSamples;
++	float gainStepR = (gainEndR - gainR) * inverseNumSamples;
++
++	// Phase increments, gliding sample by sample
++	uint32_t carrierIncrement = (uint32_t)carrierStart;
++	int32_t carrierStep = (int32_t)(((int64_t)(uint32_t)carrierEnd - (int64_t)carrierIncrement) / (int64_t)numSamples);
++	uint32_t halfBeatIncrement = (uint32_t)std::max(halfBeatStart + lockCorrection, 0.f);
++	int32_t halfBeatStep =
++	    (int32_t)(((int64_t)(uint32_t)std::max(halfBeatEnd + lockCorrection, 0.f) - (int64_t)halfBeatIncrement)
++	              / (int64_t)numSamples);
++
++	uint32_t carrierPhase = voice.carrierPhase;
++	uint32_t halfBeatPhase = voice.halfBeatPhase;
++
++	// Band-limited for the highest frequency this block reaches
++	float highestHz = (std::max(carrierStart, carrierEnd) + std::max(halfBeatStart, halfBeatEnd)) / kPhasePerHz;
++	const float* table = tableFor(voice.timbre, highestHz);
++
++	float* out = mix.data();
++	switch (voice.mode) {
++	case Mode::TONE:
++		for (size_t s = 0; s < numSamples; s++) {
++			float v = readTable(table, carrierPhase);
++			carrierPhase += carrierIncrement;
++			carrierIncrement += carrierStep;
++			gainL += gainStepL;
++			gainR += gainStepR;
++			out[2 * s] += v * gainL;
++			out[2 * s + 1] += v * gainR;
++		}
++		break;
++
++	case Mode::BINAURAL:
++		for (size_t s = 0; s < numSamples; s++) {
++			float left = readTable(table, carrierPhase - halfBeatPhase);
++			float right = readTable(table, carrierPhase + halfBeatPhase);
++			carrierPhase += carrierIncrement;
++			carrierIncrement += carrierStep;
++			halfBeatPhase += halfBeatIncrement;
++			halfBeatIncrement += halfBeatStep;
++			gainL += gainStepL;
++			gainR += gainStepR;
++			out[2 * s] += left * gainL;
++			out[2 * s + 1] += right * gainR;
++		}
++		break;
++
++	case Mode::MONAURAL:
++		for (size_t s = 0; s < numSamples; s++) {
++			float v =
++			    0.5f
++			    * (readTable(table, carrierPhase - halfBeatPhase) + readTable(table, carrierPhase + halfBeatPhase));
++			carrierPhase += carrierIncrement;
++			carrierIncrement += carrierStep;
++			halfBeatPhase += halfBeatIncrement;
++			halfBeatIncrement += halfBeatStep;
++			gainL += gainStepL;
++			gainR += gainStepR;
++			out[2 * s] += v * gainL;
++			out[2 * s + 1] += v * gainR;
++		}
++		break;
++
++	case Mode::ISOCHRONIC: {
++		bool pulsing = (halfBeatEnd + lockCorrection) > 0.f;
++		float edge = std::clamp(kEdgeSeconds * beatHz, 0.001f, 0.25f);
++		float inverseEdge = 1.f / edge;
++		for (size_t s = 0; s < numSamples; s++) {
++			float v = readTable(table, carrierPhase);
++			if (pulsing) {
++				// The pulse runs at the beat, twice the half-beat phase
++				v *= pulse((float)(halfBeatPhase << 1) * (1.f / 4294967296.f), edge, inverseEdge);
++			}
++			carrierPhase += carrierIncrement;
++			carrierIncrement += carrierStep;
++			halfBeatPhase += halfBeatIncrement;
++			halfBeatIncrement += halfBeatStep;
++			gainL += gainStepL;
++			gainR += gainStepR;
++			out[2 * s] += v * gainL;
++			out[2 * s + 1] += v * gainR;
++		}
++		break;
++	}
++	}
++
++	// The beat keeps its phase in the tone modes too, so a switch to a beating
++	// mode starts where the grid is
++	if (voice.mode == Mode::TONE) {
++		halfBeatPhase += (uint32_t)((halfBeatStart + halfBeatEnd) * 0.5f * (float)numSamples);
++	}
++
++	voice.carrierPhase = carrierPhase;
++	voice.halfBeatPhase = halfBeatPhase;
++	voice.level = levelEnd;
++	voice.gainL = gainEndL;
++	voice.gainR = gainEndR;
++
++	// Through silence: take on the new mode and timbre, or stop
++	if (fadingOut && levelEnd == 0.f) {
++		if (!tone.active) {
++			voice.started = false;
++		}
++		else {
++			voice.mode = tone.mode;
++			voice.timbre = tone.timbre;
++		}
++	}
++}
++
++} // namespace deluge::dsp
+diff --git a/src/deluge/dsp/drone/drone.h b/src/deluge/dsp/drone/drone.h
+new file mode 100644
+index 00000000..0958623d
+--- /dev/null
++++ b/src/deluge/dsp/drone/drone.h
+@@ -0,0 +1,202 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute
++ * it and/or modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation, either version 3 of the License,
++ * or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++ * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
++ * details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program. If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++
++#include "dsp/stereo_sample.h"
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <span>
++
++namespace deluge::dsp {
++
++/// A drone of up to 16 steady tones, each set by its frequency in hertz, mixed
++/// under the song (mastertune-v12).
++///
++/// Each tone can also beat, the way brainwave generators do it:
++/// - Binaural: the left ear gets the frequency minus half the beat, the right
++/// ear plus half, so the beat forms in the
++///   head (needs headphones).
++/// - Monaural: both tones in both ears, so the beat is in the sound itself.
++/// - Isochronic: the tone pulses on and off at the beat, with soft edges.
++///
++/// A beat can follow the song's tempo, and then locks to the beat grid while
++/// the song plays. The drone ducks with the song's sidechain (see
++/// Context::duck).
++///
++/// The settings (DroneSettings) belong to the song; the Drone renders them and
++/// keeps what's sounding, so a new song's drone takes over from the last one
++/// without a break: tones glide to their new frequencies and levels, and fade
++/// out and in where the mode or timbre changes.
++struct DroneSettings {
++	static constexpr size_t kNumTones = 16;
++
++	enum class Mode : uint8_t { TONE, BINAURAL, MONAURAL, ISOCHRONIC };
++	static constexpr int32_t kNumModes = 4;
++
++	enum class Timbre : uint8_t {
++		SINE,  ///< Pure
++		SOFT,  ///< Harmonics 2 to 5, each at 1 / n^2: mellow
++		ORGAN, ///< Octaves 2, 4 and 8, like drawbars
++		RICH,  ///< Harmonics 2 to 8 at 1 / n, a band-limited saw
++	};
++	static constexpr int32_t kNumTimbres = 4;
++
++	// Frequencies in hundredths of a hertz, as the menu shows them
++	static constexpr int32_t kMinFrequency = 1000;   ///< 10.00 Hz
++	static constexpr int32_t kMaxFrequency = 500000; ///< 5000.00 Hz
++	static constexpr int32_t kMaxBeat = 10000;       ///< 100.00 Hz
++	static constexpr int32_t kMaxLevel = 50;         ///< 1 dB steps; 50 is -12 dBFS for a tone, 0 is silent
++	static constexpr int32_t kMaxPan = 32;
++	/// Beat synced to the tempo: 0 is off (the beat in hertz), 1 to kMaxSync a
++	/// whole note to a 64th
++	static constexpr int32_t kMaxSync = 7;
++
++	static constexpr int32_t kMaxCents = 50;
++
++	struct Tone {
++		bool active = false; ///< Sounding (the mute pad), keeping the rest
++		Mode mode = Mode::TONE;
++		Timbre timbre = Timbre::SINE;
++		/// Pitch as a note (and cents) that follows the master tune, like everything else on the Deluge, instead of
++		/// a frequency. So a drone fits an external synth tuned to the same master tune.
++		bool byNote = false;
++		int32_t note = 57;         ///< A3, as MIDI note numbers (A4 is 69)
++		int32_t cents = 0;         ///< -50 to 50
++		int32_t frequency = 20000; ///< 200.00 Hz
++		int32_t beat = 1000;       ///< 10.00 Hz, alpha
++		int32_t sync = 0;
++		int32_t level = 40;
++		int32_t pan = 0;
++
++		bool operator==(const Tone&) const = default;
++	};
++
++	std::array<Tone, kNumTones> tones{};
++	int32_t volume = 40; ///< The whole drone, 0 to 50 in 1 dB steps (50 is 0 dB)
++
++	/// How far the drone ducks when the song's sidechain is hit, 0 to 50 (the envelope's attack, release and sync are
++	/// in Song::droneSidechain)
++	int32_t sidechain = 0;
++	int32_t sidechainShape = -601295438; ///< As the reverb's default
++
++	[[nodiscard]] bool anyActive() const {
++		for (const Tone& tone : tones) {
++			if (tone.active) {
++				return true;
++			}
++		}
++		return false;
++	}
++};
++
++class Drone {
++public:
++	using Settings = DroneSettings;
++	using Tone = DroneSettings::Tone;
++	using Mode = DroneSettings::Mode;
++	using Timbre = DroneSettings::Timbre;
++	static constexpr size_t kNumTones = DroneSettings::kNumTones;
++
++	/// What the drone needs from the rest of the firmware for one block
++	struct Context {
++		float quarterNotesPerSecond = 2.f; ///< The tempo, for synced beats
++		double position = -1.;             ///< Song position in quarter notes at the block's
++		                                   ///< start; negative: stopped
++		float duck = 1.f;                  ///< Sidechain gain at the block's end, 0 to 1: the drone
++		                                   ///< glides there
++		float volume = 1.f;                ///< The song's volume, as for the metronome
++		float a4Hz = 440.f;                ///< The master tune, for tones set by note
++	};
++
++	/// Must be called once before the first render(), with kTableMemoryFloats
++	/// floats that stay put
++	static void initTables(float* memory);
++	static constexpr size_t kTableSize = 512;
++	static constexpr size_t kNumTables = 13;
++	static constexpr size_t kTableMemoryFloats = kNumTables * (kTableSize + 1);
++	[[nodiscard]] static bool tablesReady() { return tables_[0] != nullptr; }
++
++	/// Adds the drone to the buffer
++	void render(std::span<StereoSample> buffer, const Settings& settings, const Context& context);
++
++	/// Whether render() has anything to do for these settings: a tone on, or one
++	/// still fading out
++	[[nodiscard]] bool isSounding(const Settings& settings) const;
++	/// Whether a tone is still sounding, whatever the settings
++	[[nodiscard]] bool isSounding() const;
++
++	/// Starts every tone from silence again, e.g. for a new song
++	void reset();
++
++	/// Fades out whatever is still sounding, at the pitch it's at: for when there's
++	/// no song to render the drone of, e.g. while one loads
++	void fadeOut(std::span<StereoSample> buffer);
++
++	/// Gain for a level of 0 to 50, 1 dB a step, 0 silent
++	static float levelToGain(int32_t level);
++	/// Frequency of a tone set by note, at a master tune
++	static float noteToHz(int32_t note, int32_t cents, float a4Hz);
++	/// Beat in hundredths of a hertz for a synced tone at the tempo
++	static float syncedBeatHz(int32_t sync, float quarterNotesPerSecond);
++
++private:
++	struct Voice {
++		uint32_t carrierPhase = 0;
++		uint32_t halfBeatPhase = 0;   ///< Runs at half the beat; the two tones sit
++		                              ///< this far either side of the carrier
++		float carrierIncrement = 0.f; ///< Phase per sample, gliding to the setting
++		float halfBeatIncrement = 0.f;
++		float level = 0.f; ///< Level and volume, gliding to the setting
++		float panL = 1.f;  ///< Pan gains, gliding to the setting
++		float panR = 1.f;
++		float gainL = 0.f; ///< Gains at the end of the last block, which this one starts from
++		float gainR = 0.f;
++		// Gains for the level and pan they were last worked out for (pow, cos and
++		// sin cost more than all the samples of a block)
++		int32_t gainForLevel = -1;
++		float levelGain = 0.f;
++		int32_t gainsForPan = -1000;
++		float panGainL = 1.f;
++		float panGainR = 1.f;
++		// Frequency of the note and master tune it was last worked out for
++		int32_t hzForNote = -1;
++		int32_t hzForCents = 0;
++		float hzForA4 = 0.f;
++		float noteHz = 0.f;
++		Mode mode = Mode::TONE; ///< What's sounding, which changes to the setting
++		                        ///< through silence
++		Timbre timbre = Timbre::SINE;
++		bool started = false;
++	};
++
++	const float* tableFor(Timbre timbre, float highestFrequencyHz) const;
++	void renderVoice(Voice& voice, const Tone& tone, std::span<float> mix, const Context& context, float volumeGain);
++	static void updatePanGains(Voice& voice, int32_t pan);
++	[[nodiscard]] static int32_t clampSync(int32_t sync);
++
++	std::array<Voice, kNumTones> voices_{};
++	int32_t gainForVolume_ = -1;
++	float volumeGain_ = 0.f;
++	float lastDuck_ = 1.f; ///< Sidechain gain the last block ended at, for fadeOut()
++
++	static std::array<const float*, kNumTables> tables_;
++};
++
++} // namespace deluge::dsp
+diff --git a/src/deluge/dsp/dx/aligned_buf.h b/src/deluge/dsp/dx/aligned_buf.h
+index a6d15453..90bb9553 100644
+--- a/src/deluge/dsp/dx/aligned_buf.h
++++ b/src/deluge/dsp/dx/aligned_buf.h
+@@ -21,6 +21,7 @@
+ #pragma once
+ 
+ #include <stddef.h>
++#include <stdint.h> // mastertune-v12: for intptr_t, which a new file in the unity build no longer brings in first
+ 
+ template <typename T, size_t size, size_t alignment = 16>
+ class AlignedBuf {
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index 3b7afc53..509c851f 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -923,6 +923,22 @@
+         "STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO": "USB audio",
+         "STRING_FOR_RESTART_TO_APPLY": "Restart to apply",
+         "STRING_FOR_USB_AUDIO_GAP": "USB audio gap",
+-        "STRING_FOR_COMMUNITY_FEATURE_KIT_RAM_SAVER": "Kit RAM saver"
++        "STRING_FOR_COMMUNITY_FEATURE_KIT_RAM_SAVER": "Kit RAM saver",
++        "STRING_FOR_DRONE": "Drone",
++        "STRING_FOR_DRONE_TONE_MENU_TITLE": "Drone tone",
++        "STRING_FOR_DRONE_STEADY": "Tone",
++        "STRING_FOR_BINAURAL": "Binaural",
++        "STRING_FOR_MONAURAL": "Monaural",
++        "STRING_FOR_ISOCHRONIC": "Isochronic",
++        "STRING_FOR_DRONE_PITCH_BY": "Pitch as",
++        "STRING_FOR_HERTZ": "Hz",
++        "STRING_FOR_NOTE": "Note",
++        "STRING_FOR_CENTS": "Cents",
++        "STRING_FOR_BEAT": "Beat",
++        "STRING_FOR_TIMBRE": "Timbre",
++        "STRING_FOR_SOFT": "Soft",
++        "STRING_FOR_ORGAN": "Organ",
++        "STRING_FOR_RICH": "Rich",
++        "STRING_FOR_LEVEL": "Level"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index d683bc59..fdaf3fbd 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -852,6 +852,22 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_RESTART_TO_APPLY, "Restart to apply"},
+         {STRING_FOR_USB_AUDIO_GAP, "USB audio gap"},
+         {STRING_FOR_COMMUNITY_FEATURE_KIT_RAM_SAVER, "Kit RAM saver"},
++        {STRING_FOR_DRONE, "Drone"},
++        {STRING_FOR_DRONE_TONE_MENU_TITLE, "Drone tone"},
++        {STRING_FOR_DRONE_STEADY, "Tone"},
++        {STRING_FOR_BINAURAL, "Binaural"},
++        {STRING_FOR_MONAURAL, "Monaural"},
++        {STRING_FOR_ISOCHRONIC, "Isochronic"},
++        {STRING_FOR_DRONE_PITCH_BY, "Pitch as"},
++        {STRING_FOR_HERTZ, "Hz"},
++        {STRING_FOR_NOTE, "Note"},
++        {STRING_FOR_CENTS, "Cents"},
++        {STRING_FOR_BEAT, "Beat"},
++        {STRING_FOR_TIMBRE, "Timbre"},
++        {STRING_FOR_SOFT, "Soft"},
++        {STRING_FOR_ORGAN, "Organ"},
++        {STRING_FOR_RICH, "Rich"},
++        {STRING_FOR_LEVEL, "Level"},
+     },
+ };
+ } // namespace deluge::l10n::built_in
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index 9ca5294b..8614ffbb 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -494,6 +494,22 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_RESTART_TO_APPLY, "RSTR"},
+         {STRING_FOR_USB_AUDIO_GAP, "UGAP"},
+         {STRING_FOR_COMMUNITY_FEATURE_KIT_RAM_SAVER, "KRAM"},
++        {STRING_FOR_DRONE, "DRON"},
++        {STRING_FOR_DRONE_TONE_MENU_TITLE, "TONE"},
++        {STRING_FOR_DRONE_STEADY, "TONE"},
++        {STRING_FOR_BINAURAL, "BINA"},
++        {STRING_FOR_MONAURAL, "MONA"},
++        {STRING_FOR_ISOCHRONIC, "ISO"},
++        {STRING_FOR_DRONE_PITCH_BY, "PTCH"},
++        {STRING_FOR_HERTZ, "HZ"},
++        {STRING_FOR_NOTE, "NOTE"},
++        {STRING_FOR_CENTS, "CENT"},
++        {STRING_FOR_BEAT, "BEAT"},
++        {STRING_FOR_TIMBRE, "TIMB"},
++        {STRING_FOR_SOFT, "SOFT"},
++        {STRING_FOR_ORGAN, "ORGN"},
++        {STRING_FOR_RICH, "RICH"},
++        {STRING_FOR_LEVEL, "LEVL"},
+     },
+     &built_in::english,
+ };
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index 000583bc..4c876aec 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -528,6 +528,22 @@
+         "STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO": "UAUD",
+         "STRING_FOR_RESTART_TO_APPLY": "RSTR",
+         "STRING_FOR_USB_AUDIO_GAP": "UGAP",
+-        "STRING_FOR_COMMUNITY_FEATURE_KIT_RAM_SAVER": "KRAM"
++        "STRING_FOR_COMMUNITY_FEATURE_KIT_RAM_SAVER": "KRAM",
++        "STRING_FOR_DRONE": "DRON",
++        "STRING_FOR_DRONE_TONE_MENU_TITLE": "TONE",
++        "STRING_FOR_DRONE_STEADY": "TONE",
++        "STRING_FOR_BINAURAL": "BINA",
++        "STRING_FOR_MONAURAL": "MONA",
++        "STRING_FOR_ISOCHRONIC": "ISO",
++        "STRING_FOR_DRONE_PITCH_BY": "PTCH",
++        "STRING_FOR_HERTZ": "HZ",
++        "STRING_FOR_NOTE": "NOTE",
++        "STRING_FOR_CENTS": "CENT",
++        "STRING_FOR_BEAT": "BEAT",
++        "STRING_FOR_TIMBRE": "TIMB",
++        "STRING_FOR_SOFT": "SOFT",
++        "STRING_FOR_ORGAN": "ORGN",
++        "STRING_FOR_RICH": "RICH",
++        "STRING_FOR_LEVEL": "LEVL"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index 9f02421e..2be40f97 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -968,6 +968,24 @@ enum class String : size_t {
+ 	STRING_FOR_USB_AUDIO_GAP,
+ 	STRING_FOR_COMMUNITY_FEATURE_KIT_RAM_SAVER,
+ 
++	// drone (mastertune-v12)
++	STRING_FOR_DRONE,
++	STRING_FOR_DRONE_TONE_MENU_TITLE,
++	STRING_FOR_DRONE_STEADY,
++	STRING_FOR_BINAURAL,
++	STRING_FOR_MONAURAL,
++	STRING_FOR_ISOCHRONIC,
++	STRING_FOR_DRONE_PITCH_BY,
++	STRING_FOR_HERTZ,
++	STRING_FOR_NOTE,
++	STRING_FOR_CENTS,
++	STRING_FOR_BEAT,
++	STRING_FOR_TIMBRE,
++	STRING_FOR_SOFT,
++	STRING_FOR_ORGAN,
++	STRING_FOR_RICH,
++	STRING_FOR_LEVEL,
++
+ 	STRING_LAST
+ };
+ 
+diff --git a/src/deluge/gui/menu_item/drone/items.h b/src/deluge/gui/menu_item/drone/items.h
+new file mode 100644
+index 00000000..9caf081d
+--- /dev/null
++++ b/src/deluge/gui/menu_item/drone/items.h
+@@ -0,0 +1,245 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include "dsp/drone/drone.h"
++#include "gui/l10n/l10n.h"
++#include "gui/menu_item/decimal.h"
++#include "gui/menu_item/integer.h"
++#include "gui/menu_item/selection.h"
++#include "gui/menu_item/submenu.h"
++#include "gui/ui/sound_editor.h"
++#include "hid/display/display.h"
++#include "hid/display/oled.h"
++#include "model/song/song.h"
++#include "model/tuning/master_tune.h"
++#include "util/functions.h"
++#include <cmath>
++#include <string_view>
++
++// mastertune-v12: the drone's menu, opened from the drone view (select encoder) for the tone selected there, and the
++// drone's settings for the whole song
++namespace deluge::gui::menu_item::drone {
++
++using Settings = deluge::dsp::DroneSettings;
++
++/// The tone the drone view has selected, which the tone items edit
++inline int32_t currentTone = 0;
++inline Settings::Tone& tone() {
++	return currentSong->drone.tones[std::clamp(currentTone, (int32_t)0, (int32_t)Settings::kNumTones - 1)];
++}
++
++/// Nearest note and cents for a frequency at the current master tune, and back
++inline void frequencyToNote(int32_t hundredthsHz, int32_t* note, int32_t* cents) {
++	float a4 = (float)MasterTune::getTenthsHz() * 0.1f;
++	float semitones = 12.f * std::log2(std::max((float)hundredthsHz * 0.01f, 1.f) / a4) + 69.f;
++	int32_t n = std::clamp((int32_t)std::lround(semitones), (int32_t)0, (int32_t)127);
++	*note = n;
++	*cents =
++	    std::clamp((int32_t)std::lround((semitones - (float)n) * 100.f), -Settings::kMaxCents, Settings::kMaxCents);
++}
++inline int32_t noteToFrequency(int32_t note, int32_t cents) {
++	float hz = deluge::dsp::Drone::noteToHz(note, cents, (float)MasterTune::getTenthsHz() * 0.1f);
++	return std::clamp((int32_t)std::lround(hz * 100.f), Settings::kMinFrequency, Settings::kMaxFrequency);
++}
++
++class Mode final : public Selection {
++public:
++	using Selection::Selection;
++	void readCurrentValue() override { this->setValue((int32_t)tone().mode); }
++	void writeCurrentValue() override { tone().mode = this->getValue<Settings::Mode>(); }
++	deluge::vector<std::string_view> getOptions() override {
++		using enum l10n::String;
++		return {l10n::getView(STRING_FOR_DRONE_STEADY), l10n::getView(STRING_FOR_BINAURAL),
++		        l10n::getView(STRING_FOR_MONAURAL), l10n::getView(STRING_FOR_ISOCHRONIC)};
++	}
++};
++
++/// Hz or note. Switching keeps the pitch: the frequency becomes the nearest note and cents, and back.
++class PitchBy final : public Selection {
++public:
++	using Selection::Selection;
++	void readCurrentValue() override { this->setValue(tone().byNote ? 1 : 0); }
++	void writeCurrentValue() override {
++		bool byNote = (this->getValue() != 0);
++		Settings::Tone& t = tone();
++		if (byNote && !t.byNote) {
++			frequencyToNote(t.frequency, &t.note, &t.cents);
++		}
++		else if (!byNote && t.byNote) {
++			t.frequency = noteToFrequency(t.note, t.cents);
++		}
++		t.byNote = byNote;
++	}
++	deluge::vector<std::string_view> getOptions() override {
++		using enum l10n::String;
++		return {l10n::getView(STRING_FOR_HERTZ), l10n::getView(STRING_FOR_NOTE)};
++	}
++};
++
++class Frequency final : public Decimal {
++public:
++	using Decimal::Decimal;
++	[[nodiscard]] int32_t getMinValue() const override { return Settings::kMinFrequency; }
++	[[nodiscard]] int32_t getMaxValue() const override { return Settings::kMaxFrequency; }
++	[[nodiscard]] int32_t getNumDecimalPlaces() const override { return 2; }
++	void readCurrentValue() override { this->setValue(tone().frequency); }
++	void writeCurrentValue() override { tone().frequency = this->getValue(); }
++	bool isRelevant(ModControllableAudio*, int32_t) override { return !tone().byNote; }
++};
++
++/// A note, shown by name the way the Deluge names notes
++class Note final : public Integer {
++public:
++	using Integer::Integer;
++	[[nodiscard]] int32_t getMaxValue() const override { return 127; }
++	void readCurrentValue() override { this->setValue(tone().note); }
++	void writeCurrentValue() override { tone().note = this->getValue(); }
++	bool isRelevant(ModControllableAudio*, int32_t) override { return tone().byNote; }
++
++protected:
++	void drawValue() override {
++		char buffer[8];
++		noteCodeToString(this->getValue(), buffer);
++		display->setText(buffer);
++	}
++	void drawInteger(int32_t textWidth, int32_t textHeight, int32_t yPixel) override {
++		char buffer[8];
++		noteCodeToString(this->getValue(), buffer);
++		deluge::hid::display::OLED::main.drawStringCentred(buffer, yPixel + OLED_MAIN_TOPMOST_PIXEL, textWidth,
++		                                                   textHeight);
++	}
++};
++
++class Cents final : public Integer {
++public:
++	using Integer::Integer;
++	[[nodiscard]] int32_t getMinValue() const override { return -Settings::kMaxCents; }
++	[[nodiscard]] int32_t getMaxValue() const override { return Settings::kMaxCents; }
++	void readCurrentValue() override { this->setValue(tone().cents); }
++	void writeCurrentValue() override { tone().cents = this->getValue(); }
++	bool isRelevant(ModControllableAudio*, int32_t) override { return tone().byNote; }
++};
++
++class Beat final : public Decimal {
++public:
++	using Decimal::Decimal;
++	[[nodiscard]] int32_t getMaxValue() const override { return Settings::kMaxBeat; }
++	[[nodiscard]] int32_t getNumDecimalPlaces() const override { return 2; }
++	void readCurrentValue() override { this->setValue(tone().beat); }
++	void writeCurrentValue() override { tone().beat = this->getValue(); }
++	bool isRelevant(ModControllableAudio*, int32_t) override {
++		return tone().mode != Settings::Mode::TONE && tone().sync == 0;
++	}
++};
++
++/// The beat from the tempo: off, or a whole note to a 64th
++class Sync final : public Selection {
++public:
++	using Selection::Selection;
++	void readCurrentValue() override { this->setValue(tone().sync); }
++	void writeCurrentValue() override { tone().sync = this->getValue(); }
++	deluge::vector<std::string_view> getOptions() override {
++		if (display->haveOLED()) {
++			return {l10n::getView(l10n::String::STRING_FOR_OFF), "1/1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/64"};
++		}
++		return {l10n::getView(l10n::String::STRING_FOR_OFF), "1", "2", "4", "8", "16", "32", "64"};
++	}
++	bool isRelevant(ModControllableAudio*, int32_t) override { return tone().mode != Settings::Mode::TONE; }
++};
++
++class Timbre final : public Selection {
++public:
++	using Selection::Selection;
++	void readCurrentValue() override { this->setValue((int32_t)tone().timbre); }
++	void writeCurrentValue() override { tone().timbre = this->getValue<Settings::Timbre>(); }
++	deluge::vector<std::string_view> getOptions() override {
++		using enum l10n::String;
++		return {l10n::getView(STRING_FOR_SINE), l10n::getView(STRING_FOR_SOFT), l10n::getView(STRING_FOR_ORGAN),
++		        l10n::getView(STRING_FOR_RICH)};
++	}
++};
++
++class Level final : public Integer {
++public:
++	using Integer::Integer;
++	[[nodiscard]] int32_t getMaxValue() const override { return Settings::kMaxLevel; }
++	void readCurrentValue() override { this->setValue(tone().level); }
++	void writeCurrentValue() override { tone().level = this->getValue(); }
++};
++
++class Pan final : public Integer {
++public:
++	using Integer::Integer;
++	[[nodiscard]] int32_t getMinValue() const override { return -Settings::kMaxPan; }
++	[[nodiscard]] int32_t getMaxValue() const override { return Settings::kMaxPan; }
++	void readCurrentValue() override { this->setValue(tone().pan); }
++	void writeCurrentValue() override { tone().pan = this->getValue(); }
++};
++
++/// The whole drone's volume
++class Volume final : public Integer {
++public:
++	using Integer::Integer;
++	[[nodiscard]] int32_t getMaxValue() const override { return Settings::kMaxLevel; }
++	void readCurrentValue() override { this->setValue(currentSong->drone.volume); }
++	void writeCurrentValue() override { currentSong->drone.volume = this->getValue(); }
++};
++
++/// How far the drone ducks with the song's sidechain
++class SidechainAmount final : public Integer {
++public:
++	using Integer::Integer;
++	[[nodiscard]] int32_t getMaxValue() const override { return Settings::kMaxLevel; }
++	void readCurrentValue() override { this->setValue(currentSong->drone.sidechain); }
++	void writeCurrentValue() override { currentSong->drone.sidechain = this->getValue(); }
++};
++
++/// The shape of the ducking, as the reverb's
++class SidechainShape final : public Integer {
++public:
++	using Integer::Integer;
++	[[nodiscard]] int32_t getMaxValue() const override { return kMaxMenuValue; }
++	void readCurrentValue() override {
++		this->setValue((((int64_t)currentSong->drone.sidechainShape + 2147483648) * kMaxMenuValue + 2147483648) >> 32);
++	}
++	void writeCurrentValue() override {
++		currentSong->drone.sidechainShape = (uint32_t)this->getValue() * 85899345 - 2147483648;
++	}
++	bool isRelevant(ModControllableAudio*, int32_t) override { return currentSong->drone.sidechain > 0; }
++};
++
++/// The Song menu's "Drone": opens the drone view (see gui/views/drone_view.cpp)
++class OpenView final : public MenuItem {
++public:
++	using MenuItem::MenuItem;
++	MenuItem* selectButtonPress() override;
++	bool shouldEnterSubmenu() override { return false; }
++	bool isRelevant(ModControllableAudio*, int32_t) override;
++};
++
++/// The sidechain submenu: its sync, attack and release items (shared with the other sidechain menus) edit the drone's
++/// envelope while in here
++class SidechainMenu final : public Submenu {
++public:
++	using Submenu::Submenu;
++	void beginSession(MenuItem* navigatedBackwardFrom = nullptr) override {
++		soundEditor.currentSidechain = &currentSong->droneSidechain;
++		Submenu::beginSession(navigatedBackwardFrom);
++	}
++};
++
++} // namespace deluge::gui::menu_item::drone
+diff --git a/src/deluge/gui/ui/menus.cpp b/src/deluge/gui/ui/menus.cpp
+index 6d87e7cb..85367423 100644
+--- a/src/deluge/gui/ui/menus.cpp
++++ b/src/deluge/gui/ui/menus.cpp
+@@ -57,6 +57,7 @@
+ #include "gui/menu_item/delay/filter.h"
+ #include "gui/menu_item/delay/ping_pong.h"
+ #include "gui/menu_item/delay/sync.h"
++#include "gui/menu_item/drone/items.h"
+ #include "gui/menu_item/drum_name.h"
+ #include "gui/menu_item/dx/browse.h"
+ #include "gui/menu_item/dx/engine_select.h"
+@@ -1397,6 +1398,51 @@ ActiveScaleMenu activeScaleMenu{STRING_FOR_ACTIVE_SCALES, ActiveScaleMenu::SONG}
+ 
+ song_macros::Configure configureSongMacrosMenu{STRING_FOR_CONFIGURE_SONG_MACROS};
+ 
++// mastertune-v12: the drone. The tone items edit the tone selected in the drone view (drone::currentTone).
++namespace drone_menu = deluge::gui::menu_item::drone;
++drone_menu::Mode droneModeMenu{STRING_FOR_MODE, STRING_FOR_MODE};
++drone_menu::PitchBy dronePitchByMenu{STRING_FOR_DRONE_PITCH_BY, STRING_FOR_DRONE_PITCH_BY};
++drone_menu::Frequency droneFrequencyMenu{STRING_FOR_FREQUENCY, STRING_FOR_FREQUENCY};
++drone_menu::Note droneNoteMenu{STRING_FOR_NOTE, STRING_FOR_NOTE};
++drone_menu::Cents droneCentsMenu{STRING_FOR_CENTS, STRING_FOR_CENTS};
++drone_menu::Beat droneBeatMenu{STRING_FOR_BEAT, STRING_FOR_BEAT};
++drone_menu::Sync droneSyncMenu{STRING_FOR_SYNC, STRING_FOR_SYNC};
++drone_menu::Timbre droneTimbreMenu{STRING_FOR_TIMBRE, STRING_FOR_TIMBRE};
++drone_menu::Level droneLevelMenu{STRING_FOR_LEVEL, STRING_FOR_LEVEL};
++drone_menu::Pan dronePanMenu{STRING_FOR_PAN, STRING_FOR_PAN};
++drone_menu::Volume droneVolumeMenu{STRING_FOR_VOLUME_LEVEL, STRING_FOR_VOLUME_LEVEL};
++drone_menu::SidechainAmount droneSidechainAmountMenu{STRING_FOR_VOLUME_DUCKING, STRING_FOR_VOLUME_DUCKING};
++drone_menu::SidechainShape droneSidechainShapeMenu{STRING_FOR_SHAPE, STRING_FOR_SIDECH_SHAPE_MENU_TITLE};
++drone_menu::SidechainMenu droneSidechainMenu{
++    STRING_FOR_SIDECHAIN,
++    STRING_FOR_SIDECHAIN,
++    {
++        &droneSidechainAmountMenu,
++        &sidechainSyncMenu,
++        &sidechainAttackMenu,
++        &sidechainReleaseMenu,
++        &droneSidechainShapeMenu,
++    },
++};
++menu_item::Submenu droneToneMenu{
++    STRING_FOR_DRONE_TONE_MENU_TITLE,
++    {
++        &droneModeMenu,
++        &dronePitchByMenu,
++        &droneFrequencyMenu,
++        &droneNoteMenu,
++        &droneCentsMenu,
++        &droneBeatMenu,
++        &droneSyncMenu,
++        &droneTimbreMenu,
++        &droneLevelMenu,
++        &dronePanMenu,
++        &droneVolumeMenu,
++        &droneSidechainMenu,
++    },
++};
++drone_menu::OpenView droneViewMenu{STRING_FOR_DRONE};
++
+ // Root menu for Song View
+ menu_item::Submenu soundEditorRootMenuSongView{
+     STRING_FOR_SONG,
+@@ -1407,6 +1453,7 @@ menu_item::Submenu soundEditorRootMenuSongView{
+         &swingIntervalMenu,
+         &activeScaleMenu,
+         &configureSongMacrosMenu,
++        &droneViewMenu,
+         &stemExportMenu,
+     },
+ };
+diff --git a/src/deluge/gui/ui/menus.h b/src/deluge/gui/ui/menus.h
+index 4938f0dc..13b430b1 100644
+--- a/src/deluge/gui/ui/menus.h
++++ b/src/deluge/gui/ui/menus.h
+@@ -25,6 +25,7 @@ extern deluge::gui::menu_item::audio_clip::SampleMarkerEditor audioClipSampleMar
+ extern DrumName drumNameMenu;
+ extern deluge::gui::menu_item::Submenu dxMenu;
+ extern deluge::gui::menu_item::Submenu stemExportMenu;
++extern deluge::gui::menu_item::Submenu droneToneMenu;
+ extern deluge::gui::menu_item::stem_export::Start startStemExportMenu;
+ 
+ extern deluge::gui::menu_item::firmware::Version firmwareVersionMenu;
+diff --git a/src/deluge/gui/views/drone_view.cpp b/src/deluge/gui/views/drone_view.cpp
+new file mode 100644
+index 00000000..0362c428
+--- /dev/null
++++ b/src/deluge/gui/views/drone_view.cpp
+@@ -0,0 +1,523 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "gui/views/drone_view.h"
++#include "dsp/drone/drone.h"
++#include "gui/l10n/l10n.h"
++#include "gui/menu_item/drone/items.h"
++#include "gui/ui/menus.h"
++#include "gui/ui/sound_editor.h"
++#include "gui/ui/ui.h"
++#include "gui/views/session_view.h"
++#include "gui/views/view.h"
++#include "hid/buttons.h"
++#include "hid/display/display.h"
++#include "hid/led/indicator_leds.h"
++#include "hid/led/pad_leds.h"
++#include "lib/printf.h" // Not stdio: the firmware's snprintf, which doesn't allocate
++#include "model/song/song.h"
++#include "playback/playback_handler.h"
++#include "processing/engines/audio_engine.h"
++#include "util/functions.h"
++#include <cmath>
++
++using Settings = deluge::dsp::DroneSettings;
++namespace droneMenu = deluge::gui::menu_item::drone;
++
++DroneView droneView{};
++
++namespace {
++
++constexpr int32_t kMaxScroll = (int32_t)Settings::kNumTones - kDisplayHeight;
++constexpr int32_t kAnimationMs = 40;
++/// Beats faster than this aren't shown on the pads, which would only flicker
++constexpr float kFastestShownBeat = 12.f;
++
++Settings::Tone& toneAt(int32_t index) {
++	return currentSong->drone.tones[std::clamp(index, (int32_t)0, (int32_t)Settings::kNumTones - 1)];
++}
++
++RGB modeColour(Settings::Mode mode) {
++	switch (mode) {
++	case Settings::Mode::BINAURAL:
++		return RGB{30, 70, 255};
++	case Settings::Mode::MONAURAL:
++		return RGB{0, 190, 170};
++	case Settings::Mode::ISOCHRONIC:
++		return RGB{190, 30, 255};
++	default:
++		return RGB{255, 160, 60};
++	}
++}
++
++RGB scaled(RGB colour, float factor) {
++	return RGB{(uint8_t)(colour.r * factor), (uint8_t)(colour.g * factor), (uint8_t)(colour.b * factor)};
++}
++
++deluge::l10n::String modeName(Settings::Mode mode) {
++	using enum deluge::l10n::String;
++	switch (mode) {
++	case Settings::Mode::BINAURAL:
++		return STRING_FOR_BINAURAL;
++	case Settings::Mode::MONAURAL:
++		return STRING_FOR_MONAURAL;
++	case Settings::Mode::ISOCHRONIC:
++		return STRING_FOR_ISOCHRONIC;
++	default:
++		return STRING_FOR_DRONE_STEADY;
++	}
++}
++
++deluge::l10n::String timbreName(Settings::Timbre timbre) {
++	using enum deluge::l10n::String;
++	switch (timbre) {
++	case Settings::Timbre::SOFT:
++		return STRING_FOR_SOFT;
++	case Settings::Timbre::ORGAN:
++		return STRING_FOR_ORGAN;
++	case Settings::Timbre::RICH:
++		return STRING_FOR_RICH;
++	default:
++		return STRING_FOR_SINE;
++	}
++}
++
++float quarterNotesPerSecond() {
++	return playbackHandler.calculateBPMForDisplay() * (1.f / 60.f);
++}
++
++/// The beat in hundredths of a hertz: set, or from the tempo
++int32_t beatHundredths(const Settings::Tone& tone) {
++	if (tone.sync > 0) {
++		return (int32_t)std::lround(deluge::dsp::Drone::syncedBeatHz(tone.sync, quarterNotesPerSecond()) * 100.f);
++	}
++	return tone.beat;
++}
++
++/// Brainwave band the beat falls in
++const char* bandName(int32_t hundredthsHz) {
++	if (hundredthsHz < 400) {
++		return "Delta";
++	}
++	if (hundredthsHz < 800) {
++		return "Theta";
++	}
++	if (hundredthsHz < 1300) {
++		return "Alpha";
++	}
++	if (hundredthsHz < 3000) {
++		return "Beta";
++	}
++	return "Gamma";
++}
++
++/// Level on the pads of a row: 16 pads for 50 steps
++int32_t barLength(int32_t level) {
++	return (level * kDisplayWidth + Settings::kMaxLevel / 2) / Settings::kMaxLevel;
++}
++int32_t levelForPad(int32_t x) {
++	return ((x + 1) * Settings::kMaxLevel + kDisplayWidth / 2) / kDisplayWidth;
++}
++
++/// How brightly a tone's bar shows now: pulsing with its beat, if slow enough to see
++float brightness(const Settings::Tone& tone) {
++	if (!tone.active) {
++		return 0.1f;
++	}
++	int32_t beat = beatHundredths(tone);
++	if (tone.mode == Settings::Mode::TONE || beat <= 0 || beat > (int32_t)(kFastestShownBeat * 100.f)) {
++		return 1.f;
++	}
++	float seconds = (float)AudioEngine::audioSampleTimer * (1.f / (float)kSampleRate);
++	float phase = seconds * (float)beat * 0.01f;
++	phase -= std::floor(phase);
++	if (tone.mode == Settings::Mode::ISOCHRONIC) {
++		return phase < 0.5f ? 1.f : 0.25f;
++	}
++	float c = std::cos(phase * 3.14159265f);
++	return 0.35f + 0.65f * c * c;
++}
++
++void formatPitch(const Settings::Tone& tone, char* buffer, size_t size) {
++	if (tone.byNote) {
++		char name[8];
++		noteCodeToString(tone.note, name);
++		if (tone.cents != 0) {
++			snprintf(buffer, size, "%s %+dc", name, (int)tone.cents);
++		}
++		else {
++			snprintf(buffer, size, "%s", name);
++		}
++	}
++	else {
++		snprintf(buffer, size, "%d.%02d Hz", (int)(tone.frequency / 100), (int)(tone.frequency % 100));
++	}
++}
++
++} // namespace
++
++bool DroneView::opened() {
++	focusRegained();
++	return true;
++}
++
++void DroneView::focusRegained() {
++	view.focusRegained();
++	view.setActiveModControllableTimelineCounter(currentSong);
++
++	indicator_leds::setLedState(IndicatorLED::SYNTH, false);
++	indicator_leds::setLedState(IndicatorLED::KIT, false);
++	indicator_leds::setLedState(IndicatorLED::MIDI, false);
++	indicator_leds::setLedState(IndicatorLED::CV, false);
++	indicator_leds::setLedState(IndicatorLED::KEYBOARD, false);
++	indicator_leds::setLedState(IndicatorLED::CROSS_SCREEN_EDIT, false);
++	indicator_leds::setLedState(IndicatorLED::SESSION_VIEW, false);
++	indicator_leds::setLedState(IndicatorLED::SCALE_MODE, true); // Scale takes you back
++	indicator_leds::setLedState(IndicatorLED::BACK, false);      // The menu leaves it blinking
++
++	changed();
++}
++
++void DroneView::exitToSongView() {
++	indicator_leds::setLedState(IndicatorLED::SCALE_MODE, false);
++	changeRootUI(&sessionView);
++}
++
++void DroneView::changed(bool padsToo) {
++	if (padsToo) {
++		uiNeedsRendering(this);
++	}
++	if (display->haveOLED()) {
++		renderUIsForOled();
++	}
++	else {
++		showOnSevenSegment();
++	}
++}
++
++void DroneView::showOnSevenSegment() {
++	const Settings::Tone& tone = toneAt(selected_);
++	char buffer[12];
++	if (tone.byNote) {
++		noteCodeToString(tone.note, buffer);
++		display->setText(buffer);
++		return;
++	}
++	// Four digits, with as many after the point as fit: 55.25, 440.0, 1200
++	int32_t hundredths = tone.frequency;
++	uint8_t dot = 255;
++	if (hundredths < 10000) {
++		snprintf(buffer, sizeof(buffer), "%d", (int)hundredths);
++		dot = 1;
++	}
++	else if (hundredths < 100000) {
++		snprintf(buffer, sizeof(buffer), "%d", (int)(hundredths / 10));
++		dot = 2;
++	}
++	else {
++		snprintf(buffer, sizeof(buffer), "%d", (int)(hundredths / 100));
++	}
++	display->setText(buffer, true, dot);
++}
++
++bool DroneView::renderMainPads(uint32_t whichRows, RGB image[][kDisplayWidth + kSideBarWidth],
++                               uint8_t occupancyMask[][kDisplayWidth + kSideBarWidth], bool drawUndefinedArea) {
++	if (!image) {
++		return true;
++	}
++
++	PadLEDs::renderingLock = true;
++	for (int32_t y = 0; y < kDisplayHeight; y++) {
++		if (!(whichRows & (1 << y))) {
++			continue;
++		}
++		int32_t index = toneOnRow(y);
++		const Settings::Tone& tone = toneAt(index);
++		int32_t bar = barLength(tone.level);
++		RGB colour = scaled(modeColour(tone.mode), brightness(tone));
++		for (int32_t x = 0; x < kDisplayWidth; x++) {
++			RGB pixel = RGB::monochrome(0);
++			if (x < bar) {
++				pixel = colour;
++			}
++			else if (index == selected_) {
++				pixel = RGB::monochrome(12); // The selected row, faintly all the way
++			}
++			image[y][x] = pixel;
++			if (occupancyMask) {
++				occupancyMask[y][x] = 64;
++			}
++		}
++	}
++	PadLEDs::renderingLock = false;
++	return true;
++}
++
++bool DroneView::renderSidebar(uint32_t whichRows, RGB image[][kDisplayWidth + kSideBarWidth],
++                              uint8_t occupancyMask[][kDisplayWidth + kSideBarWidth]) {
++	if (!image) {
++		return true;
++	}
++
++	for (int32_t y = 0; y < kDisplayHeight; y++) {
++		if (!(whichRows & (1 << y))) {
++			continue;
++		}
++		int32_t index = toneOnRow(y);
++		const Settings::Tone& tone = toneAt(index);
++		// Mute column: on or off, as clips in Song view
++		image[y][kDisplayWidth] = tone.active ? RGB{0, 255, 0} : RGB{40, 0, 0};
++		// Audition column: the tone's mode, white when selected
++		image[y][kDisplayWidth + 1] = (index == selected_) ? RGB::monochrome(255) : scaled(modeColour(tone.mode), 0.3f);
++		if (occupancyMask) {
++			occupancyMask[y][kDisplayWidth] = 64;
++			occupancyMask[y][kDisplayWidth + 1] = 64;
++		}
++	}
++	return true;
++}
++
++void DroneView::renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas) {
++	const Settings::Tone& tone = toneAt(selected_);
++
++	char title[32];
++	snprintf(title, sizeof(title), "%d: %s%s", (int)(selected_ + 1), deluge::l10n::get(modeName(tone.mode)),
++	         tone.active ? "" : " - off");
++	canvas.drawScreenTitle(title);
++
++	char pitch[24];
++	formatPitch(tone, pitch, sizeof(pitch));
++	canvas.drawStringCentred(pitch, OLED_MAIN_TOPMOST_PIXEL + 12, kTextBigSpacingX, kTextBigSizeY);
++
++	char line[40];
++	if (tone.mode == Settings::Mode::TONE) {
++		snprintf(line, sizeof(line), "%s  Level %d", deluge::l10n::get(timbreName(tone.timbre)), (int)tone.level);
++	}
++	else {
++		int32_t beat = beatHundredths(tone);
++		if (tone.sync > 0) {
++			snprintf(line, sizeof(line), "1/%d: %d.%02d Hz %s", 1 << (tone.sync - 1), (int)(beat / 100),
++			         (int)(beat % 100), bandName(beat));
++		}
++		else {
++			snprintf(line, sizeof(line), "Beat %d.%02d Hz %s", (int)(beat / 100), (int)(beat % 100), bandName(beat));
++		}
++	}
++	canvas.drawStringCentred(line, OLED_MAIN_TOPMOST_PIXEL + 30, kTextSpacingX, kTextSizeYUpdated);
++}
++
++ActionResult DroneView::buttonAction(deluge::hid::Button b, bool on, bool inCardRoutine) {
++	using namespace deluge::hid::button;
++
++	// Back to Song view. (Back doesn't undo in here.)
++	if (b == BACK || b == SCALE_MODE || (b == SESSION_VIEW && !Buttons::isShiftButtonPressed())) {
++		if (on && currentUIMode == UI_MODE_NONE) {
++			if (inCardRoutine) {
++				return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
++			}
++			exitToSongView();
++		}
++		return ActionResult::DEALT_WITH;
++	}
++
++	// The menu for the selected tone and the whole drone
++	if (b == SELECT_ENC && !Buttons::isShiftButtonPressed()) {
++		if (on && currentUIMode == UI_MODE_NONE) {
++			if (inCardRoutine) {
++				return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
++			}
++			droneMenu::currentTone = selected_;
++			display->setNextTransitionDirection(1);
++			if (soundEditor.setup(nullptr, &droneToneMenu)) {
++				openUI(&soundEditor);
++			}
++		}
++		return ActionResult::DEALT_WITH;
++	}
++
++	// Play, record, tempo, save, load, settings...
++	return view.buttonAction(b, on, inCardRoutine);
++}
++
++ActionResult DroneView::padAction(int32_t x, int32_t y, int32_t velocity) {
++	if (!velocity || y < 0 || y >= kDisplayHeight) {
++		return ActionResult::DEALT_WITH; // Everything happens on press
++	}
++	int32_t index = toneOnRow(y);
++	Settings::Tone& tone = toneAt(index);
++	if (x < kDisplayWidth) {
++		tone.level = levelForPad(x);
++	}
++	else if (x == kDisplayWidth) {
++		tone.active = !tone.active;
++	}
++	selected_ = index;
++	changed();
++	return ActionResult::DEALT_WITH;
++}
++
++ActionResult DroneView::horizontalEncoderAction(int32_t offset) {
++	Settings::Tone& tone = toneAt(selected_);
++	if (Buttons::isShiftButtonPressed()) {
++		tone.pan = std::clamp(tone.pan + offset, -Settings::kMaxPan, Settings::kMaxPan);
++		char buffer[12];
++		snprintf(buffer, sizeof(buffer), display->haveOLED() ? "Pan %d" : "%d", (int)tone.pan);
++		display->displayPopup(buffer);
++	}
++	else {
++		tone.level = std::clamp(tone.level + offset, (int32_t)0, Settings::kMaxLevel);
++		char buffer[12];
++		snprintf(buffer, sizeof(buffer), display->haveOLED() ? "Level %d" : "%d", (int)tone.level);
++		display->displayPopup(buffer);
++	}
++	changed();
++	return ActionResult::DEALT_WITH;
++}
++
++ActionResult DroneView::verticalEncoderAction(int32_t offset, bool inCardRoutine) {
++	int32_t newScroll = std::clamp(scroll_ + offset, (int32_t)0, kMaxScroll);
++	if (newScroll != scroll_) {
++		scroll_ = newScroll;
++		uiNeedsRendering(this);
++	}
++	return ActionResult::DEALT_WITH;
++}
++
++void DroneView::selectEncoderAction(int8_t offset) {
++	Settings::Tone& tone = toneAt(selected_);
++	int32_t mode = ((int32_t)tone.mode + offset) % Settings::kNumModes;
++	if (mode < 0) {
++		mode += Settings::kNumModes;
++	}
++	tone.mode = (Settings::Mode)mode;
++	display->displayPopup(deluge::l10n::get(modeName(tone.mode)));
++	changed();
++}
++
++void DroneView::modEncoderAction(int32_t whichModEncoder, int32_t offset) {
++	Settings::Tone& tone = toneAt(selected_);
++	bool shift = Buttons::isShiftButtonPressed();
++
++	// Upper knob: pitch. A note in semitones (with Shift, in cents); a frequency in 1 Hz steps, 10 Hz when turned
++	// quickly, and with Shift in hundredths
++	if (whichModEncoder == 1) {
++		if (tone.byNote) {
++			if (shift) {
++				tone.cents = std::clamp(tone.cents + offset, -Settings::kMaxCents, Settings::kMaxCents);
++			}
++			else {
++				tone.note = std::clamp(tone.note + offset, (int32_t)0, (int32_t)127);
++			}
++		}
++		else {
++			uint32_t now = AudioEngine::audioSampleTimer;
++			bool quick = (now - timeLastPitchTurn_) < (uint32_t)(kSampleRate / 16); // Under 60 ms apart
++			timeLastPitchTurn_ = now;
++			int32_t step = shift ? 1 : (quick ? 1000 : 100);
++			tone.frequency =
++			    std::clamp(tone.frequency + offset * step, Settings::kMinFrequency, Settings::kMaxFrequency);
++		}
++	}
++
++	// Lower knob: the beat, in tenths of a hertz (with Shift, hundredths), or the division when it's synced
++	else {
++		if (tone.sync > 0) {
++			tone.sync = std::clamp(tone.sync + offset, (int32_t)1, Settings::kMaxSync);
++		}
++		else {
++			tone.beat = std::clamp(tone.beat + offset * (shift ? 1 : 10), (int32_t)0, Settings::kMaxBeat);
++		}
++		// The OLED shows it on its beat line; the 7-segment display only has room for the pitch
++		if (!display->haveOLED()) {
++			char buffer[12];
++			if (tone.sync > 0) {
++				snprintf(buffer, sizeof(buffer), "%d", 1 << (tone.sync - 1)); // The division: 16 for 1/16
++				display->displayPopup(buffer);
++			}
++			else {
++				snprintf(buffer, sizeof(buffer), "%02d", (int)(tone.beat / 10)); // Tenths of a hertz: 7.8
++				display->displayPopup(buffer, 3, true, 2);
++			}
++		}
++	}
++	changed(false);
++}
++
++void DroneView::modEncoderButtonAction(uint8_t whichModEncoder, bool on) {
++	if (!on) {
++		return;
++	}
++	Settings::Tone& tone = toneAt(selected_);
++
++	// Upper knob pressed: Hz or note, keeping the pitch
++	if (whichModEncoder == 1) {
++		if (tone.byNote) {
++			tone.frequency = droneMenu::noteToFrequency(tone.note, tone.cents);
++		}
++		else {
++			droneMenu::frequencyToNote(tone.frequency, &tone.note, &tone.cents);
++		}
++		tone.byNote = !tone.byNote;
++		display->displayPopup(deluge::l10n::get(tone.byNote ? deluge::l10n::String::STRING_FOR_NOTE
++		                                                    : deluge::l10n::String::STRING_FOR_HERTZ));
++	}
++
++	// Lower knob pressed: the beat from the tempo, or back to hertz
++	else {
++		if (tone.sync > 0) {
++			lastSync_ = tone.sync;
++			tone.sync = 0;
++		}
++		else {
++			tone.sync = lastSync_;
++		}
++		display->displayPopup(deluge::l10n::get(tone.sync > 0 ? deluge::l10n::String::STRING_FOR_SYNC
++		                                                      : deluge::l10n::String::STRING_FOR_BEAT));
++	}
++	changed(false);
++}
++
++void DroneView::graphicsRoutine() {
++	// Every 40 ms, the rows whose beat shows as a pulse
++	uint32_t now = AudioEngine::audioSampleTimer;
++	if (now - timeLastAnimation_ < (uint32_t)(kSampleRate * kAnimationMs / 1000)) {
++		return;
++	}
++	timeLastAnimation_ = now;
++	uint32_t rows = 0;
++	for (int32_t y = 0; y < kDisplayHeight; y++) {
++		const Settings::Tone& tone = toneAt(toneOnRow(y));
++		if (tone.active && tone.mode != Settings::Mode::TONE) {
++			rows |= 1 << y;
++		}
++	}
++	if (rows) {
++		uiNeedsRendering(this, rows, 0);
++	}
++}
++
++// The Song menu's "Drone" item opens the view, from Song view only: the view goes back there (the same menu in the
++// arranger and its automation view would need the way back to them)
++bool deluge::gui::menu_item::drone::OpenView::isRelevant(ModControllableAudio*, int32_t) {
++	return getRootUI() == &sessionView;
++}
++
++MenuItem* deluge::gui::menu_item::drone::OpenView::selectButtonPress() {
++	soundEditor.exitCompletely();
++	changeRootUI(&droneView);
++	return NO_NAVIGATION;
++}
+diff --git a/src/deluge/gui/views/drone_view.h b/src/deluge/gui/views/drone_view.h
+new file mode 100644
+index 00000000..bcd216d9
+--- /dev/null
++++ b/src/deluge/gui/views/drone_view.h
+@@ -0,0 +1,66 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++
++#include "definitions_cxx.hpp"
++#include "gui/ui/root_ui.h"
++#include "hid/button.h"
++
++/// mastertune-v12: the drone's own view, laid out like Song view: one row per tone (16, eight at a time), the mute
++/// column switches a tone on and off, the audition column selects it, and the row shows its level as a bar in the
++/// colour of its mode. The gold knobs set the selected tone's pitch (upper) and beat (lower), the select encoder its
++/// mode, and pressing it opens the menu with all its settings and the drone's volume and sidechain. Back, Song or Scale
++/// go back to Song view. See Song::drone.
++class DroneView final : public RootUI {
++public:
++	bool opened() override;
++	void focusRegained() override;
++
++	UIType getUIType() override { return UIType::DRONE; }
++	const char* getName() override { return "drone_view"; }
++	[[nodiscard]] bool supportsTriplets() const override { return false; }
++
++	bool renderMainPads(uint32_t whichRows, RGB image[][kDisplayWidth + kSideBarWidth],
++	                    uint8_t occupancyMask[][kDisplayWidth + kSideBarWidth], bool drawUndefinedArea = true) override;
++	bool renderSidebar(uint32_t whichRows, RGB image[][kDisplayWidth + kSideBarWidth],
++	                   uint8_t occupancyMask[][kDisplayWidth + kSideBarWidth]) override;
++	void renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas) override;
++
++	ActionResult buttonAction(deluge::hid::Button b, bool on, bool inCardRoutine) override;
++	ActionResult padAction(int32_t x, int32_t y, int32_t velocity) override;
++	ActionResult horizontalEncoderAction(int32_t offset) override;
++	ActionResult verticalEncoderAction(int32_t offset, bool inCardRoutine) override;
++	void selectEncoderAction(int8_t offset) override;
++	void modEncoderAction(int32_t whichModEncoder, int32_t offset) override;
++	void modEncoderButtonAction(uint8_t whichModEncoder, bool on) override;
++	void modButtonAction(uint8_t whichButton, bool on) override {}
++	void graphicsRoutine() override;
++
++private:
++	void exitToSongView();
++	void changed(bool padsToo = true);
++	void showOnSevenSegment();
++	[[nodiscard]] int32_t toneOnRow(int32_t yDisplay) const { return scroll_ + yDisplay; }
++
++	int32_t scroll_ = 0;   ///< Tone on the bottom row (tone 1 is at the bottom, as clip 1 in Song view)
++	int32_t selected_ = 0; ///< Tone the knobs and the menu edit
++	uint32_t timeLastPitchTurn_ = 0;
++	uint32_t timeLastAnimation_ = 0;
++	int32_t lastSync_ = 5; ///< Division the lower knob's button brings back (1/16 at first)
++};
++
++extern DroneView droneView;
+diff --git a/src/deluge/gui/views/session_view.cpp b/src/deluge/gui/views/session_view.cpp
+index 69e89252..3f1872ce 100644
+--- a/src/deluge/gui/views/session_view.cpp
++++ b/src/deluge/gui/views/session_view.cpp
+@@ -37,6 +37,7 @@
+ #include "gui/views/arranger_view.h"
+ #include "gui/views/audio_clip_view.h"
+ #include "gui/views/automation_view.h"
++#include "gui/views/drone_view.h"
+ #include "gui/views/instrument_clip_view.h"
+ #include "gui/views/performance_session_view.h"
+ #include "gui/views/view.h"
+@@ -638,6 +639,15 @@ doActualSimpleChange:
+ 			changeRootUI(&performanceSessionView);
+ 		}
+ 	}
++	// mastertune-v12: Scale opens the drone view (Scale, Back or Song return)
++	else if (b == SCALE_MODE && !Buttons::isShiftButtonPressed()) {
++		if (on && currentUIMode == UI_MODE_NONE) {
++			if (inCardRoutine) {
++				return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
++			}
++			changeRootUI(&droneView);
++		}
++	}
+ 	else if (b == Y_ENC) {
+ 		if (on && !Buttons::isShiftButtonPressed()) {
+ 			UI* currentUI = getCurrentUI();
+diff --git a/src/deluge/model/action/action_logger.cpp b/src/deluge/model/action/action_logger.cpp
+index b0669d37..14bf564c 100644
+--- a/src/deluge/model/action/action_logger.cpp
++++ b/src/deluge/model/action/action_logger.cpp
+@@ -838,7 +838,10 @@ const uint32_t reversionUIModes[] = {
+ };
+ 
+ bool ActionLogger::allowedToDoReversion() {
+-	return (currentSong && getCurrentUI() == getRootUI() && isUIModeWithinRange(reversionUIModes));
++	// mastertune-v12: not from the drone view, which isn't a TimelineView (as revertAction() takes the root UI to be)
++	// and isn't in the undo history
++	return (currentSong && getCurrentUI() == getRootUI() && getRootUI()->getUIType() != UIType::DRONE
++	        && isUIModeWithinRange(reversionUIModes));
+ }
+ 
+ void ActionLogger::notifyClipRecordingAborted(Clip* clip) {
+diff --git a/src/deluge/model/song/song.cpp b/src/deluge/model/song/song.cpp
+index 6e986b78..ade1518c 100644
+--- a/src/deluge/model/song/song.cpp
++++ b/src/deluge/model/song/song.cpp
+@@ -1172,6 +1172,8 @@ weAreInArrangementEditorOrInClipInstance:
+ 
+ 	writer.writeClosingTag("reverb");
+ 
++	writeDroneToFile(writer);
++
+ 	globalEffectable.writeTagsToFile(writer, NULL, false);
+ 
+ 	int32_t* valuesForOverride = paramsInAutomationMode ? unautomatedParamValues : NULL;
+@@ -1983,6 +1985,11 @@ loadOutput:
+ 				reader.exitTag();
+ 			}
+ 
++			else if (!strcmp(tagName, "drone")) {
++				readDroneFromFile(reader);
++				reader.exitTag("drone");
++			}
++
+ 			else if (!strcmp(tagName, "arrangementOnlyTracks") || !strcmp(tagName, "arrangementOnlyClips")) {
+ 				Error error = readClipsFromFile(reader, &arrangementOnlyClips);
+ 				if (error != Error::NONE) {
+@@ -5957,3 +5964,133 @@ traverseClips; }
+  */
+ 
+ //    for (Output* output = firstOutput; output; output = output->next) {
++
++// mastertune-v12: the drone. Written only when it's been set up, and only the tones that are, so a song without a drone
++// stays as it was. Older firmware skips the tag.
++void Song::writeDroneToFile(Serializer& writer) {
++	using Settings = deluge::dsp::DroneSettings;
++	const Settings defaults{};
++	bool anyTone = false;
++	for (const Settings::Tone& tone : drone.tones) {
++		anyTone = anyTone || !(tone == Settings::Tone{});
++	}
++	if (!anyTone && drone.volume == defaults.volume && drone.sidechain == defaults.sidechain) {
++		return;
++	}
++
++	writer.writeOpeningTagBeginning("drone");
++	writer.writeAttribute("volume", drone.volume);
++	writer.writeAttribute("sidechain", drone.sidechain);
++	writer.writeAttribute("sidechainShape", drone.sidechainShape);
++	writer.writeAttribute("attack", droneSidechain.attack);
++	writer.writeAttribute("release", droneSidechain.release);
++	writer.writeAbsoluteSyncLevelToFile(this, "syncLevel", droneSidechain.syncLevel, true);
++	writer.writeOpeningTagEnd();
++
++	for (size_t i = 0; i < Settings::kNumTones; i++) {
++		const Settings::Tone& tone = drone.tones[i];
++		if (tone == Settings::Tone{}) {
++			continue;
++		}
++		writer.writeOpeningTagBeginning("tone");
++		writer.writeAttribute("index", (int32_t)i);
++		writer.writeAttribute("active", tone.active ? 1 : 0);
++		writer.writeAttribute("mode", (int32_t)tone.mode);
++		writer.writeAttribute("timbre", (int32_t)tone.timbre);
++		writer.writeAttribute("byNote", tone.byNote ? 1 : 0);
++		writer.writeAttribute("note", tone.note);
++		writer.writeAttribute("cents", tone.cents);
++		writer.writeAttribute("frequency", tone.frequency);
++		writer.writeAttribute("beat", tone.beat);
++		writer.writeAttribute("sync", tone.sync);
++		writer.writeAttribute("level", tone.level);
++		writer.writeAttribute("pan", tone.pan);
++		writer.closeTag();
++	}
++
++	writer.writeClosingTag("drone");
++}
++
++void Song::readDroneFromFile(Deserializer& reader) {
++	using Settings = deluge::dsp::DroneSettings;
++	char const* tagName;
++	while (*(tagName = reader.readNextTagOrAttributeName())) {
++		if (!strcmp(tagName, "volume")) {
++			drone.volume = std::clamp(reader.readTagOrAttributeValueInt(), (int32_t)0, Settings::kMaxLevel);
++			reader.exitTag("volume");
++		}
++		else if (!strcmp(tagName, "sidechain")) {
++			drone.sidechain = std::clamp(reader.readTagOrAttributeValueInt(), (int32_t)0, Settings::kMaxLevel);
++			reader.exitTag("sidechain");
++		}
++		else if (!strcmp(tagName, "sidechainShape")) {
++			drone.sidechainShape = reader.readTagOrAttributeValueInt();
++			reader.exitTag("sidechainShape");
++		}
++		else if (!strcmp(tagName, "attack")) {
++			droneSidechain.attack = reader.readTagOrAttributeValueInt();
++			reader.exitTag("attack");
++		}
++		else if (!strcmp(tagName, "release")) {
++			droneSidechain.release = reader.readTagOrAttributeValueInt();
++			reader.exitTag("release");
++		}
++		else if (!strcmp(tagName, "syncLevel")) {
++			droneSidechain.syncLevel =
++			    (SyncLevel)convertSyncLevelFromFileValueToInternalValue(reader.readTagOrAttributeValueInt());
++			droneSidechain.syncLevel = (SyncLevel)std::min((uint8_t)droneSidechain.syncLevel, (uint8_t)9);
++			reader.exitTag("syncLevel");
++		}
++		else if (!strcmp(tagName, "tone")) {
++			Settings::Tone tone;
++			int32_t index = -1;
++			while (*(tagName = reader.readNextTagOrAttributeName())) {
++				int32_t value = reader.readTagOrAttributeValueInt();
++				if (!strcmp(tagName, "index")) {
++					index = value;
++				}
++				else if (!strcmp(tagName, "active")) {
++					tone.active = (value != 0);
++				}
++				else if (!strcmp(tagName, "mode")) {
++					tone.mode = (Settings::Mode)std::clamp(value, (int32_t)0, Settings::kNumModes - 1);
++				}
++				else if (!strcmp(tagName, "timbre")) {
++					tone.timbre = (Settings::Timbre)std::clamp(value, (int32_t)0, Settings::kNumTimbres - 1);
++				}
++				else if (!strcmp(tagName, "byNote")) {
++					tone.byNote = (value != 0);
++				}
++				else if (!strcmp(tagName, "note")) {
++					tone.note = std::clamp(value, (int32_t)0, (int32_t)127);
++				}
++				else if (!strcmp(tagName, "cents")) {
++					tone.cents = std::clamp(value, -Settings::kMaxCents, Settings::kMaxCents);
++				}
++				else if (!strcmp(tagName, "frequency")) {
++					tone.frequency = std::clamp(value, Settings::kMinFrequency, Settings::kMaxFrequency);
++				}
++				else if (!strcmp(tagName, "beat")) {
++					tone.beat = std::clamp(value, (int32_t)0, Settings::kMaxBeat);
++				}
++				else if (!strcmp(tagName, "sync")) {
++					tone.sync = std::clamp(value, (int32_t)0, Settings::kMaxSync);
++				}
++				else if (!strcmp(tagName, "level")) {
++					tone.level = std::clamp(value, (int32_t)0, Settings::kMaxLevel);
++				}
++				else if (!strcmp(tagName, "pan")) {
++					tone.pan = std::clamp(value, -Settings::kMaxPan, Settings::kMaxPan);
++				}
++				reader.exitTag(tagName);
++			}
++			if (index >= 0 && index < (int32_t)Settings::kNumTones) {
++				drone.tones[index] = tone;
++			}
++			reader.exitTag("tone");
++		}
++		else {
++			reader.exitTag(tagName);
++		}
++	}
++}
+diff --git a/src/deluge/model/song/song.h b/src/deluge/model/song/song.h
+index f28874df..f6ac1c29 100644
+--- a/src/deluge/model/song/song.h
++++ b/src/deluge/model/song/song.h
+@@ -18,6 +18,7 @@
+ #pragma once
+ 
+ #include "definitions_cxx.hpp"
++#include "dsp/drone/drone.h"
+ #include "gui/menu_item/reverb/model.h"
+ #include "io/midi/learned_midi.h"
+ #include "model/clip/clip.h"
+@@ -403,6 +404,12 @@ public:
+ 	int32_t reverbPan;
+ 	int32_t reverbSidechainVolume;
+ 	int32_t reverbSidechainShape;
++
++	// mastertune-v12: the drone, and the envelope that ducks it with the song's sidechain
++	deluge::dsp::DroneSettings drone;
++	SideChain droneSidechain;
++	void writeDroneToFile(Serializer& writer);
++	void readDroneFromFile(Deserializer& reader);
+ 	int32_t reverbSidechainAttack;
+ 	int32_t reverbSidechainRelease;
+ 	SyncLevel reverbSidechainSync;
+diff --git a/src/deluge/playback/playback_handler.h b/src/deluge/playback/playback_handler.h
+index a3a5e505..925f6f05 100644
+--- a/src/deluge/playback/playback_handler.h
++++ b/src/deluge/playback/playback_handler.h
+@@ -85,6 +85,7 @@ public:
+ 	int32_t getNumSwungTicksInSinceLastActionedSwungTick(uint32_t* timeRemainder = NULL);
+ 	int64_t getActualSwungTickCount(uint32_t* timeRemainder = NULL);
+ 	int64_t getCurrentInternalTickCount(uint32_t* remainder = NULL);
++	float getCurrentInternalTickFloatFollowingExternalClock(); // mastertune-v12: public, for the drone
+ 	void scheduleSwungTick();
+ 	int32_t getInternalTickTime(int64_t internalTickCount);
+ 	void scheduleTriggerClockOutTick();
+@@ -266,7 +267,6 @@ private:
+ 	bool tryGlobalMIDICommands(MIDIDevice* device, int32_t channel, int32_t note);
+ 	bool tryGlobalMIDICommandsOff(MIDIDevice* device, int32_t channel, int32_t note);
+ 	void decideOnCurrentPlaybackMode();
+-	float getCurrentInternalTickFloatFollowingExternalClock();
+ 	void scheduleTriggerClockOutTickParamsKnown(uint32_t analogOutTicksPer, uint64_t fractionLastTimerTick,
+ 	                                            uint64_t fractionNextAnalogOutTick);
+ 	void scheduleMIDIClockOutTickParamsKnown(uint32_t midiClockOutTicksPer, uint64_t fractionLastTimerTick,
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index aa890e4d..80ef32c3 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include "processing/engines/audio_engine.h"
+ #include "definitions_cxx.hpp"
++#include "dsp/drone/drone.h"
+ #include "dsp/reverb/reverb.hpp"
+ #include "dsp/timestretch/time_stretcher.h"
+ #include "extern.h"
+@@ -39,6 +40,7 @@
+ #include "model/mod_controllable/mod_controllable_audio.h"
+ #include "model/sample/sample_recorder.h"
+ #include "model/song/song.h"
++#include "model/tuning/master_tune.h"
+ #include "model/voice/voice.h"
+ #include "model/voice/voice_sample.h"
+ #include "model/voice/voice_vector.h"
+@@ -147,6 +149,12 @@ uint32_t timeLastSideChainHit = 2147483648;
+ int32_t sizeLastSideChainHit;
+ 
+ Metronome metronome{};
++
++// mastertune-v12: renders the song's drone (Song::drone) and keeps what's sounding across songs
++deluge::dsp::Drone drone{};
++namespace {
++alignas(16) float droneTableMemory[deluge::dsp::Drone::kTableMemoryFloats];
++}
+ StereoFloatSample approxRMSLevel{0};
+ AbsValueFollower envelopeFollower{};
+ int32_t timeLastPopup{0};
+@@ -210,6 +218,8 @@ Voice* firstUnassignedVoice = staticVoices.begin();
+ 
+ // You must set up dynamic memory allocation before calling this, because of its call to setupWithPatching()
+ void init() {
++	deluge::dsp::Drone::initTables(droneTableMemory);
++
+ 	paramManagerForSamplePreview = new ((void*)paramManagerForSamplePreviewMemory) ParamManagerForTimeline();
+ 	paramManagerForSamplePreview->setupWithPatching(); // Shouldn't be an error at init time...
+ 	Sound::initParams(paramManagerForSamplePreview);
+@@ -531,6 +541,7 @@ void scheduleMidiGateOutISR(uint32_t saddrPosAtStart, int32_t unadjustedNumSampl
+                             int32_t timeWithinWindowAtWhichMIDIOrGateOccurs);
+ void setMonitoringMode();
+ void renderSongFX(size_t numSamples);
++void renderDrone(size_t numSamples);
+ void renderSamplePreview(size_t numSamples);
+ void renderReverb(size_t numSamples);
+ void tickSongFinalizeWindows(size_t& numSamples, int32_t& timeWithinWindowAtWhichMIDIOrGateOccurs);
+@@ -632,6 +643,8 @@ void renderAudio(size_t numSamples) {
+ 
+ 	renderSongFX(numSamples);
+ 
++	renderDrone(numSamples);
++
+ 	metronome.render(renderingBuffer.data(), numSamples);
+ 
+ 	approxRMSLevel = envelopeFollower.calcApproxRMS(renderingBuffer.data(), numSamples);
+@@ -646,6 +659,11 @@ void renderAudioForStemExport(size_t numSamples) {
+ 	memset(&renderingBuffer, 0, numSamples * sizeof(StereoSample));
+ 	memset(&reverbBuffer, 0, numSamples * sizeof(StereoSample));
+ 
++	// The drone isn't in the stems: afterwards it starts again from silence rather than where it stopped
++	if (drone.isSounding()) {
++		drone.reset();
++	}
++
+ 	if (sideChainHitPending) {
+ 		timeLastSideChainHit = audioSampleTimer;
+ 		sizeLastSideChainHit = sideChainHitPending;
+@@ -851,6 +869,66 @@ void renderSamplePreview(size_t numSamples) { // Previewing sample
+ 		                         sideChainHitPending);
+ 	}
+ }
++/// mastertune-v12: the drone, after the song's effects like the metronome (and not in stem exports), at the song's
++/// volume, ducked by the song's sidechain the same way as the reverb
++void renderDrone(size_t numSamples) {
++	if (!currentSong) {
++		// Between two songs (one loading while stopped, Clear Song): what's sounding fades out, so the next song's
++		// drone starts from silence
++		drone.fadeOut(std::span<StereoSample>(renderingBuffer.data(), numSamples));
++		return;
++	}
++	if (!drone.isSounding(currentSong->drone)) {
++		return;
++	}
++	deluge::dsp::DroneSettings& settings = currentSong->drone;
++	deluge::dsp::Drone::Context context;
++
++	// Tempo and position both in the song's quarter notes, as the metronome counts them
++	float timePerTick = playbackHandler.getTimePerInternalTickFloat();
++	double quarterNoteLength = (double)currentSong->getQuarterNoteLength();
++	if (timePerTick > 0.f) {
++		context.quarterNotesPerSecond = (float)((double)kSampleRate / ((double)timePerTick * quarterNoteLength));
++	}
++	if (playbackHandler.isEitherClockActive()) {
++		double tick;
++		if (playbackHandler.isExternalClockActive()) {
++			// Following the clock between its ticks (getCurrentInternalTickCount() only has whole ticks for it)
++			tick = playbackHandler.getCurrentInternalTickFloatFollowingExternalClock();
++		}
++		else {
++			uint32_t timeSinceLastTick = 0;
++			int64_t ticks = playbackHandler.getCurrentInternalTickCount(&timeSinceLastTick);
++			tick = (double)ticks + (timePerTick > 0.f ? (double)timeSinceLastTick / (double)timePerTick : 0.);
++		}
++		context.position = std::max(tick, 0.) / quarterNoteLength;
++	}
++
++	// The song's volume, as the metronome follows it (1 at the song's neutral volume)
++	int32_t songVolume =
++	    getFinalParameterValueVolume(
++	        134217728, cableToLinearParamShortcut(
++	                       currentSong->paramManager.getUnpatchedParamSet()->getValue(params::UNPATCHED_VOLUME)))
++	    >> 1;
++	context.volume = (float)songVolume * (1.f / 67108864.f);
++	context.a4Hz = (float)MasterTune::getTenthsHz() * 0.1f;
++
++	if (settings.sidechain > 0) {
++		if (sideChainHitPending != 0) {
++			currentSong->droneSidechain.registerHit(sideChainHitPending);
++		}
++		// 0 when not ducking, down to -1 (in Q31) at the bottom of a full hit
++		int32_t envelope = currentSong->droneSidechain.render(numSamples, settings.sidechainShape);
++		float gain = 1.f
++		             + (float)settings.sidechain * (1.f / deluge::dsp::DroneSettings::kMaxLevel)
++		                   * ((float)envelope * (1.f / 2147483648.f));
++		gain = std::max(gain, 0.f);
++		context.duck = gain * gain; // A volume curve, as the reverb's ducking
++	}
++
++	drone.render(std::span<StereoSample>(renderingBuffer.data(), numSamples), settings, context);
++}
++
+ void renderSongFX(size_t numSamples) { // LPF and stutter for song (must happen after reverb mixed in, which is why it's
+ 	                                   // happening all the way out here
+ 	masterVolumeAdjustmentL = 167763968; // getParamNeutralValue(params::GLOBAL_VOLUME_POST_FX);
+@@ -1368,7 +1446,7 @@ void getReverbParamsFromSong(Song* song) {
+ 	reverb.setRoomSize(song->reverbRoomSize);
+ 	// mastertune-v10: the song file keeps damping as 1.2.1 had it, see dsp/reverb/reverb.hpp
+ 	reverb.setDamping((song->model == dsp::Reverb::Model::FREEVERB) ? song->reverbDamp
+-	                                                                 : dsp::reverb::dampingFromFile(song->reverbDamp));
++	                                                                : dsp::reverb::dampingFromFile(song->reverbDamp));
+ 	reverb.setWidth(song->reverbWidth);
+ 	reverb.setHPF(song->reverbHPF); // 1.2.1 never did this, so a song's low cut only held until it was loaded again
+ 	reverb.setLPF(song->reverbLPF);
+diff --git a/src/deluge/processing/engines/audio_engine.h b/src/deluge/processing/engines/audio_engine.h
+index 2918ea8d..2780f3f4 100644
+--- a/src/deluge/processing/engines/audio_engine.h
++++ b/src/deluge/processing/engines/audio_engine.h
+@@ -128,6 +128,10 @@ class Reverb;
+ /// For advanced debugging printouts.
+ #define DO_AUDIO_LOG 0
+ 
++namespace deluge::dsp {
++class Drone;
++}
++
+ namespace AudioEngine {
+ void routine();
+ void routineWithClusterLoading(bool mayProcessUserActionsBetween = false);
+@@ -206,6 +210,7 @@ extern int32_t reverbSidechainShape;
+ extern int32_t reverbPan;
+ extern SampleRecorder* firstRecorder;
+ extern Metronome metronome;
++extern deluge::dsp::Drone drone;
+ extern RMSFeedbackCompressor mastercompressor;
+ extern uint32_t timeLastSideChainHit;
+ extern int32_t sizeLastSideChainHit;
+-- 
+2.43.0
+

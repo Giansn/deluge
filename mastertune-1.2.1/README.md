@@ -1,6 +1,6 @@
 # Deluge 1.2.1 mit Master Tune
 
-Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern.
+Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern, v12 einen Frequenz-Drone mit bis zu 16 Tönen.
 
 | Datei | Version (Settings → Firmware version) | Inhalt |
 |---|---|---|
@@ -14,9 +14,10 @@ Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit
 | `deluge-1.2.1-mastertune-v9-c0212731.bin` | `1.2.1-mastertune-v9-c0212731` | v8 + klügeres Sample-Streaming, Kit RAM saver |
 | `deluge-1.2.1-mastertune-v10-7f9ad5c1.bin` | `1.2.1-mastertune-v10-7f9ad5c1` | v9 + Reverb: neues Modell Digital, Mutable und Freeverb repariert, HPF und LPF |
 | `deluge-1.2.1-mastertune-v11-dc37f26a.bin` | `1.2.1-mastertune-v11-dc37f26a` | v10 + Delay: saubere Wiederholungen, kein Knacken bei Zeitänderungen, LPF und HPF im Feedback; kein Knacksen beim Speichern |
+| `deluge-1.2.1-mastertune-v12-f89b478c.bin` | `1.2.1-mastertune-v12-f89b478c` | v11 + Frequenz-Drone: 16 Töne, binaural, monaural, isochron, Tempo-Sync, Sidechain, eigene Ansicht |
 
-SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad` (vollständig: `sha256sum *.bin`).
-Quellcode: `patches/0001` bis `0011` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011.
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac` (vollständig: `sha256sum *.bin`).
+Quellcode: `patches/0001` bis `0012` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012.
 
 ## v3 und v4: Unterschiede
 
@@ -251,6 +252,81 @@ v11 enthält v10, überarbeitet das Delay (Sounds, Kits, Audio-Spuren und Song),
   - Unnötige Rechenzeit ging in Bibliotheksaufrufe.
   - Beim Speichern wären gestreamte Samples ohne Nachladen abgebrochen.
 
+## v12: Frequenz-Drone
+
+v12 enthält v11 und bringt einen Drone: bis zu 16 Dauertöne, eingestellt in Hz oder als Note, unter die Musik gemischt. Jeder Ton kann schweben wie in Brainwave-Apps, im Tempo des Songs pulsieren und mit der Sidechain ducken.
+
+**Öffnen:** Im Song-View die Taste **Scale** drücken, oder im Song-Menü des Song-Views (Select drücken) den Punkt **Drone** wählen. Zurück in den Song-View geht es mit **Back**, **Song** oder **Scale**. Im Arranger fehlt der Menüpunkt, weil der Rückweg in den Song-View führt.
+
+**Die Drone-Ansicht** ist aufgebaut wie der Song-View, mit einem Ton pro Zeile statt einem Clip:
+
+| Element | Funktion |
+|---|---|
+| Zeilen | Ton 1 unten, wie Clip 1 im Song-View. Der Y-Encoder scrollt zu den Tönen 9–16. |
+| Mute-Spalte | Ton an und aus (grün = an), seine Einstellungen bleiben dabei erhalten |
+| Audition-Spalte | Ton wählen (weiss = gewählt) |
+| Pads einer Zeile | Pegel als Balken. Ein Pad antippen setzt den Pegel, in 16 Stufen. |
+| Farbe | Modus: orange = Ton, blau = binaural, türkis = monaural, violett = isochron. Beats bis 12 Hz pulsieren sichtbar. |
+| Oberer Goldknopf | Tonhöhe. In Hz: 1 Hz pro Raste, schnell gedreht 10 Hz, mit Shift 0,01 Hz. Als Note: Halbtöne, mit Shift Cent. |
+| Oberen Goldknopf drücken | zwischen Hz und Note wechseln, die Tonhöhe bleibt |
+| Unterer Goldknopf | Beat: 0,1 Hz pro Raste, mit Shift 0,01 Hz. Mit Tempo-Sync der Notenwert. |
+| Unteren Goldknopf drücken | Tempo-Sync an und aus |
+| Select drehen | Modus des gewählten Tons |
+| Select drücken | Menü des Tons: Modus, Tonhöhe als Hz oder Note, Frequenz, Note, Cent, Beat, Sync, Klangfarbe, Pegel, Pan. Dazu die Lautstärke des ganzen Drones und die Sidechain. |
+| X-Encoder | Pegel fein, mit Shift Pan |
+| Play, Record, Tempo, Speichern, Laden | wie gewohnt |
+
+Das OLED zeigt Ton, Modus, Tonhöhe und den Beat mit seinem Bereich (Delta, Theta, Alpha, Beta, Gamma). Die 7-Segment-Anzeige zeigt die Frequenz mit so vielen Nachkommastellen, wie Platz haben (55.25, 440.0, 1200), oder die Note. Beat, Notenwert (16 für 1/16), Pegel und Pan erscheinen dort beim Drehen kurz.
+
+**Modi:**
+- **Ton:** ein ruhiger Dauerton.
+- **Binaural:** Das linke Ohr hört die Frequenz minus den halben Beat, das rechte plus den halben Beat. Die Schwebung entsteht im Kopf, dafür braucht es Kopfhörer.
+- **Monaural:** Beide Töne klingen in beiden Ohren, die Schwebung ist im Klang selbst hörbar.
+- **Isochron:** Der Ton pulsiert im Beat an und aus, mit weichen Flanken von 6 ms.
+
+**Klangfarben:** Sine (rein), Soft (Obertöne 2–5, weich), Organ (Oktaven wie Zugriegel), Rich (Obertöne 2–8, sägezahnartig). Sie sind bandbegrenzt: Obertöne über 18 kHz fallen weg, damit nichts spiegelt.
+
+**Tempo-Sync:** Der Beat folgt dem Songtempo, mit Notenwerten von 1/1 bis 1/64. Bei 120 BPM ergibt 1/16 einen Beat von 8 Hz (Alpha). Während der Song läuft, rastet der Puls auf dem Raster ein, im Test auf 1,2 ms genau. Das gilt auch mit externer MIDI-Clock (der Drone folgt ihr zwischen den Clock-Ticks) und mit Sync-Scaling, weil Tempo und Position wie beim Metronom gezählt werden.
+
+**Tonhöhe als Note:** Jeder Ton lässt sich als Note mit Cent einstellen. Er folgt dann dem Master Tune (Settings → Tuning), wie alles andere im Deluge. Ist der Master Tune auf ein externes Gerät eingestellt, zum Beispiel eine volca keys, passt der Drone dazu.
+
+**Pegel:**
+- Ein Ton auf Pegel 50 liegt bei −12 dBFS. Die Drone-Lautstärke 50 entspricht 0 dB, die Stufen sind je 1 dB.
+- Der Drone folgt der Song-Lautstärke wie das Metronom. Er kommt nach den Song-Effekten dazu, also ohne Song-Reverb und -Delay.
+- In Stem-Exporten fehlt er, über USB-Audio ist er zu hören.
+- Viele laute Töne zusammen können übersteuern.
+
+**Sidechain:** Der Drone duckt sich unter die Sidechain-Auslöser des Songs, etwa eine Kick mit «Send to sidechain». Stärke, Form, Attack, Release und Sync stehen im Sidechain-Menü des Drones. Der Pegel gleitet von Sample zu Sample, wie beim Sidechain-Fix aus v3, darum knackt nichts.
+
+**Gespeichert** wird der Drone mit dem Song (Tag `<drone>`), aber nur, wenn er eingerichtet ist. Ältere Firmware überspringt den Tag. Beim Laden eines anderen Songs oder bei Clear Song blendet der Drone in etwa 60 ms aus, der Drone des neuen Songs setzt aus der Stille ein. Nach einem Stem-Export setzt er ebenfalls aus der Stille wieder ein.
+
+**Grenzen:**
+- Nicht auf dem Gerät getestet.
+- Rechenzeit auf dem Cortex-A9, im Emulator gezählt: ein Sinuston 0,35 % CPU, ein binauraler Ton 0,5 %, 16 binaurale Töne mit Obertönen 6,9 %.
+- Die Wellentabellen belegen 27 KB internes RAM.
+- Der Drone sendet kein MIDI.
+- Seine Einstellungen gehören nicht zum Undo. Ein per MIDI gelerntes Undo wirkt in der Drone-Ansicht nicht.
+
+**Geprüft:**
+- **Host-Test** mit dem Drone-Code der Firmware (39 Prüfpunkte), auf dem PC mit UndefinedBehaviorSanitizer und auf dem Cortex-A9 im Emulator:
+  - Reinheit (Sinus −108 dB)
+  - Frequenzen auf 0,001 Hz genau, Note und Master Tune
+  - Binaural, monaural und isochron
+  - Knackfreiheit bei allen Änderungen
+  - Sidechain-Rampe, Bandbegrenzung, Tempo-Lock und Pegel
+  - Ausblenden zwischen zwei Songs ohne Sprung, Neustart aus der Stille
+- **Build:** ohne Compiler-Warnungen (eine Stack-Warnung beim Aufbau der Wellentabellen ist behoben), zwei Builds mit identischer SHA-256.
+- **Code-Prüfung:** zwei Prüfer (Bedienung und Menüs; Speichern und Audio), acht Befunde, jeder einmal gegengeprüft:
+  - Sechs bestätigt und behoben:
+    - möglicher Absturz bei Undo per MIDI in der Drone-Ansicht
+    - Knacks beim Laden eines Songs im Stillstand
+    - Beat-Sync mit Sync-Scaling rastete nicht ein
+    - falscher Rückweg aus dem Arranger
+    - Back-LED blinkte nach dem Menü weiter
+    - Beat und Pan fehlten auf der 7-Segment-Anzeige
+  - Einer ist nicht hörbar (externe Clock), wurde aber trotzdem verbessert.
+  - Einer ist widerlegt (MIDI Follow verhält sich wie im Song-View).
+
 ## Bedienung
 
 Das Menü liegt unter **Settings → Tuning → Master tune (Hz)**. Die 7-Segment-Anzeige zeigt `TUNE` → `MTUN`.
@@ -336,8 +412,8 @@ Version 1 liegt weiterhin in der Git-Historie dieses Ordners.
 ```sh
 git clone https://github.com/SynthstromAudible/DelugeFirmware && cd DelugeFirmware
 git checkout release_1_2_1
-git am /pfad/zu/patches/*.patch        # alle = v11; nur 0001 = v2, 0001-0003 = v3, 0001-0004 = v4, 0001-0005 = v5, 0001-0006 = v6, 0001-0007 = v7, 0001-0008 = v8, 0001-0009 = v9, 0001-0010 = v10
-./dbt configure -DRELEASE_TYPE:STRING=mastertune-v11   # Name in der Versionsanzeige, z. B. mastertune-v10 für v10
+git am /pfad/zu/patches/*.patch        # alle = v12; nur 0001 = v2, 0001-0003 = v3, 0001-0004 = v4, 0001-0005 = v5, 0001-0006 = v6, 0001-0007 = v7, 0001-0008 = v8, 0001-0009 = v9, 0001-0010 = v10, 0001-0011 = v11
+./dbt configure -DRELEASE_TYPE:STRING=mastertune-v12   # Name in der Versionsanzeige, z. B. mastertune-v10 für v10
 ./dbt build release                      # Ergebnis: build/Release/deluge.bin
 
 # Rechentest (Host-Compiler)
@@ -363,6 +439,9 @@ python3 /pfad/zu/tests/run_neon_shift_test.py .
 
 # Delay (v11): Wiederholungen, Zeitänderungen und Filter auf dem PC gemessen, mit UndefinedBehaviorSanitizer
 /pfad/zu/tests/delay/run.sh .
+
+# Drone (v12): Töne, Beats und Übergänge auf dem PC gemessen, mit UndefinedBehaviorSanitizer
+/pfad/zu/tests/drone/run.sh .
 ```
 
 ## Tests im Emulator (Cortex-A9)
@@ -377,7 +456,7 @@ Alle Tests laufen zusätzlich zum PC auch auf dem Maschinencode des Deluge-Proze
 
   Genau so fand der Emulator den Damping-Fehler aus v10.
 - **Ablauf:** Der Test läuft als normales Programm mit Ausgabe, Heap, Dateien und Exit-Code (Semihosting der newlib). Speicherfehler und ungültige Befehle meldet der Emulator mit der Stelle im Quellcode.
-- **Rechenzeit:** Der Emulator zählt die ausgeführten Befehle der DSP-Teile pro Block von 128 Samples (2,9 ms), `run_all.sh` gibt sie am Ende aus. Stand v11:
+- **Rechenzeit:** Der Emulator zählt die ausgeführten Befehle der DSP-Teile pro Block von 128 Samples (2,9 ms), `run_all.sh` gibt sie am Ende aus. Stand v12:
 
   | Teil | Befehle pro Block | ≈ CPU | 1.2.1 (v10) |
   |---|---|---|---|
@@ -388,6 +467,9 @@ Alle Tests laufen zusätzlich zum PC auch auf dem Maschinencode des Deluge-Proze
   | Delay, Zeit moduliert | 40 100 | 3,5 % | 5,0 %: meist liefen zwei Puffer |
   | Delay, moduliert mit LPF/HPF | 44 400 | 3,8 % | |
   | Delay, moduliert, Analog-Modus mit LPF/HPF | 97 000 | 8,4 % | 9,1 % ohne Filter |
+  | Drone, 1 Sinuston | 4 100 | 0,35 % | |
+  | Drone, 1 binauraler Ton | 6 300 | 0,54 % | |
+  | Drone, 16 binaurale Töne mit Obertönen | 79 500 | 6,9 % | |
 
   Die Prozentangaben rechnen mit 1 Befehl pro Takt bei 400 MHz. Das ist eine grobe Schätzung, denn Caches, Pipeline und Doppel-Ausführung des A9 bildet der Emulator nicht nach. Für Vergleiche zwischen Versionen taugt sie gut.
 - **Was nicht emuliert wird:** Die Hardware (SD-Karte, USB, Display) ersetzen die Tests wie auf dem PC durch eigene Nachbildungen. Der WAV-Test ist reines Python und läuft nur auf dem PC.
