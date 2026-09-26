@@ -410,7 +410,7 @@ int main() {
 		Out o = run(d, 44100 * 3, nullptr, c);
 		// Pulse onsets in the last second against the 16th grid: the envelope
 		// (largest value over the tone's period, 2.5 ms, centred) crosses half way
-		// 3 ms after the grid, half the edge
+		// after half the attack: the default attack is 6 % of the cycle, 7.5 ms at 8 Hz
 		double worstOffset = 0;
 		int onsets = 0;
 		bool wasOn = true;
@@ -420,7 +420,7 @@ int main() {
 				double q = 0.3 + i / kFs * 2.0; // Quarter notes from position 0
 				double sixteenths = q * 4;
 				double offMs = (sixteenths - std::floor(sixteenths)) / 8.0 * 1000; // After the last 16th
-				worstOffset = std::max(worstOffset, std::abs(offMs - 3.0));
+				worstOffset = std::max(worstOffset, std::abs(offMs - 3.75));
 				onsets++;
 			}
 			wasOn = isOn;
@@ -430,7 +430,75 @@ int main() {
 		       onsets, worstOffset);
 		CHECK(onsets >= 7 && onsets <= 9, "8 pulses a second");
 		CHECK(worstOffset < 1.5, "locked to the grid");
-		CHECK(std::abs(Drone::syncedBeatHz(5, 2.f) - 8.f) < 1e-6, "1/16 at 120 BPM is 8 Hz");
+		CHECK(std::abs(Drone::syncedBeatHz(5, false, 2.f) - 8.f) < 1e-6, "1/16 at 120 BPM is 8 Hz");
+		CHECK(std::abs(Drone::syncedBeatHz(5, true, 2.f) - 12.f) < 1e-6, "1/16T at 120 BPM is 12 Hz");
+		CHECK(std::abs(Drone::syncedBeatHz(3, true, 2.f) - 3.f) < 1e-6, "1/4T at 120 BPM is 3 Hz");
+	}
+
+	// 8a. Triplets (mastertune-v13): 1/16T at 120 BPM pulses 12 times a second, locked to the triplet grid (six to a
+	// quarter note)
+	{
+		TestDrone d = makeDrone();
+		d.tones[0] = on(Mode::ISOCHRONIC, Timbre::SINE, 40000, 0, 5, 50, 0);
+		d.tones[0].triplet = true;
+		Drone::Context c;
+		c.quarterNotesPerSecond = 2.f;
+		c.position = 0.3;
+		Out o = run(d, 44100 * 3, nullptr, c);
+		double expectedMs = 0.06 / 12.0 / 2.0 * 1000; // Half the default attack (6 % of the cycle)
+		double worstOffset = 0;
+		int onsets = 0;
+		bool wasOn = true;
+		for (size_t i = 88200; i + 60 < o.l.size(); i++) {
+			bool isOn = maxAbs(o.l, i - 55, i + 55) > 0.5 * kFullScale;
+			if (isOn && !wasOn) {
+				double q = 0.3 + i / kFs * 2.0;
+				double cycles = q * 6;
+				double offMs = (cycles - std::floor(cycles)) / 12.0 * 1000;
+				worstOffset = std::max(worstOffset, std::abs(offMs - expectedMs));
+				onsets++;
+			}
+			wasOn = isOn;
+		}
+		printf("synced 1/16T at 120 BPM: %d pulses in 1 s, onsets within %.2f ms of the triplet grid\n", onsets,
+		       worstOffset);
+		CHECK(onsets >= 11 && onsets <= 13, "12 pulses a second");
+		CHECK(worstOffset < 1.5, "locked to the triplet grid");
+	}
+
+	// 8b. Isochronic attack and release (mastertune-v13): at a 2 Hz beat, attack 25 is half the on-half (125 ms), release
+	// 10 is 10 % of the cycle (50 ms); smoothstep ramps take 0.608 of their time from 10 % to 90 %. And with both at 0
+	// the edges still take 1 ms, so nothing clicks.
+	{
+		auto edges = [](int32_t beat, int32_t attack, int32_t release, double* rise, double* fall) {
+			TestDrone d = makeDrone();
+			d.tones[0] = on(Mode::ISOCHRONIC, Timbre::SINE, 200000, beat, 0, 50, 0); // 2 kHz carrier: a sharp envelope
+			d.tones[0].pulseAttack = attack;
+			d.tones[0].pulseRelease = release;
+			Out o = run(d, 44100 * 3);
+			std::vector<double> e(o.l.size(), 0.0);
+			for (size_t i = 12; i + 12 < o.l.size(); i++) {
+				e[i] = maxAbs(o.l, i - 11, i + 12) / kFullScale;
+			}
+			// The last full rise and fall in the third second
+			double t10 = -1, t90 = -1, f90 = -1, f10 = -1;
+			*rise = *fall = 0;
+			for (size_t i = 88200; i + 1 < e.size(); i++) {
+				if (e[i] < 0.1 && e[i + 1] >= 0.1) t10 = i;
+				if (e[i] < 0.9 && e[i + 1] >= 0.9 && t10 >= 0) { t90 = i; *rise = (t90 - t10) / kFs * 1000; }
+				if (e[i] >= 0.9 && e[i + 1] < 0.9) f90 = i;
+				if (e[i] >= 0.1 && e[i + 1] < 0.1 && f90 >= 0) { f10 = i; *fall = (f10 - f90) / kFs * 1000; }
+			}
+		};
+		double rise, fall;
+		edges(200, 25, 10, &rise, &fall);
+		printf("isochronic 2 Hz, attack 25, release 10: rise %.1f ms (76.0 expected), fall %.1f ms (30.4 expected)\n",
+		       rise, fall);
+		CHECK(std::abs(rise - 76.0) < 3, "attack sets the rise");
+		CHECK(std::abs(fall - 30.4) < 3, "release sets the fall");
+		edges(1000, 0, 0, &rise, &fall);
+		printf("isochronic 10 Hz, attack and release 0: rise %.2f ms, fall %.2f ms (at least 1 ms edges)\n", rise, fall);
+		CHECK(rise > 0.5 && fall > 0.5, "edges never shorter than 1 ms");
 	}
 
 	// 9. Pitch by note, following the master tune: A4 at 440 and at 432 Hz, and no step when the master tune changes

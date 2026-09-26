@@ -31,7 +31,7 @@ awk '/^struct Grain \{/ {p = 1} p; p && /^\};/ {p = 0}' "$M/mod_controllable_aud
 # getExp and interpolateTable (EQ, SRR), quickLog, random and shouldDoPanning (grain) straight out of functions.cpp
 { echo '#include "util/functions.h"'; sed -n '/^int32_t interpolateTable(/,/^}/p;/^int32_t getExp(/,/^}/p;/^int32_t quickLog(/,/^}/p;/^int32_t random(/,/^}/p;/^bool shouldDoPanning(/,/^}/p' \
     "$D/deluge/util/functions.cpp"; } > "$B/fw_functions.cpp"
-CXX="g++ -std=gnu++23 -O2 -g -fsanitize=undefined -fno-sanitize-recover=undefined -fno-sanitize=signed-integer-overflow -w"
+CXX="g++ -std=gnu++23 -O2 -g -fsanitize=undefined -fno-sanitize-recover=undefined -fno-sanitize=signed-integer-overflow -w -I $HERE/stubs_pc"
 RUN=""
 [ -n "$ARM" ] && CXX="$ARM_CXX" && RUN="$ARM_RUN"
 $CXX -I "$HERE/stubs" -I "$B" -I "$T/delay/stubs" -I "$T/arm" -I "$D/deluge" -I "$D" -include host_shim.h \

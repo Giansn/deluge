@@ -17,6 +17,23 @@
 #   and the same in <out>/device/ and <out>/digital/.
 # Needs: python3 with unicorn 2 and numpy, a C compiler (for blockcount.c). About 2 minutes.
 #
+# EMU_OPTS: more song_emu.py options for all three runs, e.g. EMU_OPTS="--init-sounds --seed 1" ./run.sh <tree> <out>
+#   --init-sounds  Sets what Sound::Sound() leaves uninitialised but reads (Sound::globalLFO, ModControllableAudio::
+#                  modFXLFO: phase and holdValue; timeStartedSkippingRendering{ModFX,LFO,Arp}), at the start of every
+#                  Sound's constructor, as a firmware fix would (offsets from the ELF's debug info, the toolchain's gdb).
+#                  Without it measured.wav depends on what the RAM held before: e.g. timeStartedSkippingRenderingLFO of
+#                  the first synth holds a stale pointer into .rodata/.data, and the first stopSkippingRendering() ticks
+#                  the LFO by audioSampleTimer minus that, so any change of the code or data layout (another
+#                  RELEASE_TYPE, padding) changes the LFO phases and thus the audio. Use it to compare builds bit-exactly.
+#   --seed N       Sets the random generator (jcong) to N after boot: Song::setupDefault() seeds it from TCNT_0, i.e.
+#                  from the emulated instruction count up to there, which a patch touching boot code changes.
+#   --fill WORD    Fills the internal RAM and the SDRAM with this 32-bit word before boot (.bss is cleared as by
+#                  initsct). Two runs with different words differ exactly when the firmware reads RAM it never wrote.
+#                  (With --init-sounds the demand run still differs by 1 LSB in ~70 samples from bar 2 on: other,
+#                  minor reads of never-written heap bytes that are zero for every build here.)
+# Recipe for bit-exact song comparisons of a patch: EMU_OPTS="--init-sounds --seed 1" for both ELFs, then compare
+#   the demand runs' measured.wav (sha256sum); the log prints jcong after boot and the Sounds initialised.
+#
 # Files: make_sd.py (the song and its samples, generated; its docstring describes the song), fat32.py (the card
 # image), song_emu.py (the emulator harness; its docstring says what is real and what is modelled), blockcount.c
 # (instruction counting per translated block).
@@ -41,7 +58,7 @@ cc -O2 -shared -fPIC -I"$UC/include" "$HERE/blockcount.c" -o "$OUT/blockcount.so
 
 run() { # out dir, song options, emulator options
 	python3 "$HERE/make_sd.py" "$1/sd.img" $2 > /dev/null
-	python3 "$HERE/song_emu.py" "$ELF" "$1/sd.img" "$1" --tools "$TOOLS" --build "$OUT" --bars "$BARS" $3
+	python3 "$HERE/song_emu.py" "$ELF" "$1/sd.img" "$1" --tools "$TOOLS" --build "$OUT" --bars "$BARS" $3 $EMU_OPTS
 	rm -f "$1/sd.img"
 }
 

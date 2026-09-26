@@ -23,7 +23,7 @@ constexpr int kWarm = 10;  // blocks before counting
 constexpr int kCount = 10; // blocks counted
 constexpr double kFs = 44100;
 constexpr int32_t kOff = INT32_MIN; // bitcrush / SRR param "off"
-constexpr int kRandomCases = 1000; // per function
+constexpr int kRandomCases = 4000; // per function
 
 // Two detuned saws per side plus a sine, peaks around 2^27 like a sound's buffer before its effects
 static void input(StereoSample* buf, uint32_t* ph) {
@@ -267,6 +267,9 @@ static uint64_t randomFX(int cases) {
 			if (r.chance(40)) {
 				rate = r.chance(70) ? r.knob() >> r.below(12) : r.any();
 				depth = r.chance(70) ? r.knob() : r.any();
+			}
+			if (type == ModFXType::GRAIN && rate == 0) {
+				rate = 1; // quickLog(0): clz(0), fine on ARM, not in the PC build
 			}
 			int32_t postFXVolume = r.chance(70) ? 134217728 : r.any();
 			randomSource(r, buf);

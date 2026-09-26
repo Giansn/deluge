@@ -2,6 +2,12 @@
 """Runs the real Deluge firmware (deluge.elf) in unicorn and measures what a whole song costs its Cortex-A9.
 
 Usage: song_emu.py <deluge.elf> <sd.img> <out dir> [--warmup-bars N] [--bars N] [--culling] [--write-back song.xml]
+                   [--init-sounds] [--seed N] [--fill WORD]
+
+Bit-exact comparisons between builds (see run.sh): Sound::Sound() leaves the LFO phases and the skip-rendering
+timestamps uninitialised (SOUND_UNINITIALISED), so what a song renders depends on what the RAM held before, e.g. stale
+pointers whose values move with the code and data layout; --init-sounds sets them as a fix would. --seed pins the random
+generator after boot (it is seeded from the emulated time). --fill tests for reads of RAM never written.
 
 Not a sum of unit benchmarks: the firmware's own code boots, loads the song from the SD card image and renders it
 through AudioEngine::routine(), with everything the Deluge runs for it (Song, clips, Sounds, voices, kit, audio clip,

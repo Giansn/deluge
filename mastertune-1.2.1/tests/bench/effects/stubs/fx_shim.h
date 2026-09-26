@@ -35,7 +35,8 @@ struct BenchPlaybackHandler {
 	float calculateBPM(float) { return 120.f; }
 	int32_t getCurrentInternalTickCount() { return 0; }
 };
-inline BenchSong* currentSong = nullptr;
+inline BenchSong benchSong;
+inline BenchSong* currentSong = &benchSong;
 inline BenchPlaybackHandler playbackHandler;
 
 struct UnpatchedParamSet {
