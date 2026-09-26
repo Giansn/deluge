@@ -186,6 +186,7 @@ class Firmware:
             self.colour_scale = emu.sym["PIC::colourScale"]
         self.set_dimmer = fn(emu, "PadLEDs::setDimmerInterval(long)")
         self.image = emu.sym["PadLEDs::image"]
+        self.instructions = {}  # (mode, interval): instructions of a full pad and sidebar redraw
         self.image_store = emu.sym["PadLEDs::imageStore"]
 
     def call(self, name_or_address, *args):
@@ -246,7 +247,9 @@ DETAIL = [0, 13, 14, 15, 20, 24, 25]
 def check_pads(fw, interval, mode, log, failures):
     colours = test_colours()
     scale = fw.scale() if mode == "on" else FULL
+    before = fw.emu.bc.bc_total()
     msgs = fw.pads(colours)
+    fw.instructions[(mode, interval)] = fw.emu.bc.bc_total() - before
     got = {}
     for name, payload in msgs:
         if name == "cols":
@@ -282,12 +285,17 @@ def check_pads(fw, interval, mode, log, failures):
 
 def run(elf, tools, work, log, modes):
     fw = Firmware(elf, tools, work, log)
+    emu = fw.emu
+    log(f"{os.path.basename(elf)}: booted, pad brightness from the settings {emu.u8(emu.sym['FlashStorage::defaultPadBrightness'])}"
+        f" (dimmer interval {emu.u32(emu.sym['PadLEDs::dimmerInterval'])}), refresh time "
+        f"{emu.u32(emu.sym['PadLEDs::refreshTime'])}, colour scale {fw.scale() / FULL:.3f}")
     results = {}
     failures = []
     for mode in modes:
         if mode in ("on", "off"):
             fw.set_feature(mode == "on")
             fw.reapply()
+        results[mode + "_scale_before"] = fw.scale()
         rows = []
         for interval in range(26):
             msgs, pads_resent = fw.dimmer_interval(interval)
@@ -300,6 +308,11 @@ def run(elf, tools, work, log, modes):
                 check_pads(fw, interval, mode, log, failures)
         results[mode] = rows
     return results, failures, fw
+
+
+def cost_line(label, fw):
+    return label + ", ".join(f"{m} {100 - 4 * i}% {n:,}" for (m, i), n in sorted(fw.instructions.items())
+                             if i in (0, 25))
 
 
 def main():
@@ -331,7 +344,7 @@ def main():
         raise SystemExit("this ELF has no flicker-free dimming (PIC::colourScale)")
     base = None
     if args.base:
-        base, f, _ = run(args.base, tools, work, log, ["legacy"])
+        base, f, base_fw = run(args.base, tools, work, log, ["legacy"])
         failures += f
 
     log("interval  UI  | 1.2.1: refresh dimmer period light | Off = 1.2.1? | On: refresh dimmer period  scale  "
@@ -358,7 +371,7 @@ def main():
     # changes, and only then
     for mode in ("on", "off"):
         rows = new[mode]
-        changed = [i for i in range(26) if rows[i]["scale"] != (rows[i - 1]["scale"] if i else FULL)]
+        changed = [i for i in range(26) if rows[i]["scale"] != (rows[i - 1]["scale"] if i else new[mode + "_scale_before"])]
         pads = [i for i in range(26) if rows[i]["pads_resent"]]
         knobs = [i for i in range(26) if rows[i]["others"].count("knob") == 2]
         extra = sorted({n for r in rows for n in r["others"]} - {"knob"})
@@ -366,6 +379,8 @@ def main():
             f"other messages: {extra or 'none'}")
         if not (changed == pads == knobs) or extra:
             failures.append(f"{mode}: resends don't match the scale changes")
+    log(cost_line("instructions for all 144 pads + 16 sidebar pads (sendOutMainPadColours() + sendOutSidebarColours()): ",
+                  fw) + (cost_line("; 1.2.1: ", base_fw) if base else ""))
     log(f"checked pad, sidebar, scroll and knob values at intervals {DETAIL}, On and Off"
         + (" and on the 1.2.1 ELF" if base else ""))
     if failures:
