@@ -450,6 +450,45 @@ Rohdaten: `raw/perf-trackfx.json`. Patch `perf/0004`.
   - der Gegenprüfer mit eigenen Grenzfällen und einer absichtlich eingebauten Mutation
 - **Kompressor nicht geändert:** Die Gleitkomma-Rechnung wählte je nach Kontext andere Befehle, das Ergebnis wäre nicht bitgleich gewesen.
 
+## 7e. Speichern während des Abspielens (v13)
+
+Rohdaten: `raw/save-speed.json`. Commit `c6201e47` (auf v13).
+- **Problem in v12:** Die Knacks-Korrektur aus v11 bediente das Audio beim Speichern bei jedem geschriebenen Zeichen. Das war sauber, aber langsam: `routine()` lief etwa alle 5 Samples und renderte Fenster von rund 24 Samples.
+- **Korrektur:** `routineWhileAccessingFile()` bedient Audio und UI erst, wenn mindestens 8 Samples fällig sind. Dann rendert `routine()` mindestens 64 Samples voraus (`minNumSamplesToRender`, nur während des Dateizugriffs).
+- **Gemessen im Emulator,** Speichern während des Abspielens:
+
+| Fall | vorher | nachher | grösste Lücke nachher |
+|---|---|---|---|
+| 3 Synths (etwa 50 % CPU), ab Takt 2 | 344 ms | 21,8 ms | 71 Samples |
+| 5 Synths (etwa 70 % CPU), ab Takt 2 | 716 ms | 65,7 ms | 97 Samples, kein Underrun |
+| mitten im Takt, 3 / 5 Synths | 80 / 180 ms | 10,3 / 16,0 ms | 56 / 66 Samples |
+
+- Das geschriebene XML ist identisch, normales Abspielen bleibt bitgleich. Die Wartezeit der SD-Karte ist im Emulator nicht modelliert.
+
+## 7f. MIDI- und Gate-Timing (v13)
+
+Rohdaten: `raw/midi-timing.json`. Commits `c89b7b35` und `a8e8af32` (auf v13). Messung: `tests/song`, `MIDI=1 ./run.sh`.
+- **Fehler 1 (neu sichtbar durch 7e):** `scheduleMidiGateOutISR()` rechnete die Wartezeit modulo 128. Lag das Ereignis spät im vorausgerenderten Fenster, ging MIDI (Clock, Noten) oder Gate einen ganzen Puffer, also 2,9 ms, zu früh hinaus. Beim Speichern betraf das 25 von 97 Timer-Läufen. Neu: `s = 128 + t − due − (movement & 127)`, bei Underrun +128, für schon gespielte Positionen 1, begrenzt auf 5605 Samples (16-Bit-TGRA).
+- **Fehler 2 (alt, schon in 1.2.1):** `TCNT_2` wurde vor dem Start des Timers nie auf 0 gesetzt. Nach dem Compare-Match zählt er weiter, bis die ISR ihn stoppt, bei gesperrten Interrupts bis zu 451 Counts. Der nächste Lauf kam darum bis zu 38 Samples zu früh, oder nach einem 16-Bit-Überlauf rund 127 ms zu spät. Neu wird `TCNT` vor jedem Start auf 0 gesetzt.
+- **Ergebnis:** Timer wie geplant gegen den Zeitpunkt, an dem die DMA das Fenster-Sample erreicht: beim Abspielen 192 Läufe, beim Speichern 97, alle zwischen −1,4 und +0,2 Samples.
+- **Offen, beide alt:**
+  - `Song::renderAudio()` sperrt die Interrupts pro Output. Der Timer-Interrupt läuft dadurch bis 40 Samples (0,9 ms) später.
+  - Noten gehen etwa 2,3–2,6 ms vor dem Ton hinaus, weil `doMIDIClockOutTick()` den Puffer sofort sendet, wenn eine Clock auf denselben Tick fällt. Für externe Geräte mit eigener Latenz ist das eher günstig; eine Änderung wäre mit dem Nutzer abzusprechen.
+- **Mess-Modell** in `song_emu.py`: Timer (MTU2 Kanal 2) samt Zähler, MIDI-UART mit DMA und 16-Byte-FIFO bei 31 250 Baud, Interrupts mit Sperrzeiten, Wiedergabe in Echtzeit wie der Task-Manager.
+
+## 7g. Delay ohne Tonhöhensprung (v14, in Arbeit)
+
+Rohdaten: `raw/delay-v14.json`. Commits `cd7f09ef`, `9ec940a2` (Branch `delay-v14`).
+- **Ursache des Verbiegens:** Bei einer Zeitänderung dreht der Puffer mit einer anderen Rate. Was schon drin liegt, spielt schneller oder langsamer ab, die Tonhöhe verschiebt sich um das Ratenverhältnis (25 % kürzer: +386 Cent), und das Feedback trägt es weiter.
+- **Fade (neu, Standard):** Die neue Zeit läuft in einem frischen Puffer, der Eingang blendet in 23 ms hinüber, der alte Puffer spielt seine Echos mit Originalzeit und -tonhöhe aus. Tonhöhe ≤ 0,008 Cent, Artefakte ≤ −85 dB. Tape entspricht dem bisherigen Verhalten.
+- **Mitbehoben:**
+  - Klick beim ersten Echo nach einer Pause
+  - hart abgeschnittenes Echo-Ende
+  - Aliasing über 2 s (Puffer bis 4 s)
+  - Unter 3 % Feedback warf der Delay seinen Puffer bei jeder Runde weg (1.2.1).
+- **Ping-Pong** funktioniert, wirkt aber nur bei Stereo-Ausgabe (Kopfhörer oder R-Ausgang), über den Lautsprecher ist der Deluge mono.
+- CPU: +0,8 % im Ruhezustand, während eines Wechsels +1,1 % pro Delay.
+
 ## 8. Offen
 
 - [x] Volllast-Test Lauf 1 eingetragen, Priorisierung angepasst.
@@ -457,7 +496,9 @@ Rohdaten: `raw/perf-trackfx.json`. Patch `perf/0004`.
 - [ ] Messversion auf dem Gerät mit `MT_LOADTEST`: Emulator kalibrieren, Direness- und Culling-Schwellen prüfen.
 - [ ] Benchmarks für `processReverbSendAndVolume`, den Aufwand pro Fenster in `Sound::render` und die Wavetable-Schleife.
 - [ ] Wavetable-Oszillator, Grain, `hopEnd` und die Stereo-Unison-Pan-Schleife messen, falls der Volllast-Test sie als relevant zeigt.
-- [ ] MIDI/Clock-Fix: Übertragbarkeit am Code bestätigen.
+- [ ] MIDI/Clock-Fix in `routineForSD()` (`9cd09fb7`): Übertragbarkeit am Code bestätigen.
+- [x] MIDI-/Gate-Timer: 2,9 ms zu früh und Zählerrest behoben (7f).
+- [ ] Noten 2,5 ms vor dem Ton (7f): mit dem Nutzer entscheiden.
 - [ ] L2-Cache: Nachbesserungen vollständig sammeln.
 - [x] **Messversion** gebaut (`diag/`, SHA `8c94cf68…`). Der Test-Song für die SD-Karte ist `diag/loadtest-card.zip`.
   - CPU-Last pro Block (Mittel/Spitze), Stimmen, `cpuDireness`, Culling, SD-Latenz pro Cluster.
