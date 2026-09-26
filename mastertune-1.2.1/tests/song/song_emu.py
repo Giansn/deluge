@@ -1,23 +1,30 @@
 #!/usr/bin/env python3
-"""Runs the real Deluge firmware (deluge.elf) in unicorn and measures what a whole song costs the Cortex-A9.
+"""Runs the real Deluge firmware (deluge.elf) in unicorn and measures what a whole song costs its Cortex-A9.
 
-Usage: song_emu.py <deluge.elf> <sd.img> <out dir> [--bars-warmup N] [--bars N] [--reverb-model M]
+Usage: song_emu.py <deluge.elf> <sd.img> <out dir> [--warmup-bars N] [--bars N] [--write-back song.xml]
 
-What it does:
-- Loads the ELF, runs its own reset code (resetprg: the static constructors, main, deluge_main: memory allocator,
-  functionsInit, AudioEngine::init, settings, the blank song) with the hardware replaced by plain memory, except a few
-  things that must behave: the timers (OSTM, MTU2) count emulated time (instructions at 400 MHz), the DMA channels stand
-  still, the SD card's sector reads and writes go to an image file (FatFS's own code on top), and the hardware parts
-  that only wait for devices (SD card init, USB, SPI flash, OLED) are skipped. It stops where deluge_main would start the
-  task manager.
-- Loads the startup song from the SD image (the firmware's own setupStartupSong(), as at boot), starts playback with
-  the internal clock (PlaybackHandler::playButtonPressed) and then calls AudioEngine::routine() itself, one call per
-  128 samples: the SSI's DMA position is made to show exactly 128 samples free before each call and no more space
-  after the render, so every call renders one window of up to 128 samples (shorter only where the song's clock ticks,
-  as on the Deluge). Between calls, it runs what the task manager would: the playback handler's routine and the SD
-  card's cluster loading.
-- Counts instructions per translated block in C (blockcount.c), so a window's cost and the profile by function are
-  exact instruction counts of the firmware's machine code (not cycles: 1 instruction per cycle at 400 MHz is the scale).
+Not a sum of unit benchmarks: the firmware's own code boots, loads the song from the SD card image and renders it
+through AudioEngine::routine(), with everything the Deluge runs for it (Song, clips, Sounds, voices, kit, audio clip,
+effects, reverb, sidechain, drone, the playback handler's ticks).
+
+- Boot: the ELF's segments where the bootloader puts them, then resetprg() (the static constructors, main(),
+  deluge_main(): memory, functionsInit, AudioEngine::init, settings, the SD card, the blank song, the task list). The
+  hardware is plain memory, lazily mapped, except what the firmware waits on or counts with (models below): the OSTM
+  and MTU2 timers count emulated time (instructions at 400 MHz), the DMA channels have finished (or, receiving, got
+  nothing), SPI and the SPI flash (erased: default settings) answer at once. The SD card's sectors are an image file:
+  FatFS runs as it is, over sd_read_sect()/disk_write(), and mount_volume() skips the card's initialisation (the SDHI
+  driver). It stops where deluge_main() would start the task manager.
+- The song: setupStartupSong() in the template mode loads SONGS/DEFAULT.XML, as at boot (the task manager's tasks
+  run while it yields, so the cluster loading streams the samples in).
+- Playback: PlaybackHandler::playButtonPressed() (the internal clock), then AudioEngine::routine() called here, once
+  per window: the SSI's DMA position shows 127 free samples until the song renders, and none after, so each call
+  renders exactly one window of 128 samples, cut short only where the song's clock ticks (as on the Deluge; one
+  window in 44 here). Between windows it runs the other tasks that matter while playing: the playback handler's
+  routine and the SD card's cluster loading. The task list is emptied first, so getLastRunTimeforCurrentTask(), what
+  the audio routine culls voices by, reads 0: no culling for CPU load (a Sound over its voice limit still steals, as
+  on the Deluge; cullVoice() calls are counted by caller).
+- Counting: per translated block, in C (blockcount.c): exact instruction counts of the firmware's machine code, per
+  window and per function. CPU % = instructions per 128 samples / 1,161,000 (400 MHz at 1 instruction per cycle).
 """
 import argparse
 import bisect
@@ -25,70 +32,65 @@ import collections
 import ctypes
 import json
 import math
-
-import numpy as np
 import os
+import re
 import struct
 import subprocess
 import sys
 import time
 
+import numpy as np
 import unicorn
-from unicorn import (UC_ARCH_ARM, UC_HOOK_CODE, UC_HOOK_INTR, UC_HOOK_MEM_UNMAPPED, UC_MODE_ARM, UC_PROT_ALL, Uc,
-                     UcError)
-from unicorn.arm_const import (UC_ARM_REG_C1_C0_2, UC_ARM_REG_CPSR, UC_ARM_REG_D0, UC_ARM_REG_FPEXC, UC_ARM_REG_LR,
-                               UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3,
-                               UC_ARM_REG_R4, UC_ARM_REG_R5, UC_ARM_REG_R6, UC_ARM_REG_R7, UC_ARM_REG_SP,
+from unicorn import UC_ARCH_ARM, UC_HOOK_CODE, UC_HOOK_INTR, UC_HOOK_MEM_UNMAPPED, UC_MODE_ARM, UC_PROT_ALL, Uc, UcError
+from unicorn.arm_const import (UC_ARM_REG_C1_C0_2, UC_ARM_REG_CPSR, UC_ARM_REG_FPEXC, UC_ARM_REG_LR, UC_ARM_REG_PC,
+                               UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_SP,
                                UC_CPU_ARM_CORTEX_A9)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import fat32  # noqa: E402
 
 INTERNAL_RAM, INTERNAL_RAM_SIZE = 0x20000000, 0x300000
 SDRAM, SDRAM_SIZE = 0x0C000000, 0x04000000
 UNCACHED_MIRROR_OFFSET = 0x40000000
-STOP = 0x7FFF0000  # Return address of the calls we make: nothing is executed there
+STOP = 0x7FFF0000  # Return address of the calls made from here: nothing is executed there
 PROGRAM_STACK_TOP = 0x20300000
 
 CPU_HZ = 400e6
 PERIPHERAL_HZ = 33.33e6
 SAMPLE_RATE = 44100
 CYCLES_PER_BLOCK = CPU_HZ * 128 / SAMPLE_RATE  # 1,161,000
+BAR = SAMPLE_RATE * 2  # 4 beats at 120 BPM
 
 OSTM0 = 0xFCFEC000
 MTU2 = 0xFCFF0000
-MTU_TCNT = {0x306: (0, 64), 0x386: (1, 1), 0x006: (2, 64), 0x210: (3, 64), 0x212: (4, 1024)}  # offset: (timer, prescaler)
+MTU_TCNT = {0x306: 64, 0x386: 1, 0x006: 64, 0x210: 64, 0x212: 1024}  # TCNT_0..4 offset: prescaler
 DMAC = 0xE8200000
 SSI_TX_DMA_CHANNEL = 6
-
-# Status registers that the firmware waits on, preset once to "ready" (the peripherals are plain memory)
-SEEDS = {
-    0xE800C803: b"\xA0",  # RSPI0 SPSR: transmit buffer empty (SPTEF), receive buffer full (SPRF)
-}
+RSPI0 = 0xE800C800
+SPIBSC = 0x3FEFA000
 
 
 def dmac_channel_base(n):
-    return n * 64 + (0x200 if n >= 8 else 0)
+    return DMAC + n * 64 + (0x200 if n >= 8 else 0)
 
 
 class Symbols:
     def __init__(self, elf, tool_prefix):
-        out = subprocess.run([tool_prefix + "nm", "-S", "-n", "--defined-only", elf], capture_output=True, text=True,
-                             check=True).stdout
-        demangled = subprocess.run([tool_prefix + "nm", "-S", "-n", "-C", "--defined-only", elf], capture_output=True,
-                                   text=True, check=True).stdout
+        def nm(*flags):
+            return subprocess.run([tool_prefix + "nm", "-S", "-n", "--defined-only", *flags, elf], capture_output=True,
+                                  text=True, check=True).stdout.splitlines()
         self.by_name = {}
         self.functions = []  # (start, end, demangled name)
-        for line, dline in zip(out.splitlines(), demangled.splitlines()):
-            parts = line.split(maxsplit=3)
-            dparts = dline.split(maxsplit=3)
-            if len(parts) != 4:
+        for line, dline in zip(nm(), nm("-C")):
+            parts, dparts = line.split(maxsplit=3), dline.split(maxsplit=3)
+            if len(parts) != 4 or len(dparts) != 4:
                 continue
-            address, size, kind, name = int(parts[0], 16), int(parts[1], 16), parts[2], parts[3]
-            self.by_name[name] = (address, size)
-            if len(dparts) == 4:
-                self.by_name.setdefault(dparts[3], (address, size))
+            address, size, kind = int(parts[0], 16), int(parts[1], 16), parts[2]
+            self.by_name[parts[3]] = (address, size)
+            self.by_name.setdefault(dparts[3], (address, size))
             if kind in "TtWw" and size:
-                self.functions.append((address & ~1, (address & ~1) + size, dparts[3] if len(dparts) == 4 else name))
+                self.functions.append((address & ~1, (address & ~1) + size, dparts[3]))
         self.functions.sort()
         self.starts = [f[0] for f in self.functions]
 
@@ -96,7 +98,7 @@ class Symbols:
         return self.by_name[name][0]
 
     def find(self, prefix):
-        """The one symbol whose (mangled or demangled) name starts with prefix."""
+        """The one function or variable whose name starts with prefix (LTO adds suffixes like .constprop.0)."""
         found = sorted({v for k, v in self.by_name.items() if k.startswith(prefix)})
         if len(found) != 1:
             raise KeyError(f"{len(found)} symbols start with {prefix!r}")
@@ -114,21 +116,21 @@ class Symbols:
 
 
 class Emulator:
-    def __init__(self, elf, sd_image, tool_prefix, log):
+    def __init__(self, elf, sd_image, tool_prefix, build_dir, log):
         self.elf = elf
         self.log = log
         self.tool_prefix = tool_prefix
         self.sym = Symbols(elf, tool_prefix)
         data = open(elf, "rb").read()
         _, phoff, _, _, _, phentsize, phnum = struct.unpack_from("<IIIIHHH", data, 24)
-        self.segments = []
+        self.segments = []  # (load address, content)
         for i in range(phnum):
-            p_type, p_offset, p_vaddr, p_paddr, p_filesz, _ = struct.unpack_from("<IIIIII", data, phoff + i * phentsize)
+            p_type, p_offset, _, p_paddr, p_filesz, _ = struct.unpack_from("<IIIIII", data, phoff + i * phentsize)
             if p_type == 1 and p_filesz:
-                self.segments.append((p_vaddr, p_paddr, data[p_offset:p_offset + p_filesz]))
+                self.segments.append((p_paddr, data[p_offset:p_offset + p_filesz]))
+
         self.uc = uc = Uc(UC_ARCH_ARM, UC_MODE_ARM)
         uc.ctl_set_cpu_model(UC_CPU_ARM_CORTEX_A9)
-
         # Internal RAM and SDRAM, each also at its uncached mirror (the same host memory)
         self.iram = ctypes.create_string_buffer(INTERNAL_RAM_SIZE)
         self.sdram = ctypes.create_string_buffer(SDRAM_SIZE)
@@ -136,78 +138,64 @@ class Emulator:
             uc.mem_map_ptr(base, size, UC_PROT_ALL, ctypes.addressof(buf))
             uc.mem_map_ptr(base + UNCACHED_MIRROR_OFFSET, size, UC_PROT_ALL, ctypes.addressof(buf))
         uc.mem_map(STOP & ~0xFFF, 0x1000)
-        # What's at address 0 on the Deluge (the boot ROM area) reads, but isn't written: the firmware does read
-        # through null pointers now and then (e.g. Clip::~Clip() looks at currentSong while there's none)
+        # What's at address 0 on the Deluge reads but isn't written: the firmware does read through null pointers now
+        # and then (Clip::~Clip() looks at currentSong while there's none)
         uc.mem_map(0, 0x100000, unicorn.UC_PROT_READ)
-
-        # Timers, DMA, SPI registers behave (models below); the rest of the peripherals is plain memory, mapped when
-        # first touched
+        # The peripherals the firmware waits on or counts with (models below) are MMIO pages; the rest is plain memory,
+        # mapped when first touched
         self.mmio = {}
-        self.readers = {}  # Absolute address -> function(size) returning the value
-        self.writers = {}  # Absolute address -> function(size, value)
+        self.readers = {}  # Address -> function(size) giving the value read
+        self.writers = {}  # Address -> function(size, value), besides keeping the value
         self.setup_models()
         for page in sorted({a & ~0xFFF for a in list(self.readers) + list(self.writers)}):
             uc.mmio_map(page, 0x1000, self.mmio_read, page, self.mmio_write, page)
-        self.mapped_lazily = []
         uc.hook_add(UC_HOOK_MEM_UNMAPPED, self.on_unmapped)
         uc.hook_add(UC_HOOK_INTR, self.on_interrupt)
-
-        # The image, as the bootloader leaves it: every segment at its load address
-        for vaddr, paddr, content in self.segments:
+        for paddr, content in self.segments:  # As the bootloader leaves it: every segment at its load address
             uc.mem_write(paddr, content)
-
         uc.reg_write(UC_ARM_REG_C1_C0_2, uc.reg_read(UC_ARM_REG_C1_C0_2) | (0xF << 20))  # CP10/CP11 (VFP/NEON)
         uc.reg_write(UC_ARM_REG_FPEXC, 0x40000000)
 
-        # Instruction counting
-        lib = ctypes.CDLL(os.path.join(os.environ.get("SONG_BUILD", HERE), "blockcount.so"))
+        lib = ctypes.CDLL(os.path.join(build_dir, "blockcount.so"))
         lib.bc_total.restype = ctypes.c_uint64
         lib.bc_dump.restype = ctypes.c_uint32
         lib.bc_install.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32]
-        self.bc = lib
         if lib.bc_install(uc._uch, ctypes.addressof(self.iram), INTERNAL_RAM, INTERNAL_RAM_SIZE) != 0:
             raise SystemExit("could not install the block hook")
+        self.bc = lib
 
-        # SD card: an image file (read and written in place)
         self.sd_path = sd_image
         self.sd_fd = os.open(sd_image, os.O_RDWR)
         self.sd_reads = self.sd_writes = 0
-
-        self.intercepts = {}
-        self.dma_free = None  # Set while measuring: see ssi_position()
-        self.time_offset = 0.0
-
-    # --- time: instructions at 400 MHz
+        self.dma_free = 0  # See ssi_position()
+        self.stopped = False
 
     def seconds(self):
-        return self.bc.bc_total() / CPU_HZ + self.time_offset
+        """Emulated time: instructions at 400 MHz."""
+        return self.bc.bc_total() / CPU_HZ
+
+    # --- peripherals
 
     def setup_models(self):
         r, w = self.readers, self.writers
-        # OSTM0: free-running counter (the task manager's clock)
+        # OSTM0, the task manager's clock, and the MTU2's 16-bit system timers count at the peripheral clock
         r[OSTM0 + 4] = lambda size: int(self.seconds() * PERIPHERAL_HZ) & 0xFFFFFFFF
-        # MTU2: the 16-bit system timers, counting at the peripheral clock / their prescaler
-        for offset, (_, prescaler) in MTU_TCNT.items():
+        for offset, prescaler in MTU_TCNT.items():
             r[MTU2 + offset] = lambda size, p=prescaler: int(self.seconds() * PERIPHERAL_HZ / p) & 0xFFFF
-        # DMA channels stand still: current address = where they start; the SSI's is ssi_position()
+        # DMA: each channel has finished (CHSTAT: END, TC) and stands where it started (CRSA/CRDA = N0SA/N0DA)
         for ch in range(16):
-            base = DMAC + dmac_channel_base(ch)
+            base = dmac_channel_base(ch)
             r[base + 0x18] = lambda size, b=base: self.plain_read(b, 4)
             r[base + 0x1C] = lambda size, b=base: self.plain_read(b + 4, 4)
-            r[base + 0x24] = lambda size: 0x60  # CHSTAT: transfer ended (END, TC), not enabled
-        r[DMAC + dmac_channel_base(SSI_TX_DMA_CHANNEL) + 0x18] = lambda size: self.ssi_position()
-        # The UARTs' receive DMA (PIC, MIDI): nothing new arrived, i.e. it writes where the reader is
-        rx_channels = self.sym["rxDmaChannels"]
-        rx_read_addresses = self.sym["rxBufferReadAddr"]
+            r[base + 0x24] = lambda size: 0x60
+        r[dmac_channel_base(SSI_TX_DMA_CHANNEL) + 0x18] = lambda size: self.ssi_position()
+        # The UARTs' receive DMA (MIDI, PIC): nothing arrived, i.e. it writes where the reader is
+        read_addresses = self.sym["rxBufferReadAddr"]
         for item in range(2):
-            channel = struct.unpack_from("<B", self.elf_bytes_at(rx_channels + item, 1))[0]
-            r[DMAC + dmac_channel_base(channel) + 0x1C] = lambda size, a=rx_read_addresses + 4 * item: self.u32(a)
-        # RSPI0 (CV, OLED): transmit buffer always empty, the receive buffer full after each write until read
-        spi = 0xE800C800
+            channel = self.elf_bytes_at(self.sym["rxDmaChannels"] + item, 1)[0]
+            r[dmac_channel_base(channel) + 0x1C] = lambda size, a=read_addresses + 4 * item: self.u32(a)
+        # RSPI0 (CV, OLED): transmit buffer always empty (SPTEF), receive buffer full (SPRF) from a write to a read
         self.spi_rx_full = False
-
-        def spsr(size):
-            return 0x20 | (0x80 if self.spi_rx_full else 0)
 
         def spdr_read(size):
             self.spi_rx_full = False
@@ -215,81 +203,60 @@ class Emulator:
 
         def spdr_write(size, value):
             self.spi_rx_full = True
+        r[RSPI0 + 3] = lambda size: 0x20 | (0x80 if self.spi_rx_full else 0)
+        r[RSPI0 + 4] = spdr_read
+        w[RSPI0 + 4] = spdr_write
+        # SPIBSC, the SPI flash with the settings: transfers end at once (CMNSR: TEND); the flash is erased (0xFF: the
+        # firmware's default settings) and its status register (command 0x05) never busy
+        r[SPIBSC + 0x48] = lambda size: 0x1
 
-        # SPIBSC (the SPI flash holding the settings): every transfer has ended at once (CMNSR: TEND, SSL negated),
-        # the flash reads as zeros (no settings saved: the firmware's defaults)
-        r[0x3FEFA000 + 0x48] = lambda size: 0x1
-        # SMRDR0/1, the data read: erased flash (0xFF), except for the status register (RDSR, 0x05): never busy
         def flash_data(size):
-            command = (self.plain_read(0x3FEFA000 + 0x24, 4) >> 16) & 0xFF
+            command = (self.plain_read(SPIBSC + 0x24, 4) >> 16) & 0xFF
             return 0 if command == 0x05 else (1 << (8 * size)) - 1
-        r[0x3FEFA000 + 0x38] = flash_data
-        r[0x3FEFA000 + 0x3C] = flash_data
-        r[spi + 3] = spsr
-        r[spi + 4] = spdr_read
-        w[spi + 4] = spdr_write
+        r[SPIBSC + 0x38] = flash_data
+        r[SPIBSC + 0x3C] = flash_data
 
     def elf_bytes_at(self, address, n):
-        for vaddr, paddr, content in self.segments:
+        for paddr, content in self.segments:
             if paddr <= address < paddr + len(content):
                 return content[address - paddr:address - paddr + n]
         raise KeyError(hex(address))
 
     def mmio_read(self, uc, offset, size, page):
-        address = page + offset
-        reader = self.readers.get(address)
-        if reader:
-            return reader(size)
-        return self.plain_read(address, size)
+        reader = self.readers.get(page + offset)
+        return reader(size) if reader else self.plain_read(page + offset, size)
 
     def mmio_write(self, uc, offset, size, value, page):
-        address = page + offset
-        writer = self.writers.get(address)
+        writer = self.writers.get(page + offset)
         if writer:
             writer(size, value)
         for i in range(size):
-            self.mmio[address + i] = (value >> (8 * i)) & 0xFF
+            self.mmio[page + offset + i] = (value >> (8 * i)) & 0xFF
 
     def plain_read(self, address, size):
-        value = 0
-        for i in range(size):
-            value |= self.mmio.get(address + i, 0) << (8 * i)
-        return value
+        return sum(self.mmio.get(address + i, 0) << (8 * i) for i in range(size))
 
     def on_unmapped(self, uc, access, address, size, value, _):
-        region = address & ~0xFFFFF
         if address < 0x100000:
-            self.log(f"access to {address:#x} (null pointer?) at {self.sym.name_at(uc.reg_read(UC_ARM_REG_PC))}")
+            self.log(f"write to {address:#x} (null pointer) at {self.sym.name_at(uc.reg_read(UC_ARM_REG_PC))}")
             return False
         try:
-            uc.mem_map(region, 0x100000)
-        except UcError:
-            # Next to an MMIO page: map just this page
-            region = address & ~0xFFF
-            uc.mem_map(region, 0x1000)
-        self.mapped_lazily.append(region)
-        for seed_address, seed in SEEDS.items():
-            if region <= seed_address < region + (0x100000 if (region & 0xFFFFF) == 0 else 0x1000):
-                uc.mem_write(seed_address, seed)
+            uc.mem_map(address & ~0xFFFFF, 0x100000)
+        except UcError:  # Next to an MMIO page
+            uc.mem_map(address & ~0xFFF, 0x1000)
         return True
 
     def on_interrupt(self, uc, intno, _):
-        pc = uc.reg_read(UC_ARM_REG_PC)
-        raise SystemExit(f"exception {intno} at {self.sym.name_at(pc)}")
-
-    # --- the SSI's DMA position (what getTxBufferCurrentPlace() reads)
+        raise SystemExit(f"exception {intno} at {self.sym.name_at(uc.reg_read(UC_ARM_REG_PC))}")
 
     def ssi_position(self):
-        """While measuring: 127 samples free (the DMA just behind where the renderer has written up to) until the
-        window is rendered, then none, so each AudioEngine::routine() renders exactly one window. Before that: the
-        buffer always full (nothing rendered)."""
+        """Where the SSI's DMA reads (getTxBufferCurrentPlace()): dma_free samples ahead of where the renderer has
+        written up to."""
         tx_pos = self.u32(self.sym["_ZN11AudioEngine14i2sTXBufferPosE"]) - UNCACHED_MIRROR_OFFSET
         start = self.sym["ssiTxBuffer"]
-        free = self.dma_free if self.dma_free is not None else 0
-        pos = start + ((tx_pos - start + free * 8) % (128 * 8))
-        return pos
+        return start + ((tx_pos - start + self.dma_free * 8) % (128 * 8))
 
-    # --- memory helpers
+    # --- memory
 
     def u32(self, address):
         return struct.unpack("<I", self.uc.mem_read(address, 4))[0]
@@ -300,42 +267,30 @@ class Emulator:
     def u8(self, address):
         return self.uc.mem_read(address, 1)[0]
 
-    def w8(self, address, value):
-        self.uc.mem_write(address, bytes([value & 0xFF]))
-
-    def cstring(self, address, limit=256):
-        out = bytes(self.uc.mem_read(address, limit))
-        return out.split(b"\0")[0].decode("latin-1")
-
-    # --- intercepting functions
+    # --- hooks and calls
 
     def intercept(self, address, handler):
-        """handler(emu) runs when the code reaches address. It returns None to go on, or a value (int) to return from
-        the function right there with that value in r0 ("skip")."""
-        address &= ~1
-
+        """handler(emu) runs when the code reaches address; if it returns a value, the function returns it (r0)
+        right there, else it goes on."""
         def hook(uc, addr, size, _):
             result = handler(self)
             if result is not None:
                 uc.reg_write(UC_ARM_REG_R0, result & 0xFFFFFFFF)
                 uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
-
-        self.intercepts[address] = self.uc.hook_add(UC_HOOK_CODE, hook, begin=address, end=address)
+        address &= ~1
+        return self.uc.hook_add(UC_HOOK_CODE, hook, begin=address, end=address)
 
     def skip_to(self, address, target, before=None):
-        """Jumps from address to target (both Thumb code in the same function)."""
+        """Jumps from address to target (Thumb code in the same function)."""
         def hook(uc, addr, size, _):
             if before:
                 before(self)
             uc.reg_write(UC_ARM_REG_PC, target | 1)
         self.uc.hook_add(UC_HOOK_CODE, hook, begin=address, end=address)
 
-    # --- calling firmware functions
-
     def call(self, address, *args, timeout_s=0):
         uc = self.uc
-        regs = (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3)
-        for reg, value in zip(regs, args):
+        for reg, value in zip((UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3), args):
             uc.reg_write(reg, value & 0xFFFFFFFF)
         uc.reg_write(UC_ARM_REG_SP, PROGRAM_STACK_TOP)
         uc.reg_write(UC_ARM_REG_LR, STOP | 1)
@@ -343,25 +298,23 @@ class Emulator:
         return uc.reg_read(UC_ARM_REG_R0)
 
     def run(self, start, until, timeout_s=0):
+        """Runs to until (or stop()). With a timeout, says every so often where the firmware is (a loop waiting for
+        hardware that isn't modelled shows up so)."""
         uc = self.uc
         pc = start
         while True:
             try:
-                uc.emu_start(pc, until, timeout=int(timeout_s * 1e6) if timeout_s else 0)
+                uc.emu_start(pc, until, timeout=int(timeout_s * 1e6))
             except UcError as e:
-                pc = uc.reg_read(UC_ARM_REG_PC)
-                raise SystemExit(f"emulator error: {e} at {self.sym.name_at(pc)}, lr {self.sym.name_at(uc.reg_read(UC_ARM_REG_LR))}")
+                raise SystemExit(f"emulator error: {e} at {self.sym.name_at(uc.reg_read(UC_ARM_REG_PC))}, "
+                                 f"lr {self.sym.name_at(uc.reg_read(UC_ARM_REG_LR))}")
             pc = uc.reg_read(UC_ARM_REG_PC)
-            if pc == until or getattr(self, "stopped", False):
+            if pc == until or self.stopped or not timeout_s:
                 self.stopped = False
                 return
-            if not timeout_s:
-                return
-            # Timed out: say where we are, and go on (so a firmware loop waiting for hardware shows up)
-            self.log(f"  ... still running at {self.sym.name_at(pc)} (lr {self.sym.name_at(uc.reg_read(UC_ARM_REG_LR))}), "
+            self.log(f"  ... at {self.sym.name_at(pc)} (lr {self.sym.name_at(uc.reg_read(UC_ARM_REG_LR))}), "
                      f"{self.bc.bc_total() / 1e6:,.0f}M instructions")
-            thumb = uc.reg_read(UC_ARM_REG_CPSR) & 0x20
-            pc |= 1 if thumb else 0
+            pc |= 1 if uc.reg_read(UC_ARM_REG_CPSR) & 0x20 else 0
 
     def stop(self):
         self.stopped = True
@@ -377,25 +330,19 @@ def disassemble(emu, name):
     lines = []
     for line in out.splitlines():
         parts = line.strip().split("\t")
-        if len(parts) >= 2 and parts[0].endswith(":"):
-            try:
-                address = int(parts[0][:-1], 16)
-            except ValueError:
-                continue
-            lines.append((address, parts[1].strip(), parts[2].strip() if len(parts) > 2 else ""))
+        if len(parts) >= 2 and re.fullmatch(r"[0-9a-f]+:", parts[0]):
+            lines.append((int(parts[0][:-1], 16), parts[1].strip(), parts[2].strip() if len(parts) > 2 else ""))
     return lines
 
 
 def setup_sd(emu):
-    """The SD card: FatFS's own code on top of the image. Its sector reads and writes go to the image file, and its
-    mount skips the card's initialisation (the SDHI driver, inlined into mount_volume) as if the card said ready."""
-    sym = emu.sym
+    """The SD card: FatFS's own code on the image file. Its sector reads (sd_read_sect(), under disk_read() and the
+    cluster loading) and writes (disk_write()) go to the file; mount_volume() skips the card's initialisation."""
     uc = emu.uc
 
     def read_sectors(e):
         buf, sector, count = (uc.reg_read(r) for r in (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2))
-        data = os.pread(e.sd_fd, count * 512, sector * 512)
-        uc.mem_write(buf, data.ljust(count * 512, b"\0"))
+        uc.mem_write(buf, os.pread(e.sd_fd, count * 512, sector * 512).ljust(count * 512, b"\0"))
         e.sd_reads += count
         return 0
 
@@ -405,116 +352,23 @@ def setup_sd(emu):
         e.sd_writes += count
         return 0
 
-    emu.intercept(sym.find("sd_read_sect"), read_sectors)
-    emu.intercept(sym.find("disk_write"), write_sectors)
+    emu.intercept(emu.sym.find("sd_read_sect"), read_sectors)
+    emu.intercept(emu.sym.find("disk_write"), write_sectors)
 
-    # In mount_volume: from where it has cleared fs->fs_type (strb r3, [r5]) and starts disk_initialize(), to where
-    # it calls check_fs(fs, 0) for sector 0 (mov r0, r5 and movs r1, #0 before it)
+    # In mount_volume(): from where it has cleared fs->fs_type (strb r3, [r5, #0]) and disk_initialize() (inlined,
+    # the SDHI driver) begins, to where it calls check_fs(fs, 0) (after mov r0, r5 and movs r1, #0), with the card
+    # ready (diskStatus 0)
     code = disassemble(emu, "mount_volume.lto_priv.0")
     begin = next(code[i + 1][0] for i, (a, m, o) in enumerate(code) if m == "strb" and o.startswith("r3, [r5, #0]"))
     call = next(i for i, (a, m, o) in enumerate(code) if m == "bl" and "<check_fs>" in o)
-    target = code[call - 2][0]
-    assert {code[call - 2][1], code[call - 1][1]} == {"movs", "mov"}, code[call - 3:call + 1]
-    disk_status = sym["diskStatus"]
-
-    def card_ready(e):
-        e.w8(disk_status, 0)
-
-    emu.skip_to(begin, target, card_ready)
-
-
-def load_startup_song(emu):
-    """What the task manager would run once the card is ready: setupStartupSong(), in the template mode, which loads
-    SONGS/DEFAULT.XML (or writes the blank song there first if there's none)."""
-    sym = emu.sym
-    emu.w32(sym["_ZN12FlashStorage22defaultStartupSongModeE"], 1)  # StartupSongMode::TEMPLATE
-    t = time.time()
-    before = emu.bc.bc_total()
-    emu.call(sym["_Z16setupStartupSongv"], timeout_s=10)
-    emu.log(f"song loaded: {(emu.bc.bc_total() - before) / 1e6:,.1f}M instructions, {time.time() - t:.1f} s, "
-            f"{emu.sd_reads} sectors read, {emu.sd_writes} written")
-
-
-class Measurement:
-    """Drives AudioEngine::routine() one window at a time and records what each costs."""
-
-    def __init__(self, emu):
-        self.emu = emu
-        sym = emu.sym
-        self.routine = sym["_ZN11AudioEngine7routineEv"]
-        # The task manager's tasks (lambdas in registerTasks(), in the order they're added): #2 is
-        # playbackHandler.routine(), #3 audioFileManager.loadAnyEnqueuedClusters(128, false)
-        self.playback_routine = sym.find("_ZZ13registerTasksvENUlvE0_4_FUNEv")
-        self.load_clusters = sym.find("_ZZ13registerTasksvENUlvE1_4_FUNEv")
-        self.sample_timer = sym["_ZN11AudioEngine16audioSampleTimerE"]
-        self.active_voices = sym["_ZN11AudioEngine12activeVoicesE"]
-        self.rendering_buffer = sym["_ZN11AudioEngine15renderingBufferE"]
-        self.master_l = sym["_ZN11AudioEngine23masterVolumeAdjustmentLE"]
-        self.master_r = sym["_ZN11AudioEngine23masterVolumeAdjustmentRE"]
-        self.culls = {}  # Calls of AudioEngine::cullVoice() by caller: solicitVoice (a Sound over its maxVoices, or out
-        # of memory for voices) or the audio routine's CPU-load culling
-        self.rendered = False
-        emu.intercept(sym.find("_ZN4Song11renderAudioEP12StereoSample"), self.on_render)
-        emu.intercept(sym.find("_ZN11AudioEngine9cullVoiceE"), self.on_cull)
-
-    def on_render(self, emu):
-        # From here on, the DMA shows no more free space: this routine() call renders just this window
-        emu.dma_free = 0
-        self.rendered = True
-
-    def on_cull(self, emu):
-        caller = emu.sym.function_at(emu.uc.reg_read(UC_ARM_REG_LR))
-        name = caller[2].split("(")[0] if caller else "?"
-        self.culls[name] = self.culls.get(name, 0) + 1
-
-    def voices(self):
-        return self.emu.u32(self.active_voices + 16)
-
-    def window(self):
-        """One AudioEngine::routine() call: returns (instructions, samples rendered, stereo int32 samples)."""
-        emu = self.emu
-        emu.dma_free = 127
-        self.rendered = False
-        timer = emu.u32(self.sample_timer)
-        before = emu.bc.bc_total()
-        emu.call(self.routine)
-        instructions = emu.bc.bc_total() - before
-        samples = (emu.u32(self.sample_timer) - timer) & 0xFFFFFFFF
-        audio = None
-        if samples:
-            raw = bytes(emu.uc.mem_read(self.rendering_buffer, samples * 8))
-            ml = struct.unpack("<i", emu.uc.mem_read(self.master_l, 4))[0]
-            mr = struct.unpack("<i", emu.uc.mem_read(self.master_r, 4))[0]
-            audio = (raw, ml, mr)
-        return instructions, samples, audio
-
-    def other_tasks(self):
-        """What the task manager runs besides the audio routine, between windows: the playback handler's routine and
-        the SD card's cluster loading. Returns their instructions."""
-        emu = self.emu
-        emu.dma_free = 0
-        before = emu.bc.bc_total()
-        emu.call(self.playback_routine)
-        emu.call(self.load_clusters)
-        return emu.bc.bc_total() - before
-
-
-def write_back_song(emu, path_out):
-    """Has the firmware save the song it loaded (as setupStartupSong() writes the template: unlink DEFAULT.XML, and it
-    writes the current song there and loads it again), then copies that file out of the image."""
-    sys.path.insert(0, HERE)
-    import fat32
-    name = b"SONGS/DEFAULT.XML\0"
-    emu.uc.mem_write(STOP + 0x100, name)
-    emu.call(emu.sym["f_unlink"], STOP + 0x100)
-    load_startup_song(emu)
-    open(path_out, "wb").write(fat32.read_file(emu.sd_path, "SONGS/DEFAULT.XML"))
+    if {code[call - 2][1], code[call - 1][1]} != {"movs", "mov"}:
+        raise SystemExit(f"mount_volume() doesn't look as expected: {code[call - 3:call + 1]}")
+    disk_status = emu.sym["diskStatus"]
+    emu.skip_to(begin, code[call - 2][0], lambda e: e.uc.mem_write(disk_status, b"\0"))
 
 
 def boot(emu):
-    """resetprg up to where deluge_main starts the task manager, right after registerTasks(): the tasks are there (the
-    song's loading yields to them, the cluster loading among them), but the scheduler's loop doesn't start."""
-    sym = emu.sym
+    """resetprg() up to where deluge_main() would start the task manager, right after registerTasks()."""
     stop_hook = []
 
     def at_register_tasks(e):
@@ -525,170 +379,254 @@ def boot(emu):
             uc.hook_del(stop_hook[0])
         stop_hook.append(e.uc.hook_add(UC_HOOK_CODE, stop_here, begin=back, end=back))
 
-    emu.intercept(sym["_Z13registerTasksv"], at_register_tasks)
+    emu.intercept(emu.sym["_Z13registerTasksv"], at_register_tasks)
     emu.uc.reg_write(UC_ARM_REG_SP, PROGRAM_STACK_TOP)
     t = time.time()
-    emu.run(sym["resetprg"] | 1, STOP, timeout_s=3)
-    emu.log(f"boot: {emu.bc.bc_total() / 1e6:,.1f}M instructions, {time.time() - t:.1f} s")
+    emu.run(emu.sym["resetprg"] | 1, STOP, timeout_s=5)
+    emu.log(f"boot: {emu.bc.bc_total() / 1e6:,.1f}M instructions ({time.time() - t:.1f} s)")
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("elf")
-    ap.add_argument("sd")
-    ap.add_argument("out")
-    ap.add_argument("--tools", default=None)
-    ap.add_argument("--warmup-bars", type=float, default=1)
-    ap.add_argument("--bars", type=float, default=2)
-    ap.add_argument("--write-back", help="file to save the song as the firmware writes it after loading")
-    args = ap.parse_args()
-    tools = args.tools or os.path.join(os.path.dirname(os.path.abspath(args.elf)), "../../toolchain/v16/linux-x86_64/arm-none-eabi-gcc/bin/arm-none-eabi-")
-    os.makedirs(args.out, exist_ok=True)
+def load_startup_song(emu):
+    """setupStartupSong() in the template mode: loads SONGS/DEFAULT.XML (writes the current song there first if
+    there's none)."""
+    emu.w32(emu.sym["_ZN12FlashStorage22defaultStartupSongModeE"], 1)  # StartupSongMode::TEMPLATE
+    t = time.time()
+    before = emu.bc.bc_total()
+    emu.call(emu.sym["_Z16setupStartupSongv"], timeout_s=10)
+    if not emu.u32(emu.sym["currentSong"]):
+        raise SystemExit("no song after loading")
+    emu.log(f"song loaded: {(emu.bc.bc_total() - before) / 1e6:,.1f}M instructions ({time.time() - t:.1f} s), SD card: "
+            f"{emu.sd_reads} sectors read, {emu.sd_writes} written")
 
-    def log(s):
-        print(s, flush=True)
 
-    emu = Emulator(args.elf, args.sd, tools, log)
-    setup_sd(emu)
-    boot(emu)
+def write_back_song(emu, path_out):
+    """The song as the firmware saves it (to check what it understood): unlink SONGS/DEFAULT.XML and have
+    setupStartupSong() write the current song there (and load that again)."""
+    emu.uc.mem_write(STOP + 0x100, b"SONGS/DEFAULT.XML\0")
+    emu.call(emu.sym["f_unlink"], STOP + 0x100)
     load_startup_song(emu)
-    if args.write_back:
-        write_back_song(emu, args.write_back)
-    # From here on we call the tasks ourselves. An empty task list also means getLastRunTimeforCurrentTask(), which
-    # the audio routine's culling goes by, reads 0: no culling for CPU load, whatever the emulated time
-    start, size = emu.sym.by_name["taskManager"]
-    emu.uc.mem_write(start, bytes(size))
-    m = Measurement(emu)
-    emu.call(emu.sym.find("_ZN15PlaybackHandler17playButtonPressedEl"), 0)
-    if not emu.u8(emu.sym["playbackHandler"] + 16):
-        raise SystemExit("playback didn't start")
-    result = measure(emu, m, args, log)
-    json.dump(result, open(os.path.join(args.out, "result.json"), "w"), indent=1)
+    open(path_out, "wb").write(fat32.read_file(emu.sd_path, "SONGS/DEFAULT.XML"))
 
 
-def run_windows(m, samples_wanted, record):
-    total = 0
-    while total < samples_wanted:
-        n, samples, audio = m.window()
-        other = m.other_tasks()
-        total += samples
-        if record is not None:
-            record.append((n, samples, m.voices(), other, audio))
-    return total
+class Player:
+    """Plays the song one AudioEngine::routine() call (one window) at a time."""
+
+    def __init__(self, emu):
+        self.emu = emu
+        sym = emu.sym
+        self.routine = sym["_ZN11AudioEngine7routineEv"]
+        # The task manager's tasks are lambdas in registerTasks(), numbered in the order they're added: the 2nd is
+        # playbackHandler.routine(), the 3rd audioFileManager.loadAnyEnqueuedClusters(128, false)
+        self.playback_routine = sym.find("_ZZ13registerTasksvENUlvE0_4_FUNEv")
+        self.load_clusters = sym.find("_ZZ13registerTasksvENUlvE1_4_FUNEv")
+        self.sample_timer = sym["_ZN11AudioEngine16audioSampleTimerE"]
+        self.active_voices = sym["_ZN11AudioEngine12activeVoicesE"]
+        self.rendering_buffer = sym["_ZN11AudioEngine15renderingBufferE"]
+        self.master = sym["_ZN11AudioEngine23masterVolumeAdjustmentLE"], sym["_ZN11AudioEngine23masterVolumeAdjustmentRE"]
+        self.culls = collections.Counter()  # AudioEngine::cullVoice() calls by caller
+        emu.intercept(sym.find("_ZN4Song11renderAudioEP12StereoSample"), self.on_render)
+        emu.intercept(sym.find("_ZN11AudioEngine9cullVoiceE"), self.on_cull)
+        # From here on the tasks are called from here, and an empty task list makes getLastRunTimeforCurrentTask()
+        # read 0: no culling for CPU load, whatever the emulated time
+        start, size = sym.by_name["taskManager"]
+        emu.uc.mem_write(start, bytes(size))
+
+    def on_render(self, emu):
+        emu.dma_free = 0  # After this window, the DMA shows no more space: one window per routine() call
+
+    def on_cull(self, emu):
+        caller = emu.sym.function_at(emu.uc.reg_read(UC_ARM_REG_LR))
+        self.culls[caller[2].split("(")[0] if caller else "?"] += 1
+
+    def start(self):
+        self.emu.call(self.emu.sym.find("_ZN15PlaybackHandler17playButtonPressedEl"), 0)
+        if not self.emu.u8(self.emu.sym["playbackHandler"] + 16):
+            raise SystemExit("playback didn't start")
+
+    def voices(self):
+        return self.emu.u32(self.active_voices + 16)  # activeVoices.numElements
+
+    def window(self):
+        """One AudioEngine::routine() call and the other tasks after it: (instructions, samples rendered, voices,
+        other tasks' instructions, output samples scaled to the codec's full scale)."""
+        emu = self.emu
+        emu.dma_free = 127
+        timer = emu.u32(self.sample_timer)
+        before = emu.bc.bc_total()
+        emu.call(self.routine)
+        instructions = emu.bc.bc_total() - before
+        samples = (emu.u32(self.sample_timer) - timer) & 0xFFFFFFFF
+        voices = self.voices()
+        # What doSomeOutputting() sends to the codec: (sample * master volume) >> 32, << 8 with saturation
+        x = np.frombuffer(bytes(emu.uc.mem_read(self.rendering_buffer, samples * 8)), "<i4").reshape(-1, 2)
+        gain = np.array([struct.unpack("<i", emu.uc.mem_read(a, 4))[0] for a in self.master]) / 2 ** 55
+        emu.dma_free = 0
+        before = emu.bc.bc_total()
+        emu.call(self.playback_routine)
+        emu.call(self.load_clusters)
+        return instructions, samples, voices, emu.bc.bc_total() - before, x * gain
+
+    def play(self, samples_wanted, record=None):
+        total = 0
+        while total < samples_wanted:
+            w = self.window()
+            total += w[1]
+            if record is not None:
+                record.append(w)
 
 
-def measure(emu, m, args, log):
-    bar = SAMPLE_RATE * 2  # 4 beats at 120 BPM
-    t = time.time()
-    run_windows(m, int(args.warmup_bars * bar), None)
-    log(f"warm-up: {args.warmup_bars} bar(s), {time.time() - t:.1f} s")
-    emu.bc.bc_reset_counts()
-    culls_before = dict(m.culls)
-    windows = []
-    t = time.time()
-    run_windows(m, int(args.bars * bar), windows)
-    elapsed = time.time() - t
-    total_instr = sum(w[0] for w in windows)
-    total_samples = sum(w[1] for w in windows)
-    log(f"measured: {args.bars} bars, {len(windows)} windows, {total_samples} samples, {total_instr / 1e6:,.0f}M "
-        f"instructions, {elapsed:.1f} s ({total_instr / elapsed / 1e6:.0f}M instructions/s emulated)")
-    per_block = total_instr / total_samples * 128
-    full = [w[0] for w in windows if w[1] == 128]
-    other = sum(w[3] for w in windows) / total_samples * 128
-    voices = [w[2] for w in windows]
-    culls = {k: v - culls_before.get(k, 0) for k, v in m.culls.items() if v - culls_before.get(k, 0)}
-
-    # Output level: what doSomeOutputting() sends to the codec (full scale = 2^31), from the rendering buffer
-    l_all, r_all = [], []
-    for w in windows:
-        raw, ml, mr = w[4]
-        x = np.frombuffer(raw, dtype="<i4").astype(np.float64).reshape(-1, 2)
-        l_all.append(x[:, 0] * ml / 2 ** 32 * 256 / 2 ** 31)
-        r_all.append(x[:, 1] * mr / 2 ** 32 * 256 / 2 ** 31)
-    out = np.stack([np.concatenate(l_all), np.concatenate(r_all)], axis=1)
-    peak = float(np.max(np.abs(out)))
-    rms = float(np.sqrt(np.mean(out ** 2)))
-    clipped = int(np.sum(np.abs(out) >= 1.0))
-    wav_path = os.path.join(args.out, "measured.wav")
-    pcm = (np.clip(out, -1, 1) * 32767).astype("<i2").tobytes()
-    with open(wav_path, "wb") as f:
-        f.write(b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " +
-                struct.pack("<IHHIIHH", 16, 1, 2, SAMPLE_RATE, SAMPLE_RATE * 4, 4, 16) + b"data" +
-                struct.pack("<I", len(pcm)) + pcm)
-
-    profile = profile_by_function(emu, total_samples)
-    areas = collections.Counter()
-    area_functions = collections.defaultdict(list)
-    for name, v in profile.items():
-        a = area_of(name)
-        areas[a] += v
-        area_functions[a].append((name, v))
-    result = dict(
-        instructions_per_128=per_block, cpu_percent=per_block / CYCLES_PER_BLOCK * 100,
-        full_windows=len(full), full_window_mean=float(np.mean(full)), full_window_max=int(np.max(full)),
-        full_window_percentiles={p: float(np.percentile(full, p)) for p in (5, 25, 50, 75, 95, 99)},
-        max_cpu_percent=float(np.max(full)) / CYCLES_PER_BLOCK * 100,
-        windows=len(windows), samples=total_samples,
-        short_windows=sum(1 for w in windows if w[1] != 128),
-        other_tasks_per_128=other,
-        voices_mean=float(np.mean(voices)), voices_max=int(np.max(voices)), voices_min=int(np.min(voices)),
-        culls=culls, peak_dbfs=20 * math.log10(peak) if peak else None,
-        rms_dbfs=20 * math.log10(rms) if rms else None, clipped_samples=clipped,
-        areas={a: dict(per_128=v, percent_of_total=v / per_block * 100, cpu_percent=v / CYCLES_PER_BLOCK * 100,
-                       top=[(n, round(x)) for n, x in area_functions[a][:6]])
-               for a, v in areas.most_common()},
-        profile=profile, window_log=[(w[0], w[1], w[2]) for w in windows],
-    )
-    return result
-
-
-# Areas of the profile, by function name (the first rule that matches)
+# The profile's areas, by function name (the first pattern that matches the name, without its parameters)
 AREAS = [
-    ("oscillators", r"Voice::renderOsc|Voice::renderBasicSource|WaveTable|renderWave|Oscillator|render(Sine|Saw|Square|"
-                    r"Triangle|Pulse)|getKernel|getWhichKernel|calculatePhaseIncrements|MasterTune::applyToPhase"),
-    ("FM (DX7 engine)", r"neon_fm_kernel|FmOpKernel|FmCore|DxVoice|DxPatch|Env::|PitchEnv|Freqlut|Exp2|Sin::|Tanh"),
-    ("filters", r"filter::|instantTan|Filter"),
+    ("oscillators", r"Voice::renderOsc|Voice::renderBasicSource|WaveTable|getKernel|getWhichKernel|"
+                    r"calculatePhaseIncrements|MasterTune::applyToPhase"),
+    ("FM (DX7 engine)", r"neon_fm_kernel|FmOpKernel|FmCore|DxVoice|DxPatch|^Env::|PitchEnv|Freqlut"),
+    ("filters", r"filter::|instantTan"),
     ("sample reading / interpolation / time-stretch",
-     r"SampleLowLevelReader|VoiceSample|TimeStretch|Sample::|SampleCluster|SampleCache|SamplePlaybackGuide|Cluster|"
-     r"AudioClip::render|interpolat(e|ion)Buffer|MultisampleRange|getAveragesForCrossfade|AudioFileManager"),
-    ("reverb", r"reverb::|Reverb::|Freeverb|Mutable|renderReverb"),
+     r"SampleLowLevelReader|VoiceSample|TimeStretch|^Sample::|SampleCluster|SampleCache|SamplePlaybackGuide|Cluster|"
+     r"MultisampleRange|AudioFileManager"),
+    ("per-track FX (mod FX, bitcrush, volume/pan/reverb send)",
+     r"ModControllableAudio::process|processStutter|addAudio|shouldDoPanning"),
+    ("reverb", r"reverb::|Reverb::|renderReverb"),
     ("delay", r"Delay"),
     ("drone", r"Drone"),
-    ("sidechain / compressors", r"RMSFeedbackCompressor|SideChain|Compressor"),
-    ("per-track FX (mod FX, bitcrush, volume/pan/reverb send)",
-     r"ModControllableAudio::process|ModFX|Chorus|Phaser|Flanger|processStutter|addAudio|shouldDoPanning"),
-    ("song / master (song FX, output to the codec)",
-     r"GlobalEffectable|renderSongFX|doSomeOutputting|calcApproxRMS|AbsValueFollower|Metronome|AudioEngine::routine\b|"
-     r"renderGlobalEffectableForClip|renderOutput"),
-    ("voices: patcher, envelopes, LFOs, voice mixing",
+    ("sidechain / compressors", r"RMSFeedbackCompressor|SideChain"),
+    ("song / master FX, output to the codec",
+     r"GlobalEffectable|renderSongFX|doSomeOutputting|AbsValueFollower|Metronome|AudioEngine::routine$|renderOutput|"
+     r"renderGlobalEffectableForClip"),
+    ("voices: rendering loop, patcher, envelopes, LFOs",
      r"^Voice|Patcher|Envelope|^Sound::|LFO|PatchCable|getExp|interpolateTable|getFinalParameterValue|ModelStack|"
      r"VoiceVector|^Source::|lookup(Release|Attack)Rate|cableTo|VoiceUnison|SoundDrum::|SoundInstrument::"),
     ("playback / sequencing (clips, notes, arpeggiator, ticks)",
-     r"Playback|Session|Clip|NoteRow|Arpeggiator|^Song::|Kit::|tickSong|Midi|Arranger|Note::|Output::"),
-    ("memory / other", r""),
+     r"Playback|Session|Clip|NoteRow|Arpeggiator|^Song::|^Kit::|tickSong|Midi|Arranger|^Note|^Output::"),
 ]
+OTHER = "memory / other"
 
 
 def area_of(name):
-    import re
-    name = name.split("(")[0]  # The function's name, without its parameter types
-    for area, pattern in AREAS:
-        if re.search(pattern, name):
-            return area
-    return "memory / other"
+    name = name.split("(")[0]
+    return next((area for area, pattern in AREAS if re.search(pattern, name)), OTHER)
 
 
-def profile_by_function(emu, total_samples):
+def profile_by_function(emu):
     n = 1 << 20
-    addresses = (ctypes.c_uint32 * n)()
-    instructions = (ctypes.c_uint32 * n)()
-    counts = (ctypes.c_uint64 * n)()
+    addresses, instructions, counts = (ctypes.c_uint32 * n)(), (ctypes.c_uint32 * n)(), (ctypes.c_uint64 * n)()
     k = emu.bc.bc_dump(addresses, instructions, counts, n)
     by_function = collections.Counter()
     for i in range(k):
         f = emu.sym.function_at(addresses[i])
         by_function[f[2] if f else f"?{addresses[i]:#x}"] += instructions[i] * counts[i]
-    return {name: v / total_samples * 128 for name, v in by_function.most_common()}
+    return by_function
+
+
+def measure(emu, player, warmup_bars, bars, out_dir, log):
+    t = time.time()
+    player.play(int(warmup_bars * BAR))
+    log(f"warm-up: {warmup_bars:g} bar(s) ({time.time() - t:.1f} s)")
+    emu.bc.bc_reset_counts()
+    culls_before = collections.Counter(player.culls)
+    windows = []
+    t = time.time()
+    player.play(int(bars * BAR), windows)
+    elapsed = time.time() - t
+    instr = np.array([w[0] for w in windows], dtype=np.float64)
+    samples = np.array([w[1] for w in windows])
+    voices = np.array([w[2] for w in windows])
+    total_samples = int(samples.sum())
+    per_block = instr.sum() / total_samples * 128
+    full = instr[samples == 128]
+    log(f"measured: {bars:g} bars, {len(windows)} windows, {instr.sum() / 1e6:,.0f}M instructions ({elapsed:.1f} s, "
+        f"{instr.sum() / elapsed / 1e6:.0f}M instructions/s)")
+
+    out = np.concatenate([w[4] for w in windows])
+    peak = float(np.max(np.abs(out)))
+    rms = float(np.sqrt(np.mean(out ** 2)))
+    pcm = (np.clip(out, -1, 1) * 32767).astype("<i2").tobytes()
+    with open(os.path.join(out_dir, "measured.wav"), "wb") as f:
+        f.write(b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " +
+                struct.pack("<IHHIIHH", 16, 1, 2, SAMPLE_RATE, SAMPLE_RATE * 4, 4, 16) + b"data" +
+                struct.pack("<I", len(pcm)) + pcm)
+
+    functions = profile_by_function(emu)
+    areas = collections.Counter()
+    area_functions = collections.defaultdict(list)
+    for name, n in functions.most_common():
+        a = area_of(name)
+        areas[a] += n / total_samples * 128
+        area_functions[a].append((name, round(n / total_samples * 128)))
+
+    def cpu(x):
+        return x / CYCLES_PER_BLOCK * 100
+
+    return dict(
+        bars=bars, windows=len(windows), short_windows=int(np.sum(samples != 128)), samples=total_samples,
+        instructions_per_128=per_block, cpu_percent=cpu(per_block),
+        full_windows=dict(count=len(full), mean=float(full.mean()), max=float(full.max()), min=float(full.min()),
+                          percentiles={p: float(np.percentile(full, p)) for p in (5, 25, 50, 75, 95, 99)}),
+        max_cpu_percent=cpu(float(full.max())),
+        other_tasks_per_128=float(sum(w[3] for w in windows)) / total_samples * 128,
+        voices=dict(mean=float(voices.mean()), max=int(voices.max()), min=int(voices.min())),
+        culls={k: v - culls_before[k] for k, v in player.culls.items() if v - culls_before[k]},
+        culls_since_playback_started=dict(player.culls),
+        output=dict(peak_dbfs=20 * math.log10(peak) if peak else None, rms_dbfs=20 * math.log10(rms) if rms else None,
+                    clipped_samples=int(np.sum(np.abs(out) >= 1.0)), nan=bool(np.isnan(out).any())),
+        areas={a: dict(per_128=v, percent_of_total=v / per_block * 100, cpu_percent=cpu(v),
+                       top=area_functions[a][:6]) for a, v in areas.most_common()},
+        top_functions=[(name, round(n / total_samples * 128)) for name, n in functions.most_common(40)],
+        window_log=[(int(w[0]), int(w[1]), int(w[2])) for w in windows],
+    )
+
+
+def report(r, log):
+    fw = r["full_windows"]
+    p = fw["percentiles"]
+    log(f"\nper 128 samples: {r['instructions_per_128']:,.0f} instructions = {r['cpu_percent']:.1f}% CPU "
+        f"({r['samples']} samples in {r['windows']} windows, {r['short_windows']} cut short by clock ticks)")
+    log(f"full windows (128): mean {fw['mean']:,.0f} ({fw['mean'] / CYCLES_PER_BLOCK * 100:.1f}%), max "
+        f"{fw['max']:,.0f} ({r['max_cpu_percent']:.1f}%), min {fw['min']:,.0f}; percentiles 5/25/50/75/95/99: "
+        + " / ".join(f"{p[k] / CYCLES_PER_BLOCK * 100:.0f}%" for k in p))
+    v = r["voices"]
+    log(f"voices: mean {v['mean']:.1f}, max {v['max']}, min {v['min']}; cullVoice() calls: {r['culls'] or 'none'} "
+        f"(since playback started: {r['culls_since_playback_started'] or 'none'})")
+    o = r["output"]
+    log(f"output: peak {o['peak_dbfs']:.1f} dBFS, RMS {o['rms_dbfs']:.1f} dBFS, {o['clipped_samples']} clipped, "
+        f"NaN: {o['nan']}")
+    log(f"other tasks (playback routine, cluster loading): {r['other_tasks_per_128']:,.0f} per 128")
+    log("\nby area (per 128 samples, % of the total, % CPU):")
+    for a, d in r["areas"].items():
+        top = ", ".join(f"{n.split('(')[0]} {x:,}" for n, x in d["top"][:3])
+        log(f"  {d['per_128']:9,.0f} {d['percent_of_total']:5.1f}% {d['cpu_percent']:5.1f}%  {a}: {top}")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("elf")
+    ap.add_argument("sd")
+    ap.add_argument("out")
+    ap.add_argument("--tools", help="toolchain prefix (.../arm-none-eabi-); default: the firmware tree's")
+    ap.add_argument("--build", default=HERE, help="directory with blockcount.so")
+    ap.add_argument("--warmup-bars", type=float, default=1)
+    ap.add_argument("--bars", type=float, default=2)
+    ap.add_argument("--write-back", help="also save the song as the firmware writes it after loading, to this file")
+    args = ap.parse_args()
+    tools = args.tools or os.path.join(os.path.dirname(os.path.abspath(args.elf)),
+                                       "../../toolchain/v16/linux-x86_64/arm-none-eabi-gcc/bin/arm-none-eabi-")
+    os.makedirs(args.out, exist_ok=True)
+
+    def log(s):
+        print(s, flush=True)
+
+    emu = Emulator(args.elf, args.sd, tools, args.build, log)
+    setup_sd(emu)
+    boot(emu)
+    load_startup_song(emu)
+    if args.write_back:
+        write_back_song(emu, args.write_back)
+    player = Player(emu)
+    player.start()
+    result = measure(emu, player, args.warmup_bars, args.bars, args.out, log)
+    json.dump(result, open(os.path.join(args.out, "result.json"), "w"), indent=1)
+    report(result, log)
+
 
 if __name__ == "__main__":
     main()

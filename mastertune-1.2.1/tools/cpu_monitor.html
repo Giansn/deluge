@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="de-CH">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deluge CPU-Monitor</title>
+<style>
+:root {
+	--bg: #f6f6f4; --panel: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --line: #dcdcd8;
+	--avg: #1f6feb; --peak: #d9480f; --voices: #2b8a3e; --warn: #c92a2a; --grid: #ececea;
+}
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg: #151517; --panel: #1f1f22; --text: #ececef; --muted: #9a9aa2; --line: #333338;
+		--avg: #5b9cff; --peak: #ff8a4c; --voices: #5cc26e; --warn: #ff6b6b; --grid: #2a2a2e;
+	}
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1040px; margin: 0 auto; padding: 20px 16px 40px; }
+h1 { font-size: 1.35rem; margin: 0 0 4px; }
+p.lead { margin: 0 0 16px; color: var(--muted); }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+select, button { font: inherit; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+button { cursor: pointer; }
+button:disabled { opacity: .5; cursor: default; }
+#status { color: var(--muted); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.tile .k { color: var(--muted); font-size: .8rem; }
+.tile .v { font-size: 1.5rem; font-variant-numeric: tabular-nums; font-weight: 600; }
+.tile .s { color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; }
+.warn .v { color: var(--warn); }
+.chart { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+canvas { display: block; width: 100%; height: 260px; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: .85rem; color: var(--muted); margin-top: 6px; }
+.legend span::before { content: ""; display: inline-block; width: 14px; height: 3px; margin-right: 6px; vertical-align: middle; background: var(--c); }
+details { margin-top: 16px; color: var(--muted); }
+details p { margin: 6px 0; }
+</style>
+</head>
+<body>
+<main>
+<h1>Deluge CPU-Monitor</h1>
+<p class="lead">Für die Messversion mastertune-v12-diag: Settings → CPU monitor → On, Deluge per USB verbinden. Braucht Chrome oder Edge (Web MIDI mit SysEx).</p>
+
+<div class="bar">
+	<button id="connect">Verbinden</button>
+	<select id="input" disabled><option value="">Alle Eingänge</option></select>
+	<button id="csv" disabled>CSV exportieren</button>
+	<button id="clear" disabled>Zurücksetzen</button>
+	<span id="status">Nicht verbunden</span>
+</div>
+
+<div class="tiles">
+	<div class="tile" id="t-avg"><div class="k">CPU Durchschnitt</div><div class="v" id="avg">–</div><div class="s" id="avg-s"></div></div>
+	<div class="tile" id="t-peak"><div class="k">CPU Spitze (Block)</div><div class="v" id="peak">–</div><div class="s" id="peak-s"></div></div>
+	<div class="tile"><div class="k">Stimmen jetzt / max</div><div class="v" id="voices">–</div><div class="s" id="voices-s"></div></div>
+	<div class="tile" id="t-dire"><div class="k">Direness max</div><div class="v" id="dire">–</div><div class="s" id="dire-s"></div></div>
+	<div class="tile" id="t-cull"><div class="k">Culling (Stimmen/s)</div><div class="v" id="culled">–</div><div class="s" id="culled-s"></div></div>
+	<div class="tile"><div class="k">SD-Cluster Ø / max</div><div class="v" id="sd">–</div><div class="s" id="sd-s"></div></div>
+	<div class="tile" id="t-gap"><div class="k">Längste Audio-Lücke</div><div class="v" id="gap">–</div><div class="s" id="gap-s"></div></div>
+	<div class="tile"><div class="k">Messungen</div><div class="v" id="count">0</div><div class="s" id="count-s"></div></div>
+</div>
+
+<div class="chart">
+	<canvas id="chart"></canvas>
+	<div class="legend">
+		<span style="--c: var(--avg)">CPU Durchschnitt %</span>
+		<span style="--c: var(--peak)">CPU Spitze %</span>
+		<span style="--c: var(--voices)">Stimmen (rechte Skala)</span>
+		<span>letzte 5 Minuten</span>
+	</div>
+</div>
+
+<details>
+	<summary>Was die Zahlen bedeuten</summary>
+	<p><b>CPU Durchschnitt:</b> Rechenzeit der Audio-Routine geteilt durch die Dauer des Audios, das sie in dieser Sekunde erzeugt hat. Dauerhaft über etwa 90 % wird es eng.</p>
+	<p><b>CPU Spitze:</b> der teuerste einzelne Block (ab 16 Samples) im Verhältnis zu seiner Länge. Einzelne Spitzen über 100 % fängt der Ausgabepuffer auf.</p>
+	<p><b>Direness:</b> 0 bis 14. Über 0 senkt der Deluge die Qualität (z. B. lineare statt Sinc-Interpolation) und schneidet bei Bedarf Stimmen ab (Culling).</p>
+	<p><b>SD-Cluster:</b> Lesezeit eines Sample-Clusters von der Karte, Durchschnitt und längster Zugriff. <b>Audio-Lücke:</b> längster Abstand zwischen zwei Aufrufen der Audio-Routine.</p>
+</details>
+</main>
+
+<script>
+"use strict";
+
+// BEGIN decode (tests/cpu_stats/decode_test.js runs exactly this code)
+/// Decodes one CPU monitor SysEx message of the Deluge (mastertune-v12-diag) or returns null.
+/// Header F0 00 21 7B 01 10 (or F0 7D 10 once a client used the old developer ID), then fixed fields of 7-bit groups,
+/// least significant first, then F7. Units: permille (0.1 %), microseconds, milliseconds, samples.
+function decodeCpuStats(data) {
+	let p;
+	if (data.length >= 6 && data[0] === 0xF0 && data[1] === 0x00 && data[2] === 0x21 && data[3] === 0x7B && data[4] === 0x01) {
+		p = 5;
+	} else if (data.length >= 3 && data[0] === 0xF0 && data[1] === 0x7D) {
+		p = 2;
+	} else {
+		return null;
+	}
+	if (data[p] !== 0x10) {
+		return null;
+	}
+	p += 1;
+	const end = data.length - 1;
+	if (data[end] !== 0xF7 || end - p < 36 || data[p] < 1) {
+		return null;
+	}
+	for (let i = p; i < end; i++) {
+		if (data[i] > 0x7F) {
+			return null;
+		}
+	}
+	const field = (numBytes) => {
+		let value = 0;
+		for (let i = 0; i < numBytes; i++) {
+			value += data[p + i] * 2 ** (7 * i);
+		}
+		p += numBytes;
+		return value;
+	};
+	return {
+		version: field(1),
+		seq: field(2),
+		windowMs: field(2),
+		dspAvgPermille: field(2),
+		dspPeakPermille: field(2),
+		voicesNow: field(2),
+		voicesMax: field(2),
+		direMax: field(1),
+		direSharePermille: field(2),
+		culled: field(2),
+		sdLoads: field(2),
+		sdAvgUs: field(4),
+		sdMaxUs: field(4),
+		maxGapUs: field(4),
+		samples: field(4),
+	};
+}
+// END decode
+
+const $ = (id) => document.getElementById(id);
+const HISTORY = 300; // points in the chart, one per second
+let access = null;
+let rows = [];
+let lastSeq = null;
+let lost = 0;
+let startTime = null;
+
+function fmt(value, digits) {
+	return value.toFixed(digits);
+}
+
+function setTile(id, value, sub, warn) {
+	$(id).textContent = value;
+	if (sub !== undefined) {
+		$(id + "-s").textContent = sub;
+	}
+	if (warn !== undefined) {
+		const tile = $(id).parentElement;
+		tile.classList.toggle("warn", warn);
+	}
+}
+
+function show(r) {
+	setTile("avg", fmt(r.cpuAvg, 1) + " %", "über " + r.windowMs + " ms", r.cpuAvg >= 90);
+	setTile("peak", fmt(r.cpuPeak, 1) + " %", "", r.cpuPeak >= 150);
+	setTile("voices", r.voicesNow + " / " + r.voicesMax);
+	setTile("dire", String(r.direMax), fmt(r.direShare, 1) + " % der Zeit über 0", r.direMax > 0);
+	setTile("culled", String(r.culled), "", r.culled > 0);
+	setTile("sd", r.sdLoads ? fmt(r.sdAvgMs, 2) + " / " + fmt(r.sdMaxMs, 1) + " ms" : "–", r.sdLoads + " Cluster/s");
+	setTile("gap", fmt(r.maxGapMs, 2) + " ms", "zwischen zwei Audio-Aufrufen", r.maxGapMs >= 2.9);
+	setTile("count", String(rows.length), lost ? lost + " verloren" : "keine verloren");
+}
+
+function onMessage(event, inputName) {
+	const d = decodeCpuStats(event.data);
+	if (!d) {
+		return;
+	}
+	if (lastSeq !== null) {
+		lost += (d.seq - lastSeq - 1 + 16384) % 16384;
+	}
+	lastSeq = d.seq;
+	const now = new Date();
+	if (startTime === null) {
+		startTime = now;
+	}
+	const r = {
+		time: now,
+		t: (now - startTime) / 1000,
+		input: inputName,
+		seq: d.seq,
+		windowMs: d.windowMs,
+		cpuAvg: d.dspAvgPermille / 10,
+		cpuPeak: d.dspPeakPermille / 10,
+		voicesNow: d.voicesNow,
+		voicesMax: d.voicesMax,
+		direMax: d.direMax,
+		direShare: d.direSharePermille / 10,
+		culled: d.culled,
+		sdLoads: d.sdLoads,
+		sdAvgMs: d.sdAvgUs / 1000,
+		sdMaxMs: d.sdMaxUs / 1000,
+		maxGapMs: d.maxGapUs / 1000,
+		samples: d.samples,
+	};
+	rows.push(r);
+	$("csv").disabled = false;
+	$("clear").disabled = false;
+	$("status").textContent = "Daten von " + inputName;
+	show(r);
+	draw();
+}
+
+function listen() {
+	if (!access) {
+		return;
+	}
+	const chosen = $("input").value;
+	access.inputs.forEach((input) => {
+		input.onmidimessage = (!chosen || chosen === input.id) ? (e) => onMessage(e, input.name) : null;
+	});
+}
+
+function fillInputs() {
+	const select = $("input");
+	const chosen = select.value;
+	select.innerHTML = "";
+	const all = document.createElement("option");
+	all.value = "";
+	all.textContent = "Alle Eingänge";
+	select.appendChild(all);
+	access.inputs.forEach((input) => {
+		const o = document.createElement("option");
+		o.value = input.id;
+		o.textContent = input.name + (input.manufacturer ? " (" + input.manufacturer + ")" : "");
+		select.appendChild(o);
+	});
+	select.value = [...select.options].some((o) => o.value === chosen) ? chosen : "";
+	select.disabled = false;
+	const n = access.inputs.size;
+	if (!rows.length) {
+		$("status").textContent = n ? n + " Eingänge, warte auf Daten (CPU monitor eingeschaltet?)" : "Keine MIDI-Eingänge gefunden";
+	}
+	listen();
+}
+
+$("connect").addEventListener("click", async () => {
+	if (!navigator.requestMIDIAccess) {
+		$("status").textContent = "Dieser Browser kann kein Web MIDI. Bitte Chrome oder Edge verwenden.";
+		return;
+	}
+	try {
+		access = await navigator.requestMIDIAccess({ sysex: true });
+	} catch (err) {
+		$("status").textContent = "Kein Zugriff auf MIDI mit SysEx: " + err.message;
+		return;
+	}
+	$("connect").disabled = true;
+	access.onstatechange = fillInputs;
+	fillInputs();
+});
+
+$("input").addEventListener("change", listen);
+
+$("clear").addEventListener("click", () => {
+	rows = [];
+	lastSeq = null;
+	lost = 0;
+	startTime = null;
+	$("csv").disabled = true;
+	draw();
+	setTile("count", "0", "");
+});
+
+$("csv").addEventListener("click", () => {
+	const head = ["time", "t_s", "seq", "window_ms", "cpu_avg_pct", "cpu_peak_pct", "voices_now", "voices_max",
+		"direness_max", "direness_share_pct", "voices_culled", "sd_cluster_loads", "sd_avg_ms", "sd_max_ms",
+		"max_audio_gap_ms", "samples", "input"];
+	const lines = [head.join(";")];
+	for (const r of rows) {
+		lines.push([r.time.toISOString(), fmt(r.t, 3), r.seq, r.windowMs, fmt(r.cpuAvg, 1), fmt(r.cpuPeak, 1),
+			r.voicesNow, r.voicesMax, r.direMax, fmt(r.direShare, 1), r.culled, r.sdLoads, fmt(r.sdAvgMs, 3),
+			fmt(r.sdMaxMs, 3), fmt(r.maxGapMs, 3), r.samples, '"' + r.input.replace(/"/g, '""') + '"'].join(";"));
+	}
+	const blob = new Blob([lines.join("\r\n") + "\r\n"], { type: "text/csv" });
+	const a = document.createElement("a");
+	a.href = URL.createObjectURL(blob);
+	a.download = "deluge-cpu-" + new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-") + ".csv";
+	a.click();
+	setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+
+function draw() {
+	const canvas = $("chart");
+	const dpr = window.devicePixelRatio || 1;
+	const w = canvas.clientWidth;
+	const h = canvas.clientHeight;
+	if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+		canvas.width = Math.round(w * dpr);
+		canvas.height = Math.round(h * dpr);
+	}
+	const g = canvas.getContext("2d");
+	g.setTransform(dpr, 0, 0, dpr, 0, 0);
+	g.clearRect(0, 0, w, h);
+	const css = getComputedStyle(document.documentElement);
+	const color = (name) => css.getPropertyValue(name).trim();
+	const data = rows.slice(-HISTORY);
+	const left = 40, right = 40, top = 8, bottom = 22;
+	const pw = w - left - right, ph = h - top - bottom;
+	const maxPct = Math.max(100, ...data.map((r) => Math.max(r.cpuAvg, r.cpuPeak)));
+	const topPct = Math.ceil(maxPct / 25) * 25;
+	const maxVoices = Math.max(8, ...data.map((r) => r.voicesMax));
+	const topVoices = Math.ceil(maxVoices / 8) * 8;
+	const x = (i) => left + (HISTORY <= 1 ? 0 : (i + HISTORY - data.length) * pw / (HISTORY - 1));
+	const yPct = (v) => top + ph - Math.min(v, topPct) / topPct * ph;
+	const yVoices = (v) => top + ph - Math.min(v, topVoices) / topVoices * ph;
+
+	g.font = "11px system-ui, sans-serif";
+	g.lineWidth = 1;
+	g.strokeStyle = color("--grid");
+	g.fillStyle = color("--muted");
+	for (let pct = 0; pct <= topPct; pct += 25) {
+		const y = Math.round(yPct(pct)) + 0.5;
+		g.beginPath(); g.moveTo(left, y); g.lineTo(left + pw, y); g.stroke();
+		g.textAlign = "right"; g.fillText(pct + "%", left - 6, y + 4);
+		g.textAlign = "left"; g.fillText(String(Math.round(pct / topPct * topVoices)), left + pw + 6, y + 4);
+	}
+	g.strokeStyle = color("--warn");
+	g.setLineDash([4, 4]);
+	g.beginPath(); g.moveTo(left, yPct(100)); g.lineTo(left + pw, yPct(100)); g.stroke();
+	g.setLineDash([]);
+
+	const line = (values, y, stroke, width) => {
+		if (!values.length) {
+			return;
+		}
+		g.strokeStyle = stroke;
+		g.lineWidth = width;
+		g.beginPath();
+		values.forEach((v, i) => (i ? g.lineTo(x(i), y(v)) : g.moveTo(x(i), y(v))));
+		g.stroke();
+	};
+	line(data.map((r) => r.voicesNow), yVoices, color("--voices"), 1.5);
+	line(data.map((r) => r.cpuPeak), yPct, color("--peak"), 1.2);
+	line(data.map((r) => r.cpuAvg), yPct, color("--avg"), 2);
+}
+
+window.addEventListener("resize", draw);
+draw();
+</script>
+</body>
+</html>

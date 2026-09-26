@@ -1,0 +1,76 @@
+# Messversion v12-diag: CPU-Monitor
+
+| Datei | Version (Settings → Firmware version) | SHA-256 |
+|---|---|---|
+| `deluge-1.2.1-mastertune-v12-diag-b1ba466f.bin` | `1.2.1-mastertune-v12-diag-b1ba466f` | `85270b0c4d6a8ab26850a761d9738f986ea8dee49459c9a49ebad42fd281f2a0` |
+
+Das ist **v12 plus Messung, sonst nichts**. Klang, DSP und Culling sind unverändert. Die Messung zeigt, wie stark die CPU ausgelastet ist, und schickt die Werte an den Computer, wo man sie mitschreiben kann. Zwei saubere Builds ergaben dieselbe SHA-256. Quellcode: `0001-CPU-monitor-…patch` gegen v12 (`f89b478c`), Branch `mastertune-v12-diag`.
+
+## Einschalten
+
+**Settings → CPU monitor → On** (7-Segment: `CPU`). Nach jedem Einschalten des Deluge ist der Monitor wieder aus. Ausgeschaltet kostet er pro Aufruf der Audio-Routine eine einzige Abfrage.
+
+- **OLED:** Die unterste Zeile zeigt invertiert die letzte Sekunde, zweimal pro Sekunde neu, z. B. `C43/71% V24 D0 S2.4/9`. Sie liegt über dem Bild und überdeckt dort, was darunter stünde. Die Bildschirme selbst bleiben unverändert.
+- **7-Segment:** Alle 2 Sekunden erscheint kurz `C 43` (CPU-Durchschnitt in %), aber nur wenn gerade kein anderes Popup läuft.
+- **USB:** Jede Sekunde geht eine SysEx-Nachricht an den Computer, nur auf USB-MIDI-Port 3. DIN-MIDI bekommt nie etwas, auch die Volca nicht. Ist der USB-Sendepuffer voll, wird die Nachricht ausgelassen, damit Noten und Clock Vorrang haben.
+
+## Am Computer mitschreiben
+
+1. Deluge per USB anschliessen und den Monitor einschalten.
+2. `tools/cpu_monitor.html` in **Chrome oder Edge** öffnen (Datei ins Fenster ziehen genügt), dann **Verbinden** und MIDI mit SysEx erlauben.
+3. Eingang «Alle Eingänge» lassen oder den Deluge-Port 3 wählen. Kacheln und Kurve (letzte 5 Minuten) laufen dann live mit.
+4. **CSV exportieren** speichert alle empfangenen Sekunden. Das Trennzeichen ist das Semikolon, der Dezimalpunkt ein Punkt, eine Zeile entspricht einer Sekunde.
+
+## Was die Zahlen bedeuten
+
+| OLED | Seite / CSV | Bedeutung |
+|---|---|---|
+| `C43/…` | CPU Durchschnitt | Rechenzeit der Audio-Routine geteilt durch die Dauer des Audios, das sie erzeugt hat. Dauerhaft über ~90 % wird es eng. |
+| `C…/71%` | CPU Spitze | Der teuerste einzelne Aufruf (1–2 Blöcke, ab 16 Samples) im Verhältnis zu seiner Audiodauer. Einzelne Spitzen über 100 % fängt der Ausgabepuffer (128 Samples = 2,9 ms) auf. |
+| `V24` | Stimmen jetzt / max | Aktive Stimmen (Voices). |
+| `D0` | Direness max, Anteil | 0–14. Über 0 liegt die Audio-Routine hinter dem Ausgang zurück. Dann spart der Deluge Qualität (einfachere Oszillator-Tabellen, lineare statt Sinc-Interpolation), und ab etwa 80 Samples Rückstand schaltet er Stimmen ab. Der Anteil gibt an, wie viel vom Audio mit Direness über 0 entstand. |
+| – | Culling | Stimmen pro Sekunde, die der CPU-Schutz abgeschaltet hat. Voice-Stealing wegen der Polyphonie zählt nicht dazu. |
+| `S2.4/9` | SD-Cluster Ø / max | Lesezeit eines Sample-Clusters von der Karte in ms, Durchschnitt und längster Zugriff; `S-` = nichts gelesen. Darin steckt auch, was der Deluge während des Wartens sonst rechnet. |
+| – | Längste Audio-Lücke | Längster Abstand zwischen zwei Aufrufen der Audio-Routine. Ab ~2,9 ms drohen Aussetzer. |
+
+Werden die Zahlen gross, wird die OLED-Zeile kürzer (zuerst ohne `%`, dann nur der längste SD-Zugriff, dann ohne SD). Die Seite zeigt immer alles.
+
+## Messung
+
+- **Zeit:** Gemessen wird mit dem OS-Timer 0 des RZ/A1L (33,33 MHz), den der Task-Manager ohnehin frei laufen lässt. Er wird nur gelesen, kein anderer Timer wird angefasst. Ein Überlauf alle 129 s schadet nicht, da nur vorzeichenlose Differenzen gebildet werden. Interrupts während der Audio-Routine zählen mit, das ist die echte Belegung.
+- **Aufwand bei eingeschaltetem Monitor:** zwei Timer-Lesungen pro Aufruf der Audio-Routine, eine Aufgabe alle 50 ms, zwei OLED-Übertragungen und eine SysEx-Nachricht (43 Bytes) pro Sekunde. Es wird kein Speicher reserviert.
+- **Klang unverändert:** Die Audio-Routine von v12 steht unverändert in einer eigenen Funktion, die Messung legt sich nur aussen herum. Der Vergleich der Maschinencodes (`tests/cpu_stats/compare_elf.py`, v12 gegen diag) ergibt Folgendes:
+  - Die Audio-Routine hat dieselben Befehle wie in v12, nur Datenadressen haben sich verschoben.
+  - Alle DSP-Funktionen und DSP-Tabellen sind gleich oder unterscheiden sich nur in verschobenen Adressen.
+  - Geändert sind nur die Mess-Stellen (`cullVoice`-Zähler, `loadCluster`, OLED, Menü, Tasks, Texte) und ein paar kleine Funktionen ausserhalb des Audiopfads (Datei anlegen, Zahl in Text, Wavetable freigeben), die der Linker leicht anders optimiert hat.
+
+## SysEx-Format
+
+`F0 00 21 7B 01 10` + 36 Bytes + `F7`. Der Befehl `0x10` war im Deluge frei. Jedes Feld besteht aus 7-Bit-Gruppen, das niederwertigste Byte kommt zuerst, und zu grosse Werte bleiben am Maximum stehen.
+
+| Bytes | Feld | Einheit |
+|---|---|---|
+| 1 | Formatversion = 1 | |
+| 2 | Laufnummer (zählt Sekunden, 0–16383) | |
+| 2 | Fensterlänge | ms |
+| 2 / 2 | CPU Durchschnitt / Spitze | 0,1 % |
+| 2 / 2 | Stimmen jetzt / max | |
+| 1 | Direness max | 0–14 |
+| 2 | Anteil Direness > 0 | 0,1 % |
+| 2 | Abgeschaltete Stimmen (Culling) | |
+| 2 | SD-Cluster gelesen | |
+| 4 / 4 | SD Ø / längster Zugriff | µs |
+| 4 | Längste Audio-Lücke | µs |
+| 4 | Erzeugte Samples | |
+
+Hat ein Programm früher die alte Entwickler-ID benutzt, beginnt die Nachricht mit `F0 7D 10`; die Seite versteht beides. Spätere Formate dürfen hinten Felder anhängen.
+
+## Tests
+
+`tests/cpu_stats/run.sh <Firmware-Baum>` prüft auf dem PC:
+
+- **Collector:** simulierter Timer mit Überlauf; Durchschnitt, Spitze, Lücke, SD, Culling und Direness stimmen auf ±0,2 %.
+- **OLED-Zeile:** passt bei 200 000 Zufallswerten immer in 21 Zeichen.
+- **SysEx:** 503 Nachrichten laufen mit dem Decoder aus der Seite fehlerfrei hin und zurück, auch mit der kurzen Kopfzeile. Fremde oder kaputte Nachrichten werden abgelehnt.
+
+`compare_elf.py v12.elf diag.elf <toolchain-bin> "AudioEngine::routine()=AudioEngine::routineUnmeasured()"` macht den Codevergleich.
