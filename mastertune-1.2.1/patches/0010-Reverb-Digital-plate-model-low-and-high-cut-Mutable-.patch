@@ -1,0 +1,1144 @@
+From 7f9ad5c1f344be45daec915ed1191f4ddbb63967 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 11:58:53 +0000
+Subject: [PATCH] Reverb: Digital plate model, low and high cut, Mutable and
+ Freeverb fixes
+
+- Digital: Dattorro's plate (Griesinger topology), after the community
+  firmware's model (#3277) but following the paper: real allpasses in the
+  tank, one damping filter per half, delays scaled up to 44.1 kHz (x1.45 to
+  share the 32768-sample buffer), Width as stereo width, decay and level
+  matched to Mutable at the default settings.
+- Mutable: LFOs at Mutable Instruments' rates (they ran 16 times slower:
+  stepped once per read, and without the x32 in the constructor), the AP1
+  smear back in, damping running from bright (0) to dark (50) like
+  Freeverb's (1.2.1 ran it backwards, with a jump between 0 and 1).
+- Low cut (HPF) with the right coefficient (it reached 85 Hz instead of
+  520), now applied when a song loads; new high cut (LPF), off at 50.
+- Freeverb: balanced left and right below full Width, and saturating
+  instead of wrapping when a long reverb gets too loud.
+- Song files: damping stays in 1.2.1's direction on disk, the old "hpf" and
+  the community firmware's "lpf" are read at the cutoffs they actually had,
+  the new values go in "lowCut" and "highCut"; songs from community 1.3,
+  which turned the damping round too, are read in its direction. The
+  reverb presets on the reverb button keep their 1.2.1 sound.
+- Host fallback of signed_saturate matches ssat (host builds only).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/reverb/base.hpp                |  26 ++-
+ src/deluge/dsp/reverb/digital.hpp             | 192 ++++++++++++++++++
+ src/deluge/dsp/reverb/freeverb/allpass.hpp    |  20 +-
+ src/deluge/dsp/reverb/freeverb/comb.hpp       |   3 +-
+ src/deluge/dsp/reverb/freeverb/freeverb.hpp   |  13 +-
+ .../dsp/reverb/mutable/cosine_oscillator.hpp  |  91 ++++-----
+ src/deluge/dsp/reverb/mutable/fx_engine.hpp   |  19 +-
+ src/deluge/dsp/reverb/mutable/reverb.hpp      |  64 ++++--
+ src/deluge/dsp/reverb/reverb.hpp              |  75 ++++++-
+ src/deluge/gui/menu_item/reverb/hpf.h         |   6 +-
+ src/deluge/gui/menu_item/reverb/lpf.h         |  39 ++++
+ src/deluge/gui/menu_item/reverb/model.h       |   1 +
+ src/deluge/gui/menu_item/reverb/room_size.h   |   1 +
+ src/deluge/gui/ui/menus.cpp                   |   4 +
+ src/deluge/gui/views/view.cpp                 |  14 +-
+ src/deluge/model/song/song.cpp                |  56 ++++-
+ src/deluge/model/song/song.h                  |   3 +-
+ .../processing/engines/audio_engine.cpp       |   6 +-
+ src/deluge/util/fixedpoint.h                  |   6 +-
+ 19 files changed, 519 insertions(+), 120 deletions(-)
+ create mode 100644 src/deluge/dsp/reverb/digital.hpp
+ create mode 100644 src/deluge/gui/menu_item/reverb/lpf.h
+
+diff --git a/src/deluge/dsp/reverb/base.hpp b/src/deluge/dsp/reverb/base.hpp
+index 2956e1de..8ff08198 100644
+--- a/src/deluge/dsp/reverb/base.hpp
++++ b/src/deluge/dsp/reverb/base.hpp
+@@ -1,6 +1,8 @@
+ #pragma once
++#include "definitions_cxx.hpp"
+ #include "dsp/stereo_sample.h"
+ #include <cmath>
++#include <numbers>
+ #include <span>
+ 
+ namespace deluge::dsp::reverb {
+@@ -17,14 +19,19 @@ struct Base {
+ 		target_left_ = amplitude_left;
+ 	}
+ 
+-	static constexpr float calcFilterCutoff(float f) {
+-		// this exp will be between 1 and 4.48, half the knob range is about 2
+-		// the result will then be from 0 to 500Hz with half the knob range at 300hz
+-		// then shift to 20-520Hz as there is a low end buildup in the reverb that should always be filtered out
+-		float fc_hz = 20 + (std::exp(1.5f * f) - 1) * 150;
+-		float fc = fc_hz / float(kSampleRate);
+-		float wc = fc / (1 + fc);
+-		return wc;
++	/// Low cut (HPF) of the reverb's output, for a knob position from 0 to 1: 20 Hz at 0, 190 Hz half-way, 540 Hz at 1.
++	/// There's a low end buildup in the reverb that should always be filtered out.
++	static float hpfCutoffHz(float f) { return 20.f + (std::exp(1.5f * f) - 1.f) * 150.f; }
++
++	/// High cut (LPF): 500 Hz at 0, 3.2 kHz half-way, 18.6 kHz at 0.98 (49 in the menu), and off at 1
++	static bool lpfIsOff(float f) { return f > 0.99f; }
++	static float lpfCutoffHz(float f) { return 500.f * std::pow(40.f, f); }
++
++	/// Coefficient for dsp::OnePole() with its pole where an analog one-pole filter of that cutoff has it.
++	/// (mastertune-v10: 1.2.1 used f / (1 + f) with f = cutoff / sample rate, leaving out the 2 pi, so its low cut
++	/// actually ran from 3 to 85 Hz.)
++	static float onePoleCoefficient(float hz) {
++		return 1.f - std::exp(-2.f * std::numbers::pi_v<float> * hz / static_cast<float>(kSampleRate));
+ 	}
+ 
+ 	// Dummy functions
+@@ -34,6 +41,9 @@ struct Base {
+ 	virtual void setHPF(float f) {}
+ 	[[nodiscard]] virtual float getHPF() const { return 0; }
+ 
++	virtual void setLPF(float f) {}
++	[[nodiscard]] virtual float getLPF() const { return 1; }
++
+ 	virtual void setDamping(float value) {}
+ 	[[nodiscard]] virtual float getDamping() const { return 0; }
+ 
+diff --git a/src/deluge/dsp/reverb/digital.hpp b/src/deluge/dsp/reverb/digital.hpp
+new file mode 100644
+index 00000000..46151314
+--- /dev/null
++++ b/src/deluge/dsp/reverb/digital.hpp
+@@ -0,0 +1,192 @@
++/*
++ * Copyright © 2024 Katherine Whitlock
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include "definitions_cxx.hpp"
++#include "dsp/reverb/mutable/reverb.hpp"
++#include <cmath>
++
++namespace deluge::dsp::reverb {
++
++/// The plate reverb from Jon Dattorro, "Effect Design, Part 1: Reverberator and Other Filters" (JAES, 1997), in the
++/// Griesinger topology after the Lexicon 224: a bandwidth filter and four allpass diffusers on the input, then a
++/// figure-eight tank of two halves, each a modulated allpass, a delay, the damping filter, a second allpass and a
++/// second delay, and each half fed by the input and the other half. Seven taps into the tank make each output channel.
++///
++/// The model and its place in the menu come from the community firmware (#3277). This version follows the paper where
++/// that one doesn't: the tank's first allpasses are real allpasses (there, their delay lines carry the other half's
++/// output at 0.7, which shortens and thins the tail), each half has its own damping filter (there, both share one), the
++/// delays are scaled up to 44.1 kHz (there, down, which makes the plate 2.2 times smaller), and Width sets the stereo
++/// width of the output.
++///
++/// The paper's delays are for 29761 Hz. They're scaled by 1.45 instead of 44100 / 29761 = 1.48, which keeps the whole
++/// plate in the 32768 samples of buffer it shares with the Mutable model, at a 2% smaller size.
++class Digital : public Mutable {
++	static constexpr float kScale = 1.45f;
++	static constexpr size_t scaled(float samples) { return static_cast<size_t>(samples * kScale + 0.5f); }
++
++	static constexpr float kExcursion = 16.f * kScale; // Peak to peak modulation of the tank's first allpasses,
++	                                                   // centred on their delay
++	static constexpr float kBandwidth = 0.9995f;
++	static constexpr float kInputDiffusion1 = 0.75f;
++	static constexpr float kInputDiffusion2 = 0.625f;
++	static constexpr float kDecayDiffusion1 = 0.70f;
++	static constexpr float kTapGain = 0.6f;
++
++	/// Brings the output to the level of the Mutable model at the same settings (measured with noise: within 0.5 dB
++	/// over the Room size range, see tests/reverb)
++	static constexpr float kOutputGain = 0.89f;
++
++	/// Decay per half of the tank from the Room size, through Mutable's reverb time (0.01 to 0.98): about 0.6 s at 0,
++	/// 4.5 s at 30 (the default, where Mutable has 5 s), 18 s at 45 and much longer at 50 (measured without damping)
++	static constexpr float kDecayExponent = 0.47f;
++
++public:
++	Digital() {
++		// About 1 Hz as in the paper, at slightly different rates for the two halves
++		engine_.SetLFOFrequency(LFO_1, 1.0f / sample_rate);
++		engine_.SetLFOFrequency(LFO_2, 0.77f / sample_rate);
++		setRoomSize(getRoomSize());
++	}
++	~Digital() override = default;
++
++	void process(std::span<int32_t> in, std::span<StereoSample> output) override {
++		typename FxEngine::Context c;
++
++		typename FxEngine::AllPass ap1(scaled(142));
++		typename FxEngine::AllPass ap2(scaled(107));
++		typename FxEngine::AllPass ap3(scaled(379));
++		typename FxEngine::AllPass ap4(scaled(277));
++
++		// Left half of the tank
++		typename FxEngine::AllPass dap1a(scaled(672 + 8) + 2); // Room for the modulation
++		typename FxEngine::DelayLine del1a(scaled(4453));
++		typename FxEngine::AllPass dap1b(scaled(1800));
++		typename FxEngine::DelayLine del1b(scaled(3720));
++
++		// Right half
++		typename FxEngine::AllPass dap2a(scaled(908 + 8) + 2);
++		typename FxEngine::DelayLine del2a(scaled(4217));
++		typename FxEngine::AllPass dap2b(scaled(2656));
++		typename FxEngine::DelayLine del2b(scaled(3163));
++
++		FxEngine::ConstructTopology(engine_, {&ap1, &ap2, &ap3, &ap4,         //<
++		                                      &dap1a, &del1a, &dap1b, &del1b, //<
++		                                      &dap2a, &del2a, &dap2b, &del2b});
++
++		const float decay = decay_;
++		const float decayDiffusion2 = std::clamp(decay + 0.15f, 0.25f, 0.5f);
++		const float damping = lp_;
++		const float side = width_;
++
++		float lp_1 = lp_decay_1_;
++		float lp_2 = lp_decay_2_;
++		float bandwidth = bandwidth_state_;
++
++		startPanRamp(in.size());
++		for (size_t frame = 0; frame < in.size(); ++frame) {
++			advancePanRamp();
++			engine_.Advance();
++
++			// Input: bandwidth filter, then diffusion
++			const float input_sample = in[frame] / static_cast<float>(std::numeric_limits<int32_t>::max());
++			c.Set(input_sample);
++			c.Lp(bandwidth, kBandwidth);
++			ap1.Process(c, kInputDiffusion1);
++			ap2.Process(c, kInputDiffusion1);
++			ap3.Process(c, kInputDiffusion2);
++			ap4.Process(c, kInputDiffusion2);
++			const float diffused = c.Get();
++
++			// What each half hands to the other, from the ends of their second delays
++			const float fromLeft = del1b.at(static_cast<int32_t>(del1b.length)) * decay;
++			const float fromRight = del2b.at(static_cast<int32_t>(del2b.length)) * decay;
++
++			// Left half. The modulated allpass has its coefficient's sign reversed, as in the paper.
++			c.Set(diffused + fromRight);
++			dap1a.ProcessInterpolate(c, scaled(672) - kExcursion / 2, LFO_1, kExcursion, -kDecayDiffusion1);
++			del1a.Process(c);
++			c.Lp(lp_1, damping);
++			c.Multiply(decay);
++			dap1b.Process(c, decayDiffusion2);
++			del1b.Write(0, c.Get());
++
++			// Right half
++			c.Set(diffused + fromLeft);
++			dap2a.ProcessInterpolate(c, scaled(908) - kExcursion / 2, LFO_2, kExcursion, -kDecayDiffusion1);
++			del2a.Process(c);
++			c.Lp(lp_2, damping);
++			c.Multiply(decay);
++			dap2b.Process(c, decayDiffusion2);
++			del2b.Write(0, c.Get());
++
++			// Output taps (table 2 of the paper)
++			float left = del2a.at(scaled(266));
++			left += del2a.at(scaled(2974));
++			left -= dap2b.at(scaled(1913));
++			left += del2b.at(scaled(1996));
++			left -= del1a.at(scaled(1990));
++			left -= dap1b.at(scaled(187));
++			left -= del1b.at(scaled(1066));
++
++			float right = del1a.at(scaled(353));
++			right += del1a.at(scaled(3627));
++			right -= dap1b.at(scaled(1228));
++			right += del1b.at(scaled(2673));
++			right -= del2a.at(scaled(2111));
++			right -= dap2b.at(scaled(335));
++			right -= del2b.at(scaled(121));
++
++			// Width: scale the difference between the channels
++			const float mid = (left + right) * 0.5f;
++			const float diff = (left - right) * 0.5f * side;
++			left = (mid + diff) * (kTapGain * kOutputGain);
++			right = (mid - diff) * (kTapGain * kOutputGain);
++
++			left = filterOutput(left, hp_l_, lp_l_);
++			right = filterOutput(right, hp_r_, lp_r_);
++
++			auto output_left =
++			    static_cast<int32_t>(left * static_cast<float>(std::numeric_limits<uint32_t>::max()) * 0xF);
++			auto output_right =
++			    static_cast<int32_t>(right * static_cast<float>(std::numeric_limits<uint32_t>::max()) * 0xF);
++
++			// Mix
++			output[frame].l += multiply_32x32_rshift32_rounded(output_left, getPanLeft());
++			output[frame].r += multiply_32x32_rshift32_rounded(output_right, getPanRight());
++		}
++		endPanRamp();
++
++		lp_decay_1_ = lp_1;
++		lp_decay_2_ = lp_2;
++		bandwidth_state_ = bandwidth;
++	}
++
++	void setRoomSize(float value) override {
++		Mutable::setRoomSize(value);
++		decay_ = std::pow(reverb_time_, kDecayExponent);
++	}
++
++	/// The stereo width of the output: 0 is mono, 1 the full width of the plate
++	void setWidth(float value) override { width_ = std::clamp(value, 0.f, 1.f); }
++	[[nodiscard]] float getWidth() const override { return width_; }
++
++private:
++	float decay_ = 0.5f;
++	float width_ = 1.f;
++	float bandwidth_state_ = 0.f;
++};
++} // namespace deluge::dsp::reverb
+diff --git a/src/deluge/dsp/reverb/freeverb/allpass.hpp b/src/deluge/dsp/reverb/freeverb/allpass.hpp
+index c61d11a6..a18d23db 100644
+--- a/src/deluge/dsp/reverb/freeverb/allpass.hpp
++++ b/src/deluge/dsp/reverb/freeverb/allpass.hpp
+@@ -28,6 +28,18 @@
+ #include <span>
+ 
+ namespace freeverb {
++/// a - b, clipped to the int32_t range
++[[gnu::always_inline]] static inline int32_t subtractSaturate(int32_t a, int32_t b) {
++#if defined(__arm__)
++	int32_t out;
++	asm("qsub %0, %1, %2" : "=r"(out) : "r"(a), "r"(b));
++	return out;
++#else
++	int64_t d = (int64_t)a - b;
++	return d > INT32_MAX ? INT32_MAX : (d < INT32_MIN ? INT32_MIN : (int32_t)d);
++#endif
++}
++
+ class Allpass {
+ public:
+ 	Allpass() = default;
+@@ -40,11 +52,13 @@ public:
+ 
+ 	[[nodiscard]] constexpr float getFeedback() const { return (float)feedback_ / std::numeric_limits<int32_t>::max(); }
+ 
+-	[[gnu::always_inline]] constexpr int32_t process(int32_t input) {
++	[[gnu::always_inline]] int32_t process(int32_t input) {
+ 		int32_t bufout = buffer_[bufidx_];
+-		int32_t output = -input + bufout;
++		// mastertune-v10: clip instead of wrapping around (a loud crack) when a long reverb gets too loud
++		int32_t output = subtractSaturate(bufout, input);
+ 
+-		buffer_[bufidx_] = input + (bufout >> 1); // Shortcut - because feedback was always one half by default anyway
++		buffer_[bufidx_] =
++		    add_saturate(input, bufout >> 1); // Shortcut - because feedback was always one half by default anyway
+ 		// buffer[bufidx] = input + (multiply_32x32_rshift32_rounded(bufout, feedback) << 1);
+ 
+ 		if (++bufidx_ >= buffer_.size()) {
+diff --git a/src/deluge/dsp/reverb/freeverb/comb.hpp b/src/deluge/dsp/reverb/freeverb/comb.hpp
+index dc92506a..4d530572 100644
+--- a/src/deluge/dsp/reverb/freeverb/comb.hpp
++++ b/src/deluge/dsp/reverb/freeverb/comb.hpp
+@@ -55,7 +55,8 @@ public:
+ 		                multiply_32x32_rshift32_rounded(filterstore_, damp1_))
+ 		               << 1;
+ 
+-		buffer_[bufidx_] = input + (multiply_32x32_rshift32_rounded(filterstore_, feedback_) << 1);
++		// mastertune-v10: clip instead of wrapping around (a loud crack) when a long reverb gets too loud
++		buffer_[bufidx_] = add_saturate(input, multiply_32x32_rshift32_rounded(filterstore_, feedback_) << 1);
+ 
+ 		if (++bufidx_ >= buffer_.size()) {
+ 			bufidx_ = 0;
+diff --git a/src/deluge/dsp/reverb/freeverb/freeverb.hpp b/src/deluge/dsp/reverb/freeverb/freeverb.hpp
+index 6838f583..b4e6dc15 100644
+--- a/src/deluge/dsp/reverb/freeverb/freeverb.hpp
++++ b/src/deluge/dsp/reverb/freeverb/freeverb.hpp
+@@ -76,8 +76,8 @@ public:
+ 
+ 		// Accumulate comb filters in parallel
+ 		for (int32_t i = 0; i < numcombs; i++) {
+-			out_l += combL[i].process(input);
+-			out_r += combR[i].process(input);
++			out_l = add_saturate(out_l, combL[i].process(input));
++			out_r = add_saturate(out_r, combR[i].process(input));
+ 		}
+ 
+ 		// Feed through allpasses in series
+@@ -86,9 +86,12 @@ public:
+ 			out_r = allpassR[i].process(out_r);
+ 		}
+ 
+-		// Calculate output
+-		out_l = (out_l + multiply_32x32_rshift32_rounded(out_r, wet2)) << 1;
+-		out_r = (out_r + multiply_32x32_rshift32_rounded(out_l, wet2)) << 1;
++		// Calculate output. (mastertune-v10: the right channel used to take the left one after it had already been
++		// mixed, which made the reverb up to about 4 dB louder on the right when Width was below maximum.)
++		int32_t mixed_l = lshiftAndSaturate<1>(add_saturate(out_l, multiply_32x32_rshift32_rounded(out_r, wet2)));
++		int32_t mixed_r = lshiftAndSaturate<1>(add_saturate(out_r, multiply_32x32_rshift32_rounded(out_l, wet2)));
++		out_l = mixed_l;
++		out_r = mixed_r;
+ 
+ 		// Mix output
+ 		output_sample.l += multiply_32x32_rshift32_rounded(out_l, this->getPanLeft());
+diff --git a/src/deluge/dsp/reverb/mutable/cosine_oscillator.hpp b/src/deluge/dsp/reverb/mutable/cosine_oscillator.hpp
+index d4ec5d87..58ef8efd 100644
+--- a/src/deluge/dsp/reverb/mutable/cosine_oscillator.hpp
++++ b/src/deluge/dsp/reverb/mutable/cosine_oscillator.hpp
+@@ -3,77 +3,56 @@
+ // CPU use. Fixed frequency.
+ 
+ #pragma once
+-#include "argon.hpp"
+-#include <cmath>
++#include <array>
++#include <cstddef>
+ #include <initializer_list>
+ 
++/// Two of Mutable Instruments' approximate cosine oscillators (a resonant two-pole filter). Frequencies are in cycles
++/// per call of Next().
+ class DualCosineOscillator {
+ public:
+-	enum class Mode { APPROX, EXACT };
+-
+-	template <Mode mode = Mode::APPROX>
+-	constexpr DualCosineOscillator(std::initializer_list<float> frequencies) : frequencies_(frequencies) {
+-		Init<mode>();
+-	}
+-	~DualCosineOscillator() = default;
+-
+-	template <Mode mode = Mode::APPROX>
+-	inline void SetFrequency(int index, float frequency) {
+-		frequencies_[index] = frequency;
+-		Init<mode>();
+-	}
+-
+-	inline void InitApproximate() {
+-		argon::Neon64<float> sign = 16.0f;
+-		argon::Neon64<float> frequencies = frequencies_;
+-		frequencies.each_lane([&](float& frequency, int i) {
+-			frequency -= 0.25f;
+-			if (frequency < 0.0f) {
+-				frequency = -frequency;
+-			}
+-			else if (frequency > 0.5f) {
+-				frequency -= 0.5f;
++	DualCosineOscillator(std::initializer_list<float> frequencies) {
++		size_t i = 0;
++		for (float frequency : frequencies) {
++			if (i < 2) {
++				Init(i++, frequency);
+ 			}
+-			else {
+-				sign[i] = -16.0f;
+-			}
+-		});
+-		iir_coefficient_ = sign * frequencies * (1.0f - (2.0f * frequencies));
+-		initial_amplitude_ = iir_coefficient_ * 0.25f;
++		}
+ 	}
++	~DualCosineOscillator() = default;
+ 
+-	constexpr void Start() {
+-		y_0 = initial_amplitude_;
+-		y_1 = 0.5f;
+-	}
++	void SetFrequency(int index, float frequency) { Init(index, frequency); }
+ 
+-	[[nodiscard]] inline argon::Neon64<float> values() const { return y_0 + 0.5f; }
++	[[nodiscard]] std::array<float, 2> values() const { return {y_0[0] + 0.5f, y_0[1] + 0.5f}; }
+ 
+-	inline argon::Neon64<float> Next() {
+-		argon::Neon64<float> temp = y_1;
+-		y_1 = iir_coefficient_ * y_1 - y_0;
+-		y_0 = temp;
+-		return temp + 0.5f;
++	void Next() {
++		for (size_t i = 0; i < 2; i++) {
++			float temp = y_1[i];
++			y_1[i] = iir_coefficient_[i] * y_1[i] - y_0[i];
++			y_0[i] = temp;
++		}
+ 	}
+ 
+ private:
+-	template <Mode mode = Mode::APPROX>
+-	inline void Init() {
+-		if constexpr (mode == Mode::APPROX) {
+-			InitApproximate();
++	// Approximates 2 cos(2 pi f), as stmlib's COSINE_OSCILLATOR_APPROXIMATE
++	void Init(size_t i, float frequency) {
++		float sign = 16.0f;
++		frequency -= 0.25f;
++		if (frequency < 0.0f) {
++			frequency = -frequency;
++		}
++		else if (frequency > 0.5f) {
++			frequency -= 0.5f;
+ 		}
+ 		else {
+-			for (size_t i = 0; i < frequencies_.size(); ++i) {
+-				iir_coefficient_[i] = 2.0f * std::cos(2.0f * std::numbers::pi_v<float> * frequencies_[i]);
+-				initial_amplitude_[i] = iir_coefficient_[i] * 0.25f;
+-			}
++			sign = -16.0f;
+ 		}
+-		Start();
++		iir_coefficient_[i] = sign * frequency * (1.0f - (2.0f * frequency));
++		y_0[i] = iir_coefficient_[i] * 0.25f;
++		y_1[i] = 0.5f;
+ 	}
+ 
+-	argon::Neon64<float> frequencies_;
+-	argon::Neon64<float> y_0;
+-	argon::Neon64<float> y_1;
+-	argon::Neon64<float> iir_coefficient_;
+-	argon::Neon64<float> initial_amplitude_;
++	std::array<float, 2> y_0{};
++	std::array<float, 2> y_1{};
++	std::array<float, 2> iir_coefficient_{};
+ };
+diff --git a/src/deluge/dsp/reverb/mutable/fx_engine.hpp b/src/deluge/dsp/reverb/mutable/fx_engine.hpp
+index ed2ba20e..7ab0b301 100644
+--- a/src/deluge/dsp/reverb/mutable/fx_engine.hpp
++++ b/src/deluge/dsp/reverb/mutable/fx_engine.hpp
+@@ -28,8 +28,9 @@ enum LFOIndex { LFO_1, LFO_2 };
+ 
+ class FxEngine {
+ public:
+-	FxEngine(std::span<float> signal, std::initializer_list<float> lfo_freqs)
+-	    : buffer_(signal), mask(buffer_.size() - 1), lfo_{lfo_freqs} {};
++	/// LFO frequencies in cycles per sample. The LFOs step once every 32 samples, like in Mutable Instruments' engine.
++	FxEngine(std::span<float> signal, std::array<float, 2> lfo_freqs)
++	    : buffer_(signal), lfo_{lfo_freqs[0] * 32.0f, lfo_freqs[1] * 32.0f}, mask(buffer_.size() - 1){};
+ 	~FxEngine() = default;
+ 
+ 	void Clear() {
+@@ -46,21 +47,19 @@ public:
+ 		if (write_ptr_ < 0) {
+ 			write_ptr_ += buffer_.size();
+ 		}
+-	}
+-
+-	//[gnu::always_inline]
+-	float& at(size_t index) { return buffer_[(write_ptr_ + index) & mask]; }
+-
+-	//[gnu::always_inline]
+-	void StepLFO() {
+ 		if ((write_ptr_ & 31) == 0) {
+ 			lfo_.Next();
+ 		}
+ 	}
+ 
++	//[gnu::always_inline]
++	float& at(size_t index) { return buffer_[(write_ptr_ + index) & mask]; }
++
++	// mastertune-v10: the LFOs used to step in here, once per read, so twice per 32 samples with two reads per sample,
++	// and without the factor 32 from SetLFOFrequency() on the frequencies given to the constructor. Together that ran
++	// them 16 times slower than Mutable Instruments' 0.5 and 0.3 Hz. They now step in Advance(), once per sample.
+ 	//[gnu::always_inline]
+ 	float LFO(LFOIndex lfo) {
+-		StepLFO();
+ 		switch (lfo) {
+ 		case LFO_1:
+ 			return lfo_.values()[0];
+diff --git a/src/deluge/dsp/reverb/mutable/reverb.hpp b/src/deluge/dsp/reverb/mutable/reverb.hpp
+index b70bfa2f..45f96b9e 100644
+--- a/src/deluge/dsp/reverb/mutable/reverb.hpp
++++ b/src/deluge/dsp/reverb/mutable/reverb.hpp
+@@ -16,7 +16,10 @@ class Mutable : public Base {
+ 	constexpr static size_t kBufferSize = 32768;
+ 
+ public:
+-	Mutable() = default;
++	Mutable() {
++		setHPF(0.f);
++		setLPF(1.f);
++	}
+ 
+ 	~Mutable() override = default;
+ 
+@@ -62,9 +65,10 @@ public:
+ 			float apout = 0.0f;
+ 			engine_.Advance();
+ 
+-			// Smear AP1 inside the loop.
+-			// c.Interpolate(ap1, 10.0f, LFO_1, 80.0f, 1.0f);
+-			// c.Write(ap1, 100, 0.0f);
++			// Smear AP1 inside the loop. (mastertune-v10: back in, as in Mutable Instruments' Rings and Elements)
++			c.Set(0.0f);
++			ap1.Interpolate(c, 10.0f, LFO_1, 80.0f, 1.0f);
++			ap1.Write(c, static_cast<int32_t>(100), 0.0f);
+ 
+ 			const float input_sample = in[frame] / static_cast<float>(std::numeric_limits<int32_t>::max());
+ 
+@@ -85,9 +89,7 @@ public:
+ 			dap1a.Process(c, -kap);
+ 			dap1b.Process(c, kap);
+ 			del1.Write(c, 2.0f);
+-			wet = c.Get();
+-			dsp::OnePole(hp_r_, wet, hp_cutoff_);
+-			wet = wet - hp_r_;
++			wet = filterOutput(c.Get(), hp_r_, lp_r_);
+ 
+ 			auto output_right =
+ 			    static_cast<int32_t>(wet * static_cast<float>(std::numeric_limits<uint32_t>::max()) * 0xF);
+@@ -98,9 +100,7 @@ public:
+ 			dap2a.Process(c, -kap);
+ 			dap2b.Process(c, kap);
+ 			del2.Write(c, 2.0f);
+-			wet = c.Get();
+-			dsp::OnePole(hp_l_, wet, hp_cutoff_);
+-			wet = wet - hp_l_;
++			wet = filterOutput(c.Get(), hp_l_, lp_l_);
+ 
+ 			auto output_left =
+ 			    static_cast<int32_t>(wet * static_cast<float>(std::numeric_limits<uint32_t>::max()) * 0xF);
+@@ -131,23 +131,45 @@ public:
+ 		return util::map(reverb_time_, kReverbTimeMin, kReverbTimeMax, 0.f, 1.f);
+ 	};
+ 
++	/// 0 is no damping at all, 1 as dark as the loop filter goes, on a logarithmic curve so the audible change is
++	/// spread over the range. (mastertune-v10: 1.2.1 ran this backwards, with 0 and 1 both bright and the smallest
++	/// step above 0 the darkest. Song files keep the old value, see dampingFromFile() in reverb.hpp.)
+ 	void setDamping(float value) override {
+ 		lp_val_ = value;
+-		lp_ = (value == 0.f) ? 1.f : 1.f - std::clamp((std::log2(((1.f - lp_val_) * 50.f) + 1.f) / 5.7f), 0.f, 1.f);
++		lp_ = 1.f - std::clamp(std::log2((value * 50.f) + 1.f) / 5.7f, 0.f, 1.f);
+ 	}
+ 	[[nodiscard]] float getDamping() const override { return lp_val_; }
+ 
+ 	void setWidth(float value) override { diffusion_ = util::map(value, 0.f, 1.f, kWidthMin, kWidthMax); }
+ 	[[nodiscard]] float getWidth() const override { return util::map(diffusion_, kWidthMin, kWidthMax, 0.f, 1.f); };
+ 
+-	void setHPF(float f) {
++	void setHPF(float f) override {
+ 		hp_cutoff_val_ = f;
+-		hp_cutoff_ = calcFilterCutoff(f);
++		hp_cutoff_ = onePoleCoefficient(hpfCutoffHz(f));
+ 	}
++	[[nodiscard]] float getHPF() const override { return hp_cutoff_val_; }
+ 
+-	[[nodiscard]] float getHPF() const { return hp_cutoff_val_; }
++	void setLPF(float f) override {
++		lp_cutoff_val_ = f;
++		lp_on_ = !lpfIsOff(f);
++		lp_cutoff_ = onePoleCoefficient(lpfCutoffHz(f));
++	}
++	[[nodiscard]] float getLPF() const override { return lp_cutoff_val_; }
++
++protected:
++	/// Low cut and, unless it's off, high cut for one output channel. While the high cut is off, its state follows the
++	/// signal, so switching it on doesn't click.
++	[[gnu::always_inline]] float filterOutput(float wet, float& hp_state, float& lp_state) const {
++		wet -= dsp::OnePole(hp_state, wet, hp_cutoff_);
++		if (lp_on_) {
++			wet = dsp::OnePole(lp_state, wet, lp_cutoff_);
++		}
++		else {
++			lp_state = wet;
++		}
++		return wet;
++	}
+ 
+-private:
+ 	static constexpr float sample_rate = kSampleRate;
+ 
+ 	std::array<float, kBufferSize> buffer_{};
+@@ -169,12 +191,18 @@ private:
+ 	float lp_decay_1_{0};
+ 	float lp_decay_2_{0};
+ 
+-	// High-pass
++	// Low cut (HPF) on the output
+ 	float hp_cutoff_val_{0.f};
+-	// corresponds to 20Hz
+-	float hp_cutoff_{calcFilterCutoff(0)};
++	float hp_cutoff_{0.f};
+ 	float hp_l_{0.0}; // HP state variable
+ 	float hp_r_{0.0}; // HP state variable
++
++	// High cut (LPF) on the output
++	float lp_cutoff_val_{1.f};
++	float lp_cutoff_{1.f};
++	bool lp_on_{false};
++	float lp_l_{0.0}; // LP state variable
++	float lp_r_{0.0}; // LP state variable
+ };
+ 
+ } // namespace deluge::dsp::reverb
+diff --git a/src/deluge/dsp/reverb/reverb.hpp b/src/deluge/dsp/reverb/reverb.hpp
+index a2bbd25a..b35b40c9 100644
+--- a/src/deluge/dsp/reverb/reverb.hpp
++++ b/src/deluge/dsp/reverb/reverb.hpp
+@@ -1,5 +1,6 @@
+ #pragma once
+ #include "base.hpp"
++#include "digital.hpp"
+ #include "freeverb/freeverb.hpp"
+ #include "mutable/reverb.hpp"
+ #include <algorithm>
+@@ -13,6 +14,7 @@ public:
+ 	enum class Model {
+ 		FREEVERB = 0, // Freeverb is the original
+ 		MUTABLE,
++		DIGITAL,
+ 	};
+ 
+ 	Reverb()
+@@ -27,7 +29,11 @@ public:
+ 		case Model::FREEVERB:
+ 			reverb_.emplace<reverb::Freeverb>();
+ 			break;
+-		case Model::MUTABLE:
++		case Model::DIGITAL:
++			reverb_.emplace<reverb::Digital>();
++			break;
++		default:
++			m = Model::MUTABLE;
+ 			reverb_.emplace<reverb::Mutable>();
+ 			break;
+ 		}
+@@ -35,6 +41,7 @@ public:
+ 		base_->setDamping(damping_);
+ 		base_->setWidth(width_);
+ 		base_->setHPF(hpf_);
++		base_->setLPF(lpf_);
+ 		model_ = m;
+ 	}
+ 
+@@ -49,6 +56,9 @@ public:
+ 		case Model::MUTABLE:
+ 			reverb_as<Mutable>().process(input, output);
+ 			break;
++		case Model::DIGITAL:
++			reverb_as<Digital>().process(input, output);
++			break;
+ 		}
+ 	}
+ 
+@@ -77,11 +87,17 @@ public:
+ 
+ 	[[nodiscard]] float getWidth() const override { return base_->getWidth(); };
+ 
+-	virtual void setHPF(float f) {
++	void setHPF(float f) override {
+ 		hpf_ = f;
+ 		base_->setHPF(f);
+ 	}
+-	[[nodiscard]] virtual float getHPF() const { return base_->getHPF(); }
++	[[nodiscard]] float getHPF() const override { return hpf_; }
++
++	void setLPF(float f) override {
++		lpf_ = f;
++		base_->setLPF(f);
++	}
++	[[nodiscard]] float getLPF() const override { return lpf_; }
+ 
+ 	template <typename T>
+ 	constexpr T& reverb_as() {
+@@ -91,7 +107,8 @@ public:
+ private:
+ 	std::variant<         //<
+ 	    reverb::Freeverb, //<
+-	    reverb::Mutable   //<
++	    reverb::Mutable,  //<
++	    reverb::Digital   //<
+ 	    >
+ 	    reverb_{};
+ 
+@@ -102,6 +119,54 @@ private:
+ 	float room_size_;
+ 	float damping_;
+ 	float width_;
+-	float hpf_;
++	float hpf_ = 0.f;
++	float lpf_ = 1.f; // Off
+ };
++
++namespace reverb {
++// Song files keep the reverb settings the way 1.2.1 wrote them, so older firmware still reads them the same:
++//
++// - Damping of the Mutable (and Digital) model ran backwards in 1.2.1: 0 and 50 were both bright, 1 the darkest. The
++//   file keeps that value, the menu now runs like Freeverb's, from 0 bright to 50 dark, at the same sound.
++// - The low cut ("hpf") only reached 85 Hz in 1.2.1, which also never applied it when loading a song. Its value goes on
++//   in "lowCut", the old one is read at the cutoff it actually had.
++// - The high cut is new ("highCut"). The community firmware's "lpf" is read at the cutoff it actually has there.
++
++/// Damping in the menu's direction, from the value in the song file (Mutable and Digital model)
++inline float dampingFromFile(float value) {
++	return (value <= 0.f) ? 0.f : 1.f - std::min(value, 1.f);
++}
++
++/// The other way. The darkest setting becomes the smallest value above 0, since 0 means no damping in the file.
++inline float dampingToFile(float damping) {
++	return (damping <= 0.f) ? 0.f : std::max(1.f - damping, 1.f / 2147483648.f);
++}
++
++/// Cutoff where dsp::OnePole() with 1.2.1's coefficient f / (1 + f) actually puts its pole
++inline float actualHzOfOldCoefficient(float labelHz) {
++	float f = labelHz / static_cast<float>(kSampleRate);
++	float coefficient = f / (1.f + f);
++	return -std::log(1.f - coefficient) * static_cast<float>(kSampleRate) / (2.f * std::numbers::pi_v<float>);
++}
++
++/// Low cut position for the "hpf" value of 1.2.1 (and the community firmware), at the same actual cutoff
++inline float lowCutFromOldHPF(float value) {
++	float labelHz = 20.f + (std::exp(1.5f * value) - 1.f) * 150.f;
++	float hz = actualHzOfOldCoefficient(labelHz);
++	if (hz <= 20.f) {
++		return 0.f;
++	}
++	return std::clamp(std::log((hz - 20.f) / 150.f + 1.f) / 1.5f, 0.f, 1.f);
++}
++
++/// High cut position for the community firmware's "lpf" value, at the same actual cutoff
++inline float highCutFromCommunityLPF(float value) {
++	float labelHz = (std::exp(1.5f * value) - 1.f) * 5083.74f;
++	float hz = actualHzOfOldCoefficient(labelHz);
++	if (hz <= 500.f) {
++		return 0.f;
++	}
++	return std::clamp(std::log(hz / 500.f) / std::log(40.f), 0.f, 0.98f);
++}
++} // namespace reverb
+ } // namespace deluge::dsp
+diff --git a/src/deluge/gui/menu_item/reverb/hpf.h b/src/deluge/gui/menu_item/reverb/hpf.h
+index e88b0212..d78c530d 100644
+--- a/src/deluge/gui/menu_item/reverb/hpf.h
++++ b/src/deluge/gui/menu_item/reverb/hpf.h
+@@ -16,7 +16,6 @@
+  */
+ #pragma once
+ #include "definitions_cxx.hpp"
+-#include "dsp/reverb/mutable/reverb.hpp"
+ #include "dsp/reverb/reverb.hpp"
+ #include "gui/l10n/strings.h"
+ #include "gui/menu_item/integer.h"
+@@ -24,16 +23,17 @@
+ #include <cmath>
+ 
+ namespace deluge::gui::menu_item::reverb {
++/// Low cut on the reverb's output: 0 = 20 Hz, 25 = 190 Hz, 50 = 540 Hz
+ class HPF final : public Integer {
+ public:
+ 	using Integer::Integer;
+-	void readCurrentValue() override { this->setValue(AudioEngine::reverb.getHPF() * kMaxMenuValue); }
++	void readCurrentValue() override { this->setValue(std::round(AudioEngine::reverb.getHPF() * kMaxMenuValue)); }
+ 	void writeCurrentValue() override { AudioEngine::reverb.setHPF((float)this->getValue() / kMaxMenuValue); }
+ 
+ 	[[nodiscard]] int32_t getMaxValue() const override { return kMaxMenuValue; }
+ 
+ 	bool isRelevant(ModControllableAudio* modControllable, int32_t whichThing) override {
+-		return (AudioEngine::reverb.getModel() == dsp::Reverb::Model::MUTABLE);
++		return (AudioEngine::reverb.getModel() != dsp::Reverb::Model::FREEVERB);
+ 	}
+ };
+ } // namespace deluge::gui::menu_item::reverb
+diff --git a/src/deluge/gui/menu_item/reverb/lpf.h b/src/deluge/gui/menu_item/reverb/lpf.h
+new file mode 100644
+index 00000000..aa85c760
+--- /dev/null
++++ b/src/deluge/gui/menu_item/reverb/lpf.h
+@@ -0,0 +1,39 @@
++/*
++ * Copyright (c) 2014-2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include "definitions_cxx.hpp"
++#include "dsp/reverb/reverb.hpp"
++#include "gui/l10n/strings.h"
++#include "gui/menu_item/integer.h"
++#include "processing/engines/audio_engine.h"
++#include <cmath>
++
++namespace deluge::gui::menu_item::reverb {
++/// High cut on the reverb's output: 0 = 500 Hz, 25 = 3.2 kHz, 49 = 18.6 kHz, 50 = off
++class LPF final : public Integer {
++public:
++	using Integer::Integer;
++	void readCurrentValue() override { this->setValue(std::round(AudioEngine::reverb.getLPF() * kMaxMenuValue)); }
++	void writeCurrentValue() override { AudioEngine::reverb.setLPF((float)this->getValue() / kMaxMenuValue); }
++
++	[[nodiscard]] int32_t getMaxValue() const override { return kMaxMenuValue; }
++
++	bool isRelevant(ModControllableAudio* modControllable, int32_t whichThing) override {
++		return (AudioEngine::reverb.getModel() != dsp::Reverb::Model::FREEVERB);
++	}
++};
++} // namespace deluge::gui::menu_item::reverb
+diff --git a/src/deluge/gui/menu_item/reverb/model.h b/src/deluge/gui/menu_item/reverb/model.h
+index 864a7d30..46c95a8d 100644
+--- a/src/deluge/gui/menu_item/reverb/model.h
++++ b/src/deluge/gui/menu_item/reverb/model.h
+@@ -19,6 +19,7 @@ public:
+ 		return {
+ 		    l10n::getView(STRING_FOR_FREEVERB),
+ 		    l10n::getView(STRING_FOR_MUTABLE),
++		    l10n::getView(STRING_FOR_DIGITAL),
+ 		};
+ 	}
+ };
+diff --git a/src/deluge/gui/menu_item/reverb/room_size.h b/src/deluge/gui/menu_item/reverb/room_size.h
+index fa11ce06..0cf71555 100644
+--- a/src/deluge/gui/menu_item/reverb/room_size.h
++++ b/src/deluge/gui/menu_item/reverb/room_size.h
+@@ -33,6 +33,7 @@ public:
+ 		using enum l10n::String;
+ 		switch (AudioEngine::reverb.getModel()) {
+ 		case dsp::Reverb::Model::MUTABLE:
++		case dsp::Reverb::Model::DIGITAL:
+ 			return l10n::getView(STRING_FOR_TIME);
+ 		default:
+ 			return l10n::getView(this->name);
+diff --git a/src/deluge/gui/ui/menus.cpp b/src/deluge/gui/ui/menus.cpp
+index e2199a43..d7518264 100644
+--- a/src/deluge/gui/ui/menus.cpp
++++ b/src/deluge/gui/ui/menus.cpp
+@@ -140,6 +140,7 @@
+ #include "gui/menu_item/record/quantize.h"
+ #include "gui/menu_item/reverb/damping.h"
+ #include "gui/menu_item/reverb/hpf.h"
++#include "gui/menu_item/reverb/lpf.h"
+ #include "gui/menu_item/reverb/model.h"
+ #include "gui/menu_item/reverb/pan.h"
+ #include "gui/menu_item/reverb/room_size.h"
+@@ -533,6 +534,7 @@ reverb::Width reverbWidthMenu{STRING_FOR_WIDTH, STRING_FOR_REVERB_WIDTH};
+ reverb::Pan reverbPanMenu{STRING_FOR_PAN, STRING_FOR_REVERB_PAN};
+ reverb::Model reverbModelMenu{STRING_FOR_MODEL};
+ reverb::HPF reverbHPFMenu{STRING_FOR_HPF};
++reverb::LPF reverbLPFMenu{STRING_FOR_LPF};
+ 
+ Submenu reverbMenu{
+     STRING_FOR_REVERB,
+@@ -543,6 +545,7 @@ Submenu reverbMenu{
+         &reverbDampingMenu,
+         &reverbWidthMenu,
+         &reverbHPFMenu,
++        &reverbLPFMenu,
+         &reverbPanMenu,
+         &reverbSidechainMenu,
+     },
+@@ -689,6 +692,7 @@ Submenu globalReverbMenu{
+         &reverbDampingMenu,
+         &reverbWidthMenu,
+         &reverbHPFMenu,
++        &reverbLPFMenu,
+         &reverbPanMenu,
+         &reverbSidechainMenu,
+     },
+diff --git a/src/deluge/gui/views/view.cpp b/src/deluge/gui/views/view.cpp
+index 00e93d39..e681b20c 100644
+--- a/src/deluge/gui/views/view.cpp
++++ b/src/deluge/gui/views/view.cpp
+@@ -1823,12 +1823,22 @@ void View::cycleThroughReverbPresets() {
+ 	}
+ 
+ 	AudioEngine::reverb.setRoomSize((float)presetReverbRoomSize[newPreset] / 50);
+-	AudioEngine::reverb.setDamping((float)presetReverbDamping[newPreset] / 50);
++	// mastertune-v10: the presets' damping is in 1.2.1's direction, which ran the other way for the Mutable (and now
++	// Digital) model, see dsp/reverb/reverb.hpp
++	float damping = (float)presetReverbDamping[newPreset] / 50;
++	if (AudioEngine::reverb.getModel() != deluge::dsp::Reverb::Model::FREEVERB) {
++		damping = deluge::dsp::reverb::dampingFromFile(damping);
++	}
++	AudioEngine::reverb.setDamping(damping);
+ }
+ 
+ int32_t View::getCurrentReverbPreset() {
+ 	int32_t currentRoomSize = AudioEngine::reverb.getRoomSize() * 50;
+-	int32_t currentDamping = AudioEngine::reverb.getDamping() * 50;
++	float damping = AudioEngine::reverb.getDamping();
++	if (AudioEngine::reverb.getModel() != deluge::dsp::Reverb::Model::FREEVERB) {
++		damping = deluge::dsp::reverb::dampingToFile(damping); // In the presets' direction
++	}
++	int32_t currentDamping = std::round(damping * 50);
+ 
+ 	// See which preset we're the closest to currently
+ 	int32_t lowestDifferentness = 1000;
+diff --git a/src/deluge/model/song/song.cpp b/src/deluge/model/song/song.cpp
+index 0ec8ffca..6e986b78 100644
+--- a/src/deluge/model/song/song.cpp
++++ b/src/deluge/model/song/song.cpp
+@@ -173,6 +173,7 @@ Song::Song() : backedUpParamManagers(sizeof(BackedUpParamManager)) {
+ 	reverbRoomSize = (float)30 / 50;
+ 	reverbDamp = (float)36 / 50;
+ 	reverbHPF = 0;
++	reverbLPF = 1; // Off
+ 	reverbWidth = 1;
+ 	reverbPan = 0;
+ 	reverbSidechainVolume = getParamFromUserValue(params::STATIC_SIDECHAIN_VOLUME, -1);
+@@ -1137,19 +1138,26 @@ weAreInArrangementEditorOrInClipInstance:
+ 	writer.writeOpeningTagBeginning("reverb");
+ 	deluge::dsp::Reverb::Model model = AudioEngine::reverb.getModel();
+ 	uint32_t roomSize = AudioEngine::reverb.getRoomSize() * (uint32_t)2147483648u;
+-	uint32_t damping = AudioEngine::reverb.getDamping() * (uint32_t)2147483648u;
++	float dampingValue = AudioEngine::reverb.getDamping();
++	if (model != deluge::dsp::Reverb::Model::FREEVERB) {
++		dampingValue = deluge::dsp::reverb::dampingToFile(dampingValue); // As 1.2.1 had it, see dsp/reverb/reverb.hpp
++	}
++	uint32_t damping = dampingValue * (uint32_t)2147483648u;
+ 	uint32_t width = AudioEngine::reverb.getWidth() * (uint32_t)2147483648u;
+-	uint32_t hpf = AudioEngine::reverb.getHPF() * (uint32_t)2147483648u;
++	uint32_t lowCut = AudioEngine::reverb.getHPF() * (uint32_t)2147483648u;
++	uint32_t highCut = AudioEngine::reverb.getLPF() * (uint32_t)2147483648u;
+ 
+ 	roomSize = std::min(roomSize, (uint32_t)2147483647);
+ 	damping = std::min(damping, (uint32_t)2147483647);
+ 	width = std::min(width, (uint32_t)2147483647);
+-	hpf = std::min(hpf, (uint32_t)2147483647);
++	lowCut = std::min(lowCut, (uint32_t)2147483647);
++	highCut = std::min(highCut, (uint32_t)2147483647);
+ 
+ 	writer.writeAttribute("roomSize", roomSize);
+ 	writer.writeAttribute("dampening", damping);
+ 	writer.writeAttribute("width", width);
+-	writer.writeAttribute("hpf", hpf);
++	writer.writeAttribute("lowCut", lowCut);
++	writer.writeAttribute("highCut", highCut);
+ 	writer.writeAttribute("pan", AudioEngine::reverbPan);
+ 	writer.writeAttribute("model", util::to_underlying(model));
+ 	writer.writeOpeningTagEnd();
+@@ -1337,9 +1345,17 @@ Error Song::readFromFile(Deserializer& reader) {
+ 		// "reve" -> reverb
+ 		case 0x65766572:
+ 			if (!strcmp(tagName, "reverb")) {
++				// mastertune-v10: the low and high cut, see dsp/reverb/reverb.hpp
++				bool haveLowCut = false;
++				bool haveHighCut = false;
++				bool haveDamping = false;
+ 				while (*(tagName = reader.readNextTagOrAttributeName())) {
+ 					if (!strcmp(tagName, "model")) {
+-						model = static_cast<deluge::dsp::Reverb::Model>(reader.readTagOrAttributeValueInt());
++						int32_t modelNumber = reader.readTagOrAttributeValueInt();
++						if (modelNumber < 0 || modelNumber > util::to_underlying(deluge::dsp::Reverb::Model::DIGITAL)) {
++							modelNumber = util::to_underlying(deluge::dsp::Reverb::Model::MUTABLE);
++						}
++						model = static_cast<deluge::dsp::Reverb::Model>(modelNumber);
+ 						reader.exitTag("model");
+ 					}
+ 					else if (!strcmp(tagName, "roomSize")) {
+@@ -1348,6 +1364,7 @@ Error Song::readFromFile(Deserializer& reader) {
+ 					}
+ 					else if (!strcmp(tagName, "dampening")) {
+ 						reverbDamp = (float)reader.readTagOrAttributeValueInt() / 2147483648u;
++						haveDamping = true;
+ 						reader.exitTag("dampening");
+ 					}
+ 					else if (!strcmp(tagName, "width")) {
+@@ -1359,10 +1376,30 @@ Error Song::readFromFile(Deserializer& reader) {
+ 						reverbWidth = (float)widthInt / 2147483648u;
+ 						reader.exitTag("width");
+ 					}
+-					else if (!strcmp(tagName, "hpf")) {
++					else if (!strcmp(tagName, "lowCut")) {
+ 						reverbHPF = (float)reader.readTagOrAttributeValueInt() / 2147483648u;
++						haveLowCut = true;
++						reader.exitTag("lowCut");
++					}
++					else if (!strcmp(tagName, "hpf")) {
++						float oldHPF = (float)reader.readTagOrAttributeValueInt() / 2147483648u;
++						if (!haveLowCut) {
++							reverbHPF = deluge::dsp::reverb::lowCutFromOldHPF(oldHPF);
++						}
+ 						reader.exitTag("hpf");
+ 					}
++					else if (!strcmp(tagName, "highCut")) {
++						reverbLPF = (float)reader.readTagOrAttributeValueInt() / 2147483648u;
++						haveHighCut = true;
++						reader.exitTag("highCut");
++					}
++					else if (!strcmp(tagName, "lpf")) {
++						float communityLPF = (float)reader.readTagOrAttributeValueInt() / 2147483648u;
++						if (!haveHighCut) {
++							reverbLPF = deluge::dsp::reverb::highCutFromCommunityLPF(communityLPF);
++						}
++						reader.exitTag("lpf");
++					}
+ 					else if (!strcmp(tagName, "pan")) {
+ 						reverbPan = reader.readTagOrAttributeValueInt();
+ 						reader.exitTag("pan");
+@@ -1401,6 +1438,13 @@ Error Song::readFromFile(Deserializer& reader) {
+ 						reader.exitTag(tagName);
+ 					}
+ 				}
++				// The community firmware turned the Mutable and Digital damping round in 1.3 (#4936) and saves it
++				// that way. Keep it here in 1.2.1's direction, like everything else reads it. (1.3 builds from before
++				// that change can't be told apart, and get read the same way, as the community firmware does.)
++				if (haveDamping && model != deluge::dsp::Reverb::Model::FREEVERB
++				    && smDeserializer.firmware_version >= FirmwareVersion::community({1, 3, 0})) {
++					reverbDamp = deluge::dsp::reverb::dampingToFile(reverbDamp);
++				}
+ 			}
+ 			else {
+ 				goto unknownTag;
+diff --git a/src/deluge/model/song/song.h b/src/deluge/model/song/song.h
+index 93547264..f28874df 100644
+--- a/src/deluge/model/song/song.h
++++ b/src/deluge/model/song/song.h
+@@ -396,7 +396,8 @@ public:
+ 	// Reverb params to be stored here between loading and song being made the active one
+ 	dsp::Reverb::Model model;
+ 	float reverbRoomSize;
+-	float reverbHPF;
++	float reverbHPF; // Low cut, in the scale of the menu
++	float reverbLPF; // High cut, in the scale of the menu
+ 	float reverbDamp;
+ 	float reverbWidth;
+ 	int32_t reverbPan;
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index b1d1a66d..aa890e4d 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -1366,8 +1366,12 @@ void stopAnyPreviewing() {
+ void getReverbParamsFromSong(Song* song) {
+ 	reverb.setModel(song->model);
+ 	reverb.setRoomSize(song->reverbRoomSize);
+-	reverb.setDamping(song->reverbDamp);
++	// mastertune-v10: the song file keeps damping as 1.2.1 had it, see dsp/reverb/reverb.hpp
++	reverb.setDamping((song->model == dsp::Reverb::Model::FREEVERB) ? song->reverbDamp
++	                                                                 : dsp::reverb::dampingFromFile(song->reverbDamp));
+ 	reverb.setWidth(song->reverbWidth);
++	reverb.setHPF(song->reverbHPF); // 1.2.1 never did this, so a song's low cut only held until it was loaded again
++	reverb.setLPF(song->reverbLPF);
+ 	reverbPan = song->reverbPan;
+ 	reverbSidechainVolume = song->reverbSidechainVolume;
+ 	reverbSidechainShape = song->reverbSidechainShape;
+diff --git a/src/deluge/util/fixedpoint.h b/src/deluge/util/fixedpoint.h
+index 1d0dcdc1..01b8b7ea 100644
+--- a/src/deluge/util/fixedpoint.h
++++ b/src/deluge/util/fixedpoint.h
+@@ -122,9 +122,13 @@ static inline q31_t multiply_subtract_32x32_rshift32_rounded(q31_t sum, q31_t a,
+ }
+ 
+ // computes limit((val >> rshift), 2**bits)
++// (mastertune-v10: the range of ARM's ssat, as in the community firmware. This used to clamp only from above, at
++// 1 << bits, which is INT32_MIN for 31 bits. Host builds only, the firmware uses ssat.)
+ template <uint8_t bits>
+ static inline int32_t signed_saturate(int32_t val) {
+-	return std::min(val, 1 << bits);
++	constexpr int32_t hi = static_cast<int32_t>((static_cast<uint32_t>(1) << (bits - 1)) - 1);
++	constexpr int32_t lo = -hi - 1;
++	return val > hi ? hi : (val < lo ? lo : val);
+ }
+ 
+ static inline int32_t add_saturation(int32_t a, int32_t b) __attribute__((always_inline, unused));
+-- 
+2.43.0
+

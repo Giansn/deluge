@@ -1,6 +1,6 @@
 # Deluge 1.2.1 mit Master Tune
 
-Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits.
+Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb.
 
 | Datei | Version (Settings → Firmware version) | Inhalt |
 |---|---|---|
@@ -12,9 +12,10 @@ Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit
 | `deluge-1.2.1-mastertune-v7-ca0b5bd7.bin` | `1.2.1-mastertune-v7-ca0b5bd7` | v6 + SD-Karte über USB für DEx und deluge-editor |
 | `deluge-1.2.1-mastertune-v8-76c5a9b8.bin` | `1.2.1-mastertune-v8-76c5a9b8` | v7 + USB-Audio: Ausgang des Deluge als Aufnahme-Eingang am Computer |
 | `deluge-1.2.1-mastertune-v9-c0212731.bin` | `1.2.1-mastertune-v9-c0212731` | v8 + klügeres Sample-Streaming, Kit RAM saver |
+| `deluge-1.2.1-mastertune-v10-7f9ad5c1.bin` | `1.2.1-mastertune-v10-7f9ad5c1` | v9 + Reverb: neues Modell Digital, Mutable und Freeverb repariert, HPF und LPF |
 
-SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745` (vollständig: `sha256sum *.bin`).
-Quellcode: `patches/0001` bis `0009` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009.
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62` (vollständig: `sha256sum *.bin`).
+Quellcode: `patches/0001` bis `0010` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010.
 
 ## v3 und v4: Unterschiede
 
@@ -171,6 +172,29 @@ v9 enthält v8 unverändert und verbessert, wie der Deluge Samples von der SD-Ka
 
 **Geprüft:** die Warteschlange mit dem echten Firmware-Code auf dem PC (Reihenfolge, gleiche Prioritäten, Erkennung der niedrigsten Priorität), Build ohne Warnungen, zwei Builds mit identischer SHA-256, eine Code-Prüfung. Sie fand drei Fehler, alle behoben: Ein wartender Schlag konnte durch die automatische Release-Logik stumm bleiben, der Kit RAM saver konnte beim Laden eines Presets in eine Kit-Reihe in freigegebenen Speicher schreiben, und beim Erhöhen von Unison während des Wartens übernahm die neue Stimme einen falschen Zustand. Ausserdem laden ein später Einstieg in ein Sample (Stummschaltung mitten in der Note aufgehoben) und der Wechsel vom Cache zurück zur Karte jetzt mit der Priorität ihrer Stimme statt mit der niedrigsten.
 
+## v10: Reverb in besserer Qualität
+
+v10 enthält v9 unverändert und überarbeitet das Song-Reverb: ein neues Modell, zwei reparierte Modelle und funktionierende Filter. Alle Einstellungen liegen wie bisher im Reverb-Menü (Song und Sound).
+
+1. **Neues Modell «Digital»** (Model → Digital, 7-Segment `DIGI`): die Plate von Jon Dattorro (1997), aufgebaut wie das Lexicon 224. Dichter, glatter Nachhall ohne metallisches Klingeln, weil die Modulation im Tank die Resonanzen ständig verschiebt. Stereo aus 14 Abgriffen, links und rechts unkorreliert.
+   - **Time** (Room size): 0 ≈ 0,6 s, 30 (Standard) ≈ 4,5 s, 45 ≈ 18 s, 50 fast endlos. **Width:** Stereobreite, 0 = mono. **Damping**, **HPF** und **LPF** wie bei Mutable.
+   - Gleich laut wie Mutable (Abweichung höchstens 0,5 dB), ein Wechsel des Modells springt also nicht in der Lautstärke.
+   - Die aktuelle Community-Firmware hat ein Modell mit diesem Namen, aber mit Fehlern: Die modulierten Allpässe im Tank sind dort keine Allpässe (kürzerer, dünnerer Nachhall), beide Tank-Hälften teilen sich ein Dämpfungsfilter, und die Plate ist 2,2-mal zu klein skaliert. Diese Version folgt dem Paper.
+2. **Mutable: Modulation wie im Original.** Durch einen Portierungsfehler liefen die beiden LFOs 16-mal langsamer als bei Mutable Instruments, der Nachhall stand deshalb fast still. Jetzt laufen sie wie in den Modulen Rings, Elements und Clouds (etwa 0,45 und 0,28 Hz), und das «Smearing» im ersten Diffusor ist wieder drin. Songs mit Mutable klingen dadurch etwas lebendiger, Lautstärke und Länge bleiben gleich.
+3. **Damping läuft richtig herum (Mutable).** In 1.2.1 lief Damping beim Mutable-Modell verkehrt: 0 und 50 waren hell, 1 am dunkelsten, mit einem Sprung zwischen 0 und 1. Jetzt wie bei Freeverb: 0 hell, 50 dunkel, stufenlos. **Bestehende Songs klingen gleich**, nur die angezeigte Zahl ist jetzt 50 minus die alte (Standard 36 → 14). In der Datei steht der Wert weiter wie in 1.2.1, Songs bleiben also zwischen den Versionen austauschbar.
+4. **HPF repariert.** Wegen eines Rechenfehlers reichte er nur bis 85 Hz statt bis 540 Hz, und 1.2.1 übernahm ihn beim Laden eines Songs gar nicht. Jetzt: 0 = 20 Hz, 25 = 190 Hz, 50 = 540 Hz, gespeichert und geladen mit dem Song. Ein in alten Songs gespeicherter Wert wird mit der Frequenz geladen, die er damals tatsächlich hatte (alt 50 → neu 12).
+5. **Neu: LPF** (Mutable und Digital) zum Abdunkeln des ganzen Halls: 0 = 500 Hz, 25 = 3,2 kHz, 49 = 18,6 kHz, **50 = aus** (Standard). Das Damping dagegen dunkelt den Nachhall mit der Zeit immer stärker ab.
+6. **Freeverb:** Bei Width unter dem Maximum war der rechte Kanal lauter, bei Width 0 um 3,6 dB, jetzt ausgeglichen (≤ 0,1 dB). Und wenn ein langer, lauter Hall den Wertebereich überschritt, klappte der Wert um und knackte laut. Jetzt wird er begrenzt. Sonst rechnet Freeverb bitgleich wie bisher.
+
+**Grenzen:**
+- Nicht auf dem Gerät getestet.
+- Digital braucht etwa ein Drittel mehr Rechenzeit als Mutable (gerechnet einmal für den ganzen Song).
+- Ein mit Digital gespeicherter Song spielt in 1.2.1 ohne Reverb, weil 1.2.1 das Modell nicht kennt.
+- HPF und LPF gibt es wie bisher nur für Mutable und Digital, nicht für Freeverb.
+- Songs aus der Community-Firmware 1.3 liest v10 mit deren Damping-Richtung, denn auch die Community hat Damping inzwischen umgedreht (19.9.2026). Ältere 1.3-Songs lassen sich davon nicht unterscheiden und kommen mit umgekehrtem Damping, genau wie in der Community-Firmware selbst. Deine Songs aus 1.2.1 und meinen Versionen betrifft das nicht.
+
+**Geprüft:** Host-Test mit dem Reverb-Code der Firmware (47 Prüfpunkte, mit UndefinedBehaviorSanitizer): alle Modelle stabil bei maximaler Room Size, Nachhallzeiten und Pegel von Digital gegen Mutable, Stereo-Balance und -Breite, LFO-Raten, Grenzfrequenzen von HPF und LPF, Umrechnung aller alten Damping- und HPF-Werte (identischer Klang). Build ohne Warnungen, zwei Builds mit identischer SHA-256, eine Code-Prüfung. Sie fand zwei Fehler, beide behoben: Die Presets auf der Reverb-Taste (Small, Medium, Large) wären mit der neuen Damping-Richtung beim Mutable-Modell viel dunkler geworden, und Songs aus der Community-Firmware 1.3 wären mit umgekehrtem Damping geladen worden.
+
 ## Bedienung
 
 Das Menü liegt unter **Settings → Tuning → Master tune (Hz)**. Die 7-Segment-Anzeige zeigt `TUNE` → `MTUN`.
@@ -256,8 +280,8 @@ Version 1 liegt weiterhin in der Git-Historie dieses Ordners.
 ```sh
 git clone https://github.com/SynthstromAudible/DelugeFirmware && cd DelugeFirmware
 git checkout release_1_2_1
-git am /pfad/zu/patches/*.patch        # alle = v9; nur 0001 = v2, 0001-0003 = v3, 0001-0004 = v4, 0001-0005 = v5, 0001-0006 = v6, 0001-0007 = v7, 0001-0008 = v8
-./dbt configure -DRELEASE_TYPE:STRING=mastertune-v9   # Name in der Versionsanzeige, z. B. mastertune-v8 für v8
+git am /pfad/zu/patches/*.patch        # alle = v10; nur 0001 = v2, 0001-0003 = v3, 0001-0004 = v4, 0001-0005 = v5, 0001-0006 = v6, 0001-0007 = v7, 0001-0008 = v8, 0001-0009 = v9
+./dbt configure -DRELEASE_TYPE:STRING=mastertune-v10   # Name in der Versionsanzeige, z. B. mastertune-v9 für v9
 ./dbt build release                      # Ergebnis: build/Release/deluge.bin
 
 # Rechentest (Host-Compiler)
@@ -277,4 +301,7 @@ python3 /pfad/zu/tests/run_neon_shift_test.py .
 
 # Lade-Warteschlange (v9) auf dem PC (braucht g++-multilib)
 /pfad/zu/tests/streaming/run.sh .
+
+# Reverb (v10): alle Modelle auf dem PC gemessen, mit UndefinedBehaviorSanitizer
+/pfad/zu/tests/reverb/run.sh .
 ```
