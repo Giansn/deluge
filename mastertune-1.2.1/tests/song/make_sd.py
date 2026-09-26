@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Builds the SD card image for the song benchmark: generated samples and the song SONGS/DEFAULT.XML.
 
-Usage: make_sd.py <image> [--reverb-model N] [--xml-out file]
+Usage: make_sd.py <image> [--reverb-model N] [--xml-out file] [--synths N]
 
 The song ("everything at once", 120 BPM, 4/4, the firmware's default resolution of 96 ticks per quarter note):
 - 8 synth tracks, all playing 4-bar clips of 4-note chords (Cm9, Abmaj7, Fm9, G7sus4, one chord per bar), 2
@@ -435,7 +435,7 @@ def drone():
     return out
 
 
-def song_xml(lengths, reverb_model):
+def song_xml(lengths, reverb_model, num_synths=8):
     head = dict(firmwareVersion="c1.2.1", earliestCompatibleFirmware="4.1.0-alpha", arrangementAutoScrollOn=0,
                 xScroll=0, xZoom=24, yScrollSongView=-7, yScrollArrangementView=-7, xScrollArrangementView=0,
                 xZoomArrangementView=192, timePerTimerTick=229, timerTickFraction=-1073741824, rootNote=0,
@@ -459,7 +459,7 @@ def song_xml(lengths, reverb_model):
                        tempo="0x00002EE0")
     out += global_params_block("songParams", song_params, 1)
     instruments, clips = [], []
-    for part in synths() + [kit(lengths), audio_track(lengths)]:
+    for part in synths()[:num_synths] + [kit(lengths), audio_track(lengths)]:
         instruments.append(part[0])
         clips.append(part[1])
     out += "\t<instruments>\n" + "".join(instruments) + "\t</instruments>\n"
@@ -474,11 +474,13 @@ def main():
     ap.add_argument("image")
     ap.add_argument("--reverb-model", type=int, default=1, help="0 Freeverb, 1 Mutable (default), 2 Digital")
     ap.add_argument("--xml-out")
+    ap.add_argument("--synths", type=int, default=8,
+                    help="only the first N synth tracks (a lighter song, e.g. for song_emu.py --save-while-playing)")
     ap.add_argument("--files-out", help="also write the song and samples as files for a real SD card, under their own "
                     "names (SONGS/MT_LOADTEST.XML, SAMPLES/MT_LOADTEST/), so nothing on the card is overwritten")
     args = ap.parse_args()
     files, lengths = samples()
-    xml = song_xml(lengths, args.reverb_model)
+    xml = song_xml(lengths, args.reverb_model, args.synths)
     files["SONGS/DEFAULT.XML"] = xml.encode()
     if args.xml_out:
         open(args.xml_out, "w").write(xml)

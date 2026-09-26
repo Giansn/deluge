@@ -189,6 +189,7 @@ class Emulator:
         self.sd_fd = os.open(sd_image, os.O_RDWR)
         self.sd_reads = self.sd_writes = 0
         self.dma_free = 0  # See ssi_position()
+        self.dma = None  # A RealTimeDma from when it takes over (--save-while-playing)
         self.stopped = False
 
     @staticmethod
@@ -284,7 +285,9 @@ class Emulator:
 
     def ssi_position(self):
         """Where the SSI's DMA reads (getTxBufferCurrentPlace()): dma_free samples ahead of where the renderer has
-        written up to."""
+        written up to. With a RealTimeDma (--save-while-playing): where it reads now, by the emulated time."""
+        if self.dma is not None:
+            return self.sym["ssiTxBuffer"] + self.dma.position() % 128 * 8
         tx_pos = self.u32(self.sym["_ZN11AudioEngine14i2sTXBufferPosE"]) - UNCACHED_MIRROR_OFFSET
         start = self.sym["ssiTxBuffer"]
         return start + ((tx_pos - start + self.dma_free * 8) % (128 * 8))
@@ -834,6 +837,248 @@ def report(r, log):
         log(f"  {d['per_128']:9,.0f} {d['percent_of_total']:5.1f}% {d['cpu_percent']:5.1f}%  {a}: {top}")
 
 
+# --- saving while the song plays (--save-while-playing)
+
+class RealTimeDma:
+    """The SSI's transmit DMA in real time: from here on it reads one sample every 1/44100 s of emulated time
+    (instructions at 400 MHz), round the buffer of 128 samples, whether the firmware has refilled it or not. It starts
+    with the buffer full (as the windows before leave it). Every sample the firmware writes into the buffer is checked
+    against it: the gap is how many samples the DMA has read since the buffer was last full (the firmware refills up to
+    where the DMA reads), i.e. how long the audio went without servicing. At 128 or more the DMA has played the buffer's
+    old content again: an underrun, the buzz. What the firmware writes is kept for a WAV file."""
+
+    def __init__(self, emu):
+        self.emu = emu
+        self.cached = emu.sym["ssiTxBuffer"]
+        self.base = self.cached + UNCACHED_MIRROR_OFFSET
+        slot = (emu.u32(emu.sym["_ZN11AudioEngine14i2sTXBufferPosE"]) - self.base) // 8
+        self.start_instructions = emu.bc.bc_total()
+        self.start_position = slot  # The DMA reads where the firmware writes next: the buffer is full
+        self.written = slot + 128  # Absolute number of the next sample the firmware writes (the DMA's count + 128)
+        self.max_gap = 0
+        self.underruns = 0  # Samples written with a gap of 128 or more
+        self.misplaced = 0  # Samples not written where expected (only after an underrun)
+        self.pending = []  # Addresses written since the last collect()
+        self.samples = []  # (left, right) as written, in order
+        for b in (self.base, self.cached):
+            emu.uc.hook_add(unicorn.UC_HOOK_MEM_WRITE, self.on_write, begin=b, end=b + 128 * 8 - 1)
+        emu.dma = self
+
+    def position(self):
+        """The number of the sample the DMA reads now (counted from where the firmware wrote first)."""
+        return self.start_position + (self.emu.bc.bc_total() - self.start_instructions) * SAMPLE_RATE // int(CPU_HZ)
+
+    def gap(self):
+        return self.position() + 128 - self.written
+
+    def on_write(self, uc, access, address, size, value, _):
+        base = self.base if address >= self.base else self.cached
+        offset = address - base
+        for first in range(-(-offset // 8) * 8, offset + size, 8):  # Samples whose first word is written here
+            slot = first // 8 % 128
+            if slot != self.written % 128:
+                self.misplaced += 1
+                self.written += (slot - self.written) % 128
+            gap = self.gap()
+            self.max_gap = max(self.max_gap, gap)
+            if gap >= 128:
+                self.underruns += 1
+            self.written += 1
+            self.pending.append(base + slot * 8)
+
+    def collect(self):
+        """Reads the samples written since the last call (after the writes: the hook comes before them)."""
+        for a in self.pending:
+            self.samples.append(struct.unpack("<ii", self.emu.uc.mem_read(a, 8)))
+        self.pending = []
+
+
+class Regions:
+    """The emulated time by what runs, exclusive: `outer` unless inside one of the functions given (the innermost
+    counts), entered at their first instruction and left at their return address with the same stack pointer. Return
+    hooks are added as return addresses show up (and the translated code there is dropped, so they take effect)."""
+
+    def __init__(self, emu, functions, outer):
+        self.emu = emu
+        self.outer = outer
+        self.stack = []  # (category, stack pointer, return address, instructions at entry, extra)
+        self.time = collections.Counter()
+        self.last = emu.bc.bc_total()
+        self.return_hooks = set()
+        self.on_enter = {}  # Category -> function(emu, return address) giving the entry's extra, for on_exit
+        self.on_exit = {}  # Category -> function(emu, extra, instructions)
+        self.missing = []
+        for name, category in functions:
+            try:
+                address = emu.sym.find(name)
+            except KeyError:
+                self.missing.append(name)
+                continue
+            emu.intercept(address, lambda e, c=category: self.enter(c))
+            emu.uc.ctl_remove_cache(address & ~1, (address & ~1) + 4)
+
+    def charge(self):
+        now = self.emu.bc.bc_total()
+        self.time[self.stack[-1][0] if self.stack else self.outer] += now - self.last
+        self.last = now
+
+    def enter(self, category):
+        uc = self.emu.uc
+        self.charge()
+        back = uc.reg_read(UC_ARM_REG_LR) & ~1
+        if back not in self.return_hooks:
+            self.return_hooks.add(back)
+            uc.hook_add(UC_HOOK_CODE, self.at_return, begin=back, end=back)
+            uc.ctl_remove_cache(back, back + 4)
+        extra = self.on_enter[category](self.emu, back) if category in self.on_enter else None
+        self.stack.append((category, uc.reg_read(UC_ARM_REG_SP), back, self.emu.bc.bc_total(), extra))
+
+    def at_return(self, uc, address, size, _):
+        if self.stack and self.stack[-1][2] == address and self.stack[-1][1] == uc.reg_read(UC_ARM_REG_SP):
+            self.charge()
+            category, _, _, entered, extra = self.stack.pop()
+            if category in self.on_exit:
+                self.on_exit[category](self.emu, extra, self.emu.bc.bc_total() - entered)
+
+
+SAVE_PATH = "SONGS/SAVETEST.XML"
+AUDIO, CLUSTERS, UI, FILES, XML = ("audio (AudioEngine::routine())", "cluster loading (loadAnyEnqueuedClusters)",
+                                   "UI timers, OLED, PIC", "FatFS (f_write, f_close, ...; the card itself is instant)",
+                                   "XML generation (the rest)")
+
+
+def save_while_playing(emu, player, warmup_bars, out_dir, log):
+    """--save-while-playing: after the warm-up (windows of 128 as in measure()), the DMA runs in real time
+    (RealTimeDma) and the firmware saves the playing song to SAVE_PATH as SaveSongUI does: StorageManager::
+    createXMLFile(), Song::writeToFile(), XMLSerializer::closeFileAfterWriting(). Nothing but the firmware itself services
+    the audio meanwhile (as on the Deluge, where the save runs inside a task and only the SD card's waits yield; those are
+    instant here). Reports the save's emulated duration, what it is spent on, the routine() calls and their windows, and
+    the gaps (see RealTimeDma)."""
+    t = time.time()
+    player.play(int(warmup_bars * BAR))
+    log(f"warm-up: {warmup_bars:g} bar(s) ({time.time() - t:.1f} s)")
+    sym = emu.sym
+    timer = sym["_ZN11AudioEngine16audioSampleTimerE"]
+    calls = []  # Top-level routine() calls: dict
+    renders = []  # audioSampleTimer where each window's rendering began (Song::renderAudio())
+    regions = Regions(emu, [("_ZN11AudioEngine7routineEv", AUDIO),
+                            ("_ZN16AudioFileManager23loadAnyEnqueuedClusters", CLUSTERS),
+                            ("_ZN14UITimerManager7routineEv", UI), ("oledRoutine", UI), ("uartFlushIfNotSending", UI),
+                            ("f_write", FILES), ("f_close", FILES), ("f_open", FILES), ("f_read", FILES),
+                            ("f_lseek", FILES), ("f_sync", FILES)], XML)
+
+    def routine_entered(e, back):
+        if any(s[0] == AUDIO for s in regions.stack):
+            return None  # From inside routine(): returns at once (audioRoutineLocked)
+        return dict(gap=e.dma.gap(), timer=e.u32(timer), caller=e.sym.name_at(back).split("(")[0], renders=len(renders),
+                    at=e.bc.bc_total())
+
+    def routine_left(e, extra, instructions):
+        if extra is None:
+            return
+        e.dma.collect()
+        starts = renders[extra["renders"]:] + [e.u32(timer)]  # audioSampleTimer grows by each window after it
+        extra.update(instructions=instructions, samples=(starts[-1] - extra["timer"]) & 0xFFFFFFFF,
+                     windows=[(b - a) & 0xFFFFFFFF for a, b in zip(starts, starts[1:])], max_gap=e.dma.max_gap)
+        calls.append(extra)
+    regions.on_enter[AUDIO] = routine_entered
+    regions.on_exit[AUDIO] = routine_left
+    emu.intercept(sym.find("_ZN4Song11renderAudioEP12StereoSample"),
+                  lambda e: renders.append(e.u32(timer)) and None)
+    dma = RealTimeDma(emu)
+
+    strings = {}
+    at = STOP + 0x100
+    for name, text in (("path", SAVE_PATH), ("begin", '<?xml version="1.0" encoding="UTF-8"?>\n<song\n'),
+                       ("end", "\n</song>\n")):
+        emu.uc.mem_write(at, text.encode() + b"\0")
+        strings[name] = at
+        at += len(text) + 4 & ~3
+    storage, serializer, song = sym["storageManager"], sym["smSerializer"], emu.u32(sym["currentSong"])
+    t = time.time()
+    before = emu.bc.bc_total()
+    regions.last = before
+    # createXMLFile() is a clone without the XMLSerializer (always smSerializer); Song::writeToFile() returns nothing
+    steps = [("createXMLFile", sym.find("_ZN14StorageManager13createXMLFile"), (storage, strings["path"], 1, 0), True),
+             ("Song::writeToFile", sym["_ZN4Song11writeToFileER14StorageManager"], (song, storage), False),
+             ("closeFileAfterWriting", sym.find("_ZN13XMLSerializer21closeFileAfterWriting"),
+              (serializer, strings["path"], strings["begin"], strings["end"]), True)]
+    for name, address, arguments, returns_error in steps:
+        error = emu.call(address, *arguments, timeout_s=30)
+        if returns_error and error:
+            raise SystemExit(f"{name}: error {error}")
+    regions.charge()
+    dma.collect()
+    total = emu.bc.bc_total() - before
+    end_gap = dma.gap()
+    log(f"saved {SAVE_PATH}: {total / 1e6:,.1f}M instructions ({time.time() - t:.1f} s)")
+    xml = fat32.read_file(emu.sd_path, SAVE_PATH)
+
+    ms = lambda n: n / CPU_HZ * 1e3  # noqa: E731
+    windows = np.array([w for c in calls for w in c["windows"]])
+    rendering = [c for c in calls if c["windows"]]
+    gaps_in = np.array([c["gap"] for c in calls])
+    per_caller = collections.Counter(c["caller"] for c in calls)
+    samples = np.array(dma.samples, dtype=np.int64).reshape(-1, 2)
+    pcm = (samples >> 16).astype("<i2").tobytes()
+    with open(os.path.join(out_dir, "save.wav"), "wb") as f:
+        f.write(b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " +
+                struct.pack("<IHHIIHH", 16, 1, 2, SAMPLE_RATE, SAMPLE_RATE * 4, 4, 16) + b"data" +
+                struct.pack("<I", len(pcm)) + pcm)
+    result = dict(
+        file=dict(path=SAVE_PATH, bytes=len(xml), sha256=__import__("hashlib").sha256(xml).hexdigest()),
+        duration_ms=ms(total), instructions=total,
+        by_what={k: dict(ms=ms(v), share=v / total) for k, v in regions.time.most_common()},
+        not_in_elf=regions.missing,
+        routine_calls=dict(
+            count=len(calls), rendering=len(rendering), output_only=len(calls) - len(rendering),
+            by_caller=dict(per_caller.most_common()),
+            mean_instructions=float(np.mean([c["instructions"] for c in calls])) if calls else None,
+            mean_instructions_rendering=float(np.mean([c["instructions"] for c in rendering])) if rendering else None,
+            mean_interval_samples=(ms(calls[-1]["at"] - calls[0]["at"]) * SAMPLE_RATE / 1e3 / (len(calls) - 1))
+            if len(calls) > 1 else None),
+        windows=dict(count=len(windows), samples=int(windows.sum()) if len(windows) else 0,
+                     mean=float(windows.mean()) if len(windows) else None,
+                     percentiles={p: float(np.percentile(windows, p)) for p in (5, 25, 50, 75, 95)}
+                     if len(windows) else None,
+                     histogram={f"{lo}-{lo + 15}": int(np.sum((windows >= lo) & (windows < lo + 16)))
+                                for lo in range(0, 129, 16)} if len(windows) else None),
+        gaps=dict(max=int(max(dma.max_gap, end_gap)), at_end=int(end_gap), underrun_samples=dma.underruns,
+                  misplaced=dma.misplaced,
+                  at_routine_entry=dict(mean=float(gaps_in.mean()), max=int(gaps_in.max()),
+                                        percentiles={p: float(np.percentile(gaps_in, p)) for p in (50, 95, 99)})
+                  if len(calls) else None),
+        samples_written=len(samples), samples_played=int(dma.position() - dma.start_position),
+        call_log_fields=["instructions since the save began", "gap at entry", "instructions", "samples rendered",
+                         "windows"],
+        call_log=[(int(c["at"] - before), int(c["gap"]), int(c["instructions"]), int(c["samples"]), c["windows"])
+                  for c in calls])
+    json.dump(result, open(os.path.join(out_dir, "save_result.json"), "w"), indent=1)
+    emu.dma = None
+
+    log(f"\nsave while playing: {result['duration_ms']:.1f} ms emulated ({total / 1e6:,.1f}M instructions), "
+        f"{len(xml):,} bytes of XML")
+    for k, v in result["by_what"].items():
+        log(f"  {v['ms']:8.1f} ms {v['share'] * 100:5.1f}%  {k}")
+    r = result["routine_calls"]
+    log(f"routine() calls: {r['count']} ({r['rendering']} rendering, {r['output_only']} only outputting), one every "
+        f"{r['mean_interval_samples'] or 0:.1f} samples; by caller: "
+        + ", ".join(f"{k} {v}" for k, v in r["by_caller"].items()))
+    w = result["windows"]
+    if w["count"]:
+        log(f"windows rendered: {w['count']}, {w['samples']} samples, mean {w['mean']:.1f}, percentiles 5/25/50/75/95: "
+            + " / ".join(f"{x:.0f}" for x in w["percentiles"].values()) + "; by size: "
+            + ", ".join(f"{k}: {v}" for k, v in w["histogram"].items() if v))
+    g = result["gaps"]
+    log(f"gaps (samples the DMA read since the buffer was last full; 128 = underrun): max {g['max']}, at the end "
+        f"{g['at_end']}, samples written with a gap of 128 or more: {g['underrun_samples']}, misplaced: {g['misplaced']}"
+        + (f"; at routine() entry: mean {g['at_routine_entry']['mean']:.1f}, max {g['at_routine_entry']['max']}"
+           if g["at_routine_entry"] else ""))
+    log(f"samples: {result['samples_played']} played by the DMA during the save, {result['samples_written']} written "
+        f"(save.wav); file sha256 {result['file']['sha256'][:16]}")
+    return result
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("elf")
@@ -846,6 +1091,10 @@ def main():
     ap.add_argument("--culling", action="store_true",
                     help="as on the Deluge: routine() culls voices and sets cpuDireness by its emulated duration")
     ap.add_argument("--write-back", help="also save the song as the firmware writes it after loading, to this file")
+    ap.add_argument("--save-while-playing", action="store_true",
+                    help="instead of the measurement: after the warm-up bars, save the playing song (to "
+                         f"{SAVE_PATH}) with the DMA in real time; reports the save's duration by what runs, the "
+                         "routine() calls and windows, and the gaps in the audio (save_result.json, save.wav)")
     ap.add_argument("--fill", type=lambda x: int(x, 0),
                     help="fill the internal RAM and the SDRAM (not the peripherals) with this 32-bit word before boot "
                          "(default: zeros); two different words give the same measured.wav unless the firmware reads "
@@ -887,6 +1136,9 @@ def main():
         log(f"--init-sounds: {emu.sounds_initialised} Sounds constructed")
     player = Player(emu, culling=args.culling)
     player.start()
+    if args.save_while_playing:
+        save_while_playing(emu, player, args.warmup_bars, args.out, log)
+        return
     result = measure(emu, player, args.warmup_bars, args.bars, args.out, log, song_names)
     json.dump(result, open(os.path.join(args.out, "result.json"), "w"), indent=1)
     report(result, log)
