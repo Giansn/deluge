@@ -222,42 +222,117 @@ Nicht gemessen: `considerUpcomingWindow`/Cluster und `TimeStretcher::hopEnd`.
 
 ## 6. Volllast-Test mit einem vielspurigen Song
 
-**Läuft** (Workflow `song-load-run`, `tests/song/`).
-- Aufbau: die echte v12-Firmware (`deluge.elf`) im Emulator, ohne Hardware-Init, nur der Audioteil.
-  - SD über Hooks in `diskio.c` auf ein Kartenabbild.
-  - `getTxBufferCurrentPlace()` liefert je 128 neue Samples.
-  - Befehle werden mit einem Zähler in C pro Basisblock gezählt.
-- Song: etwa 12 Spuren bei 120 BPM.
-  - 8 Synths mit Akkorden, Unison, LP24/HPF, LFO, Mod-FX, Delay, Kompressor, Bitcrush und Arp
-  - ein Kit mit 8 Spuren; die Kick steuert die Sidechain
-  - eine Audiospur
-  - Reverb, Sidechain, Drone mit 4 Tönen
-  - Ziel etwa 30 Stimmen, ohne Voice-Culling
-- Ergebnisse: *folgen*
+`tests/song/run.sh <Firmware-Baum|deluge.elf> [out] [Takte]`, Laufzeit etwa 1 Minute. Rohdaten: `raw/song-load-run-1.json`.
 
-## 7. Priorisierung (vorläufig, wird nach dem Volllast-Test festgelegt)
+**Aufbau**
+- Die **unveränderte v12-`deluge.elf`** läuft im Emulator.
+- Ablauf: `resetprg`/`deluge_main` bis `registerTasks`, dann `setupStartupSong` (lädt `SONGS/DEFAULT.XML` von einem FAT32-Abbild mit 32-KB-Clustern), `playButtonPressed`, danach `AudioEngine::routine()` pro Fenster.
+- Nachgebildet ist nur die Hardware: Timer, DMA, SPI, Flash. Die SDHI-Initialisierung wird übersprungen.
+- Gezählt wird die ganze Routine, inklusive Ticks und Ausgabe. Das Ergebnis ist deterministisch: zwei Läufe sind identisch.
 
-**Bitgleiche Optimierungen, Kandidaten fürs Leistungspaket:**
-1. Filter: pro Stimme, bei 30 Stimmen etwa 4–5 % CPU.
-2. Sample-Lesen: Sinc 15–20 %, linear etwa 45 % pro Sample-Stimme.
-3. Analog-Delay-Impulsantwort mit NEON: etwa −3 % pro Instanz.
-4. Oszillatoren: NEON-Gewichte, wirkt vor allem bei Unison.
-5. Phaser, Kompressor, EQ, MkI-Engine.
-6. Drone mit NEON.
+**Song:** 120 BPM, alles gleichzeitig.
+- 8 Synths, alle mit 4-Ton-Akkorden, Saw+Square und LP24:
+  - Unison 4 + HPF + LFO + Chorus
+  - Unison 4 + Phaser + Delay
+  - HPF + Flanger + Kompressor
+  - Bitcrush + SRR
+  - Arp 16tel + Delay
+  - Unison 4 + HPF
+  - FM (DX7, Algorithmus 5)
+  - Wavetable
+- Kit mit 8 Spuren in Sechzehnteln; die Kick steuert die Sidechain, zwei Spuren sind gepitcht.
+- Audiospur: ein Loop mit 100 BPM, per Timestretch auf 120 BPM.
+- Reverb Mutable, 4 binaurale Drone-Töne.
+- Ausgang: Peak −1,5 dBFS, RMS −18 dBFS, nichts übersteuert, kein NaN.
+
+**Ergebnis, Lauf 1** (vom Gegenprüfer nachgerechnet)
+- **Mittel 962 920 Befehle pro Fenster von 128 Samples = 83 % CPU. Spitze 1 303 588 = 112 %,** bei Akkordwechseln.
+- Stimmen: Mittel 29,7, Spitze 36.
+- Die Kosten wachsen etwa linear: **rund 126 000 Befehle fix pro Fenster plus 28 000 pro Stimme** (r = 0,98).
+- An Clock-Ticks gekürzte Fenster (10 Samples) kosten trotzdem etwa 200 000. Der Aufwand pro Fenster und Stimme ist also hoch.
+- Variante mit 1,6 s Release: 58 Stimmen, Mittel 108 %, Spitze 151 %.
+- Digital-Reverb statt Mutable: 54 000 statt 40 000 Befehle pro Fenster.
+
+| Bereich | Anteil | Befehle pro Fenster |
+|---|---|---|
+| Filter (LP/HP-Ladder) | 35,1 % | 337 500 |
+| Oszillatoren inkl. Wavetable | 26,3 % | 253 000 |
+| Spur-FX (Mod-FX, Bitcrush, Volume/Pan/Reverb-Send) | 10,6 % | 101 700 |
+| Stimmen, Patcher, Hüllkurven, LFOs | 9,3 % | 89 700 |
+| Reverb (Mutable) | 4,1 % | 39 900 |
+| Sidechain, Kompressoren | 3,2 % | 31 200 |
+| Sample-Lesen, Interpolation, Timestretch | 2,2 % | 21 300 |
+| Delay | 2,1 % | 20 600 |
+| Drone | 2,1 % | 20 500 |
+| FM (DX7) | 2,1 % | 20 000 |
+| Speicher, Sonstiges | 1,4 % | 13 600 |
+| Song-/Master-FX, Ausgabe | 1,2 % | 11 500 |
+| Playback, Sequencer | 0,3 % | 2 500 |
+
+Top-Funktionen:
+
+| Funktion | Befehle | Anteil |
+|---|---|---|
+| `LpLadderFilter::doFilter` | 252 600 | 26 % |
+| `Voice::renderOsc` | 178 200 | 18,5 % |
+| `HpLadderFilter::doFilter` | 78 100 | |
+| `Sound::render` | 75 900 | |
+| `WaveTable::doRenderingLoop` | 56 700 | |
+| `ModControllableAudio::processReverbSendAndVolume` | 56 700 | 5,9 % |
+| `reverb::Mutable::process` | 39 800 | |
+| `ModControllableAudio::processFX` | 38 000 | |
+| `RMSFeedbackCompressor::render` | 24 300 | |
+| `Delay::process` | 19 800 | |
+
+**Abgleich mit den Einzel-Benchmarks** (Gegenprüfer): Die Werte passen.
+- LP-Ladder: 11 200 pro Stimme im Song, 10 800 im Bench.
+- HP-Ladder: 7 200 gegen 7 700.
+- Oszillatoren: 179 000 hochgerechnet, 178 000 gemessen.
+
+**Vom Gegenprüfer gefunden, Korrekturlauf läuft:**
+1. Im letzten Achtel jedes Takts schweigen die Synths. Im Dauerzustand liegt die Last bei **etwa 89 %**, nicht 83 %.
+2. **Culling auf dem Gerät:** Der Soft-Cull beginnt, wenn ein Fenster mehr als 62,5 % seiner Zeit braucht, der Hard-Cull ab 87,5 %. Bei rund 89 % würde ein echter Deluge mit diesem Song **dauernd Stimmen abschalten** und `cpuDireness` hochsetzen. Im Emulator lief das nicht, weil die Laufzeitmessung 0 lieferte. Der Korrekturlauf bildet es nach.
+3. Stimmen pro Spur werden ergänzt.
+4. Den Reverb-Vergleich über dieselben Takte wiederholen.
+
+Nach den Zählungen des Gegenprüfers spielen alle 16 Sounds, 6 Pads zu 90 % der Zeit mit 4 Stimmen, und alle 8 Kit-Spuren sind aktiv.
+
+## 7. Priorisierung (nach dem Volllast-Test)
+
+Grundlage: Anteil im vollen Song mal geschätzte Einsparung aus den Benchmarks. Alle Punkte sind bitgleich geplant.
+
+| # | Ziel | Anteil im Song | erwartete Einsparung am Gesamt | Grundlage |
+|---|---|---|---|---|
+| 1 | **Filter** (LP/HP-Ladder, SVF): Zustand in Registern, Verzweigungen aus der Schleife, `smmlar`-Ketten | 35 % | **etwa 6–7 %** der Gesamtlast | 3.1: LP 15–20 %, HP etwa 20 % |
+| 2 | **Oszillatoren:** NEON-Gewichte in `renderWave`/`renderPulseWave`, Dreieck und Crude in NEON | 26 % (davon `renderOsc` 18,5 %) | etwa 3–4 % | 3.2: −21 % `renderWave` |
+| 3 | **`processReverbSendAndVolume`** (neu gefunden, noch nicht gebenchmarkt) | 5,9 % | offen, vermutlich viel (skalare Schleife pro Sample) | Song-Profil |
+| 4 | **Aufwand pro Fenster und Stimme** (`Sound::render`, Patcher, Hüllkurven) | 9,3 % + 126 000 fix | offen | Song-Profil: 10-Sample-Fenster kosten etwa 200 000 |
+| 5 | Wavetable-Schleife | 5,9 % | offen | noch nicht gebenchmarkt |
+| 6 | Mod-FX (Phaser, Chorus), Kompressor, EQ | zusammen etwa 6 % | etwa 1–2 % | 3.3 |
+| 7 | Analog-Delay-Impulsantwort NEON | im Song nicht aktiv | etwa 3 % pro Analog-Delay | 3.3 |
+| 8 | Sample-Lesen (Sinc/linear) | 2,2 % in diesem Song | klein hier; gross bei sample-lastigen Songs | 3.4 |
+| 9 | Drone NEON | 2,1 % | klein | 3.5 |
+
+**Schluss:**
+- Filter und Oszillatoren machen zusammen über 60 % der Last aus und sind der klare erste Schritt.
+- Die Plätze 1–2 bringen zusammen etwa 10 % der Gesamtlast. Das senkt den Bedarf dieses Songs von etwa 89 % auf etwa 80 %, also weniger Culling und seltener reduzierte Qualität.
+- Für die Plätze 3–5 braucht es zuerst Benchmarks.
 
 **Getrennt, mit Messung auf dem Gerät:**
 - L2-Cache
-- MIDI/Clock-Fix im SD-Routine
+- MIDI/Clock-Fix in `routineForSD`
 - Kompressor-Korrektur (`hpfR`)
 
 **Vorgehen je Optimierung:**
 1. Ein Agent setzt um, mit bitgleichem Nachweis nach Abschnitt 1 und gezählter Einsparung.
 2. Ein Gegenprüfer kontrolliert.
-3. Zum Schluss der ganze Song vorher/nachher identisch.
+3. Zum Schluss der ganze Song vorher/nachher: gleicher Ausgang (`measured.wav`), weniger Befehle.
 
 ## 8. Offen
 
-- [ ] Volllast-Test: Ergebnisse eintragen (Abschnitt 6), Priorisierung festlegen (Abschnitt 7).
+- [x] Volllast-Test Lauf 1 eingetragen, Priorisierung angepasst.
+- [ ] Korrekturlauf eintragen: Dauerlast, Culling und `cpuDireness` wie auf dem Gerät, Stimmen pro Spur.
+- [ ] Benchmarks für `processReverbSendAndVolume`, den Aufwand pro Fenster in `Sound::render` und die Wavetable-Schleife.
 - [ ] Wavetable-Oszillator, Grain, `hopEnd` und die Stereo-Unison-Pan-Schleife messen, falls der Volllast-Test sie als relevant zeigt.
 - [ ] MIDI/Clock-Fix: Übertragbarkeit am Code bestätigen.
 - [ ] L2-Cache: Nachbesserungen vollständig sammeln.
