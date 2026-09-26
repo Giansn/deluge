@@ -25,6 +25,8 @@ import collections
 import ctypes
 import json
 import math
+
+import numpy as np
 import os
 import struct
 import subprocess
@@ -433,10 +435,97 @@ def load_startup_song(emu):
             f"{emu.sd_reads} sectors read, {emu.sd_writes} written")
 
 
+class Measurement:
+    """Drives AudioEngine::routine() one window at a time and records what each costs."""
+
+    def __init__(self, emu):
+        self.emu = emu
+        sym = emu.sym
+        self.routine = sym["_ZN11AudioEngine7routineEv"]
+        # The task manager's tasks (lambdas in registerTasks(), in the order they're added): #2 is
+        # playbackHandler.routine(), #3 audioFileManager.loadAnyEnqueuedClusters(128, false)
+        self.playback_routine = sym.find("_ZZ13registerTasksvENUlvE0_4_FUNEv")
+        self.load_clusters = sym.find("_ZZ13registerTasksvENUlvE1_4_FUNEv")
+        self.sample_timer = sym["_ZN11AudioEngine16audioSampleTimerE"]
+        self.active_voices = sym["_ZN11AudioEngine12activeVoicesE"]
+        self.rendering_buffer = sym["_ZN11AudioEngine15renderingBufferE"]
+        self.master_l = sym["_ZN11AudioEngine23masterVolumeAdjustmentLE"]
+        self.master_r = sym["_ZN11AudioEngine23masterVolumeAdjustmentRE"]
+        self.culls = {}  # Calls of AudioEngine::cullVoice() by caller: solicitVoice (a Sound over its maxVoices, or out
+        # of memory for voices) or the audio routine's CPU-load culling
+        self.rendered = False
+        emu.intercept(sym.find("_ZN4Song11renderAudioEP12StereoSample"), self.on_render)
+        emu.intercept(sym.find("_ZN11AudioEngine9cullVoiceE"), self.on_cull)
+
+    def on_render(self, emu):
+        # From here on, the DMA shows no more free space: this routine() call renders just this window
+        emu.dma_free = 0
+        self.rendered = True
+
+    def on_cull(self, emu):
+        caller = emu.sym.function_at(emu.uc.reg_read(UC_ARM_REG_LR))
+        name = caller[2].split("(")[0] if caller else "?"
+        self.culls[name] = self.culls.get(name, 0) + 1
+
+    def voices(self):
+        return self.emu.u32(self.active_voices + 16)
+
+    def window(self):
+        """One AudioEngine::routine() call: returns (instructions, samples rendered, stereo int32 samples)."""
+        emu = self.emu
+        emu.dma_free = 127
+        self.rendered = False
+        timer = emu.u32(self.sample_timer)
+        before = emu.bc.bc_total()
+        emu.call(self.routine)
+        instructions = emu.bc.bc_total() - before
+        samples = (emu.u32(self.sample_timer) - timer) & 0xFFFFFFFF
+        audio = None
+        if samples:
+            raw = bytes(emu.uc.mem_read(self.rendering_buffer, samples * 8))
+            ml = struct.unpack("<i", emu.uc.mem_read(self.master_l, 4))[0]
+            mr = struct.unpack("<i", emu.uc.mem_read(self.master_r, 4))[0]
+            audio = (raw, ml, mr)
+        return instructions, samples, audio
+
+    def other_tasks(self):
+        """What the task manager runs besides the audio routine, between windows: the playback handler's routine and
+        the SD card's cluster loading. Returns their instructions."""
+        emu = self.emu
+        emu.dma_free = 0
+        before = emu.bc.bc_total()
+        emu.call(self.playback_routine)
+        emu.call(self.load_clusters)
+        return emu.bc.bc_total() - before
+
+
+def write_back_song(emu, path_out):
+    """Has the firmware save the song it loaded (as setupStartupSong() writes the template: unlink DEFAULT.XML, and it
+    writes the current song there and loads it again), then copies that file out of the image."""
+    sys.path.insert(0, HERE)
+    import fat32
+    name = b"SONGS/DEFAULT.XML\0"
+    emu.uc.mem_write(STOP + 0x100, name)
+    emu.call(emu.sym["f_unlink"], STOP + 0x100)
+    load_startup_song(emu)
+    open(path_out, "wb").write(fat32.read_file(emu.sd_path, "SONGS/DEFAULT.XML"))
+
+
 def boot(emu):
-    """resetprg up to where deluge_main registers the task manager's tasks."""
+    """resetprg up to where deluge_main starts the task manager, right after registerTasks(): the tasks are there (the
+    song's loading yields to them, the cluster loading among them), but the scheduler's loop doesn't start."""
     sym = emu.sym
-    emu.intercept(sym["_Z13registerTasksv"], lambda e: e.stop())
+    stop_hook = []
+
+    def at_register_tasks(e):
+        back = e.uc.reg_read(UC_ARM_REG_LR) & ~1
+
+        def stop_here(uc, address, size, _):
+            e.stop()
+            uc.hook_del(stop_hook[0])
+        stop_hook.append(e.uc.hook_add(UC_HOOK_CODE, stop_here, begin=back, end=back))
+
+    emu.intercept(sym["_Z13registerTasksv"], at_register_tasks)
     emu.uc.reg_write(UC_ARM_REG_SP, PROGRAM_STACK_TOP)
     t = time.time()
     emu.run(sym["resetprg"] | 1, STOP, timeout_s=3)
@@ -449,6 +538,9 @@ def main():
     ap.add_argument("sd")
     ap.add_argument("out")
     ap.add_argument("--tools", default=None)
+    ap.add_argument("--warmup-bars", type=float, default=1)
+    ap.add_argument("--bars", type=float, default=2)
+    ap.add_argument("--write-back", help="file to save the song as the firmware writes it after loading")
     args = ap.parse_args()
     tools = args.tools or os.path.join(os.path.dirname(os.path.abspath(args.elf)), "../../toolchain/v16/linux-x86_64/arm-none-eabi-gcc/bin/arm-none-eabi-")
     os.makedirs(args.out, exist_ok=True)
@@ -460,7 +552,143 @@ def main():
     setup_sd(emu)
     boot(emu)
     load_startup_song(emu)
+    if args.write_back:
+        write_back_song(emu, args.write_back)
+    # From here on we call the tasks ourselves. An empty task list also means getLastRunTimeforCurrentTask(), which
+    # the audio routine's culling goes by, reads 0: no culling for CPU load, whatever the emulated time
+    start, size = emu.sym.by_name["taskManager"]
+    emu.uc.mem_write(start, bytes(size))
+    m = Measurement(emu)
+    emu.call(emu.sym.find("_ZN15PlaybackHandler17playButtonPressedEl"), 0)
+    if not emu.u8(emu.sym["playbackHandler"] + 16):
+        raise SystemExit("playback didn't start")
+    result = measure(emu, m, args, log)
+    json.dump(result, open(os.path.join(args.out, "result.json"), "w"), indent=1)
 
+
+def run_windows(m, samples_wanted, record):
+    total = 0
+    while total < samples_wanted:
+        n, samples, audio = m.window()
+        other = m.other_tasks()
+        total += samples
+        if record is not None:
+            record.append((n, samples, m.voices(), other, audio))
+    return total
+
+
+def measure(emu, m, args, log):
+    bar = SAMPLE_RATE * 2  # 4 beats at 120 BPM
+    t = time.time()
+    run_windows(m, int(args.warmup_bars * bar), None)
+    log(f"warm-up: {args.warmup_bars} bar(s), {time.time() - t:.1f} s")
+    emu.bc.bc_reset_counts()
+    culls_before = dict(m.culls)
+    windows = []
+    t = time.time()
+    run_windows(m, int(args.bars * bar), windows)
+    elapsed = time.time() - t
+    total_instr = sum(w[0] for w in windows)
+    total_samples = sum(w[1] for w in windows)
+    log(f"measured: {args.bars} bars, {len(windows)} windows, {total_samples} samples, {total_instr / 1e6:,.0f}M "
+        f"instructions, {elapsed:.1f} s ({total_instr / elapsed / 1e6:.0f}M instructions/s emulated)")
+    per_block = total_instr / total_samples * 128
+    full = [w[0] for w in windows if w[1] == 128]
+    other = sum(w[3] for w in windows) / total_samples * 128
+    voices = [w[2] for w in windows]
+    culls = {k: v - culls_before.get(k, 0) for k, v in m.culls.items() if v - culls_before.get(k, 0)}
+
+    # Output level: what doSomeOutputting() sends to the codec (full scale = 2^31), from the rendering buffer
+    l_all, r_all = [], []
+    for w in windows:
+        raw, ml, mr = w[4]
+        x = np.frombuffer(raw, dtype="<i4").astype(np.float64).reshape(-1, 2)
+        l_all.append(x[:, 0] * ml / 2 ** 32 * 256 / 2 ** 31)
+        r_all.append(x[:, 1] * mr / 2 ** 32 * 256 / 2 ** 31)
+    out = np.stack([np.concatenate(l_all), np.concatenate(r_all)], axis=1)
+    peak = float(np.max(np.abs(out)))
+    rms = float(np.sqrt(np.mean(out ** 2)))
+    clipped = int(np.sum(np.abs(out) >= 1.0))
+    wav_path = os.path.join(args.out, "measured.wav")
+    pcm = (np.clip(out, -1, 1) * 32767).astype("<i2").tobytes()
+    with open(wav_path, "wb") as f:
+        f.write(b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " +
+                struct.pack("<IHHIIHH", 16, 1, 2, SAMPLE_RATE, SAMPLE_RATE * 4, 4, 16) + b"data" +
+                struct.pack("<I", len(pcm)) + pcm)
+
+    profile = profile_by_function(emu, total_samples)
+    areas = collections.Counter()
+    area_functions = collections.defaultdict(list)
+    for name, v in profile.items():
+        a = area_of(name)
+        areas[a] += v
+        area_functions[a].append((name, v))
+    result = dict(
+        instructions_per_128=per_block, cpu_percent=per_block / CYCLES_PER_BLOCK * 100,
+        full_windows=len(full), full_window_mean=float(np.mean(full)), full_window_max=int(np.max(full)),
+        full_window_percentiles={p: float(np.percentile(full, p)) for p in (5, 25, 50, 75, 95, 99)},
+        max_cpu_percent=float(np.max(full)) / CYCLES_PER_BLOCK * 100,
+        windows=len(windows), samples=total_samples,
+        short_windows=sum(1 for w in windows if w[1] != 128),
+        other_tasks_per_128=other,
+        voices_mean=float(np.mean(voices)), voices_max=int(np.max(voices)), voices_min=int(np.min(voices)),
+        culls=culls, peak_dbfs=20 * math.log10(peak) if peak else None,
+        rms_dbfs=20 * math.log10(rms) if rms else None, clipped_samples=clipped,
+        areas={a: dict(per_128=v, percent_of_total=v / per_block * 100, cpu_percent=v / CYCLES_PER_BLOCK * 100,
+                       top=[(n, round(x)) for n, x in area_functions[a][:6]])
+               for a, v in areas.most_common()},
+        profile=profile, window_log=[(w[0], w[1], w[2]) for w in windows],
+    )
+    return result
+
+
+# Areas of the profile, by function name (the first rule that matches)
+AREAS = [
+    ("oscillators", r"Voice::renderOsc|Voice::renderBasicSource|WaveTable|renderWave|Oscillator|render(Sine|Saw|Square|"
+                    r"Triangle|Pulse)|getKernel|getWhichKernel|calculatePhaseIncrements|MasterTune::applyToPhase"),
+    ("FM (DX7 engine)", r"neon_fm_kernel|FmOpKernel|FmCore|DxVoice|DxPatch|Env::|PitchEnv|Freqlut|Exp2|Sin::|Tanh"),
+    ("filters", r"filter::|instantTan|Filter"),
+    ("sample reading / interpolation / time-stretch",
+     r"SampleLowLevelReader|VoiceSample|TimeStretch|Sample::|SampleCluster|SampleCache|SamplePlaybackGuide|Cluster|"
+     r"AudioClip::render|interpolat(e|ion)Buffer|MultisampleRange|getAveragesForCrossfade|AudioFileManager"),
+    ("reverb", r"reverb::|Reverb::|Freeverb|Mutable|renderReverb"),
+    ("delay", r"Delay"),
+    ("drone", r"Drone"),
+    ("sidechain / compressors", r"RMSFeedbackCompressor|SideChain|Compressor"),
+    ("per-track FX (mod FX, bitcrush, volume/pan/reverb send)",
+     r"ModControllableAudio::process|ModFX|Chorus|Phaser|Flanger|processStutter|addAudio|shouldDoPanning"),
+    ("song / master (song FX, output to the codec)",
+     r"GlobalEffectable|renderSongFX|doSomeOutputting|calcApproxRMS|AbsValueFollower|Metronome|AudioEngine::routine\b|"
+     r"renderGlobalEffectableForClip|renderOutput"),
+    ("voices: patcher, envelopes, LFOs, voice mixing",
+     r"^Voice|Patcher|Envelope|^Sound::|LFO|PatchCable|getExp|interpolateTable|getFinalParameterValue|ModelStack|"
+     r"VoiceVector|^Source::|lookup(Release|Attack)Rate|cableTo|VoiceUnison|SoundDrum::|SoundInstrument::"),
+    ("playback / sequencing (clips, notes, arpeggiator, ticks)",
+     r"Playback|Session|Clip|NoteRow|Arpeggiator|^Song::|Kit::|tickSong|Midi|Arranger|Note::|Output::"),
+    ("memory / other", r""),
+]
+
+
+def area_of(name):
+    import re
+    name = name.split("(")[0]  # The function's name, without its parameter types
+    for area, pattern in AREAS:
+        if re.search(pattern, name):
+            return area
+    return "memory / other"
+
+
+def profile_by_function(emu, total_samples):
+    n = 1 << 20
+    addresses = (ctypes.c_uint32 * n)()
+    instructions = (ctypes.c_uint32 * n)()
+    counts = (ctypes.c_uint64 * n)()
+    k = emu.bc.bc_dump(addresses, instructions, counts, n)
+    by_function = collections.Counter()
+    for i in range(k):
+        f = emu.sym.function_at(addresses[i])
+        by_function[f[2] if f else f"?{addresses[i]:#x}"] += instructions[i] * counts[i]
+    return {name: v / total_samples * 128 for name, v in by_function.most_common()}
 
 if __name__ == "__main__":
     main()
