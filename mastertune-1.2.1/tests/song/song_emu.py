@@ -2,10 +2,14 @@
 """Runs the real Deluge firmware (deluge.elf) in unicorn and measures what a whole song costs its Cortex-A9.
 
 Usage: song_emu.py <deluge.elf> <sd.img> <out dir> [--warmup-bars N] [--bars N] [--culling] [--write-back song.xml]
-                   [--init-sounds] [--seed N] [--fill WORD] [--save-while-playing] [--poke SYMBOL=VALUE]
+                   [--init-sounds] [--seed N] [--fill WORD] [--save-while-playing] [--midi-timing]
+                   [--poke SYMBOL=VALUE]
 
 --save-while-playing: instead of measuring the windows, the firmware saves the song while it plays, with the output DMA
 in real time (see save_while_playing(), RealTimeDma and run.sh's SAVE=1).
+--midi-timing: the MIDI/gate output timer and the DIN MIDI UART modelled with their interrupts (MidiTiming, Interrupts),
+and when the MIDI goes out against the audio: in normal playback in real time (play_realtime()) or, with
+--save-while-playing, while the song is saved again and again (run.sh's MIDI=1).
 
 Bit-exact comparisons between builds (see run.sh): Sound::Sound() leaves the LFO phases and the skip-rendering
 timestamps uninitialised (SOUND_UNINITIALISED), so what a song renders depends on what the RAM held before, e.g. stale
@@ -964,19 +968,413 @@ class Regions:
                 self.on_exit[category](self.emu, extra, self.emu.bc.bc_total() - entered)
 
 
+ISR_RETURN = STOP + 0x40  # Return address of the interrupts run here: a Thumb nop, so that return hooks there run
+
+
+class Interrupts:
+    """--midi-timing: interrupts at a given emulated time. blockcount.c stops the emulation at the first block from
+    then on (bc_set_deadline()); Emulator.run() then runs the handler here, as the CPU would: on the stack below the
+    interrupted code's, its registers (VFP/NEON too) saved and restored around it. Not while the code has interrupts
+    masked (CPSR.I): then at the next check, 1 µs on. Between calls from the harness (play_realtime()'s idle time),
+    idle_until() runs those due."""
+
+    def __init__(self, emu):
+        self.emu = emu
+        self.pending = {}  # key -> [emulated time (instructions), handler address, before(emu) or None]
+        self.inside = False
+        self.masked_delays = 0  # Interrupts that had to wait for the code to unmask them
+        emu.uc.mem_write(ISR_RETURN, b"\x00\xbf")  # nop: a handler's tail call returns here (Regions' return hooks)
+        emu.interrupts = self
+
+    def schedule(self, key, at, address, before=None):
+        self.pending[key] = [math.ceil(at), address, before]
+        self.arm()
+
+    def cancel(self, key):
+        if self.pending.pop(key, None):
+            self.arm()
+
+    def arm(self):
+        if self.inside:
+            return  # Once the handler returns
+        at = min((p[0] for p in self.pending.values()), default=None)
+        self.emu.bc.bc_set_deadline(2 ** 64 - 1 if at is None else max(at - self.emu.idle, 0))
+
+    def service(self):
+        """At a deadline stop: runs what is due, unless the code has masked interrupts."""
+        uc = self.emu.uc
+        if uc.reg_read(UC_ARM_REG_CPSR) & 0x80:
+            later = self.emu.now() + 400
+            for p in self.pending.values():
+                if p[0] < later:
+                    p[0] = later
+                    self.masked_delays += 1
+            self.arm()
+            return
+        self.run_due(self.emu.now())
+
+    def run_due(self, now):
+        while True:
+            due = [(p[0], k) for k, p in self.pending.items() if p[0] <= now]
+            if not due:
+                break
+            _, key = min(due)
+            _, address, before = self.pending.pop(key)
+            if before:
+                before(self.emu)
+            self.fire(address)
+        self.arm()
+
+    def fire(self, address):
+        uc = self.emu.uc
+        context = uc.context_save()
+        self.inside = True
+        uc.reg_write(UC_ARM_REG_SP, (uc.reg_read(UC_ARM_REG_SP) - 256) & ~7)
+        uc.reg_write(UC_ARM_REG_LR, ISR_RETURN | 1)
+        uc.emu_start(address | 1, ISR_RETURN + 2)
+        uc.context_restore(context)
+        self.inside = False
+
+    def idle_until(self, at):
+        """The CPU idles (nothing runs) until then, but for the interrupts due meanwhile, each at its time."""
+        emu = self.emu
+        while True:
+            first = min((p[0] for p in self.pending.values()), default=None)
+            if first is None or first > at:
+                break
+            emu.idle = max(emu.idle, first - emu.bc.bc_total())
+            self.run_due(emu.now())
+        emu.idle = max(emu.idle, math.ceil(at) - emu.bc.bc_total())
+        self.arm()
+
+
+MIDI_BYTE_SECONDS = 10 / 31250  # On the DIN wire: start bit, 8 bits, stop bit at 31250 baud
+UART_TX_FIFO = 16  # The SCIF's transmit FIFO, which the DMA fills
+TIMER_MIDI_GATE_OUTPUT = 2
+MTU2_TSTR, MTU2_TGRA_2, MTU2_TSTR_CST2 = MTU2 + 0x280, MTU2 + 0x008, 0x04
+MIDI_TIMER_PRESCALER = 64  # setupTimerWithInterruptHandler(TIMER_MIDI_GATE_OUTPUT, 64, ...)
+
+
+class MidiTiming:
+    """--midi-timing: the MIDI and gate output timer and the DIN MIDI UART, modelled, and when what goes out.
+
+    - The timer (MTU2 channel 2, P0 33.33 MHz / 64, cleared by TGRA): when the firmware starts it (TSTR.CST2, after
+      writing TGRA in scheduleMidiGateOutISR(), inlined in routine()), its interrupt midiAndGateOutputTimerInterrupt()
+      runs TGRA counts later (Interrupts); stopping it cancels that.
+    - The MIDI UART's transmit DMA (channel txDmaChannels[UART_ITEM_MIDI]): when enabled (CHCTRL.SETEN) it sends N0TB
+      bytes from N0SA (and N1TB from N1SA with CHCFG.REN, the wrap of the ring buffer) into the 16-byte FIFO, the wire
+      sends one byte per 320 µs, and the transfer-end interrupt (MIDI_TX_INT_TrnEnd) comes when the last byte went into
+      the FIFO. So txSending and uartGetTxBufferFullnessByItem() (MidiEngine::anythingInOutputBuffer()) behave as on the
+      Deluge.
+    - Every window: AudioEngine::tickSongFinalizeWindows(), its audioSampleTimer, length and
+      timeWithinWindowAtWhichMIDIOrGateOccurs (t), and how many samples the RealTimeDma had been written then: the
+      window's sample i is the one written as number that + i, if the rendering buffer was empty when the window was
+      rendered (checked: each window starts where the one before ended).
+    - Every timer run (the MIDI and gate output of one window, all of it at once): the emulated time it fires against
+      the time the DMA reaches the window's sample at t (RealTimeDma: sample n plays from position n.0). That's the
+      error of the scheduling; 0 = on time with the audio, -128 = a whole buffer (2.9 ms) early.
+    - Every MIDI byte on the wire: when it starts, and what sent it (the timer's interrupt, the UART's transfer-end
+      interrupt, or code outside interrupts: MidiEngine::flushMIDI() in PlaybackHandler::doMIDIClockOutTick() or
+      AudioEngine's flushMIDIGateBuffers()). MIDI clocks (0xF8) against their own time: PlaybackHandler::
+      timeNextMIDIClockOutTick when doMIDIClockOutTick() sends it, i.e. the window's sample there."""
+
+    def __init__(self, emu):
+        self.emu = emu
+        sym = emu.sym
+        self.ints = Interrupts(emu)
+        self.timer_isr = sym["midiAndGateOutputTimerInterrupt"]
+        self.tx_end_isr = sym.find("MIDI_TX_INT_TrnEnd")
+        self.sample_timer = sym["_ZN11AudioEngine16audioSampleTimerE"]
+        self.dmac = dmac_channel_base(emu.elf_bytes_at(sym["txDmaChannels"] + 1, 1)[0])  # UART_ITEM_MIDI = 1
+        self.tx_buffer, self.tx_size = sym.by_name["midiTxBuffer"]
+        out = subprocess.run([emu.tool_prefix + "gdb", "-batch", "-ex",
+                              "print (int)&((PlaybackHandler*)0)->timeNextMIDIClockOutTick", emu.elf],
+                             capture_output=True, text=True).stdout
+        m = re.search(r"^\$1 = (\d+)$", out, re.M)
+        if not m:
+            raise SystemExit(f"--midi-timing: no offset of PlaybackHandler::timeNextMIDIClockOutTick from gdb:\n{out}")
+        self.clock_time_address = sym["playbackHandler"] + int(m.group(1))
+        emu.writers[MTU2_TSTR] = self.on_tstr
+        emu.writers[self.dmac + 0x28] = self.on_chctrl
+        emu.intercept(sym.find("_ZN11AudioEngine23tickSongFinalizeWindows"), self.on_finalize)
+        emu.intercept(sym.find("_ZN15PlaybackHandler18doMIDIClockOutTick"), self.on_clock_tick)
+        for base in (self.tx_buffer, self.tx_buffer + UNCACHED_MIRROR_OFFSET):
+            emu.uc.hook_add(unicorn.UC_HOOK_MEM_WRITE, self.on_buffer_write, begin=base, end=base + self.tx_size - 1)
+        self.return_hooks = set()
+        self.recording = False
+        self.windows = []  # dict(start, at, number, n, t)
+        self.finalizing = None  # (sp, return address, &numSamples, &t, window) while in tickSongFinalizeWindows()
+        self.timers = []  # dict(set, tgra, due, window, fired, isr)
+        self.clock_due = None  # timeNextMIDIClockOutTick while doMIDIClockOutTick() runs, until its 0xF8 is buffered
+        self.buffered = {}  # Offset in the ring buffer -> (byte, clock time or None, window index)
+        self.wire = []  # dict(start, byte, source, clock, window)
+        self.wire_free = 0  # When the wire has sent all it was given
+        self.fifo = collections.deque()  # When each byte in the FIFO or on the wire ends
+        self.source = "code outside interrupts"
+        self.model_breaks = 0  # Windows that didn't start where the last one ended in the output
+        # Anything already started (before the models were installed) finishes now
+        if emu.plain_read(MTU2_TSTR, 1) & MTU2_TSTR_CST2:
+            self.ints.schedule("timer", emu.now(), self.timer_isr, self.before_timer)
+        if emu.u8(sym["uartItems"] + 8 + 6):  # uartItems[UART_ITEM_MIDI].txSending
+            self.ints.schedule("uart", emu.now(), self.tx_end_isr, self.before_tx_end)
+        emu.uc.ctl_flush_tb()
+
+    # --- the models
+
+    def on_tstr(self, size, value):
+        was, now = self.emu.plain_read(MTU2_TSTR, 1) & MTU2_TSTR_CST2, value & MTU2_TSTR_CST2
+        if now and not was:
+            tgra = self.emu.plain_read(MTU2_TGRA_2, 2)
+            at = self.emu.now() + tgra * MIDI_TIMER_PRESCALER / PERIPHERAL_HZ * CPU_HZ
+            self.ints.schedule("timer", at, self.timer_isr, self.before_timer)
+            if self.recording:
+                self.timers.append(dict(set=self.emu.now(), tgra=tgra, due=at, window=len(self.windows) - 1,
+                                        fired=None))
+        elif was and not now:
+            self.ints.cancel("timer")
+
+    def before_timer(self, emu):
+        self.source = "timer interrupt"
+        if self.recording and self.timers and self.timers[-1]["fired"] is None:
+            self.timers[-1]["fired"] = emu.now()
+
+    def before_tx_end(self, emu):
+        self.source = "UART transfer-end interrupt"
+
+    def on_chctrl(self, size, value):
+        if not value & 1:  # SETEN
+            return
+        emu = self.emu
+        read = emu.plain_read
+        pieces = [(read(self.dmac, 4), read(self.dmac + 0x08, 4))]
+        if read(self.dmac + 0x2C, 4) & 0x40000000:  # CHCFG.REN: then N1SA/N1TB
+            pieces.append((read(self.dmac + 0x0C, 4), read(self.dmac + 0x14, 4)))
+        now = emu.now()
+        byte_time = MIDI_BYTE_SECONDS * CPU_HZ
+        t = now
+        for address, n in pieces:
+            offset = (address - self.tx_buffer) % UNCACHED_MIRROR_OFFSET
+            for i in range(n):
+                o = (offset + i) % self.tx_size
+                while self.fifo and self.fifo[0] <= t:
+                    self.fifo.popleft()
+                if len(self.fifo) >= UART_TX_FIFO:
+                    t = self.fifo.popleft()  # Waits for room in the FIFO
+                start = max(t, self.wire_free)
+                self.wire_free = start + byte_time
+                self.fifo.append(self.wire_free)
+                if self.recording:
+                    byte, clock, window = self.buffered.get(o, (None, None, None))
+                    self.wire.append(dict(start=start, byte=byte, source=self.source, clock=clock, window=window))
+        self.ints.schedule("uart", max(t, now + 400), self.tx_end_isr, self.before_tx_end)
+
+    def on_buffer_write(self, uc, access, address, size, value, _):
+        base = self.tx_buffer if address < UNCACHED_MIRROR_OFFSET else self.tx_buffer + UNCACHED_MIRROR_OFFSET
+        for i in range(size):
+            byte = (value >> (8 * i)) & 0xFF
+            clock = None
+            if byte == 0xF8 and self.clock_due is not None:
+                clock, self.clock_due = self.clock_due, None
+            window = len(self.windows) - (0 if self.finalizing else 1)
+            self.buffered[(address - base + i) % self.tx_size] = (byte, clock, window)
+
+    # --- the windows and MIDI clocks
+
+    def on_finalize(self, emu):
+        uc = emu.uc
+        back = uc.reg_read(UC_ARM_REG_LR) & ~1
+        if back not in self.return_hooks:
+            self.return_hooks.add(back)
+            uc.hook_add(UC_HOOK_CODE, self.at_finalized, begin=back, end=back)
+            uc.ctl_remove_cache(back, back + 4)
+        dma = emu.dma
+        window = dict(start=emu.u32(self.sample_timer), at=emu.now(),
+                      number=len(dma.numbers) if dma else None)
+        self.finalizing = (uc.reg_read(UC_ARM_REG_SP), back, uc.reg_read(UC_ARM_REG_R0), uc.reg_read(UC_ARM_REG_R1),
+                           window)
+
+    def at_finalized(self, uc, address, size, _):
+        if not self.finalizing or self.finalizing[1] != address or self.finalizing[0] != uc.reg_read(UC_ARM_REG_SP):
+            return
+        _, _, n_at, t_at, window = self.finalizing
+        self.finalizing = None
+        window.update(n=self.emu.u32(n_at), t=struct.unpack("<i", uc.mem_read(t_at, 4))[0])
+        if self.recording:
+            last = self.windows[-1] if self.windows else None
+            if last and last["number"] is not None and window["number"] != last["number"] + last["n"]:
+                self.model_breaks += 1
+            self.windows.append(window)
+        else:
+            self.windows = [window]  # Only the last, for timers set before the recording starts
+
+    def on_clock_tick(self, emu):
+        self.clock_due = emu.u32(self.clock_time_address)
+
+    # --- results
+
+    def start(self):
+        self.recording = True
+        self.windows, self.timers, self.wire, self.model_breaks = [], [], [], 0
+
+    def results(self):
+        """Timing errors in samples (+ = late, - = early), against the DMA's position (emu.dma, still in place)."""
+        dma = self.emu.dma
+        emu = self.emu
+        self.recording = False
+
+        def played(window, offset):
+            """The DMA's number of the window's sample at offset, None if not written (yet)."""
+            if window is None or window < 0 or window >= len(self.windows) or self.windows[window]["number"] is None:
+                return None
+            i = self.windows[window]["number"] + offset
+            return dma.numbers[i] if i < len(dma.numbers) else None
+
+        timers = []
+        for timer in self.timers:
+            w = self.windows[timer["window"]] if 0 <= timer["window"] < len(self.windows) else None
+            if w is None or timer["fired"] is None:
+                continue
+            t = max(w["t"], 0)
+            number = played(timer["window"], t)
+            if number is None:
+                continue
+            timers.append(dict(t=t, window=w["n"], error=dma.exact_position(timer["fired"]) - number,
+                               scheduled=dma.exact_position(timer["due"]) - number,
+                               needed=number - dma.exact_position(timer["set"]),
+                               asked=timer["tgra"] * 65536 / 766245))
+        clocks = []
+        for byte in self.wire:
+            if byte["byte"] == 0xF8 and byte["clock"] is not None and byte["window"] is not None:
+                w = self.windows[byte["window"]] if byte["window"] < len(self.windows) else None
+                # A clock due before the window (t < 0) is at the window's first sample at the earliest
+                offset = max(struct.unpack("<i", struct.pack("<I", (byte["clock"] - w["start"]) & 0xFFFFFFFF))[0], 0) \
+                    if w else 0
+                number = played(byte["window"], offset) if w else None
+                if number is not None:
+                    clocks.append(dict(error=dma.exact_position(byte["start"]) - number, source=byte["source"]))
+
+        def stats(errors):
+            e = np.array(errors, dtype=np.float64)
+            if not len(e):
+                return dict(count=0)
+            return dict(count=len(e), mean=float(e.mean()), min=float(e.min()), max=float(e.max()),
+                        percentiles={p: float(np.percentile(e, p)) for p in (1, 5, 50, 95, 99)},
+                        early_over_64=int(np.sum(e < -64)), within_4=int(np.sum(np.abs(e) <= 4)),
+                        histogram={f"{lo}..{lo + 7}": int(np.sum((e >= lo) & (e < lo + 8)))
+                                   for lo in range(-136, 136, 8) if np.sum((e >= lo) & (e < lo + 8))})
+        sources = collections.Counter(b["source"] for b in self.wire)
+        return dict(
+            windows=len(self.windows), windows_not_starting_where_the_last_ended=self.model_breaks,
+            underrun_samples=dma.underruns, interrupts_delayed_by_masking=self.ints.masked_delays,
+            timer_runs=dict(scheduled=stats([x["scheduled"] for x in timers]),
+                            scheduled_at_window_start=stats([x["scheduled"] for x in timers if x["t"] == 0]),
+                            scheduled_later_in_window=stats([x["scheduled"] for x in timers if x["t"] > 0]),
+                            all=stats([x["error"] for x in timers]),
+                            at_window_start=stats([x["error"] for x in timers if x["t"] == 0]),
+                            later_in_window=stats([x["error"] for x in timers if x["t"] > 0]),
+                            needing_over_128=sum(1 for x in timers if x["needed"] > 128),
+                            asked_minus_needed=stats([x["asked"] - x["needed"] for x in timers])),
+            midi_clocks_on_wire=dict(all=stats([c["error"] for c in clocks]),
+                                     by_source={s: stats([c["error"] for c in clocks if c["source"] == s])
+                                                for s in sorted({c["source"] for c in clocks})}),
+            wire_bytes=dict(count=len(self.wire), by_source=dict(sources.most_common()),
+                            by_kind=dict(collections.Counter(
+                                "clock" if b["byte"] == 0xF8 else "note on" if b["byte"] is not None and
+                                b["byte"] & 0xF0 == 0x90 else "note off" if b["byte"] is not None and
+                                b["byte"] & 0xF0 == 0x80 else "other" for b in self.wire).most_common())),
+            timer_log_fields=["t", "window length", "error", "error as scheduled",
+                              "samples from setting the timer to the sample",
+                              "samples the timer was set to (TGRA / 11.69)"],
+            timer_log=[(x["t"], x["window"], round(x["error"], 2), round(x["scheduled"], 2), round(x["needed"], 2),
+                        round(x["asked"], 2))
+                       for x in timers])
+
+
+def midi_report(r, log, what):
+    def line(name, s):
+        if not s["count"]:
+            return f"  {name}: none"
+        p = s["percentiles"]
+        return (f"  {name}: {s['count']}, error mean {s['mean']:+.1f}, min {s['min']:+.1f}, max {s['max']:+.1f}, "
+                f"1/50/99 %: {p[1]:+.1f} / {p[50]:+.1f} / {p[99]:+.1f}; within 4 samples {s['within_4']}, "
+                f"more than 64 early {s['early_over_64']}")
+    t = r["timer_runs"]
+    log(f"\nMIDI/gate timing, {what} (samples, + = late, against the DMA reaching the window's sample; "
+        f"{r['windows']} windows, {r['windows_not_starting_where_the_last_ended']} not starting where the last "
+        f"ended, {r['underrun_samples']} underrun samples):")
+    log(line("timer as scheduled (TGRA)", t["scheduled"]))
+    log(line("  at the window's start (t = 0: notes, clocks on a tick)", t["scheduled_at_window_start"]))
+    log(line("  later in the window (t > 0: MIDI clocks)", t["scheduled_later_in_window"]))
+    log(line("timer interrupt as run (later while Song::renderAudio() masks interrupts)", t["all"]))
+    log(line("  at the window's start", t["at_window_start"]))
+    log(line("  later in the window", t["later_in_window"]))
+    log(f"  timer runs whose sample was more than 128 samples ahead: {t['needing_over_128']}; the timer's delay "
+        f"(TGRA) minus that time: mean {t['asked_minus_needed'].get('mean', 0):+.1f}")
+    log(line("MIDI clocks on the wire", r["midi_clocks_on_wire"]["all"]))
+    for s, v in r["midi_clocks_on_wire"]["by_source"].items():
+        log(line(f"  sent by {s}", v))
+    log(f"  bytes on the wire: {r['wire_bytes']['count']}, " + ", ".join(
+        f"{k} {v}" for k, v in r["wire_bytes"]["by_kind"].items()) + "; by " + ", ".join(
+        f"{k} {v}" for k, v in r["wire_bytes"]["by_source"].items()))
+    for name, key in (("as scheduled", "scheduled"), ("as run", "all")):
+        hist = t[key].get("histogram")
+        if hist:
+            log(f"  timer errors {name}, by 8 samples: " + ", ".join(f"{k}: {v}" for k, v in hist.items()))
+    log(f"  interrupts that waited for the code to unmask them (checked every µs): "
+        f"{r['interrupts_delayed_by_masking']}")
+
+
+AUDIO_TASK_INTERVAL = 16  # samples: the task manager's target time between AudioEngine::routine() calls
+
+
+def play_realtime(emu, player, samples, midi, log):
+    """--midi-timing without --save-while-playing: plays with the DMA in real time (RealTimeDma) as the task manager
+    would (registerTasks()): AudioEngine::routine() every AUDIO_TASK_INTERVAL samples (its target time between calls),
+    the playback handler's routine as often, cluster loading after each, and when nothing is due, idle (the emulated
+    time goes on without code running; interrupts are run at their time)."""
+    dma = RealTimeDma(emu)
+    midi.start()
+    per = AUDIO_TASK_INTERVAL * CPU_HZ / SAMPLE_RATE
+    next_audio = next_playback = emu.now()
+    start = dma.position()
+    calls = 0
+    t = time.time()
+    while dma.position() - start < samples:
+        ran = False
+        if emu.now() >= next_audio:
+            next_audio = emu.now() + per
+            emu.call(player.routine)
+            dma.collect()
+            calls += 1
+            ran = True
+        if emu.now() >= next_playback:
+            next_playback = emu.now() + per
+            emu.call(player.playback_routine)
+            ran = True
+        emu.call(player.load_clusters)
+        if not ran:
+            emu.interrupts.idle_until(min(next_audio, next_playback))
+    dma.collect()
+    log(f"played {samples} samples in real time: {calls} routine() calls, idle "
+        f"{emu.idle / CPU_HZ * 1e3:.0f} ms of {(emu.now() - dma.start_instructions) / CPU_HZ * 1e3:.0f} ms, max gap "
+        f"{dma.max_gap} ({time.time() - t:.1f} s)")
+    return dma
+
+
 SAVE_PATH = "SONGS/SAVETEST.XML"
 AUDIO, CLUSTERS, UI, FILES, XML = ("audio (AudioEngine::routine())", "cluster loading (loadAnyEnqueuedClusters)",
                                    "UI timers, OLED, PIC", "FatFS (f_write, f_close, ...; the card itself is instant)",
                                    "XML generation (the rest)")
 
 
-def save_while_playing(emu, player, warmup_bars, out_dir, log):
+def save_while_playing(emu, player, warmup_bars, out_dir, log, repeat_samples=0, midi=None):
     """--save-while-playing: after the warm-up (windows of 128 as in measure()), the DMA runs in real time
     (RealTimeDma) and the firmware saves the playing song to SAVE_PATH as SaveSongUI does: StorageManager::
     createXMLFile(), Song::writeToFile(), XMLSerializer::closeFileAfterWriting(). Nothing but the firmware itself services
     the audio meanwhile (as on the Deluge, where the save runs inside a task and only the SD card's waits yield; those are
     instant here). Reports the save's emulated duration, what it is spent on, the routine() calls and their windows, and
-    the gaps (see RealTimeDma)."""
+    the gaps (see RealTimeDma). With repeat_samples (--midi-timing), it saves again and again until the DMA has played
+    that many samples, and midi (a MidiTiming) records the MIDI timing meanwhile (midi_timing.json)."""
     t = time.time()
     player.play(int(warmup_bars * BAR))
     log(f"warm-up: {warmup_bars:g} bar(s) ({time.time() - t:.1f} s)")
@@ -1010,6 +1408,8 @@ def save_while_playing(emu, player, warmup_bars, out_dir, log):
                   lambda e: renders.append(e.u32(timer)) and None)
     dma = RealTimeDma(emu)
     emu.uc.ctl_flush_tb()  # Code hooks added now take effect only where the code is translated again
+    if midi:
+        midi.start()
 
     strings = {}
     at = STOP + 0x100
@@ -1027,15 +1427,21 @@ def save_while_playing(emu, player, warmup_bars, out_dir, log):
              ("Song::writeToFile", sym["_ZN4Song11writeToFileER14StorageManager"], (song, storage), False),
              ("closeFileAfterWriting", sym.find("_ZN13XMLSerializer21closeFileAfterWriting"),
               (serializer, strings["path"], strings["begin"], strings["end"]), True)]
-    for name, address, arguments, returns_error in steps:
-        error = emu.call(address, *arguments, timeout_s=30)
-        if returns_error and error:
-            raise SystemExit(f"{name}: error {error}")
+    saves = 0
+    while True:
+        for name, address, arguments, returns_error in steps:
+            error = emu.call(address, *arguments, timeout_s=30)
+            if returns_error and error:
+                raise SystemExit(f"{name}: error {error}")
+        saves += 1
+        if dma.position() - dma.start_position >= repeat_samples:
+            break
     regions.charge()
     dma.collect()
     total = emu.bc.bc_total() - before
     end_gap = dma.gap()
-    log(f"saved {SAVE_PATH}: {total / 1e6:,.1f}M instructions ({time.time() - t:.1f} s)")
+    log(f"saved {SAVE_PATH}" + (f" {saves} times" if saves > 1 else "") +
+        f": {total / 1e6:,.1f}M instructions ({time.time() - t:.1f} s)")
     xml = fat32.read_file(emu.sd_path, SAVE_PATH)
 
     ms = lambda n: n / CPU_HZ * 1e3  # noqa: E731
@@ -1050,7 +1456,7 @@ def save_while_playing(emu, player, warmup_bars, out_dir, log):
                 struct.pack("<IHHIIHH", 16, 1, 2, SAMPLE_RATE, SAMPLE_RATE * 4, 4, 16) + b"data" +
                 struct.pack("<I", len(pcm)) + pcm)
     result = dict(
-        file=dict(path=SAVE_PATH, bytes=len(xml), sha256=hashlib.sha256(xml).hexdigest()),
+        saves=saves, file=dict(path=SAVE_PATH, bytes=len(xml), sha256=hashlib.sha256(xml).hexdigest()),
         duration_ms=ms(total), instructions=total,
         by_what={k: dict(ms=ms(v), share=v / total) for k, v in regions.time.most_common()},
         not_in_elf=regions.missing,
@@ -1078,6 +1484,7 @@ def save_while_playing(emu, player, warmup_bars, out_dir, log):
         call_log=[(int(c["at"] - before), int(c["gap"]), int(c["instructions"]), int(c["samples"]), c["windows"])
                   for c in calls])
     json.dump(result, open(os.path.join(out_dir, "save_result.json"), "w"), indent=1)
+    midi_result = midi.results() if midi else None
     emu.dma = None
 
     log(f"\nsave while playing: {result['duration_ms']:.1f} ms emulated ({total / 1e6:,.1f}M instructions), "
@@ -1100,6 +1507,9 @@ def save_while_playing(emu, player, warmup_bars, out_dir, log):
            if g["at_routine_entry"] else ""))
     log(f"samples: {result['samples_played']} played by the DMA during the save, {result['samples_written']} written "
         f"(save.wav); file sha256 {result['file']['sha256'][:16]}")
+    if midi_result:
+        json.dump(midi_result, open(os.path.join(out_dir, "midi_timing.json"), "w"), indent=1)
+        midi_report(midi_result, log, f"while saving ({saves} saves back to back)")
     return result
 
 
@@ -1119,6 +1529,11 @@ def main():
                     help="instead of the measurement: after the warm-up bars, save the playing song (to "
                          f"{SAVE_PATH}) with the DMA in real time; reports the save's duration by what runs, the "
                          "routine() calls and windows, and the gaps in the audio (save_result.json, save.wav)")
+    ap.add_argument("--midi-timing", action="store_true",
+                    help="models the MIDI/gate output timer and the DIN MIDI UART (MidiTiming) and reports when the "
+                         "MIDI and gate output goes out against the audio (midi_timing.json): after the warm-up, plays "
+                         "--bars bars in real time as the task manager would (play_realtime()), or with "
+                         "--save-while-playing saves again and again for --bars bars")
     ap.add_argument("--fill", type=lambda x: int(x, 0),
                     help="fill the internal RAM and the SDRAM (not the peripherals) with this 32-bit word before boot "
                          "(default: zeros); two different words give the same measured.wav unless the firmware reads "
@@ -1166,9 +1581,20 @@ def main():
     if args.init_sounds:
         log(f"--init-sounds: {emu.sounds_initialised} Sounds constructed")
     player = Player(emu, culling=args.culling)
+    midi = MidiTiming(emu) if args.midi_timing else None
     player.start()
     if args.save_while_playing:
-        save_while_playing(emu, player, args.warmup_bars, args.out, log)
+        save_while_playing(emu, player, args.warmup_bars, args.out, log,
+                           repeat_samples=int(args.bars * BAR) if midi else 0, midi=midi)
+        return
+    if midi:
+        t = time.time()
+        player.play(int(args.warmup_bars * BAR))
+        log(f"warm-up: {args.warmup_bars:g} bar(s) ({time.time() - t:.1f} s)")
+        play_realtime(emu, player, int(args.bars * BAR), midi, log)
+        r = midi.results()
+        json.dump(r, open(os.path.join(args.out, "midi_timing.json"), "w"), indent=1)
+        midi_report(r, log, f"normal playback ({args.bars:g} bars in real time)")
         return
     result = measure(emu, player, args.warmup_bars, args.bars, args.out, log, song_names)
     json.dump(result, open(os.path.join(args.out, "result.json"), "w"), indent=1)

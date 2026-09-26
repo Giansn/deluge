@@ -51,6 +51,24 @@
 #   mastertune-v13 base (e13dce3d) against the save-speed branch: 3 synths at bar 2: 344 ms -> 22 ms, worst gap 80 -> 71;
 #   5 synths at bar 2: 716 ms -> 66 ms, worst gap 128 (1 sample underrun) -> 97; at bar 2.5: 80 -> 10 ms and 180 -> 16 ms.
 #
+# MIDI=1 ./run.sh <tree | deluge.elf> [out dir]: instead of the three runs, the timing of the MIDI (and gate) output
+#   against the audio (song_emu.py --midi-timing; MidiTiming in song_emu.py says what is modelled): the song with 3 synths
+#   (MIDI_SYNTHS) and a MIDI track (make_sd.py --midi-track, a bass line in 16ths on channel 1; MIDI clock out is on by
+#   default), the DMA in real time. The MIDI/gate output timer (MTU2 channel 2) and the DIN MIDI UART (its transmit DMA,
+#   16-byte FIFO, 31250 baud) are modelled with their interrupts; for every timer run, the emulated time it fires
+#   against the time the DMA reaches the audio sample at the window position the firmware scheduled it for
+#   (timeWithinWindowAtWhichMIDIOrGateOccurs), both as scheduled (TGRA) and as run (the interrupt waits while
+#   Song::renderAudio() masks interrupts, as on the Deluge), and for every MIDI clock byte its start on the wire against
+#   its own tick's sample. Two cases: normal playback, 2 bars (MIDI_BARS) with routine() called as the task manager does
+#   (every 16 samples, see play_realtime()), and saving (the song saved again and again for 1 bar, MIDI_SAVE_BARS),
+#   when routine() renders 64 samples ahead (minNumSamplesToRender). Results: <out>/midi-play/ and <out>/midi-save/
+#   midi_timing.json (per timer run too). About 3 minutes.
+#   mastertune-v13 base (c6201e47) against the midi-timing branch (scheduleMidiGateOutISR()'s formula without the wrap),
+#   timer runs as scheduled: normal playback 192, all within -1.2..+0.2 samples for both; while saving 97, 25 of them
+#   (the MIDI clocks at a window position past what was due plus the DMA's movement) at -128 (2.9 ms early) -> all
+#   within -1.4..+0.2. As run, both: up to 33 (normal) and 41 (saving) samples late while Song::renderAudio() has
+#   interrupts masked (DISABLE_ALL_INTERRUPTS() around each output's rendering).
+#
 # Files: make_sd.py (the song and its samples, generated; its docstring describes the song), fat32.py (the card
 # image), song_emu.py (the emulator harness; its docstring says what is real and what is modelled), blockcount.c
 # (instruction counting per translated block).
@@ -72,6 +90,30 @@ mkdir -p "$OUT/device" "$OUT/digital"
 UC=$(python3 -c 'import os, unicorn; print(os.path.dirname(unicorn.__file__))')
 cc -O2 -shared -fPIC -I"$UC/include" "$HERE/blockcount.c" -o "$OUT/blockcount.so" -L"$UC/lib" -l:libunicorn.so.2 \
 	-Wl,-rpath,"$UC/lib"
+
+if [ -n "$MIDI" ]; then
+	synths=${MIDI_SYNTHS:-3}
+	for mode in play save; do
+		dir="$OUT/midi-$mode"
+		mkdir -p "$dir"
+		python3 "$HERE/make_sd.py" "$dir/sd.img" --synths "$synths" --midi-track > /dev/null
+		if [ $mode = play ]; then
+			echo "== MIDI timing, normal playback: $synths synths and the MIDI track, ${MIDI_BARS:-2} bar(s) in real time"
+			python3 "$HERE/song_emu.py" "$ELF" "$dir/sd.img" "$dir" --tools "$TOOLS" --build "$OUT" --warmup-bars 1 \
+				--bars "${MIDI_BARS:-2}" --midi-timing --init-sounds --seed 1 $EMU_OPTS | sed -n '/^played/,$p'
+		else
+			echo "== MIDI timing while saving: $synths synths and the MIDI track, saved again and again for" \
+				"${MIDI_SAVE_BARS:-1} bar(s)"
+			python3 "$HERE/song_emu.py" "$ELF" "$dir/sd.img" "$dir" --tools "$TOOLS" --build "$OUT" --warmup-bars 1 \
+				--bars "${MIDI_SAVE_BARS:-1}" --midi-timing --save-while-playing --init-sounds --seed 1 $EMU_OPTS \
+				| sed -n '/^saved/,$p'
+		fi
+		rm -f "$dir/sd.img"
+		echo
+	done
+	echo "results in $OUT"
+	exit 0
+fi
 
 if [ -n "$SAVE" ]; then
 	for synths in 3 5; do

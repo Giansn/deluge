@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Builds the SD card image for the song benchmark: generated samples and the song SONGS/DEFAULT.XML.
 
-Usage: make_sd.py <image> [--reverb-model N] [--xml-out file] [--synths N]
+Usage: make_sd.py <image> [--reverb-model N] [--xml-out file] [--synths N] [--midi-track]
 
 The song ("everything at once", 120 BPM, 4/4, the firmware's default resolution of 96 ticks per quarter note):
 - 8 synth tracks, all playing 4-bar clips of 4-note chords (Cm9, Abmaj7, Fm9, G7sus4, one chord per bar), 2
@@ -21,10 +21,14 @@ The song ("everything at once", 120 BPM, 4/4, the firmware's default resolution 
 - 1 audio track playing a 2-bar loop recorded at 100 BPM in a 2-bar clip, so time-stretched to 120 BPM
 - Song: the reverb (Mutable, the default model, or --reverb-model), ducked by the sidechain; the drone with 4 binaural
   tones (100, 150, 200 and 300 Hz carriers with 4 to 10 Hz beats), ducked by the sidechain too.
+- --midi-track (not by default): also a MIDI track on channel 1 (e.g. a volca keys over DIN MIDI), a 1-bar bass line in
+  16ths (10 notes, each a 16th long), for song_emu.py --midi-timing. MIDI clock out is on anyway (the firmware's default
+  settings, as the emulator's erased flash gives).
 """
 import argparse
 import math
 import os
+import re
 import struct
 import sys
 
@@ -435,7 +439,22 @@ def drone():
     return out
 
 
-def song_xml(lengths, reverb_model, num_synths=8):
+MIDI_BASS = [(0, 36), (2, 36), (3, 48), (4, 39), (6, 43), (8, 36), (10, 46), (11, 48), (12, 43), (14, 39)]  # (step, note)
+
+
+def midi_track():
+    """A MIDI instrument on channel 1 (0 in the file) and its clip: MIDI_BASS in 16ths, each a 16th long."""
+    out = '\t\t<midiChannel channel="0" suffix="-1" defaultVelocity="64" isArmedForRecording="0" activeModFunction="0" ' \
+          'colour="0" />\n'
+    rows = {}
+    for step, note in MIDI_BASS:
+        rows.setdefault(note, []).append((step * STEP, STEP, 100))
+    clip = instrument_clip("", "", BAR, [("y", y, notes, None) for y, notes in sorted(rows.items())])
+    clip = re.sub(r'\s*instrumentPresetFolder=""', "", clip.replace('instrumentPresetName=""', 'midiChannel="0"'))
+    return out, clip
+
+
+def song_xml(lengths, reverb_model, num_synths=8, midi=False):
     head = dict(firmwareVersion="c1.2.1", earliestCompatibleFirmware="4.1.0-alpha", arrangementAutoScrollOn=0,
                 xScroll=0, xZoom=24, yScrollSongView=-7, yScrollArrangementView=-7, xScrollArrangementView=0,
                 xZoomArrangementView=192, timePerTimerTick=229, timerTickFraction=-1073741824, rootNote=0,
@@ -459,7 +478,7 @@ def song_xml(lengths, reverb_model, num_synths=8):
                        tempo="0x00002EE0")
     out += global_params_block("songParams", song_params, 1)
     instruments, clips = [], []
-    for part in synths()[:num_synths] + [kit(lengths), audio_track(lengths)]:
+    for part in synths()[:num_synths] + [kit(lengths), audio_track(lengths)] + ([midi_track()] if midi else []):
         instruments.append(part[0])
         clips.append(part[1])
     out += "\t<instruments>\n" + "".join(instruments) + "\t</instruments>\n"
@@ -476,11 +495,13 @@ def main():
     ap.add_argument("--xml-out")
     ap.add_argument("--synths", type=int, default=8,
                     help="only the first N synth tracks (a lighter song, e.g. for song_emu.py --save-while-playing)")
+    ap.add_argument("--midi-track", action="store_true",
+                    help="also a MIDI track on channel 1 (a bass line in 16ths), for song_emu.py --midi-timing")
     ap.add_argument("--files-out", help="also write the song and samples as files for a real SD card, under their own "
                     "names (SONGS/MT_LOADTEST.XML, SAMPLES/MT_LOADTEST/), so nothing on the card is overwritten")
     args = ap.parse_args()
     files, lengths = samples()
-    xml = song_xml(lengths, args.reverb_model, args.synths)
+    xml = song_xml(lengths, args.reverb_model, args.synths, args.midi_track)
     files["SONGS/DEFAULT.XML"] = xml.encode()
     if args.xml_out:
         open(args.xml_out, "w").write(xml)
