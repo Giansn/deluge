@@ -26,7 +26,14 @@ Zwei unabhängige Analysen (Rhythmus, Tonhöhe/Klang) plus eine eigene Gegenprü
 - **Gate eher 50 % oder mehr** statt 25 %. Das Pad verdeckt hier viel.
 - Ob die Anschläge der Figur einzelne Arp-Töne oder ganze Akkord-Stösse sind, lässt sich aus dem Mix nicht sicher trennen.
 
-## Nachbau auf dem Deluge (Firmware v5)
+## Nachbau auf dem Deluge mit Firmware v6 (genau)
+
+- **Tempo:** 138.
+- **Arp:** Sync 1/8, Ratchet notes 3, Ratchet bounce +6, Bounce fade aus.
+- **Einsätze:** 0, 99 und 169 ms nach Beginn der Achtel, also Abstände von 99, 70 und 49 ms. Gemessen wurden 99, 64 und 46 ms bei 0:57 und 102, 75 und 46 ms bei 6:39.
+- **Ratchet probability:** In der Automation-Ansicht nur auf die Achtel vor dem Schlag setzen, an dem die Figur kommen soll, sonst 0.
+
+## Nachbau auf dem Deluge mit Firmware v5 (angenähert)
 
 - **Tempo:** 138.
 - **Arp:** Sync 1/8, Ratchet Bounce +6 bis +7. Das ergibt ein Verhältnis von 0,70 bzw. 0,65, gemessen sind etwa 0,67.

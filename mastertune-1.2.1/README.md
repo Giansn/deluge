@@ -1,6 +1,6 @@
 # Deluge 1.2.1 mit Master Tune
 
-Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in vier Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3.
+Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version.
 
 | Datei | Version (Settings → Firmware version) | Inhalt |
 |---|---|---|
@@ -8,9 +8,10 @@ Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit
 | `deluge-1.2.1-mastertune-v3-09dcce01.bin` | `1.2.1-mastertune-v3-09dcce01` | v2 + Leistungspaket A + Sidechain-Fix |
 | `deluge-1.2.1-mastertune-v4-6cb344e2.bin` | `1.2.1-mastertune-v4-6cb344e2` | v3 + Leistungspaket B |
 | `deluge-1.2.1-mastertune-v5-5daddd9f.bin` | `1.2.1-mastertune-v5-5daddd9f` | v4 + Arpeggiator aus 1.3, Latch, Ratchet Bounce |
+| `deluge-1.2.1-mastertune-v6-1e1af07a.bin` | `1.2.1-mastertune-v6-1e1af07a` | v5 + zweite Bounce-Version: feste Ratchet-Anzahl, Bounce ohne Leiserwerden |
 
-SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b` (vollständig: `sha256sum *.bin`).
-Quellcode: `patches/0001` bis `0005` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005.
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692` (vollständig: `sha256sum *.bin`).
+Quellcode: `patches/0001` bis `0006` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006.
 
 ## v3 und v4: Unterschiede
 
@@ -71,6 +72,32 @@ v5 enthält alles aus v4 und zusätzlich den kompletten Arpeggiator der Communit
   - Zwei echte Fehler gefunden und behoben: Bei ungesynctem Arp mit starkem Bounce verzögerte ein zu später letzter Ratchet-Schlag den nächsten Schritt. Und ein Synth ohne Clip konnte bei einer Note abstürzen (derselbe Fehler steckt in 1.3).
   - Eine Gegenprüfung der Korrekturen.
 - **Auf dem Gerät nicht getestet.**
+
+## v6: zweite Bounce-Version
+
+v6 enthält v5 unverändert und zwei neue Einstellungen im Arpeggiator-Menü direkt beim Ratchet Bounce. Mit den Grundeinstellungen (Auto, Fade an) verhält sich v6 genau wie v5, auch beim Laden von Songs.
+
+| Einstellung | Werte | Was sie tut |
+|---|---|---|
+| **Ratchet notes** | Auto, 2 … 8 | **Auto** wie in 1.3 und v5: zufällig 2, 4 oder 8 Noten, gewichtet mit «Number of ratchets». **2 … 8:** immer genau so viele. Ob ein Schritt ratchet, entscheidet dann nur noch die Ratchet-Wahrscheinlichkeit. Bei Sync 1/128 und 1/256 höchstens 2, bei 1/64 höchstens 4: Sonst wären die Abstände kaum länger als ein Audio-Block (2,9 ms). |
+| **Bounce fade** | an, aus | **An** wie v5: Mit kürzer werdenden Abständen werden die Schläge leiser, wie bei einem Ball. **Aus:** Alle Schläge behalten ihre Velocity. |
+
+Gleichmässige Ratchets teilen den Schritt jetzt durch die Notenzahl. Für 2, 4 und 8 ergibt das exakt dieselben Zeitpunkte wie vorher.
+
+**Geprüft:** Build ohne Warnungen, zwei Builds mit identischer SHA-256, eine Code-Prüfung. Sie hat bestätigt, dass die Grundeinstellungen exakt wie v5 laufen, und keine Fehler in den neuen Pfaden gefunden. **Auf dem Gerät nicht getestet.**
+
+**Die Figur aus «You Are The Seeds» nachbauen** (siehe `references/pettra-arp/ANALYSE.md`):
+
+| Einstellung | Wert |
+|---|---|
+| Tempo | 138 |
+| Arp Sync | 1/8 |
+| Ratchet notes | 3 |
+| Ratchet bounce | +6 |
+| Bounce fade | aus |
+| Ratchet probability | in der Automation-Ansicht nur auf der Achtel vor dem Schlag, an dem die Figur kommen soll, sonst 0 |
+
+Das ergibt Einsätze bei 0, 99 und 169 ms nach Beginn der Achtel, also Abstände von 99, 70 und 49 ms. Gemessen wurden im Stück 99, 64 und 46 ms bei 0:57 und 102, 75 und 46 ms bei 6:39.
 
 ## Bedienung
 
@@ -157,8 +184,8 @@ Version 1 liegt weiterhin in der Git-Historie dieses Ordners.
 ```sh
 git clone https://github.com/SynthstromAudible/DelugeFirmware && cd DelugeFirmware
 git checkout release_1_2_1
-git am /pfad/zu/patches/*.patch        # alle = v5; nur 0001 = v2, 0001-0003 = v3, 0001-0004 = v4
-./dbt configure -DRELEASE_TYPE:STRING=mastertune-v5   # Name in der Versionsanzeige, z. B. mastertune-v4 für v4
+git am /pfad/zu/patches/*.patch        # alle = v6; nur 0001 = v2, 0001-0003 = v3, 0001-0004 = v4, 0001-0005 = v5
+./dbt configure -DRELEASE_TYPE:STRING=mastertune-v6   # Name in der Versionsanzeige, z. B. mastertune-v5 für v5
 ./dbt build release                      # Ergebnis: build/Release/deluge.bin
 
 # Rechentest (Host-Compiler)

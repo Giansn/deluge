@@ -1,0 +1,396 @@
+From 1e1af07a8cd3d5ca9e7c7d59972cbcab3e96a0f2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 08:43:02 +0000
+Subject: [PATCH] Second ratchet bounce: fixed number of ratchet notes and
+ bounce without fade
+
+Ratchet notes: Auto keeps the random 2/4/8 of 1.3, or always exactly 2 to 8 notes (at most 2 at 128th sync,
+4 at 64th). Bounce fade: on keeps the v5 behaviour (later, shorter bounces softer), off keeps every note's
+velocity. The defaults (Auto, fade on) behave exactly like v5. Evenly spaced ratchets now divide the step by
+the number of notes, identical to before for 2, 4 and 8.
+---
+ src/deluge/gui/l10n/english.json              |  6 +-
+ src/deluge/gui/l10n/g_english.cpp             |  4 ++
+ src/deluge/gui/l10n/g_seven_segment.cpp       |  2 +
+ src/deluge/gui/l10n/seven_segment.json        |  4 +-
+ src/deluge/gui/l10n/strings.h                 |  4 ++
+ .../gui/menu_item/arpeggiator/bounce_fade.h   | 56 ++++++++++++++++++
+ .../gui/menu_item/arpeggiator/ratchet_notes.h | 57 +++++++++++++++++++
+ src/deluge/gui/ui/menus.cpp                   |  8 +++
+ src/deluge/modulation/arpeggiator.cpp         | 40 +++++++++++--
+ src/deluge/modulation/arpeggiator.h           |  7 +++
+ 10 files changed, 181 insertions(+), 7 deletions(-)
+ create mode 100644 src/deluge/gui/menu_item/arpeggiator/bounce_fade.h
+ create mode 100644 src/deluge/gui/menu_item/arpeggiator/ratchet_notes.h
+
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index ddf8fa3c..99426532 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -915,6 +915,10 @@
+         "STRING_FOR_ARP_LATCH": "Latch",
+         "STRING_FOR_ARP_LATCH_MENU_TITLE": "Arp latch",
+         "STRING_FOR_RATCHET_BOUNCE": "Ratchet bounce",
+-        "STRING_FOR_ARP_RATCHET_BOUNCE_MENU_TITLE": "Ratchet bounce"
++        "STRING_FOR_ARP_RATCHET_BOUNCE_MENU_TITLE": "Ratchet bounce",
++        "STRING_FOR_RATCHET_NOTES": "Ratchet notes",
++        "STRING_FOR_ARP_RATCHET_NOTES_MENU_TITLE": "Ratchet notes",
++        "STRING_FOR_BOUNCE_FADE": "Bounce fade",
++        "STRING_FOR_ARP_BOUNCE_FADE_MENU_TITLE": "Bounce fade"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index 65ab5f3f..ce7d721a 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -844,6 +844,10 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_ARP_LATCH_MENU_TITLE, "Arp latch"},
+         {STRING_FOR_RATCHET_BOUNCE, "Ratchet bounce"},
+         {STRING_FOR_ARP_RATCHET_BOUNCE_MENU_TITLE, "Ratchet bounce"},
++        {STRING_FOR_RATCHET_NOTES, "Ratchet notes"},
++        {STRING_FOR_ARP_RATCHET_NOTES_MENU_TITLE, "Ratchet notes"},
++        {STRING_FOR_BOUNCE_FADE, "Bounce fade"},
++        {STRING_FOR_ARP_BOUNCE_FADE_MENU_TITLE, "Bounce fade"},
+     },
+ };
+ } // namespace deluge::l10n::built_in
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index 0c16bdf7..f7006e2f 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -488,6 +488,8 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_PATTERN, "PATT"},
+         {STRING_FOR_ARP_LATCH, "LATC"},
+         {STRING_FOR_RATCHET_BOUNCE, "BNCE"},
++        {STRING_FOR_RATCHET_NOTES, "RNUM"},
++        {STRING_FOR_BOUNCE_FADE, "BFAD"},
+     },
+     &built_in::english,
+ };
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index bfa2987f..ff0066ee 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -522,6 +522,8 @@
+         "STRING_FOR_RANDOMIZER": "RAND",
+         "STRING_FOR_PATTERN": "PATT",
+         "STRING_FOR_ARP_LATCH": "LATC",
+-        "STRING_FOR_RATCHET_BOUNCE": "BNCE"
++        "STRING_FOR_RATCHET_BOUNCE": "BNCE",
++        "STRING_FOR_RATCHET_NOTES": "RNUM",
++        "STRING_FOR_BOUNCE_FADE": "BFAD"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index c5c4f764..e36a8e6c 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -959,6 +959,10 @@ enum class String : size_t {
+ 	STRING_FOR_ARP_LATCH_MENU_TITLE,
+ 	STRING_FOR_RATCHET_BOUNCE,
+ 	STRING_FOR_ARP_RATCHET_BOUNCE_MENU_TITLE,
++	STRING_FOR_RATCHET_NOTES,
++	STRING_FOR_ARP_RATCHET_NOTES_MENU_TITLE,
++	STRING_FOR_BOUNCE_FADE,
++	STRING_FOR_ARP_BOUNCE_FADE_MENU_TITLE,
+ 
+ 	STRING_LAST
+ };
+diff --git a/src/deluge/gui/menu_item/arpeggiator/bounce_fade.h b/src/deluge/gui/menu_item/arpeggiator/bounce_fade.h
+new file mode 100644
+index 00000000..15594aee
+--- /dev/null
++++ b/src/deluge/gui/menu_item/arpeggiator/bounce_fade.h
+@@ -0,0 +1,56 @@
++/*
++ * Copyright © 2026 Deluge community contributors
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include "gui/l10n/l10n.h"
++#include "gui/menu_item/selection.h"
++#include "gui/ui/sound_editor.h"
++#include "model/drum/drum.h"
++#include "model/instrument/kit.h"
++#include "model/song/song.h"
++#include "modulation/arpeggiator.h"
++
++namespace deluge::gui::menu_item::arpeggiator {
++// Whether a bouncing ratchet gets softer as its gaps get shorter, like a real ball (on), or keeps every note's
++// velocity (off)
++class BounceFade final : public Selection {
++public:
++	using Selection::Selection;
++	void readCurrentValue() override { this->setValue(soundEditor.currentArpSettings->ratchetBounceFade); }
++	bool usesAffectEntire() override { return true; }
++	void writeCurrentValue() override {
++		bool fade = this->getValue() != 0;
++		// If affect-entire button held, do whole kit
++		if (currentUIMode == UI_MODE_HOLDING_AFFECT_ENTIRE_IN_SOUND_EDITOR && soundEditor.editingKitRow()) {
++			for (Drum* thisDrum = getCurrentKit()->firstDrum; thisDrum != nullptr; thisDrum = thisDrum->next) {
++				thisDrum->arpSettings.ratchetBounceFade = fade;
++			}
++		}
++		else {
++			soundEditor.currentArpSettings->ratchetBounceFade = fade;
++		}
++	}
++	deluge::vector<std::string_view> getOptions() override {
++		using enum l10n::String;
++		return {l10n::getView(STRING_FOR_OFF), l10n::getView(STRING_FOR_ON)};
++	}
++	bool isRelevant(ModControllableAudio* modControllable, int32_t whichThing) override {
++		return soundEditor.currentArpSettings != nullptr && soundEditor.currentArpSettings->mode != ArpMode::OFF;
++	}
++	bool isToggle() override { return true; }
++	bool shouldEnterSubmenu() override { return false; }
++};
++} // namespace deluge::gui::menu_item::arpeggiator
+diff --git a/src/deluge/gui/menu_item/arpeggiator/ratchet_notes.h b/src/deluge/gui/menu_item/arpeggiator/ratchet_notes.h
+new file mode 100644
+index 00000000..3e758f66
+--- /dev/null
++++ b/src/deluge/gui/menu_item/arpeggiator/ratchet_notes.h
+@@ -0,0 +1,57 @@
++/*
++ * Copyright © 2026 Deluge community contributors
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include "gui/l10n/l10n.h"
++#include "gui/menu_item/selection.h"
++#include "gui/ui/sound_editor.h"
++#include "model/drum/drum.h"
++#include "model/instrument/kit.h"
++#include "model/song/song.h"
++#include "modulation/arpeggiator.h"
++
++namespace deluge::gui::menu_item::arpeggiator {
++// Number of notes in a ratchet: Auto picks 2, 4 or 8 at random like 1.3 (weighted by the number of ratchets), or
++// always exactly 2 ... 8
++class RatchetNotes final : public Selection {
++public:
++	using Selection::Selection;
++	void readCurrentValue() override {
++		uint8_t notes = soundEditor.currentArpSettings->ratchetNotes;
++		this->setValue((notes >= 2) ? notes - 1 : 0);
++	}
++	bool usesAffectEntire() override { return true; }
++	void writeCurrentValue() override {
++		int32_t option = this->getValue();
++		uint8_t notes = (option == 0) ? 0 : option + 1;
++		// If affect-entire button held, do whole kit
++		if (currentUIMode == UI_MODE_HOLDING_AFFECT_ENTIRE_IN_SOUND_EDITOR && soundEditor.editingKitRow()) {
++			for (Drum* thisDrum = getCurrentKit()->firstDrum; thisDrum != nullptr; thisDrum = thisDrum->next) {
++				thisDrum->arpSettings.ratchetNotes = notes;
++			}
++		}
++		else {
++			soundEditor.currentArpSettings->ratchetNotes = notes;
++		}
++	}
++	deluge::vector<std::string_view> getOptions() override {
++		return {l10n::getView(l10n::String::STRING_FOR_AUTO), "2", "3", "4", "5", "6", "7", "8"};
++	}
++	bool isRelevant(ModControllableAudio* modControllable, int32_t whichThing) override {
++		return soundEditor.currentArpSettings != nullptr && soundEditor.currentArpSettings->mode != ArpMode::OFF;
++	}
++};
++} // namespace deluge::gui::menu_item::arpeggiator
+diff --git a/src/deluge/gui/ui/menus.cpp b/src/deluge/gui/ui/menus.cpp
+index 7c54be9c..e2199a43 100644
+--- a/src/deluge/gui/ui/menus.cpp
++++ b/src/deluge/gui/ui/menus.cpp
+@@ -1,6 +1,7 @@
+ #include "gui/l10n/strings.h"
+ #include "gui/menu_item/active_scales.h"
+ #include "gui/menu_item/arpeggiator/arp_unpatched_param.h"
++#include "gui/menu_item/arpeggiator/bounce_fade.h"
+ #include "gui/menu_item/arpeggiator/chord_type.h"
+ #include "gui/menu_item/arpeggiator/include_in_kit_arp.h"
+ #include "gui/menu_item/arpeggiator/latch.h"
+@@ -16,6 +17,7 @@
+ #include "gui/menu_item/arpeggiator/octaves.h"
+ #include "gui/menu_item/arpeggiator/preset_mode.h"
+ #include "gui/menu_item/arpeggiator/ratchet_bounce.h"
++#include "gui/menu_item/arpeggiator/ratchet_notes.h"
+ #include "gui/menu_item/arpeggiator/rate.h"
+ #include "gui/menu_item/arpeggiator/rhythm.h"
+ #include "gui/menu_item/arpeggiator/sequence_length.h"
+@@ -250,6 +252,8 @@ randomizer::RandomizerUnpatchedParam arpRatchetProbabilityMenu{STRING_FOR_RATCHE
+ randomizer::midi_cv::RatchetProbability arpRatchetProbabilityMenuMIDIOrCV{
+     STRING_FOR_RATCHET_PROBABILITY, STRING_FOR_ARP_RATCHET_PROBABILITY_MENU_TITLE};
+ arpeggiator::RatchetBounce arpRatchetBounceMenu{STRING_FOR_RATCHET_BOUNCE, STRING_FOR_ARP_RATCHET_BOUNCE_MENU_TITLE};
++arpeggiator::RatchetNotes arpRatchetNotesMenu{STRING_FOR_RATCHET_NOTES, STRING_FOR_ARP_RATCHET_NOTES_MENU_TITLE};
++arpeggiator::BounceFade arpBounceFadeMenu{STRING_FOR_BOUNCE_FADE, STRING_FOR_ARP_BOUNCE_FADE_MENU_TITLE};
+ arpeggiator::Latch arpLatchMenu{STRING_FOR_ARP_LATCH, STRING_FOR_ARP_LATCH_MENU_TITLE};
+ arpeggiator::IncludeInKitArp arpIncludeInKitArpMenu{STRING_FOR_INCLUDE_IN_KIT_ARP, STRING_FOR_INCLUDE_IN_KIT_ARP};
+ 
+@@ -349,7 +353,9 @@ Submenu arpMenu{
+         &arpRatchetAmountMenuMIDIOrCV,
+         &arpRatchetProbabilityMenu,
+         &arpRatchetProbabilityMenuMIDIOrCV,
++        &arpRatchetNotesMenu,
+         &arpRatchetBounceMenu,
++        &arpBounceFadeMenu,
+         &arpMpeMenu,
+         &arpIncludeInKitArpMenu,
+     },
+@@ -371,7 +377,9 @@ Submenu kitArpMenu{
+         &arpSequenceLengthMenu,
+         &arpRatchetAmountMenu,
+         &arpRatchetProbabilityMenu,
++        &arpRatchetNotesMenu,
+         &arpRatchetBounceMenu,
++        &arpBounceFadeMenu,
+         &randomizerMenu,
+     },
+ };
+diff --git a/src/deluge/modulation/arpeggiator.cpp b/src/deluge/modulation/arpeggiator.cpp
+index 3d4df160..8a76a632 100644
+--- a/src/deluge/modulation/arpeggiator.cpp
++++ b/src/deluge/modulation/arpeggiator.cpp
+@@ -601,11 +601,25 @@ void ArpeggiatorBase::switchAnyNoteOff(ArpReturnInstruction* instruction) {
+ 
+ // Sets up the ratchet state if the probability is met
+ void ArpeggiatorBase::maybeSetupNewRatchet(ArpeggiatorSettings* settings) {
++	bool fixedNumberOfNotes = settings->ratchetNotes >= 2;
+ 	isRatcheting = isPlayRatchetForCurrentStep
+-	               && settings->ratchetAmount > 0
++	               && (settings->ratchetAmount > 0 || fixedNumberOfNotes)
+ 	               // For the highest sync we can't divide the time any more, so not possible to ratchet
+ 	               && !(settings->syncType == SYNC_TYPE_EVEN && settings->syncLevel == SyncLevel::SYNC_LEVEL_256TH);
+-	if (isRatcheting) {
++	if (isRatcheting && fixedNumberOfNotes) {
++		// Always the chosen number of notes, except where the step is too short to divide that finely: at most 2 at
++		// 128th and 256th (triplet or dotted) sync, 4 at 64th
++		uint32_t maxNotes = kMaxFixedRatchetNotes;
++		if (settings->syncLevel == SyncLevel::SYNC_LEVEL_128TH || settings->syncLevel == SyncLevel::SYNC_LEVEL_256TH) {
++			maxNotes = 2;
++		}
++		else if (settings->syncLevel == SyncLevel::SYNC_LEVEL_64TH) {
++			maxNotes = 4;
++		}
++		ratchetNotesCount = std::min<uint32_t>(settings->ratchetNotes, maxNotes);
++		ratchetNotesMultiplier = 0; // Only used by the random counts, which are powers of two
++	}
++	else if (isRatcheting) {
+ 		ratchetNotesMultiplier = getRandomWeighted2BitsAmount(settings->ratchetAmount);
+ 		ratchetNotesCount = 1 << ratchetNotesMultiplier;
+ 		if (settings->syncLevel == SyncLevel::SYNC_LEVEL_128TH) {
+@@ -634,7 +648,7 @@ void ArpeggiatorBase::maybeSetupNewRatchet(ArpeggiatorSettings* settings) {
+ 
+ // Spaces the notes of a new ratchet like a bouncing ball: each gap is the one before times r, so the ratchet speeds
+ // up (r < 1) or slows down (r > 1) while still filling exactly one step. A ball hits softer as the bounces get shorter,
+-// so each note's velocity follows the square root of its gap relative to the longest one.
++// so with bounce fade on, each note's velocity follows the square root of its gap relative to the longest one.
+ void ArpeggiatorBase::setupRatchetBounce(ArpeggiatorSettings* settings) {
+ 	isRatchetBouncing =
+ 	    isRatcheting && settings->ratchetBounce != 0 && ratchetNotesCount >= 2 && ratchetNotesCount <= kMaxRatchetNotes;
+@@ -661,7 +675,8 @@ void ArpeggiatorBase::setupRatchetBounce(ArpeggiatorSettings* settings) {
+ 	for (uint32_t i = 0; i < ratchetNotesCount; i++) {
+ 		ratchetNoteStarts[i] = (uint32_t)(start * kMaxGate / total);
+ 		start += gaps[i];
+-		ratchetNoteVelocityScales[i] = (uint8_t)(255.0f * std::sqrt(gaps[i] / longest) + 0.5f);
++		ratchetNoteVelocityScales[i] =
++		    settings->ratchetBounceFade ? (uint8_t)(255.0f * std::sqrt(gaps[i] / longest) + 0.5f) : 255;
+ 	}
+ 	ratchetNoteStarts[ratchetNotesCount] = 1 << 24;
+ }
+@@ -671,7 +686,11 @@ uint32_t ArpeggiatorBase::getRatchetNoteStart(uint32_t index, uint32_t maxGate)
+ 	if (isRatchetBouncing) {
+ 		return ratchetNoteStarts[std::min(index, ratchetNotesCount)];
+ 	}
+-	return index * (maxGate >> ratchetNotesMultiplier);
++	if (ratchetNotesCount == 0) {
++		return 0;
++	}
++	// Evenly spaced. For the random counts (powers of two) this is exactly index * (maxGate >> multiplier)
++	return (uint32_t)(((uint64_t)std::min(index, ratchetNotesCount) * maxGate) / ratchetNotesCount);
+ }
+ 
+ uint8_t ArpeggiatorBase::applyRatchetBounceToVelocity(uint8_t velocity) {
+@@ -1730,6 +1749,8 @@ void ArpeggiatorSettings::cloneFrom(ArpeggiatorSettings const* other) {
+ 	randomizerLock = other->randomizerLock;
+ 	latch = other->latch;
+ 	ratchetBounce = other->ratchetBounce;
++	ratchetBounceFade = other->ratchetBounceFade;
++	ratchetNotes = other->ratchetNotes;
+ 	syncType = other->syncType;
+ 	syncLevel = other->syncLevel;
+ 	mpeVelocity = other->mpeVelocity;
+@@ -1772,6 +1793,13 @@ bool ArpeggiatorSettings::readCommonTagsFromFile(Deserializer& reader, char cons
+ 	else if (!strcmp(tagName, "ratchetBounce")) {
+ 		ratchetBounce = std::clamp<int32_t>(reader.readTagOrAttributeValueInt(), -kMaxRatchetBounce, kMaxRatchetBounce);
+ 	}
++	else if (!strcmp(tagName, "ratchetBounceFade")) {
++		ratchetBounceFade = reader.readTagOrAttributeValueInt();
++	}
++	else if (!strcmp(tagName, "ratchetNotes")) {
++		int32_t notes = reader.readTagOrAttributeValueInt();
++		ratchetNotes = (notes < 2) ? 0 : std::min<int32_t>(notes, kMaxFixedRatchetNotes);
++	}
+ 	else if (!strcmp(tagName, "lastLockedNoteProb")) {
+ 		lastLockedNoteProbabilityParameterValue = reader.readTagOrAttributeValueInt();
+ 	}
+@@ -1983,6 +2011,8 @@ void ArpeggiatorSettings::writeCommonParamsToFile(Serializer& writer, Song* song
+ 	writer.writeAttribute("randomizerLock", randomizerLock);
+ 	writer.writeAttribute("latch", latch);
+ 	writer.writeAttribute("ratchetBounce", ratchetBounce);
++	writer.writeAttribute("ratchetBounceFade", ratchetBounceFade);
++	writer.writeAttribute("ratchetNotes", ratchetNotes);
+ 	writer.writeAttribute("kitArp", includeInKitArp);
+ 
+ 	// Note probability
+diff --git a/src/deluge/modulation/arpeggiator.h b/src/deluge/modulation/arpeggiator.h
+index ebd46c58..09c79c73 100644
+--- a/src/deluge/modulation/arpeggiator.h
++++ b/src/deluge/modulation/arpeggiator.h
+@@ -41,6 +41,7 @@ constexpr uint32_t PATTERN_MAX_BUFFER_SIZE = 16;
+ constexpr int16_t ARP_NOTE_NONE = 32767;
+ 
+ constexpr int32_t kMaxRatchetBounce = 10;
++constexpr uint32_t kMaxFixedRatchetNotes = 8;
+ 
+ enum class ArpType : uint8_t {
+ 	SYNTH,
+@@ -104,6 +105,12 @@ public:
+ 	// Ratchet bounce: spaces a ratchet's notes like a bouncing ball, each gap (and velocity) smaller than the one
+ 	// before (positive) or bigger (negative). 0 is evenly spaced, like before
+ 	int8_t ratchetBounce{0};
++	// Whether a bouncing ratchet also gets softer as its gaps get shorter (like a ball), or keeps every note's velocity
++	bool ratchetBounceFade{true};
++
++	// Number of notes in a ratchet: 0 = random like 1.3 (2, 4 or 8, weighted by the ratchet amount), 2 ... 8 = always
++	// exactly that many
++	uint8_t ratchetNotes{0};
+ 
+ 	// MPE settings
+ 	ArpMpeModSource mpeVelocity{ArpMpeModSource::OFF};
+-- 
+2.43.0
+
