@@ -1,0 +1,306 @@
+#!/usr/bin/env python3
+"""Runs the real Deluge firmware (deluge.elf) in unicorn and measures what a whole song costs the Cortex-A9.
+
+Usage: song_emu.py <deluge.elf> <sd.img> <out dir> [--bars-warmup N] [--bars N] [--reverb-model M]
+
+What it does:
+- Loads the ELF, runs its own reset code (resetprg: the static constructors, main, deluge_main: memory allocator,
+  functionsInit, AudioEngine::init, settings, the blank song) with the hardware replaced by plain memory, except a few
+  things that must behave: the timers (OSTM, MTU2) count emulated time (instructions at 400 MHz), the DMA channels stand
+  still, the SD card's sector reads and writes go to an image file (FatFS's own code on top), and the hardware parts
+  that only wait for devices (SD card init, USB, SPI flash, OLED) are skipped. It stops where deluge_main would start the
+  task manager.
+- Loads the startup song from the SD image (the firmware's own setupStartupSong(), as at boot), starts playback with
+  the internal clock (PlaybackHandler::playButtonPressed) and then calls AudioEngine::routine() itself, one call per
+  128 samples: the SSI's DMA position is made to show exactly 128 samples free before each call and no more space
+  after the render, so every call renders one window of up to 128 samples (shorter only where the song's clock ticks,
+  as on the Deluge). Between calls, it runs what the task manager would: the playback handler's routine and the SD
+  card's cluster loading.
+- Counts instructions per translated block in C (blockcount.c), so a window's cost and the profile by function are
+  exact instruction counts of the firmware's machine code (not cycles: 1 instruction per cycle at 400 MHz is the scale).
+"""
+import argparse
+import bisect
+import collections
+import ctypes
+import json
+import math
+import os
+import struct
+import subprocess
+import sys
+import time
+
+import unicorn
+from unicorn import (UC_ARCH_ARM, UC_HOOK_CODE, UC_HOOK_INTR, UC_HOOK_MEM_UNMAPPED, UC_MODE_ARM, UC_PROT_ALL, Uc,
+                     UcError)
+from unicorn.arm_const import (UC_ARM_REG_C1_C0_2, UC_ARM_REG_CPSR, UC_ARM_REG_D0, UC_ARM_REG_FPEXC, UC_ARM_REG_LR,
+                               UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3,
+                               UC_ARM_REG_R4, UC_ARM_REG_R5, UC_ARM_REG_R6, UC_ARM_REG_R7, UC_ARM_REG_SP,
+                               UC_CPU_ARM_CORTEX_A9)
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+INTERNAL_RAM, INTERNAL_RAM_SIZE = 0x20000000, 0x300000
+SDRAM, SDRAM_SIZE = 0x0C000000, 0x04000000
+UNCACHED_MIRROR_OFFSET = 0x40000000
+STOP = 0x7FFF0000  # Return address of the calls we make: nothing is executed there
+PROGRAM_STACK_TOP = 0x20300000
+
+CPU_HZ = 400e6
+PERIPHERAL_HZ = 33.33e6
+SAMPLE_RATE = 44100
+CYCLES_PER_BLOCK = CPU_HZ * 128 / SAMPLE_RATE  # 1,161,000
+
+OSTM0 = 0xFCFEC000
+MTU2 = 0xFCFF0000
+MTU_TCNT = {0x306: (0, 64), 0x386: (1, 1), 0x006: (2, 64), 0x210: (3, 64), 0x212: (4, 1024)}  # offset: (timer, prescaler)
+DMAC = 0xE8200000
+SSI_TX_DMA_CHANNEL = 6
+
+
+def dmac_channel_base(n):
+    return n * 64 + (0x200 if n >= 8 else 0)
+
+
+class Symbols:
+    def __init__(self, elf, tool_prefix):
+        out = subprocess.run([tool_prefix + "nm", "-S", "-n", "--defined-only", elf], capture_output=True, text=True,
+                             check=True).stdout
+        demangled = subprocess.run([tool_prefix + "nm", "-S", "-n", "-C", "--defined-only", elf], capture_output=True,
+                                   text=True, check=True).stdout
+        self.by_name = {}
+        self.functions = []  # (start, end, demangled name)
+        for line, dline in zip(out.splitlines(), demangled.splitlines()):
+            parts = line.split(maxsplit=3)
+            dparts = dline.split(maxsplit=3)
+            if len(parts) != 4:
+                continue
+            address, size, kind, name = int(parts[0], 16), int(parts[1], 16), parts[2], parts[3]
+            self.by_name[name] = (address, size)
+            if len(dparts) == 4:
+                self.by_name.setdefault(dparts[3], (address, size))
+            if kind in "TtWw" and size:
+                self.functions.append((address & ~1, (address & ~1) + size, dparts[3] if len(dparts) == 4 else name))
+        self.functions.sort()
+        self.starts = [f[0] for f in self.functions]
+
+    def __getitem__(self, name):
+        return self.by_name[name][0]
+
+    def find(self, prefix):
+        """The one symbol whose (mangled or demangled) name starts with prefix."""
+        found = sorted({v for k, v in self.by_name.items() if k.startswith(prefix)})
+        if len(found) != 1:
+            raise KeyError(f"{len(found)} symbols start with {prefix!r}")
+        return found[0][0]
+
+    def function_at(self, address):
+        i = bisect.bisect_right(self.starts, address & ~1) - 1
+        if i >= 0 and address < self.functions[i][1]:
+            return self.functions[i]
+        return None
+
+    def name_at(self, address):
+        f = self.function_at(address)
+        return f"{f[2]}+{address - f[0]:#x}" if f else f"{address:#x}"
+
+
+class Emulator:
+    def __init__(self, elf, sd_image, tool_prefix, log):
+        self.elf = elf
+        self.log = log
+        self.tool_prefix = tool_prefix
+        self.sym = Symbols(elf, tool_prefix)
+        self.uc = uc = Uc(UC_ARCH_ARM, UC_MODE_ARM)
+        uc.ctl_set_cpu_model(UC_CPU_ARM_CORTEX_A9)
+
+        # Internal RAM and SDRAM, each also at its uncached mirror (the same host memory)
+        self.iram = ctypes.create_string_buffer(INTERNAL_RAM_SIZE)
+        self.sdram = ctypes.create_string_buffer(SDRAM_SIZE)
+        for base, buf, size in ((INTERNAL_RAM, self.iram, INTERNAL_RAM_SIZE), (SDRAM, self.sdram, SDRAM_SIZE)):
+            uc.mem_map_ptr(base, size, UC_PROT_ALL, ctypes.addressof(buf))
+            uc.mem_map_ptr(base + UNCACHED_MIRROR_OFFSET, size, UC_PROT_ALL, ctypes.addressof(buf))
+        uc.mem_map(STOP & ~0xFFF, 0x1000)
+
+        # Timers and DMA registers behave; the rest of the peripherals is plain memory, mapped when first touched
+        self.mmio = {}
+        uc.mmio_map(OSTM0, 0x1000, self.ostm_read, None, self.plain_write, OSTM0)
+        uc.mmio_map(MTU2, 0x1000, self.mtu_read, None, self.plain_write, MTU2)
+        uc.mmio_map(DMAC, 0x1000, self.dmac_read, None, self.plain_write, DMAC)
+        self.mapped_lazily = []
+        uc.hook_add(UC_HOOK_MEM_UNMAPPED, self.on_unmapped)
+        uc.hook_add(UC_HOOK_INTR, self.on_interrupt)
+
+        # The image, as the bootloader leaves it: every segment at its load address
+        data = open(elf, "rb").read()
+        _, phoff, _, _, _, phentsize, phnum = struct.unpack_from("<IIIIHHH", data, 24)
+        for i in range(phnum):
+            p_type, p_offset, p_vaddr, p_paddr, p_filesz, _ = struct.unpack_from("<IIIIII", data, phoff + i * phentsize)
+            if p_type == 1 and p_filesz:
+                uc.mem_write(p_paddr, data[p_offset:p_offset + p_filesz])
+
+        uc.reg_write(UC_ARM_REG_C1_C0_2, uc.reg_read(UC_ARM_REG_C1_C0_2) | (0xF << 20))  # CP10/CP11 (VFP/NEON)
+        uc.reg_write(UC_ARM_REG_FPEXC, 0x40000000)
+
+        # Instruction counting
+        lib = ctypes.CDLL(os.path.join(os.environ.get("SONG_BUILD", HERE), "blockcount.so"))
+        lib.bc_total.restype = ctypes.c_uint64
+        lib.bc_dump.restype = ctypes.c_uint32
+        lib.bc_install.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32]
+        self.bc = lib
+        if lib.bc_install(uc._uch, ctypes.addressof(self.iram), INTERNAL_RAM, INTERNAL_RAM_SIZE) != 0:
+            raise SystemExit("could not install the block hook")
+
+        # SD card
+        self.sd = bytearray(open(sd_image, "rb").read())
+        self.sd_path = sd_image
+        self.sd_reads = self.sd_writes = 0
+
+        self.intercepts = {}
+        self.dma_free = None  # Set while measuring: see ssi_position()
+        self.time_offset = 0.0
+
+    # --- time: instructions at 400 MHz
+
+    def seconds(self):
+        return self.bc.bc_total() / CPU_HZ + self.time_offset
+
+    def ostm_read(self, uc, offset, size, base):
+        if offset == 4:  # OSTMnCNT, counting up in the free-running mode
+            return int(self.seconds() * PERIPHERAL_HZ) & 0xFFFFFFFF
+        return self.plain_read(base, offset, size)
+
+    def mtu_read(self, uc, offset, size, base):
+        if offset in MTU_TCNT:
+            _, prescaler = MTU_TCNT[offset]
+            return int(self.seconds() * PERIPHERAL_HZ / prescaler) & 0xFFFF
+        return self.plain_read(base, offset, size)
+
+    def dmac_read(self, uc, offset, size, base):
+        channel_offset = offset & 0x3F
+        channel = (offset - (0x200 if offset >= 0x400 else 0)) // 64 if offset < 0x200 or offset >= 0x400 else None
+        if channel is not None and channel_offset in (0x18, 0x1C):
+            if channel == SSI_TX_DMA_CHANNEL and channel_offset == 0x18:
+                return self.ssi_position()
+            # A DMA that stands still: current address = where it started
+            return self.plain_read(base, offset - 0x18, 4)
+        return self.plain_read(base, offset, size)
+
+    def plain_read(self, base, offset, size):
+        value = 0
+        for i in range(size):
+            value |= self.mmio.get(base + offset + i, 0) << (8 * i)
+        return value
+
+    def plain_write(self, uc, offset, size, value, base):
+        for i in range(size):
+            self.mmio[base + offset + i] = (value >> (8 * i)) & 0xFF
+
+    def on_unmapped(self, uc, access, address, size, value, _):
+        region = address & ~0xFFFFF
+        if region in (0x00000000,) or address < 0x1000:
+            self.log(f"access to {address:#x} (null pointer?) at {self.sym.name_at(uc.reg_read(UC_ARM_REG_PC))}")
+            return False
+        try:
+            uc.mem_map(region, 0x100000)
+        except UcError:
+            # Next to an MMIO page: map just this page
+            region = address & ~0xFFF
+            uc.mem_map(region, 0x1000)
+        self.mapped_lazily.append(region)
+        return True
+
+    def on_interrupt(self, uc, intno, _):
+        pc = uc.reg_read(UC_ARM_REG_PC)
+        raise SystemExit(f"exception {intno} at {self.sym.name_at(pc)}")
+
+    # --- the SSI's DMA position (what getTxBufferCurrentPlace() reads)
+
+    def ssi_position(self):
+        """While measuring: 127 samples free (the DMA just behind where the renderer has written up to) until the
+        window is rendered, then none, so each AudioEngine::routine() renders exactly one window. Before that: the
+        buffer always full (nothing rendered)."""
+        tx_pos = self.u32(self.sym["_ZN11AudioEngine14i2sTXBufferPosE"]) - UNCACHED_MIRROR_OFFSET
+        start = self.sym["ssiTxBuffer"]
+        free = self.dma_free if self.dma_free is not None else 0
+        pos = start + ((tx_pos - start + free * 8) % (128 * 8))
+        return pos
+
+    # --- memory helpers
+
+    def u32(self, address):
+        return struct.unpack("<I", self.uc.mem_read(address, 4))[0]
+
+    def w32(self, address, value):
+        self.uc.mem_write(address, struct.pack("<I", value & 0xFFFFFFFF))
+
+    def u8(self, address):
+        return self.uc.mem_read(address, 1)[0]
+
+    def w8(self, address, value):
+        self.uc.mem_write(address, bytes([value & 0xFF]))
+
+    def cstring(self, address, limit=256):
+        out = bytes(self.uc.mem_read(address, limit))
+        return out.split(b"\0")[0].decode("latin-1")
+
+    # --- intercepting functions
+
+    def intercept(self, address, handler):
+        """handler(emu) runs when the code reaches address. It returns None to go on, or a value (int) to return from
+        the function right there with that value in r0 ("skip")."""
+        address &= ~1
+
+        def hook(uc, addr, size, _):
+            result = handler(self)
+            if result is not None:
+                uc.reg_write(UC_ARM_REG_R0, result & 0xFFFFFFFF)
+                uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
+
+        self.intercepts[address] = self.uc.hook_add(UC_HOOK_CODE, hook, begin=address, end=address)
+
+    def skip_to(self, address, target, before=None):
+        """Jumps from address to target (both Thumb code in the same function)."""
+        def hook(uc, addr, size, _):
+            if before:
+                before(self)
+            uc.reg_write(UC_ARM_REG_PC, target | 1)
+        self.uc.hook_add(UC_HOOK_CODE, hook, begin=address, end=address)
+
+    # --- calling firmware functions
+
+    def call(self, address, *args, timeout_s=0):
+        uc = self.uc
+        regs = (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3)
+        for reg, value in zip(regs, args):
+            uc.reg_write(reg, value & 0xFFFFFFFF)
+        uc.reg_write(UC_ARM_REG_SP, PROGRAM_STACK_TOP)
+        uc.reg_write(UC_ARM_REG_LR, STOP | 1)
+        self.run(address | 1, STOP, timeout_s)
+        return uc.reg_read(UC_ARM_REG_R0)
+
+    def run(self, start, until, timeout_s=0):
+        uc = self.uc
+        pc = start
+        while True:
+            try:
+                uc.emu_start(pc, until, timeout=int(timeout_s * 1e6) if timeout_s else 0)
+            except UcError as e:
+                pc = uc.reg_read(UC_ARM_REG_PC)
+                raise SystemExit(f"emulator error: {e} at {self.sym.name_at(pc)}, lr {self.sym.name_at(uc.reg_read(UC_ARM_REG_LR))}")
+            pc = uc.reg_read(UC_ARM_REG_PC)
+            if pc == until or getattr(self, "stopped", False):
+                self.stopped = False
+                return
+            if not timeout_s:
+                return
+            # Timed out: say where we are, and go on (so a firmware loop waiting for hardware shows up)
+            self.log(f"  ... still running at {self.sym.name_at(pc)} (lr {self.sym.name_at(uc.reg_read(UC_ARM_REG_LR))}), "
+                     f"{self.bc.bc_total() / 1e6:,.0f}M instructions")
+            thumb = uc.reg_read(UC_ARM_REG_CPSR) & 0x20
+            pc |= 1 if thumb else 0
+
+    def stop(self):
+        self.stopped = True
+        self.uc.emu_stop()
