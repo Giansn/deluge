@@ -20,7 +20,8 @@ D="$FW/src"
 } > "$B/voice_osc.cpp"
 grep -q 'Voice::renderOsc' "$B/voice_osc.cpp" || { echo "renderOsc not found in voice.cpp"; exit 1; }
 T="$D/deluge/util/lookuptables"
-CXX="g++ -std=gnu++23 -O2 -g -fsanitize=undefined -fno-sanitize-recover=undefined -w -I $HERE/stubs_pc"
+# -m32: the firmware computes table addresses in 32 bits.
+CXX="g++ -m32 -std=gnu++23 -O2 -g -fsanitize=undefined -fno-sanitize-recover=undefined -w -I $HERE/stubs_pc"
 RUN=""
 [ -n "$ARM" ] && CXX="$ARM_CXX" && RUN="$ARM_RUN"
 $CXX -I "$HERE/stubs" -I "$HERE/../../delay/stubs" -I "$HERE/../../arm" -I "$D/deluge" -I "$D" -include host_shim.h \
