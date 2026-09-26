@@ -1,6 +1,6 @@
 # Deluge 1.2.1 mit Master Tune
 
-Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version.
+Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB.
 
 | Datei | Version (Settings → Firmware version) | Inhalt |
 |---|---|---|
@@ -9,9 +9,10 @@ Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit
 | `deluge-1.2.1-mastertune-v4-6cb344e2.bin` | `1.2.1-mastertune-v4-6cb344e2` | v3 + Leistungspaket B |
 | `deluge-1.2.1-mastertune-v5-5daddd9f.bin` | `1.2.1-mastertune-v5-5daddd9f` | v4 + Arpeggiator aus 1.3, Latch, Ratchet Bounce |
 | `deluge-1.2.1-mastertune-v6-1e1af07a.bin` | `1.2.1-mastertune-v6-1e1af07a` | v5 + zweite Bounce-Version: feste Ratchet-Anzahl, Bounce ohne Leiserwerden |
+| `deluge-1.2.1-mastertune-v7-ca0b5bd7.bin` | `1.2.1-mastertune-v7-ca0b5bd7` | v6 + SD-Karte über USB für DEx und deluge-editor |
 
-SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692` (vollständig: `sha256sum *.bin`).
-Quellcode: `patches/0001` bis `0006` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006.
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21` (vollständig: `sha256sum *.bin`).
+Quellcode: `patches/0001` bis `0007` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007.
 
 ## v3 und v4: Unterschiede
 
@@ -99,6 +100,32 @@ Gleichmässige Ratchets teilen den Schritt jetzt durch die Notenzahl. Für 2, 4 
 
 Das ergibt Einsätze bei 0, 99 und 169 ms nach Beginn der Achtel, also Abstände von 99, 70 und 49 ms. Gemessen wurden im Stück 99, 64 und 46 ms bei 0:57 und 102, 75 und 46 ms bei 6:39.
 
+## v7: SD-Karte über USB
+
+v7 enthält v6 unverändert und dazu den Dateizugriff über USB-MIDI aus Community-Firmware 1.3 (SysEx-Protokoll «smSysex»). Die Karte bleibt dabei im Deluge. Damit laufen am Computer:
+
+| App | Was geht |
+|---|---|
+| [DEx](https://dex.silicak.es) | Datei-Browser: Ordner ansehen, Dateien hoch- und herunterladen, umbenennen, kopieren, verschieben, löschen, Ordner anlegen. Dazu wie bisher Display-Spiegelung und Screenshots. |
+| [deluge-editor](https://cyface.github.io/deluge-editor/) | Synth- und Kit-Presets direkt von der Karte öffnen und wieder dorthin speichern. |
+
+**Bedienung:** Deluge per USB an den Computer, die Seite in Chrome, Edge oder Opera öffnen und den MIDI-Zugriff erlauben. Die Apps erkennen den Dateizugriff selbst.
+
+**Angepasst an 1.2.1** (sonst wie 1.3):
+- Nur über USB. Anfragen über die DIN-Buchsen ignoriert v7, weil 1.2.1 dort keinen Überlaufschutz hat.
+- Der USB-MIDI-Sendepuffer ist viermal so gross wie in 1.2.1 (12 statt 3 KB). Eine Antwort geht nur als Ganzes hinaus, sobald sie Platz hat. So passt auch eine volle Ordnerseite mit langen Namen hinein, und deluge-editor sieht jeden Ordner vollständig. In 1.2.1 hätte ein voller Puffer die älteste noch nicht gesendete Nachricht überschrieben.
+- Dateinamen mit Zeichen ausserhalb von ASCII (z. B. Umlaute) verschickt v7 maskiert. So bleibt die Liste lesbar, statt die ganze Antwort zu verderben.
+
+**Grenzen:**
+- **deluge-editor meldet in Rot «needs community 1.3.0 or later»,** weil der Deluge ehrlich 1.2.1 meldet. Die Meldung stimmt hier nicht: Öffnen und Speichern funktionieren trotzdem.
+- **deluge-editor blendet Regler aus, die es erst ab 1.3 kennt.** Darunter sind auch die Arp-Neuerungen aus v5/v6 (Spread, Chord, Walk, Kit-Arp …). Die stellst du am Deluge ein. Beim Speichern bleiben sie in der Datei erhalten.
+- **«Live Edit» im deluge-editor geht nicht.** Es braucht zusätzliche Befehle aus einem Firmware-Fork, die auch 1.3 nicht hat.
+- **Namen mit Umlauten:** Die Apps zeigen sie falsch an und können solche Dateien meist nicht öffnen. Am besten nur Namen aus A–Z, 0–9 und _ verwenden.
+- **Während der Wiedergabe** keine Samples löschen oder überschreiben, die der Song gerade braucht. Grosse Übertragungen gehen über MIDI langsam; für ganze Sample-Sammlungen ist ein Kartenleser schneller.
+- **MIDI zum Computer während Übertragungen:** Noten und Clock über USB teilen sich den Sendepuffer mit den Antworten und können deshalb verzögert ankommen. Beim Spielen mit einer DAW über USB keine Dateien übertragen. DIN-MIDI ist nicht betroffen.
+
+**Geprüft:** Host-Test (der Firmware-Code auf dem PC mit AddressSanitizer, auf einer FAT32-RAM-Disk, 40 Prüfpunkte im Ablauf von DEx und deluge-editor), Build ohne Warnungen, zwei Builds mit identischer SHA-256, eine Code-Prüfung. Sie fand drei Fehler, alle behoben: verkürzte Ordnerlisten in deluge-editor, zu knapp bemessenes Warten auf Platz im Sendepuffer, fehlende Absicherung beim Schreiben ohne Puffer. **Auf dem Gerät nicht getestet.**
+
 ## Bedienung
 
 Das Menü liegt unter **Settings → Tuning → Master tune (Hz)**. Die 7-Segment-Anzeige zeigt `TUNE` → `MTUN`.
@@ -184,8 +211,8 @@ Version 1 liegt weiterhin in der Git-Historie dieses Ordners.
 ```sh
 git clone https://github.com/SynthstromAudible/DelugeFirmware && cd DelugeFirmware
 git checkout release_1_2_1
-git am /pfad/zu/patches/*.patch        # alle = v6; nur 0001 = v2, 0001-0003 = v3, 0001-0004 = v4, 0001-0005 = v5
-./dbt configure -DRELEASE_TYPE:STRING=mastertune-v6   # Name in der Versionsanzeige, z. B. mastertune-v5 für v5
+git am /pfad/zu/patches/*.patch        # alle = v7; nur 0001 = v2, 0001-0003 = v3, 0001-0004 = v4, 0001-0005 = v5, 0001-0006 = v6
+./dbt configure -DRELEASE_TYPE:STRING=mastertune-v7   # Name in der Versionsanzeige, z. B. mastertune-v6 für v6
 ./dbt build release                      # Ergebnis: build/Release/deluge.bin
 
 # Rechentest (Host-Compiler)
@@ -196,4 +223,7 @@ python3 /pfad/zu/tests/wav_mtun_chunk_test.py
 
 # NEON-Pufferverschiebung auf Cortex-A9-Code im Emulator (pip install unicorn)
 python3 /pfad/zu/tests/run_neon_shift_test.py .
+
+# SD-Zugriff über USB (v7) auf dem PC, mit AddressSanitizer
+/pfad/zu/tests/smsysex/run.sh .
 ```

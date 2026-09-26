@@ -1,0 +1,2080 @@
+From ca0b5bd732b98516b701d264e6831a5799aa355f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 09:15:14 +0000
+Subject: [PATCH] SD file access over USB MIDI (SysEx JSON protocol from 1.3)
+
+Port of community firmware 1.3's smSysex file access, so that browser
+apps like DEx (file browser) and deluge-editor can list, read, write,
+rename, copy, move and delete files on the SD card over USB.
+
+- storage/smsysex.{h,cpp}: 1.3 protocol handler (session, ping, dir,
+  open, close, read, write, delete, mkdir, rename, copy, move, utime).
+  1.2.1 changes: reply buffer allocated on first use, requests from DIN
+  ignored (no overflow protection there), oversized requests dropped,
+  queue bounded at 16. A reply goes out only as a whole, once the USB
+  send buffer has room for all of it, and is dropped after two seconds
+  without room instead of being sent in part. A directory page takes an
+  entry back out if it would make the reply too big for that buffer.
+  A write without a decode buffer reports FR_NOT_ENOUGH_CORE.
+- io/midi: the USB MIDI send ring holds 4096 messages instead of 1024
+  (in the internal frunk RAM, which has room), so a full directory page
+  of 25 entries fits even with 255-character names. deluge-editor ends
+  a listing at the first page shorter than 25 entries. A full ring now
+  drops the new message instead of overwriting the oldest unsent one.
+- storage/smsysex_json.{h,cpp}: the memory-based JSON writer/reader
+  from 1.3, which the protocol needs. Names with bytes outside ASCII are
+  escaped as \u00XX, so replies stay clean 7-bit SysEx.
+- util/pack.c: unpack_7bit_to_8bit returns the decoded length, as in
+  1.3 (1.2.1 returned the encoded length, which no caller used).
+- io/midi: SysEx command 0x04 (Json) goes to smSysex; 0x05 is JsonReply.
+- deluge.cpp: repeating task that works through queued requests.
+- fatfs: FF_USE_CHMOD on, for f_utime (keeps file dates on upload).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/deluge.cpp                      |    3 +
+ src/deluge/io/midi/midi_device_manager.cpp |    4 +-
+ src/deluge/io/midi/midi_device_manager.h   |    4 +-
+ src/deluge/io/midi/midi_engine.cpp         |    5 +
+ src/deluge/io/midi/sysex.h                 |    2 +
+ src/deluge/storage/smsysex.cpp             | 1130 ++++++++++++++++++++
+ src/deluge/storage/smsysex.h               |   89 ++
+ src/deluge/storage/smsysex_json.cpp        |  510 +++++++++
+ src/deluge/storage/smsysex_json.h          |  139 +++
+ src/deluge/util/pack.c                     |    7 +-
+ src/fatfs/ffconf.h                         |    2 +-
+ 11 files changed, 1890 insertions(+), 5 deletions(-)
+ create mode 100644 src/deluge/storage/smsysex.cpp
+ create mode 100644 src/deluge/storage/smsysex.h
+ create mode 100644 src/deluge/storage/smsysex_json.cpp
+ create mode 100644 src/deluge/storage/smsysex_json.h
+
+diff --git a/src/deluge/deluge.cpp b/src/deluge/deluge.cpp
+index e140b7e7..39bfca8e 100644
+--- a/src/deluge/deluge.cpp
++++ b/src/deluge/deluge.cpp
+@@ -63,6 +63,7 @@
+ #include "processing/engines/cv_engine.h"
+ #include "storage/audio/audio_file_manager.h"
+ #include "storage/flash_storage.h"
++#include "storage/smsysex.h"
+ #include "storage/storage_manager.h"
+ #include "task_scheduler.h"
+ #include "util/misc.h"
+@@ -592,6 +593,8 @@ void registerTasks() {
+ 	// Max intervals of the UI tasks kept short, so a menu change reaches the OLED quickly even while audio is busy.
+ 	// These tasks take microseconds unless there is something to draw or send.
+ 	addRepeatingTask(&doAnyPendingUIRendering, p++, 0.01, 0.01, 0.015, "pending UI");
++	// SD card file access over USB MIDI SysEx (storage/smsysex.cpp), same place and timing as in 1.3
++	addRepeatingTask([]() { smSysex::handleNextSysEx(); }, p++, 0.0002, 0.0002, 0.01, "sysex file access");
+ 	// this one actually actions them
+ 	addRepeatingTask([]() { encoders::interpretEncoders(false); }, p++, 0.005, 0.005, 0.01, "interpret encoders slow");
+ 
+diff --git a/src/deluge/io/midi/midi_device_manager.cpp b/src/deluge/io/midi/midi_device_manager.cpp
+index 92ebbe1e..ad9bf78f 100644
+--- a/src/deluge/io/midi/midi_device_manager.cpp
++++ b/src/deluge/io/midi/midi_device_manager.cpp
+@@ -642,7 +642,9 @@ void ConnectedUSBMIDIDevice::bufferMessage(uint32_t fullMessage) {
+ 		}
+ 		queued = ringBufWriteIdx - ringBufReadIdx;
+ 	}
+-	if (queued > MIDI_SEND_BUFFER_LEN_RING) {
++	// mastertune-v7: >= rather than >, so a full ring drops the new message instead of overwriting the oldest one that
++	// hasn't been sent yet
++	if (queued >= MIDI_SEND_BUFFER_LEN_RING) {
+ 		// TODO: show some error message
+ 		return;
+ 	}
+diff --git a/src/deluge/io/midi/midi_device_manager.h b/src/deluge/io/midi/midi_device_manager.h
+index 5adda1d4..aaea447b 100644
+--- a/src/deluge/io/midi/midi_device_manager.h
++++ b/src/deluge/io/midi/midi_device_manager.h
+@@ -41,7 +41,9 @@ struct MIDIDeviceUSB;
+ #define MIDI_SEND_BUFFER_LEN_INNER_HOST 2
+ 
+ // MUST be an exact power of two
+-#define MIDI_SEND_BUFFER_LEN_RING 1024
++// mastertune-v7: 4096 instead of 1024, so a reply of the SD card file access (storage/smsysex.cpp) with a full page of
++// long file names fits in one go (12 KB of SysEx). The rings live in the internal "frunk" RAM, which has room for this.
++#define MIDI_SEND_BUFFER_LEN_RING 4096
+ #define MIDI_SEND_RING_MASK (MIDI_SEND_BUFFER_LEN_RING - 1)
+ 
+ #ifdef __cplusplus
+diff --git a/src/deluge/io/midi/midi_engine.cpp b/src/deluge/io/midi/midi_engine.cpp
+index 8de20d28..32fe7e2c 100644
+--- a/src/deluge/io/midi/midi_engine.cpp
++++ b/src/deluge/io/midi/midi_engine.cpp
+@@ -29,6 +29,7 @@
+ #include "model/song/song.h"
+ #include "playback/mode/playback_mode.h"
+ #include "processing/engines/audio_engine.h"
++#include "storage/smsysex.h"
+ #include "version.h"
+ 
+ extern "C" {
+@@ -827,6 +828,10 @@ void MidiEngine::midiSysexReceived(MIDIDevice* device, uint8_t* data, int32_t le
+ 		Debug::sysexReceived(device, payloadStart, payloadLength);
+ 		break;
+ 
++	case SysEx::SysexCommands::Json:
++		smSysex::sysexReceived(*device, payloadStart, payloadLength);
++		break;
++
+ 	case SysEx::SysexCommands::Pong: // PONG, reserved
+ 		D_PRINTLN("Pong");
+ 	default:
+diff --git a/src/deluge/io/midi/sysex.h b/src/deluge/io/midi/sysex.h
+index a3e627fb..f88eef07 100644
+--- a/src/deluge/io/midi/sysex.h
++++ b/src/deluge/io/midi/sysex.h
+@@ -52,6 +52,8 @@ enum SysexCommands : uint8_t {
+ 	Popup,      // display info in popup
+ 	HID,        // HID access
+ 	Debug,      // Debugging
++	Json,       // Json Request (SD card file access, see storage/smsysex.cpp)
++	JsonReply,  // Json Response
+ 	Pong = 0x7F // Pong reply
+ };
+ 
+diff --git a/src/deluge/storage/smsysex.cpp b/src/deluge/storage/smsysex.cpp
+new file mode 100644
+index 00000000..dfec8012
+--- /dev/null
++++ b/src/deluge/storage/smsysex.cpp
+@@ -0,0 +1,1130 @@
++/*
++ * Copyright © 2014-2023 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++// Ported from community firmware 1.3 (storage/smsysex.cpp) with as few changes as possible, so it behaves like the
++// protocol the browser apps were built against. Changes, all marked "1.2.1 port":
++// - 1.2.1 has no MIDICable, a MIDIDevice does the same job.
++// - The reply buffer is allocated on first use; 1.2.1 has no JSON file support to share one with.
++// - SysEx from DIN MIDI is ignored: a reply to a file request is far too big for the DIN output buffer.
++// - At most 16 requests wait in the queue, so a flood of messages can't use up the memory.
++// - A reply only goes out once the USB MIDI send buffer has room for it (or after 100 tries), so it can't be cut short
++//   by display mirroring traffic.
++// - A directory listing stops before its reply would outgrow that buffer; the next request carries on from there.
++// - A read that couldn't get its buffer answers with an error instead of sending memory from the requested address.
++
++#include "storage/smsysex.h"
++#include "io/debug/log.h"
++#include "io/midi/midi_device.h"
++#include "io/midi/midi_device_manager.h"
++#include "io/midi/sysex.h"
++#include "memory/general_memory_allocator.h"
++#include "util/containers.h"
++#include "util/pack.h"
++#include <cstring>
++
++#define MAX_DIR_LINES 25
++
++extern "C" {
++extern uint8_t currentlyAccessingCard;
++}
++namespace AudioEngine {
++extern uint32_t audioSampleTimer;
++}
++DIR sxDIR;
++uint32_t dirOffsetCounter;
++
++JsonSerializer jWriter;
++// 1.2.1 port: the reply buffer. A reply goes out only as a whole, so it must also fit the USB MIDI send buffer (4096
++// messages of 3 bytes each, see MIDI_SEND_BUFFER_LEN_RING)
++const uint32_t replyBufferSize = 12288;
++char* replyBuffer = nullptr;
++String activeDirName;
++const size_t blockBufferMax = 1024;
++const size_t sysexBufferMax = blockBufferMax + 256;
++uint8_t* writeBlockBuffer = nullptr;
++uint8_t* readBlockBuffer = nullptr;
++const uint32_t MAX_OPEN_FILES = 4;
++
++struct FILdata {
++	String fName;
++	uint32_t fileID;
++	uint32_t LRUstamp = 0;
++	uint32_t fSize = 0;
++	uint32_t fPosition = 0; // file offset noted after last read/write operation.
++	bool fileOpen = false;
++	int forWrite = false;
++	FIL file;
++};
++
++int32_t FIDcounter = 1;
++uint32_t LRUcounter = 1;
++
++FILdata openFiles[MAX_OPEN_FILES];
++
++const int MaxSysExLength = 1024;
++
++struct SysExDataEntry {
++	MIDICable& cable;
++	int32_t len;
++	uint8_t data[sysexBufferMax];
++
++	SysExDataEntry(MIDICable& forCable, int32_t newLen) : cable{forCable}, len{newLen} {}
++};
++
++deluge::deque<SysExDataEntry> SysExQ;
++
++// 1.2.1 port: limits and state for sending replies safely
++const size_t maxQueuedSysEx = 16;
++// A directory page stops before its reply gets bigger than this. Clients take a page shorter than they asked for as
++// the end of the folder, so a full page (25 entries) has to fit: it always does with ASCII names, even 255 long.
++const int32_t maxDirReplySize = replyBufferSize - 256;
++// A reply waits until the USB MIDI send buffer has room for all of it, since a SysEx message cut short would garble
++// what the computer receives. After two seconds it's dropped: the client has given up on it by then and asks again.
++const uint32_t maxReplyWaitSamples = 2 * 44100;
++MIDICable* pendingReplyCable = nullptr;
++JsonSerializer* pendingReplyWriter = nullptr;
++uint32_t pendingReplySince = 0;
++FILINFO dirLookahead; // a directory entry that didn't fit into the last reply
++bool haveDirLookahead = false;
++
++// The following constants assume that the messageID part ranges from 1 to SYSEX_MSGID_MAX
++// and that SYSEX_MSGID_MAX is 1 less than a power of 2.
++// It also assumes that MAX_SYSEX_SESSIONS is also 1 less than a power of 2.
++const uint32_t MAX_SYSEX_SESSIONS = 15;
++const uint32_t SYSEX_MSGID_MAX = 7;
++const uint32_t SYSEX_MSGID_MASK = 0x07;
++const uint32_t SYSEX_SESSION_MASK = 0x78;
++const uint32_t SYSEX_SESSION_SHIFT = 3;
++
++uint32_t session_mono_counter = 1;
++uint32_t sessionLRU_array[MAX_SYSEX_SESSIONS + 1] = {0};
++
++void smSysex::noteSessionIdUse(uint8_t msgId) {
++	uint32_t sessionNum = (msgId & SYSEX_SESSION_MASK) >> SYSEX_SESSION_SHIFT;
++	sessionLRU_array[sessionNum] = session_mono_counter++;
++}
++
++void smSysex::noteFileIdUse(FILdata* fp) {
++	fp->LRUstamp = LRUcounter++;
++}
++
++// Returns the entry in the FILdata array for the given fid
++FILdata* smSysex::entryForFID(uint32_t fid) {
++	for (int i = 0; i < MAX_OPEN_FILES; ++i) {
++		if (openFiles[i].fileID == fid) {
++			return openFiles + i;
++		}
++	}
++	return nullptr;
++}
++
++// Assign a FIL from our pool.
++FILdata* smSysex::findEmptyFIL() {
++	uint32_t LRUtime = 0xFFFFFFFF;
++	uint32_t LRUindex = 0;
++
++	for (int i = 0; i < MAX_OPEN_FILES; ++i) {
++		if (!openFiles[i].fileOpen) {
++			return openFiles + i;
++		}
++		else if (openFiles[i].LRUstamp < LRUtime) {
++			LRUtime = openFiles[i].LRUstamp;
++			LRUindex = i;
++		}
++	}
++	// Close the abandoned file before we reuse the entry.
++	FILdata* oldest = openFiles + LRUindex;
++	closeFIL(oldest);
++	return oldest;
++}
++
++// 1.2.1 port: gets the reply buffer on first use
++static void prepareWriter(JsonSerializer& writer) {
++	if (replyBuffer == nullptr) {
++		replyBuffer = (char*)GeneralMemoryAllocator::get().allocLowSpeed(replyBufferSize);
++	}
++	writer.setBuffer(replyBuffer, (replyBuffer != nullptr) ? replyBufferSize : 0);
++}
++
++void smSysex::startDirect(JsonSerializer& writer) {
++	prepareWriter(writer);
++	writer.reset();
++	writer.setMemoryBased();
++	uint8_t reply_hdr[7] = {0xf0, 0x00, 0x21, 0x7B, 0x01, SysEx::SysexCommands::Json, 0};
++	writer.writeBlock(reply_hdr, sizeof(reply_hdr));
++}
++
++void smSysex::startReply(JsonSerializer& writer, JsonDeserializer& reader) {
++	prepareWriter(writer);
++	writer.reset();
++	writer.setMemoryBased();
++	uint8_t reply_hdr[7] = {0xf0, 0x00, 0x21, 0x7B, 0x01, SysEx::SysexCommands::JsonReply, reader.getReplySeqNum()};
++	writer.writeBlock(reply_hdr, sizeof(reply_hdr));
++}
++
++// 1.2.1 port: sends the waiting reply once the USB MIDI send buffer has room for all of it. Returns whether no reply
++// is waiting any more.
++static bool sendPendingReply() {
++	if (pendingReplyCable == nullptr) {
++		return true;
++	}
++	int32_t bw = pendingReplyWriter->bytesWritten();
++	if (pendingReplyCable->sendBufferSpace() >= bw) {
++		pendingReplyCable->sendSysex((const uint8_t*)pendingReplyWriter->getBufferPtr(), bw);
++	}
++	else if (AudioEngine::audioSampleTimer - pendingReplySince < maxReplyWaitSamples) {
++		return false;
++	}
++	pendingReplyCable = nullptr;
++	return true;
++}
++
++void smSysex::sendMsg(MIDICable& cable, JsonSerializer& writer) {
++	writer.writeByte(0xF7);
++	if (writer.overflowed()) {
++		return; // 1.2.1 port: never send a message that got cut short
++	}
++
++	// 1.2.1 port: goes out whole or not yet; handleNextSysEx() tries again until it fits
++	pendingReplyCable = &cable;
++	pendingReplyWriter = &writer;
++	pendingReplySince = AudioEngine::audioSampleTimer;
++	sendPendingReply();
++};
++
++FILdata* smSysex::openFIL(const char* fPath, int forWrite, uint32_t* fsize, FRESULT* eCode) {
++	FILdata* fp = findEmptyFIL();
++	fp->fName.set(fPath);
++	fp->fileID = FIDcounter++;
++	noteFileIdUse(fp);
++	BYTE mode = FA_READ;
++	if (forWrite) {
++		mode = FA_WRITE;
++		if (forWrite == 1)
++			mode |= FA_CREATE_ALWAYS;
++	}
++	FRESULT err = f_open(&fp->file, fPath, mode);
++	*eCode = err;
++	if (err == FRESULT::FR_OK) {
++		fp->fileOpen = true;
++		fp->forWrite = forWrite;
++		fp->fSize = f_size(&fp->file);
++		fp->fPosition = 0;
++		return fp;
++	}
++	return nullptr;
++}
++
++FRESULT smSysex::closeFIL(FILdata* fp) {
++	if (fp == nullptr)
++		return FRESULT::FR_INVALID_OBJECT;
++
++	FRESULT err = f_close(&fp->file);
++	fp->fileOpen = false;
++	fp->forWrite = 0;
++	fp->fSize = 0;
++	return err;
++}
++
++// Fill in missing directories for the full path name given.
++// Unless the last character in the path is a /, we assume the
++// path given ends with a filename (which we ignore).
++FRESULT smSysex::createPathDirectories(String& path, uint32_t date, uint32_t time) {
++	FRESULT errCode;
++	if (path.getLength() > 256) {
++		return FRESULT::FR_INVALID_PARAMETER;
++	}
++
++	char working[257];
++	char pathPart[257];
++	strcpy(working, path.get());
++	// ignore the file name and extension part.
++	int len = strlen(working);
++	int lastSlash;
++	for (lastSlash = len - 1; lastSlash >= 0; lastSlash--) {
++		if (working[lastSlash] == '/')
++			break;
++	}
++	if (lastSlash == 0)
++		return FRESULT::FR_INVALID_PARAMETER;
++
++	int jx = 1; // skip the leading slash.
++	while (jx <= lastSlash) {
++		if (working[jx] == '/') {
++			DIR wDIR;
++			working[jx] = 0;
++			strcpy(pathPart, working);
++			working[jx] = '/';
++			if (strlen(pathPart)) {
++				errCode = f_opendir(&wDIR, (TCHAR*)pathPart);
++				if (errCode == FRESULT::FR_NO_PATH) {
++					errCode = f_mkdir((TCHAR*)pathPart);
++					if (errCode == FRESULT::FR_OK && (date != 0 || time != 0)) {
++						FILINFO finfo;
++						finfo.fdate = date;
++						finfo.ftime = time;
++						errCode = f_utime(pathPart, &finfo);
++					}
++				}
++				else if (errCode == 0) {
++					errCode = f_closedir(&wDIR);
++				}
++				else {
++					return errCode;
++				}
++			}
++		}
++		jx++;
++	}
++	return errCode;
++}
++
++void smSysex::openFile(MIDICable& cable, JsonDeserializer& reader) {
++	bool forWrite = false;
++	String path;
++	int32_t rn = 0;
++	char const* tagName;
++	uint32_t date = 0;
++	uint32_t time = 0;
++	reader.match('{');
++	while (*(tagName = reader.readNextTagOrAttributeName())) {
++		if (!strcmp(tagName, "write")) {
++			forWrite = reader.readTagOrAttributeValueInt();
++		}
++		else if (!strcmp(tagName, "path")) {
++			reader.readTagOrAttributeValueString(&path);
++		}
++		// Since you can't change the date/time of an open file, we use date/time
++		// only for created directoris.
++		else if (!strcmp(tagName, "date")) {
++			date = reader.readTagOrAttributeValueInt();
++		}
++		else if (!strcmp(tagName, "time")) {
++			time = reader.readTagOrAttributeValueInt();
++		}
++		else {
++			reader.exitTag();
++		}
++	}
++
++	reader.match('}');
++	bool pathCreateTried = false;
++retry:
++	FRESULT errCode;
++	uint32_t fSize = 0;
++
++	FILdata* fp = openFIL(path.get(), forWrite, &fSize, &errCode);
++
++	if (fp != nullptr) {
++		fSize = fp->fSize;
++	}
++	if (forWrite && !pathCreateTried && errCode == FRESULT::FR_NO_PATH) { // was the path missing?
++		createPathDirectories(path, date, time);
++		pathCreateTried = true;
++		goto retry;
++	}
++
++	startReply(jWriter, reader);
++	jWriter.writeOpeningTag("^open", false, true);
++	jWriter.writeAttribute("fid", fp != nullptr ? fp->fileID : 0);
++	jWriter.writeAttribute("size", fSize);
++	jWriter.writeAttribute("err", errCode);
++	jWriter.closeTag(true);
++
++	sendMsg(cable, jWriter);
++}
++
++void smSysex::closeFile(MIDICable& cable, JsonDeserializer& reader) {
++	int32_t fid = 0;
++	char const* tagName;
++	reader.match('{');
++	while (*(tagName = reader.readNextTagOrAttributeName())) {
++		if (!strcmp(tagName, "fid")) {
++			fid = reader.readTagOrAttributeValueInt();
++		}
++		else {
++			reader.exitTag();
++		}
++	}
++	reader.match('}');
++
++	FILdata* fd = entryForFID(fid);
++	FRESULT errCode = closeFIL(fd);
++
++	startReply(jWriter, reader);
++	jWriter.writeOpeningTag("^close", false, true);
++	jWriter.writeAttribute("fid", (uint32_t)fid);
++	jWriter.writeAttribute("err", errCode);
++	jWriter.closeTag(true);
++
++	sendMsg(cable, jWriter);
++}
++
++void smSysex::deleteFile(MIDICable& cable, JsonDeserializer& reader) {
++	FRESULT errCode = FRESULT::FR_OK;
++
++	char const* tagName;
++	String path;
++	reader.match('{');
++	while (*(tagName = reader.readNextTagOrAttributeName())) {
++		if (!strcmp(tagName, "path")) {
++			reader.readTagOrAttributeValueString(&path);
++		}
++		else {
++			reader.exitTag();
++		}
++	}
++	reader.match('}');
++
++	const char* pathVal = path.get();
++	const TCHAR* pathTC = (const TCHAR*)pathVal;
++
++	if (pathTC && strlen(pathTC) > 0) {
++		D_PRINTLN(pathTC);
++		errCode = f_unlink(pathTC);
++		startReply(jWriter, reader);
++		jWriter.writeOpeningTag("^delete", false, true);
++		jWriter.writeAttribute("err", errCode);
++		jWriter.closeTag(true);
++		sendMsg(cable, jWriter);
++	}
++}
++
++void smSysex::createDirectory(MIDICable& cable, JsonDeserializer& reader) {
++	FRESULT errCode = FRESULT::FR_OK;
++
++	char const* tagName;
++	String path;
++	uint32_t date = 0;
++	uint32_t time = 0;
++	reader.match('{');
++	while (*(tagName = reader.readNextTagOrAttributeName())) {
++		if (!strcmp(tagName, "path")) {
++			reader.readTagOrAttributeValueString(&path);
++		}
++		else if (!strcmp(tagName, "date")) {
++			date = reader.readTagOrAttributeValueInt();
++		}
++		else if (!strcmp(tagName, "time")) {
++			time = reader.readTagOrAttributeValueInt();
++		}
++		else {
++			reader.exitTag();
++		}
++	}
++	reader.match('}');
++
++	const char* pathVal = path.get();
++	const TCHAR* pathTC = (const TCHAR*)pathVal;
++
++	if (pathTC && strlen(pathTC) > 0) {
++		D_PRINTLN(pathTC);
++		errCode = f_mkdir(pathTC);
++		if (errCode == FRESULT::FR_OK && (date != 0 || time != 0)) {
++			FILINFO finfo;
++			finfo.fdate = date;
++			finfo.ftime = time;
++			errCode = f_utime(pathTC, &finfo);
++		}
++		startReply(jWriter, reader);
++		jWriter.writeOpeningTag("^mkdir", false, true);
++		jWriter.writeAttribute("path", pathVal);
++		jWriter.writeAttribute("err", errCode);
++		jWriter.closeTag(true);
++		sendMsg(cable, jWriter);
++	}
++}
++
++void smSysex::rename(MIDICable& cable, JsonDeserializer& reader) {
++	FRESULT errCode = FRESULT::FR_OK;
++
++	char const* tagName;
++	String fromName;
++	String toName;
++	reader.match('{');
++	while (*(tagName = reader.readNextTagOrAttributeName())) {
++		if (!strcmp(tagName, "from")) {
++			reader.readTagOrAttributeValueString(&fromName);
++		}
++		else if (!strcmp(tagName, "to")) {
++			reader.readTagOrAttributeValueString(&toName);
++		}
++		else {
++			reader.exitTag();
++		}
++	}
++	reader.match('}');
++
++	const char* fromVal = fromName.get();
++	const TCHAR* fromTC = (const TCHAR*)fromVal;
++	const char* toVal = toName.get();
++	const TCHAR* toTC = (const TCHAR*)toVal;
++
++	if (fromTC && strlen(fromTC) && toTC && strlen(toTC)) {
++		D_PRINTLN(fromTC);
++		D_PRINTLN(toTC);
++		errCode = f_rename(fromTC, toTC);
++		startReply(jWriter, reader);
++		jWriter.writeOpeningTag("^rename", false, true);
++		jWriter.writeAttribute("from", fromVal);
++		jWriter.writeAttribute("to", toVal);
++		jWriter.writeAttribute("err", errCode);
++		jWriter.closeTag(true);
++		sendMsg(cable, jWriter);
++	}
++}
++
++// Returns a block of directory entries as a Json array.
++void smSysex::getDirEntries(MIDICable& cable, JsonDeserializer& reader) {
++	String path;
++	path.set("/");
++	uint32_t lineOffset = 0;
++	uint32_t linesWanted = 20;
++
++	FRESULT errCode = FRESULT::FR_OK;
++	char const* tagName;
++	reader.match('{');
++	while (*(tagName = reader.readNextTagOrAttributeName())) {
++		if (!strcmp(tagName, "offset")) {
++			lineOffset = reader.readTagOrAttributeValueInt();
++		}
++		else if (!strcmp(tagName, "lines")) {
++			linesWanted = reader.readTagOrAttributeValueInt();
++		}
++		else if (!strcmp(tagName, "path")) {
++			reader.readTagOrAttributeValueString(&path);
++		}
++		else {
++			reader.exitTag();
++		}
++	}
++	reader.match('}');
++	if (linesWanted > MAX_DIR_LINES)
++		linesWanted = MAX_DIR_LINES;
++	// We should pick up on path changes and out-of-order offset requests.
++
++	const char* pathVal = path.get();
++	const TCHAR* pathTC = (const TCHAR*)pathVal;
++	if (lineOffset == 0 || strcmp(activeDirName.get(), pathVal) || lineOffset != dirOffsetCounter) {
++		haveDirLookahead = false;
++		errCode = f_opendir(&sxDIR, pathTC);
++		if (errCode != FRESULT::FR_OK)
++			goto errorFound;
++		dirOffsetCounter = 0;
++		activeDirName.set(pathVal);
++		if (lineOffset > 0) {
++			FILINFO fno;
++			for (uint32_t ix = 0; ix < lineOffset; ++ix) {
++				errCode = f_readdir(&sxDIR, &fno);
++				if (errCode != FRESULT::FR_OK)
++					break;
++				if (fno.altname[0] == 0)
++					break;
++				dirOffsetCounter++;
++			}
++		}
++	}
++errorFound:;
++	startReply(jWriter, reader);
++	jWriter.writeOpeningTag("^dir", false, true);
++	jWriter.writeArrayStart("list", true, false);
++
++	for (uint32_t ix = 0; ix < linesWanted; ++ix) {
++		FILINFO fno;
++		if (haveDirLookahead) {
++			fno = dirLookahead;
++			haveDirLookahead = false;
++		}
++		else {
++			FRESULT err = f_readdir(&sxDIR, &fno);
++			if (err != FRESULT::FR_OK)
++				break;
++			if (fno.altname[0] == 0)
++				break;
++		}
++		int32_t entryStart = jWriter.bytesWritten();
++		jWriter.writeOpeningTag(NULL, true);
++		jWriter.writeAttribute("name", fno.fname);
++		jWriter.writeAttribute("size", fno.fsize);
++		jWriter.writeAttribute("date", fno.fdate);
++		jWriter.writeAttribute("time", fno.ftime);
++
++		// AM_RDO  0x01 Read only
++		// AM_HID  0x02 Hidden
++		// AM_SYS  0x04 System
++
++		// AM_DIR  0x10 Directory
++		// AM_ARC  0x20 Archive
++		jWriter.writeAttribute("attr", fno.fattrib);
++
++		jWriter.closeTag();
++
++		// 1.2.1 port: if this entry made the reply too big, take it out again and keep it for the next request
++		if (ix > 0 && (jWriter.overflowed() || jWriter.bytesWritten() > maxDirReplySize)) {
++			jWriter.rewindTo(entryStart);
++			dirLookahead = fno;
++			haveDirLookahead = true;
++			break;
++		}
++		dirOffsetCounter++;
++	}
++	jWriter.writeArrayEnding("list", true, false);
++	jWriter.writeAttribute("err", errCode);
++	jWriter.closeTag(true);
++	sendMsg(cable, jWriter);
++}
++
++void smSysex::readBlock(MIDICable& cable, JsonDeserializer& reader) {
++	char const* tagName;
++	uint32_t addr = 0;
++	uint32_t size = blockBufferMax;
++	int32_t fid = 0;
++
++	auto repSN = reader.getReplySeqNum();
++	reader.match('{');
++	while (*(tagName = reader.readNextTagOrAttributeName())) {
++		if (!strcmp(tagName, "fid")) {
++			fid = reader.readTagOrAttributeValueInt();
++		}
++		else if (!strcmp(tagName, "addr")) {
++			addr = reader.readTagOrAttributeValueInt();
++		}
++		else if (!strcmp(tagName, "size")) {
++			size = reader.readTagOrAttributeValueInt();
++			if (size > blockBufferMax)
++				size = blockBufferMax;
++		}
++		else {
++			reader.exitTag();
++		}
++	}
++	reader.match('}');
++
++	FILdata* fp = entryForFID(fid);
++	FRESULT errCode = FR_OK;
++
++	if (fp == nullptr) {
++		errCode = FRESULT::FR_NOT_ENABLED;
++	}
++	UINT actuallyRead = 0;
++	uint8_t* srcAddr = (uint8_t*)addr;
++	if (errCode == FRESULT::FR_OK) {
++		if (!readBlockBuffer && fp) {
++			readBlockBuffer = (uint8_t*)GeneralMemoryAllocator::get().allocLowSpeed(blockBufferMax);
++		}
++
++		if (!readBlockBuffer) {
++			errCode = FRESULT::FR_NOT_ENOUGH_CORE; // 1.2.1 port: don't send from the requested address instead
++			size = 0;
++		}
++		else if (fp) {
++			noteFileIdUse(fp);
++			// If file position requested is not what we expect, seek to requested.
++			if (fp->fPosition != addr) {
++				errCode = f_lseek(&fp->file, addr);
++			}
++			if (errCode == FRESULT::FR_OK) {
++				errCode = f_read(&fp->file, readBlockBuffer, size, &actuallyRead);
++				size = actuallyRead;
++				srcAddr = readBlockBuffer;
++				fp->fPosition = addr + actuallyRead;
++			}
++			else {
++				D_PRINTLN("lseek issue: %d", errCode);
++			}
++		}
++	}
++	else {
++		size = 0;
++	}
++	startReply(jWriter, reader);
++	jWriter.writeOpeningTag("^read", false, true);
++	jWriter.writeAttribute("fid", fid);
++	jWriter.writeAttribute("addr", addr);
++	jWriter.writeAttribute("size", size);
++	jWriter.writeAttribute("err", errCode);
++	jWriter.closeTag(true);
++
++	jWriter.writeByte(0); // spacer between Json and encoded block.
++
++	uint8_t working[8];
++	if (size == 0) {
++		D_PRINTLN("Read size 0");
++	}
++	for (uint32_t ix = 0; ix < size; ix += 7) {
++		int pktSize = 7;
++		if (ix + pktSize > size) {
++			pktSize = size - ix;
++		}
++		uint8_t hiBits = 0;
++		uint8_t rotBit = 1;
++		for (int i = 1; i <= pktSize; ++i) {
++			working[i] = (*srcAddr) & 0x7F;
++			if ((*srcAddr) & 0x80) {
++				hiBits |= rotBit;
++			}
++			srcAddr++;
++			rotBit <<= 1;
++		}
++		working[0] = hiBits;
++		jWriter.writeBlock(working, pktSize + 1);
++	}
++	sendMsg(cable, jWriter);
++}
++
++void smSysex::writeBlock(MIDICable& cable, JsonDeserializer& reader) {
++	char const* tagName;
++	uint32_t fileId = 0;
++	uint32_t addr = 0;
++	uint32_t size = blockBufferMax;
++	reader.match('{');
++	while (*(tagName = reader.readNextTagOrAttributeName())) {
++		if (!strcmp(tagName, "addr")) {
++			addr = reader.readTagOrAttributeValueInt();
++		}
++		else if (!strcmp(tagName, "size")) {
++			size = reader.readTagOrAttributeValueInt();
++			if (size > blockBufferMax)
++				size = blockBufferMax;
++		}
++		else if (!strcmp(tagName, "fid")) {
++			fileId = reader.readTagOrAttributeValueInt();
++		}
++		else {
++			reader.exitTag();
++		}
++	}
++	if (!writeBlockBuffer) {
++		writeBlockBuffer = (uint8_t*)GeneralMemoryAllocator::get().allocLowSpeed(blockBufferMax);
++	}
++	reader.match('}');
++	reader.match('}'); // skip box too.
++
++	// We should be on the separator character, check to make
++	char aChar;
++	if (reader.peekChar(&aChar) && aChar != 0) {
++		D_PRINTLN("Missing Separater error in writeBlock");
++	}
++	// 1.2.1 port: without a buffer nothing gets decoded or written
++	uint32_t decodedSize = writeBlockBuffer ? decodeDataFromReader(reader, writeBlockBuffer, size) : 0;
++	D_PRINTLN("Decoded block len: %d", decodedSize);
++
++	// Here is where we actually write the buffer out.
++	FRESULT errCode = FRESULT::FR_OK;
++	FILdata* fp = entryForFID(fileId);
++
++	if (!writeBlockBuffer) {
++		errCode = FRESULT::FR_NOT_ENOUGH_CORE;
++		size = 0;
++	}
++	else if (fp == nullptr) {
++		errCode = FRESULT::FR_NOT_ENABLED;
++	}
++	if (writeBlockBuffer && (fp != nullptr)) {
++		if (addr != fp->fPosition) {
++			errCode = f_lseek(&fp->file, addr);
++		}
++		if (errCode == FRESULT::FR_OK) {
++			noteFileIdUse(fp);
++			UINT actuallyWritten = 0;
++			errCode = f_write(&fp->file, writeBlockBuffer, decodedSize, &actuallyWritten);
++			size = actuallyWritten;
++			fp->fPosition = addr + actuallyWritten;
++		}
++	}
++	startReply(jWriter, reader);
++	jWriter.writeOpeningTag("^write", false, true);
++	jWriter.writeAttribute("fid", fileId);
++	jWriter.writeAttribute("addr", addr);
++	jWriter.writeAttribute("size", size);
++	jWriter.writeAttribute("err", errCode);
++	jWriter.closeTag(true);
++
++	sendMsg(cable, jWriter);
++}
++
++void smSysex::updateTime(MIDICable& cable, JsonDeserializer& reader) {
++
++	FRESULT errCode;
++	char const* tagName;
++	uint32_t date = 0;
++	uint32_t time = 0;
++	String path;
++
++	reader.match('{');
++	while (*(tagName = reader.readNextTagOrAttributeName())) {
++		if (!strcmp(tagName, "path")) {
++			reader.readTagOrAttributeValueString(&path);
++		}
++		else if (!strcmp(tagName, "date")) {
++			date = reader.readTagOrAttributeValueInt();
++		}
++		else if (!strcmp(tagName, "time")) {
++			time = reader.readTagOrAttributeValueInt();
++		}
++		else {
++			reader.exitTag();
++		}
++	}
++	reader.match('}');
++
++	if (!path.isEmpty() && (date != 0 || time != 0)) {
++		FILINFO finfo;
++		finfo.fdate = date;
++		finfo.ftime = time;
++		const char* pathVal = path.get();
++		const TCHAR* pathTC = (const TCHAR*)pathVal;
++		errCode = f_utime(pathTC, &finfo);
++	}
++	else {
++		errCode = FRESULT::FR_INVALID_PARAMETER;
++	}
++	startReply(jWriter, reader);
++	jWriter.writeOpeningTag("^utime", false, true);
++	jWriter.writeAttribute("err", errCode);
++	jWriter.closeTag(true);
++	sendMsg(cable, jWriter);
++}
++
++// A session ID or sid is a number used by clients to keep track of which messages belong to who.
++void smSysex::assignSession(MIDICable& cable, JsonDeserializer& reader) {
++	char const* tagName;
++	String tag;
++	reader.match('{');
++	while (*(tagName = reader.readNextTagOrAttributeName())) {
++		if (!strcmp(tagName, "tag")) {
++			reader.readTagOrAttributeValueString(&tag);
++		}
++		else {
++			reader.exitTag();
++		}
++	}
++	reader.match('}');
++
++	int sessionNum = 0;
++	uint32_t minSeen = session_mono_counter;
++	for (int i = 1; i <= MAX_SYSEX_SESSIONS; ++i) {
++		if (sessionLRU_array[i] == 0) {
++			sessionNum = i;
++			break;
++		}
++		if (sessionLRU_array[i] < minSeen) {
++			minSeen = sessionLRU_array[i];
++			sessionNum = i;
++		}
++	}
++	// Note the sessionNum as MRU to claim it.
++	sessionLRU_array[sessionNum] = session_mono_counter++;
++
++	startDirect(jWriter);
++	jWriter.writeOpeningTag("^session", false, true);
++	jWriter.writeAttribute("sid", sessionNum);
++	jWriter.writeAttribute("tag", tag.get());
++	jWriter.writeAttribute("midBase", sessionNum << SYSEX_SESSION_SHIFT);
++	jWriter.writeAttribute("midMin", (sessionNum << SYSEX_SESSION_SHIFT) + 1);
++	jWriter.writeAttribute("midMax", (sessionNum << SYSEX_SESSION_SHIFT) + SYSEX_MSGID_MAX);
++	jWriter.closeTag(true);
++	sendMsg(cable, jWriter);
++}
++
++void smSysex::doPing(MIDICable& cable, JsonDeserializer& reader) {
++	startReply(jWriter, reader);
++	jWriter.writeOpeningTag("^ping", false, true);
++	jWriter.closeTag(true);
++	sendMsg(cable, jWriter);
++}
++
++uint32_t smSysex::decodeDataFromReader(JsonDeserializer& reader, uint8_t* dest, uint32_t destMax) {
++	char zip = 0;
++	if (!reader.readChar(&zip) || zip) // skip separator, fail if not there.
++		return 0;
++	uint32_t encodedSize = reader.bytesRemainingInBuffer() - 1; // don't count that 0xF7.
++	uint32_t amount = unpack_7bit_to_8bit(dest, destMax, (uint8_t*)reader.GetCurrentAddressInBuffer(), encodedSize);
++	return amount;
++}
++
++void smSysex::sysexReceived(MIDICable& cable, uint8_t* data, int32_t len) {
++	if (len < 3) {
++		return;
++	}
++	// 1.2.1 port: USB only, a bounded queue, and messages that fit the entry
++	if (&cable == &MIDIDeviceManager::dinMIDIPorts || len > (int32_t)sysexBufferMax
++	    || SysExQ.size() >= maxQueuedSysEx) {
++		return;
++	}
++
++	SysExDataEntry& de = SysExQ.emplace_back(cable, len);
++	memcpy(de.data, data, len);
++}
++
++void smSysex::handleNextSysEx() {
++
++	// 1.2.1 port: the reply to the last request goes out before the next request gets handled
++	if (!sendPendingReply())
++		return;
++	if (SysExQ.empty())
++		return;
++	if (currentlyAccessingCard != 0)
++		return;
++
++	SysExDataEntry& de = SysExQ.front();
++
++	char const* tagName;
++	uint8_t msgSeqNum = de.data[1];
++	noteSessionIdUse(msgSeqNum);
++	JsonDeserializer parser(de.data + 2, de.len - 2);
++	parser.setReplySeqNum(msgSeqNum);
++
++	parser.match('{');
++	while (*(tagName = parser.readNextTagOrAttributeName())) {
++		if (!strcmp(tagName, "open")) {
++			openFile(de.cable, parser);
++			goto done;
++		}
++		else if (!strcmp(tagName, "close")) {
++			closeFile(de.cable, parser);
++			goto done;
++		}
++		else if (!strcmp(tagName, "dir")) {
++			getDirEntries(de.cable, parser);
++			goto done;
++		}
++		else if (!strcmp(tagName, "read")) {
++			readBlock(de.cable, parser);
++			goto done;
++		}
++		else if (!strcmp(tagName, "write")) {
++			writeBlock(de.cable, parser);
++			goto done; // Already skipped end.
++		}
++		else if (!strcmp(tagName, "delete")) {
++			deleteFile(de.cable, parser);
++			goto done;
++		}
++		else if (!strcmp(tagName, "mkdir")) {
++			createDirectory(de.cable, parser);
++			goto done;
++		}
++		else if (!strcmp(tagName, "rename")) {
++			rename(de.cable, parser);
++			goto done;
++		}
++		else if (!strcmp(tagName, "copy")) {
++			copyFile(de.cable, parser);
++			goto done;
++		}
++		else if (!strcmp(tagName, "move")) {
++			moveFile(de.cable, parser);
++			goto done;
++		}
++		else if (!strcmp(tagName, "utime")) {
++			updateTime(de.cable, parser);
++			goto done;
++		}
++		else if (!strcmp(tagName, "session")) {
++			assignSession(de.cable, parser);
++			goto done;
++		}
++		else if (!strcmp(tagName, "ping")) {
++			doPing(de.cable, parser);
++			goto done;
++		}
++		parser.exitTag();
++	}
++done:
++	SysExQ.pop_front();
++}
++
++// Helper function to parse file operation parameters
++bool smSysex::parseFileOpParams(JsonDeserializer& reader, FileOpParams& params) {
++	char const* tagName;
++	reader.match('{');
++	while (*(tagName = reader.readNextTagOrAttributeName())) {
++		if (!strcmp(tagName, "from")) {
++			reader.readTagOrAttributeValueString(&params.fromName);
++		}
++		else if (!strcmp(tagName, "to")) {
++			reader.readTagOrAttributeValueString(&params.toName);
++		}
++		else if (!strcmp(tagName, "date")) {
++			params.date = reader.readTagOrAttributeValueInt();
++		}
++		else if (!strcmp(tagName, "time")) {
++			params.time = reader.readTagOrAttributeValueInt();
++		}
++		else {
++			reader.exitTag();
++		}
++	}
++	reader.match('}');
++
++	return params.getFromTC() && strlen(params.getFromTC()) && params.getToTC() && strlen(params.getToTC());
++}
++
++// Helper function to set file timestamp
++void smSysex::setFileTimestamp(const TCHAR* path, uint32_t date, uint32_t time) {
++	if (date != 0 || time != 0) {
++		FILINFO finfo;
++		finfo.fdate = date;
++		finfo.ftime = time;
++		f_utime(path, &finfo);
++	}
++}
++
++// Helper function to perform file copy operation
++FRESULT smSysex::performFileCopy(FileOpParams& params) {
++	FRESULT errCode = FRESULT::FR_OK;
++	const TCHAR* fromTC = params.getFromTC();
++	const TCHAR* toTC = params.getToTC();
++
++	D_PRINTLN(fromTC);
++	D_PRINTLN(toTC);
++
++	// Create destination directory if needed
++	bool pathCreateTried = false;
++retry_copy:
++	// Open source file for reading
++	FIL srcFile, dstFile;
++	errCode = f_open(&srcFile, fromTC, FA_READ);
++	if (errCode == FRESULT::FR_OK) {
++		// Open destination file for writing
++		errCode = f_open(&dstFile, toTC, FA_WRITE | FA_CREATE_ALWAYS);
++		if (errCode == FRESULT::FR_NO_PATH && !pathCreateTried) {
++			// Try to create the destination directory
++			// Don't set timestamps on directories - let them use current time
++			String toNameCopy;
++			toNameCopy.set(&params.toName);
++			createPathDirectories(toNameCopy, 0, 0);
++			pathCreateTried = true;
++			f_close(&srcFile);
++			goto retry_copy;
++		}
++
++		if (errCode == FRESULT::FR_OK) {
++			// Copy file contents
++			uint8_t* copyBuffer = nullptr;
++			if (!readBlockBuffer) {
++				readBlockBuffer = (uint8_t*)GeneralMemoryAllocator::get().allocLowSpeed(blockBufferMax);
++			}
++			copyBuffer = readBlockBuffer;
++
++			if (copyBuffer) {
++				UINT bytesRead, bytesWritten;
++				do {
++					errCode = f_read(&srcFile, copyBuffer, blockBufferMax, &bytesRead);
++					if (errCode == FRESULT::FR_OK && bytesRead > 0) {
++						errCode = f_write(&dstFile, copyBuffer, bytesRead, &bytesWritten);
++						if (errCode != FRESULT::FR_OK || bytesWritten != bytesRead) {
++							break;
++						}
++					}
++				} while (errCode == FRESULT::FR_OK && bytesRead == blockBufferMax);
++			}
++			else {
++				errCode = FRESULT::FR_NOT_ENOUGH_CORE;
++			}
++
++			f_close(&dstFile);
++
++			// Set timestamp if provided and copy was successful
++			if (errCode == FRESULT::FR_OK && params.hasTimestamp()) {
++				setFileTimestamp(toTC, params.date, params.time);
++			}
++		}
++		f_close(&srcFile);
++	}
++
++	return errCode;
++}
++
++void smSysex::copyFile(MIDICable& cable, JsonDeserializer& reader) {
++	FileOpParams params;
++
++	if (!parseFileOpParams(reader, params)) {
++		return;
++	}
++
++	FRESULT errCode = performFileCopy(params);
++
++	startReply(jWriter, reader);
++	jWriter.writeOpeningTag("^copy", false, true);
++	jWriter.writeAttribute("from", params.getFromPath());
++	jWriter.writeAttribute("to", params.getToPath());
++	jWriter.writeAttribute("err", errCode);
++	jWriter.closeTag(true);
++	sendMsg(cable, jWriter);
++}
++
++void smSysex::moveFile(MIDICable& cable, JsonDeserializer& reader) {
++	FileOpParams params;
++
++	if (!parseFileOpParams(reader, params)) {
++		return;
++	}
++
++	FRESULT errCode = FRESULT::FR_OK;
++	const TCHAR* fromTC = params.getFromTC();
++	const TCHAR* toTC = params.getToTC();
++
++	D_PRINTLN(fromTC);
++	D_PRINTLN(toTC);
++
++	// Try rename first (works if source and destination are on same filesystem)
++	errCode = f_rename(fromTC, toTC);
++
++	// If rename failed due to missing path, try creating directories
++	if (errCode == FRESULT::FR_NO_PATH) {
++		// Don't set timestamps on directories - let them use current time
++		String toNameCopy;
++		toNameCopy.set(&params.toName);
++		createPathDirectories(toNameCopy, 0, 0);
++		errCode = f_rename(fromTC, toTC);
++	}
++
++	// If rename still fails (e.g., cross-filesystem move), fall back to copy+delete
++	if (errCode != FRESULT::FR_OK) {
++		// Use the shared copy function
++		errCode = performFileCopy(params);
++
++		// If copy was successful, delete the source file
++		if (errCode == FRESULT::FR_OK) {
++			FRESULT deleteResult = f_unlink(fromTC);
++
++			// For move operation, both copy and delete must succeed
++			if (deleteResult != FRESULT::FR_OK) {
++				D_PRINTLN("Move: copy succeeded but delete failed: %d", deleteResult);
++				// Clean up the destination file since move failed
++				f_unlink(toTC);
++				errCode = deleteResult;
++			}
++		}
++	}
++	else {
++		// Rename was successful, set timestamp if provided
++		if (params.hasTimestamp()) {
++			setFileTimestamp(toTC, params.date, params.time);
++		}
++	}
++
++	startReply(jWriter, reader);
++	jWriter.writeOpeningTag("^move", false, true);
++	jWriter.writeAttribute("from", params.getFromPath());
++	jWriter.writeAttribute("to", params.getToPath());
++	jWriter.writeAttribute("err", errCode);
++	jWriter.closeTag(true);
++	sendMsg(cable, jWriter);
++}
+diff --git a/src/deluge/storage/smsysex.h b/src/deluge/storage/smsysex.h
+new file mode 100644
+index 00000000..39bf9f51
+--- /dev/null
++++ b/src/deluge/storage/smsysex.h
+@@ -0,0 +1,89 @@
++/*
++ * Copyright © 2014-2023 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include "definitions_cxx.hpp"
++#include "storage/smsysex_json.h"
++#include "util/d_string.h"
++#include <cstdint>
++
++extern "C" {
++#include "fatfs/ff.h"
++}
++
++class MIDIDevice;
++// 1.3 calls a MIDI connection a cable; in 1.2.1 it's still a device
++using MIDICable = MIDIDevice;
++
++struct FILdata;
++
++// Access to the SD card over USB MIDI SysEx, with the protocol of community firmware 1.3 ("smSysex"), so that browser
++// apps like DEx (file browser) and deluge-editor (live load and save) work. Ported from 1.3 storage/smsysex.cpp.
++namespace smSysex {
++
++const uint32_t MAX_PATH_NAME_LEN = 255;
++
++// Helper structure for file operation parameters
++struct FileOpParams {
++	String fromName;
++	String toName;
++	uint32_t date = 0;
++	uint32_t time = 0;
++
++	const char* getFromPath() { return fromName.get(); }
++	const char* getToPath() { return toName.get(); }
++	const TCHAR* getFromTC() { return (const TCHAR*)fromName.get(); }
++	const TCHAR* getToTC() { return (const TCHAR*)toName.get(); }
++	bool hasTimestamp() const { return date != 0 || time != 0; }
++};
++
++FILdata* openFIL(const char* fPath, int forWrite, uint32_t* fsize, FRESULT* eCode);
++FRESULT closeFIL(FILdata* fd);
++FILdata* findEmptyFIL();
++
++void noteSessionIdUse(uint8_t msgId);
++void noteFileIdUse(FILdata* fp);
++FILdata* entryForFID(uint32_t fileId);
++void startDirect(JsonSerializer& writer);
++void startReply(JsonSerializer& writer, JsonDeserializer& reader);
++void sendMsg(MIDICable& device, JsonSerializer& writer);
++
++void sysexReceived(MIDICable& cable, uint8_t* data, int32_t len);
++void handleNextSysEx();
++void openFile(MIDICable& cable, JsonDeserializer& reader);
++void closeFile(MIDICable& cable, JsonDeserializer& reader);
++void readBlock(MIDICable& cable, JsonDeserializer& reader);
++void writeBlock(MIDICable& cable, JsonDeserializer& reader);
++void getDirEntries(MIDICable& cable, JsonDeserializer& reader);
++void deleteFile(MIDICable& cable, JsonDeserializer& reader);
++void createDirectory(MIDICable& cable, JsonDeserializer& reader);
++FRESULT createPathDirectories(String& path, uint32_t date, uint32_t time);
++void rename(MIDICable& cable, JsonDeserializer& reader);
++void updateTime(MIDICable& cable, JsonDeserializer& reader);
++void copyFile(MIDICable& cable, JsonDeserializer& reader);
++void moveFile(MIDICable& cable, JsonDeserializer& reader);
++void assignSession(MIDICable& cable, JsonDeserializer& reader);
++void doPing(MIDICable& cable, JsonDeserializer& reader);
++uint32_t decodeDataFromReader(JsonDeserializer& reader, uint8_t* dest, uint32_t destMax);
++
++// Helper functions for file operations
++bool parseFileOpParams(JsonDeserializer& reader, FileOpParams& params);
++FRESULT performFileCopy(FileOpParams& params);
++void setFileTimestamp(const TCHAR* path, uint32_t date, uint32_t time);
++
++} // namespace smSysex
+diff --git a/src/deluge/storage/smsysex_json.cpp b/src/deluge/storage/smsysex_json.cpp
+new file mode 100644
+index 00000000..89b8e5e9
+--- /dev/null
++++ b/src/deluge/storage/smsysex_json.cpp
+@@ -0,0 +1,510 @@
++/*
++ * Copyright © 2014-2023 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++// Ported from community firmware 1.3 (storage_manager.cpp FileWriter / FileReader in memory mode, JSONSerializer.cpp,
++// JsonDeserializer.cpp). Differences: the writer's buffer is set by the owner, and string values are escaped so a file
++// name can never put a byte of 0x80 or more into a SysEx message.
++
++#include "storage/smsysex_json.h"
++#include "io/debug/log.h"
++#include "util/d_string.h"
++#include <cstring>
++
++/*******************************************************************************
++
++    MemoryWriter / MemoryReader
++
++********************************************************************************/
++
++void MemoryWriter::resetWriter() {
++	fileWriteBufferCurrentPos = 0;
++	fileAccessFailedDuringWrite = false;
++}
++
++void MemoryWriter::writeBlock(uint8_t* block, uint32_t size) {
++	for (uint32_t ix = 0; ix < size; ++ix) {
++		writeByte(block[ix]);
++	}
++}
++
++void MemoryWriter::writeByte(int8_t b) {
++	if (fileWriteBufferCurrentPos >= (int32_t)bufferSize) {
++		fileAccessFailedDuringWrite = true;
++		return;
++	}
++	writeClusterBuffer[fileWriteBufferCurrentPos] = b;
++	fileWriteBufferCurrentPos++;
++}
++
++void MemoryWriter::writeChars(char const* output) {
++	while (*output) {
++		writeByte(*output);
++		output++;
++	}
++}
++
++bool MemoryReader::readFileClusterIfNecessary() {
++	if (fileReadBufferCurrentPos >= (int32_t)currentReadBufferEndPos) {
++		reachedBufferEnd = true;
++	}
++	return !reachedBufferEnd;
++}
++
++// Similar to readChar, but it does not advance the fileReadBufferCurrentPos.
++bool MemoryReader::peekChar(char* thisChar) {
++	readFileClusterIfNecessary();
++	if (reachedBufferEnd) {
++		return false;
++	}
++	*thisChar = fileClusterBuffer[fileReadBufferCurrentPos];
++	return true;
++}
++
++bool MemoryReader::readChar(char* thisChar) {
++	readFileClusterIfNecessary();
++	if (reachedBufferEnd) {
++		return false;
++	}
++	*thisChar = fileClusterBuffer[fileReadBufferCurrentPos];
++	fileReadBufferCurrentPos++;
++	return true;
++}
++
++/*******************************************************************************
++
++    JsonSerializer
++
++********************************************************************************/
++
++void JsonSerializer::reset() {
++	resetWriter();
++	// Reset formatting as well as comma state when reusing a writer.
++	indentAmount = 0;
++	firstItemHasBeenWritten = false;
++}
++
++void JsonSerializer::write(char const* output) {
++	writeChars(output);
++}
++
++// Unlike other attributes, numbers in Json should not be quoted.
++// So we don't.
++void JsonSerializer::writeAttribute(char const* name, int32_t number, bool onNewLine) {
++
++	char buffer[12];
++	intToString(number, buffer);
++
++	insertCommaIfNeeded();
++	if (onNewLine) {
++		write("\n");
++		printIndents();
++	}
++	else {
++		write(" ");
++	}
++	write("\"");
++	write(name);
++	write("\": ");
++	write(buffer);
++
++	firstItemHasBeenWritten = true;
++}
++
++void JsonSerializer::writeAttribute(char const* name, char const* value, bool onNewLine) {
++
++	insertCommaIfNeeded();
++	if (onNewLine) {
++		write("\n");
++		printIndents();
++	}
++	else {
++		write(" ");
++	}
++	write("\"");
++	write(name);
++	write("\": \"");
++	writeEscaped(value);
++	write("\"");
++	firstItemHasBeenWritten = true;
++}
++
++// Not in 1.3, which writes the value as it is. A SysEx message can only carry bytes below 0x80, and a file name from a
++// computer may well have others (FatFS gives them in code page 437), which would cut the whole message short. Such
++// bytes, the quote and the backslash become JSON escapes instead.
++void JsonSerializer::writeEscaped(char const* value) {
++	static constexpr char kHex[] = "0123456789ABCDEF";
++	for (; *value; value++) {
++		uint8_t c = (uint8_t)*value;
++		if (c == '"' || c == '\\') {
++			writeByte('\\');
++			writeByte((int8_t)c);
++		}
++		else if (c < 0x20 || c >= 0x80) {
++			char escaped[7] = {'\\', 'u', '0', '0', kHex[c >> 4], kHex[c & 15], 0};
++			write(escaped);
++		}
++		else {
++			writeByte((int8_t)c);
++		}
++	}
++}
++
++// If passed NULL for the tag, then don't write one. Just start a new object.
++void JsonSerializer::writeOpeningTagBeginning(char const* tag, bool box, bool newLineBefore) {
++	insertCommaIfNeeded();
++	if (newLineBefore) // prepend newLine almost always.
++		write("\n");
++	printIndents();
++	if (box || !tag) {
++		write("{");
++	}
++	if (tag) {
++		write("\"");
++		write(tag);
++		write("\": {");
++	}
++	indentAmount++;
++	firstItemHasBeenWritten = false;
++}
++
++void JsonSerializer::writeOpeningTag(char const* tag, bool startNewLineAfter, bool box) {
++	writeOpeningTagBeginning(tag, box, false);
++	writeOpeningTagEnd(startNewLineAfter);
++}
++
++void JsonSerializer::closeTag(bool box) {
++	write("}");
++	if (box)
++		write("}");
++	indentAmount--;
++	firstItemHasBeenWritten = true;
++}
++
++void JsonSerializer::writeArrayStart(char const* tag, bool startNewLineAfter, bool box) {
++
++	insertCommaIfNeeded();
++	write("\n");
++	printIndents();
++	if (box)
++		write("{");
++	write("\"");
++	write(tag);
++	write("\": [");
++	indentAmount++;
++	firstItemHasBeenWritten = false;
++}
++
++void JsonSerializer::writeArrayEnding(char const* tag, bool shouldPrintIndents, bool box) {
++	indentAmount--;
++	firstItemHasBeenWritten = true;
++	if (shouldPrintIndents) {
++		write("\n");
++		printIndents();
++	}
++	write("]");
++	if (box)
++		write("}");
++}
++
++void JsonSerializer::insertCommaIfNeeded() {
++	if (firstItemHasBeenWritten) {
++		write(",");
++	}
++	else {
++		firstItemHasBeenWritten = true;
++	}
++}
++
++/*******************************************************************************
++
++    JsonDeserializer
++
++********************************************************************************/
++
++JsonDeserializer::JsonDeserializer(uint8_t* inbuf, size_t buflen) : MemoryReader((char*)inbuf, buflen) {
++	resetReader();
++	objectDepth = 0;
++	arrayDepth = 0;
++	readState = JsonState::NewFile;
++}
++
++// Advances read pointer until it encounters a non-whitespace character.
++// It leaves the read pointer at the non-whitespace character encountered.
++// Returns true if a non-whitespace character was found, otherwise false
++// if we are at the end.
++bool JsonDeserializer::skipWhiteSpace(bool commasToo) {
++	char thisChar;
++	while (peekChar(&thisChar)) {
++		if (thisChar == ' ' || thisChar == '\r' || thisChar == '\n' || thisChar == '\t'
++		    || ((thisChar == ',') && commasToo)) {
++			readChar(&thisChar);
++		}
++		else {
++			return true;
++		}
++	}
++	return false;
++}
++
++char JsonDeserializer::unescape(char inchar) {
++	char thisChar;
++	if (inchar != '\\')
++		return inchar;
++	if (!readChar(&thisChar))
++		return 0;
++	switch (thisChar) {
++	case '"':
++		thisChar = '"';
++		break;
++	case '\\':
++		thisChar = '\\';
++		break;
++	default:
++		break;
++	}
++	return thisChar;
++}
++
++// Returns a Json string, max length of kFilenameBufferSize, delimited by double quotes.
++char const* JsonDeserializer::readQuotedString() {
++	char thisChar;
++	if (!skipWhiteSpace())
++		return NULL;
++	if (!peekChar(&thisChar))
++		return NULL;
++	if (thisChar != '\"')
++		return NULL;
++	readChar(&thisChar);
++	int32_t charPos = 0;
++
++	while (readChar(&thisChar)) {
++		if (thisChar == '\"')
++			goto getOut;
++		thisChar = unescape(thisChar);
++		if (thisChar == 0)
++			goto getOut;
++		// Store this character, if space in our un-ideal buffer
++		if (charPos < kFilenameBufferSize - 1) {
++			stringBuffer[charPos++] = thisChar;
++		}
++	}
++
++getOut:
++	readDone();
++	stringBuffer[charPos] = 0;
++	return stringBuffer;
++}
++
++// Read a Json key name, which must be quoted and followed with a colon.
++// return an empty string if a proper key is not found.
++char const* JsonDeserializer::readKeyName() {
++	char const* key = readQuotedString();
++	if (key == NULL)
++		return "";
++	if (!skipWhiteSpace())
++		return "";
++	char aChar;
++	if (!readChar(&aChar))
++		return "";
++	if (aChar != ':')
++		return "";
++	readState = JsonState::KeyRead;
++	return key;
++}
++
++// In Json, the equivalent functionality is to read the next key name.
++// Which is always "key": (with double quotes & colon)
++char const* JsonDeserializer::readNextTagOrAttributeName() {
++	return readKeyName();
++}
++
++void JsonDeserializer::skipUntilChar(char endChar) {
++
++	readFileClusterIfNecessary();
++	do {
++		while (fileReadBufferCurrentPos < (int32_t)currentReadBufferEndPos
++		       && fileClusterBuffer[fileReadBufferCurrentPos] != endChar) {
++			fileReadBufferCurrentPos++;
++		}
++
++	} while (fileReadBufferCurrentPos == (int32_t)currentReadBufferEndPos && readFileClusterIfNecessary());
++
++	fileReadBufferCurrentPos++; // Gets us past the endChar
++
++	readDone();
++}
++
++// A non-destructive (to the fileClusterBuffer contents) routine to read into a String object.
++// Returns memory error. If error, caller must deal with the fact that the end-character hasn't been reached.
++Error JsonDeserializer::readStringUntilChar(String* string, char endChar) {
++
++	int32_t newStringPos = 0;
++
++	do {
++		int32_t bufferPosNow = fileReadBufferCurrentPos;
++		while (bufferPosNow < (int32_t)currentReadBufferEndPos && fileClusterBuffer[bufferPosNow] != endChar) {
++			bufferPosNow++;
++		}
++
++		int32_t numCharsHere = bufferPosNow - fileReadBufferCurrentPos;
++
++		if (numCharsHere) {
++			Error error =
++			    string->concatenateAtPos(&fileClusterBuffer[fileReadBufferCurrentPos], newStringPos, numCharsHere);
++
++			fileReadBufferCurrentPos = bufferPosNow;
++
++			if (error != Error::NONE) {
++				return error;
++			}
++
++			newStringPos += numCharsHere;
++		}
++
++	} while (fileReadBufferCurrentPos == (int32_t)currentReadBufferEndPos && readFileClusterIfNecessary());
++
++	fileReadBufferCurrentPos++; // Gets us past the endChar
++
++	readDone();
++	readState = JsonState::ValueRead;
++	return Error::NONE;
++}
++
++// Read an integer up until the first non-numeric character.
++// Leaves the buff index pointing at that non-numeric character.
++int32_t JsonDeserializer::readInt() {
++	uint32_t number = 0;
++	char thisChar;
++
++	if (!skipWhiteSpace(false))
++		return 0;
++	bool isNegative = false;
++	while (peekChar(&thisChar)) {
++		if (thisChar == '-') {
++			isNegative = true;
++			readChar(&thisChar);
++			continue;
++		}
++		if (!(thisChar >= '0' && thisChar <= '9')) {
++			goto getOut;
++		}
++		readChar(&thisChar);
++		number *= 10;
++		number += (thisChar - '0');
++	}
++getOut:
++	readState = JsonState::ValueRead;
++	if (isNegative) {
++		if (number >= 2147483648) {
++			return -2147483648;
++		}
++		else {
++			return -(int32_t)number;
++		}
++	}
++	else {
++		return number;
++	}
++}
++
++int32_t JsonDeserializer::readTagOrAttributeValueInt() {
++	return readInt();
++}
++
++// Returns memory error
++Error JsonDeserializer::readTagOrAttributeValueString(String* string) {
++	if (!skipWhiteSpace())
++		return Error::FILE_CORRUPTED;
++	skipUntilChar('\"');
++	return readStringUntilChar(string, '\"');
++}
++
++// Used to match syntax for Json strings.
++// Iff the current index matches the given character
++// we then skip over that character and return true.
++// else we return false and leave the index pointing at
++// the first non-whitespace character after the incoming index.
++bool JsonDeserializer::match(char const ch) {
++	if (!skipWhiteSpace())
++		return false;
++	char nowChar, nextChar;
++	if (peekChar(&nowChar)) {
++		if (nowChar != ch)
++			return false;
++		readChar(&nowChar);
++		switch (ch) {
++		case '{':
++			objectDepth++;
++			break;
++		case '}':
++			objectDepth--;
++			break;
++		case '[':
++			arrayDepth++;
++			break;
++		case ']':
++			arrayDepth--;
++			break;
++		}
++	}
++	peekChar(&nextChar);
++	return true;
++}
++
++void JsonDeserializer::exitTag(char const* exitTagName, bool closeObject) {
++	if (closeObject) {
++		match('}');
++	}
++	if (readState == JsonState::ValueRead)
++		return;
++
++	// We have a key/value pair where the key is not known.
++	// Based on the key type, skip over the value(s).
++	// Since the value could be an object or array, we need to skip forward until we hit the
++	// matching closing character. This can involve counting open and close characters until
++	// we get a match.
++	D_PRINTLN("Unread value detected");
++	readState = JsonState::ValueRead; // declare victory prematurely.
++	skipWhiteSpace();
++	char leadingChar, trailingChar, currentChar, balanceCtr = 1;
++	readChar(&leadingChar);
++	// Strings are easy.
++	if (leadingChar == '"') {
++		skipUntilChar('"');
++		return;
++	}
++	if (leadingChar == '[')
++		trailingChar = ']';
++	else if (leadingChar == '{')
++		trailingChar = '}';
++	else if ((leadingChar == '-') || (leadingChar >= '0' && leadingChar <= '9')) {
++		// The other possibility is a number
++		readInt(); // skip the number.
++		return;
++	}
++	else {
++		D_PRINTLN("Malformed value encountered.");
++		return;
++	}
++
++	while ((balanceCtr > 0) && readChar(&currentChar)) {
++		if (currentChar == leadingChar)
++			balanceCtr++;
++		else if (currentChar == trailingChar)
++			balanceCtr--;
++	}
++}
+diff --git a/src/deluge/storage/smsysex_json.h b/src/deluge/storage/smsysex_json.h
+new file mode 100644
+index 00000000..f4ffd948
+--- /dev/null
++++ b/src/deluge/storage/smsysex_json.h
+@@ -0,0 +1,139 @@
++/*
++ * Copyright © 2014-2023 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include "definitions_cxx.hpp"
++#include <cstddef>
++#include <cstdint>
++
++class String;
++
++// In-memory JSON writer and reader for the SysEx file protocol (storage/smsysex.cpp). Ported from community firmware
++// 1.3: the memory mode of its FileWriter / FileReader and its JsonSerializer / JsonDeserializer, with only the parts
++// the protocol uses. 1.2.1 keeps storing songs and presets as XML, so nothing here touches files.
++
++class MemoryWriter {
++public:
++	void writeByte(int8_t b);
++	void writeBlock(uint8_t* block, uint32_t size);
++	void writeChars(char const* output);
++	char* getBufferPtr() { return writeClusterBuffer; }
++	int32_t bytesWritten() { return fileWriteBufferCurrentPos; }
++	int32_t bytesFree() { return (int32_t)bufferSize - fileWriteBufferCurrentPos; }
++	bool overflowed() { return fileAccessFailedDuringWrite; }
++	void setMemoryBased() {} // Always is
++	void setBuffer(char* buffer, uint32_t size) {
++		writeClusterBuffer = buffer;
++		bufferSize = size;
++	}
++	// Takes back everything written after pos (a value of bytesWritten() from before)
++	void rewindTo(int32_t pos) {
++		fileWriteBufferCurrentPos = pos;
++		fileAccessFailedDuringWrite = false;
++	}
++
++protected:
++	void resetWriter();
++
++	char* writeClusterBuffer = nullptr;
++	uint32_t bufferSize = 0;
++	int32_t fileWriteBufferCurrentPos = 0;
++	bool fileAccessFailedDuringWrite = false;
++};
++
++class MemoryReader {
++public:
++	MemoryReader(char* memBuffer, uint32_t bufLen) {
++		fileClusterBuffer = memBuffer;
++		currentReadBufferEndPos = bufLen;
++	}
++
++	bool peekChar(char* thisChar);
++	bool readChar(char* thisChar);
++	uint32_t bytesRemainingInBuffer() { return currentReadBufferEndPos - fileReadBufferCurrentPos; }
++	char* GetCurrentAddressInBuffer() { return fileClusterBuffer + fileReadBufferCurrentPos; }
++
++protected:
++	bool readFileClusterIfNecessary();
++	void readDone() {}
++	void resetReader() {
++		fileReadBufferCurrentPos = 0;
++		reachedBufferEnd = false;
++	}
++
++	char* fileClusterBuffer;
++	uint32_t currentReadBufferEndPos;
++	int32_t fileReadBufferCurrentPos = 0;
++	bool reachedBufferEnd = false;
++};
++
++class JsonSerializer : public MemoryWriter {
++public:
++	JsonSerializer() = default;
++
++	void writeAttribute(char const* name, int32_t number, bool onNewLine = true);
++	void writeAttribute(char const* name, char const* value, bool onNewLine = true);
++	void writeOpeningTag(char const* tag, bool startNewLineAfter = true, bool box = false);
++	void writeOpeningTagBeginning(char const* tag, bool box = false, bool newLineBefore = true);
++	void writeOpeningTagEnd(bool startNewLineAfter = true) {}
++	void closeTag(bool box = false);
++	void writeArrayStart(char const* tag, bool shouldPrintIndents = true, bool box = false);
++	void writeArrayEnding(char const* tag, bool shouldPrintIndents = true, bool box = false);
++	void printIndents() {} // Memory based, so never indented
++	void insertCommaIfNeeded();
++	void write(char const* output);
++	void reset();
++
++private:
++	void writeEscaped(char const* value);
++
++	uint8_t indentAmount = 0;
++	bool firstItemHasBeenWritten = false;
++};
++
++class JsonDeserializer : public MemoryReader {
++public:
++	JsonDeserializer(uint8_t* inbuf, size_t buflen);
++
++	char const* readNextTagOrAttributeName();
++	int32_t readTagOrAttributeValueInt();
++	Error readTagOrAttributeValueString(String* string);
++	bool match(char const ch);
++	void exitTag(char const* exitTagName = nullptr, bool closeObject = false);
++
++	void setReplySeqNum(uint8_t msgNum) { replySeqNum = msgNum; }
++	uint8_t getReplySeqNum() { return replySeqNum; }
++
++private:
++	uint8_t replySeqNum = 0;
++	int32_t objectDepth = 0;
++	int32_t arrayDepth = 0;
++
++	enum JsonState { NewFile, KeyRead, ValueRead, ReadError };
++	JsonState readState = NewFile;
++
++	char stringBuffer[kFilenameBufferSize];
++
++	void skipUntilChar(char endChar);
++	char unescape(char inchar);
++	bool skipWhiteSpace(bool commasToo = true);
++	char const* readQuotedString();
++	char const* readKeyName();
++	int32_t readInt();
++	Error readStringUntilChar(String* string, char endChar);
++};
+diff --git a/src/deluge/util/pack.c b/src/deluge/util/pack.c
+index 4e426cf4..53dfdaad 100644
+--- a/src/deluge/util/pack.c
++++ b/src/deluge/util/pack.c
+@@ -28,6 +28,8 @@ int32_t pack_8bit_to_7bit(uint8_t* dst, int32_t dst_size, uint8_t* src, int32_t
+ 	return out_len;
+ }
+ 
++// Returns the decoded amount (as in community firmware 1.3; 1.2.1 returned the encoded length, which no caller used).
++// Keeps the high bits of a packet in a local, so decoding in place (dst == src) works too.
+ int32_t unpack_7bit_to_8bit(uint8_t* dst, int32_t dst_size, uint8_t* src, int32_t src_len) {
+ 	int32_t packets = (src_len + 7) / 8;
+ 	int32_t missing = (8 * packets - src_len);
+@@ -41,16 +43,17 @@ int32_t unpack_7bit_to_8bit(uint8_t* dst, int32_t dst_size, uint8_t* src, int32_
+ 	for (int32_t i = 0; i < packets; i++) {
+ 		int32_t ipos = 8 * i;
+ 		int32_t opos = 7 * i;
++		uint8_t highBits = src[ipos];
+ 		for (int32_t j = 0; j < 7; j++) {
+ 			if (!(j + 1 + ipos < src_len))
+ 				break;
+ 			dst[opos + j] = src[ipos + 1 + j] & 0x7f;
+-			if (src[ipos] & (1 << j)) {
++			if (highBits & (1 << j)) {
+ 				dst[opos + j] |= 0x80;
+ 			}
+ 		}
+ 	}
+-	return 8 * packets - missing;
++	return out_len;
+ }
+ 
+ const int32_t MAX_DENSE_SIZE = 5;
+diff --git a/src/fatfs/ffconf.h b/src/fatfs/ffconf.h
+index 7fb8fd26..739d849c 100644
+--- a/src/fatfs/ffconf.h
++++ b/src/fatfs/ffconf.h
+@@ -42,7 +42,7 @@
+ /* This option switches f_expand function. (0:Disable or 1:Enable) */
+ 
+ 
+-#define FF_USE_CHMOD	0
++#define FF_USE_CHMOD	1 // Enabled for f_utime, used by the SysEx file access (storage/smsysex.cpp), as in 1.3
+ /* This option switches attribute manipulation functions, f_chmod() and f_utime().
+ /  (0:Disable or 1:Enable) Also FF_FS_READONLY needs to be 0 to enable this option. */
+ 
+-- 
+2.43.0
+

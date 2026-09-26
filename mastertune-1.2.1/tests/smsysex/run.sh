@@ -6,7 +6,7 @@ set -e
 FW=$(cd "$1" && pwd)
 HERE=$(cd "$(dirname "$0")" && pwd)
 B=$(mktemp -d)
-trap 'rm -rf "$B"' EXIT
+[ -n "$KEEP" ] && echo "build dir: $B" || trap 'rm -rf "$B"' EXIT
 mkdir -p "$B/fatfs"
 cp "$FW"/src/fatfs/ff.c "$FW"/src/fatfs/ff.h "$FW"/src/fatfs/ffconf.h "$FW"/src/fatfs/ffunicode.c "$FW"/src/fatfs/diskio.h "$B/fatfs/"
 sed -i 's/#define FF_USE_MKFS[[:space:]]*0/#define FF_USE_MKFS 1/' "$B/fatfs/ffconf.h" # to format the RAM disk

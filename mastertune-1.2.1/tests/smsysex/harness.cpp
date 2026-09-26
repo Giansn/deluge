@@ -11,13 +11,17 @@ extern "C" {
 #include "fatfs/ff.h"
 }
 
+namespace AudioEngine {
+uint32_t audioSampleTimer = 0; // advanced with TICK
+}
+
 void intToString(int32_t number, char* buffer, int32_t minNumDigits) {
 	snprintf(buffer, 12, "%0*d", (int)minNumDigits, (int)number);
 }
 
 struct FakeDevice : MIDIDevice {
 	const char* name;
-	int32_t space = 3072;
+	int32_t space = 4096 * 3; // an empty USB MIDI send buffer
 	explicit FakeDevice(const char* n) : name(n) {}
 	void sendSysex(const uint8_t* data, int32_t len) override {
 		printf("R ");
@@ -72,6 +76,9 @@ int main() {
 		}
 		else if (s.rfind("SPACE ", 0) == 0) {
 			usbDevice.space = std::stoi(s.substr(6));
+		}
+		else if (s.rfind("TICK ", 0) == 0) {
+			AudioEngine::audioSampleTimer += std::stoul(s.substr(5));
 		}
 		else if (s == "RUN") {
 			for (int i = 0; i < 1000; i++)

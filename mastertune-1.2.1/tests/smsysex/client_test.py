@@ -44,7 +44,7 @@ def replies(lines):
         if l.startswith("R "):
             m = bytes.fromhex(l[2:])
             check(m[0] == 0xF0 and m[-1] == 0xF7 and all(b < 0x80 for b in m[1:-1]), "reply is clean 7-bit SysEx")
-            check(len(m) <= 3072, f"reply fits the USB send buffer ({len(m)} bytes)")
+            check(len(m) <= 4096 * 3, f"reply fits the USB send buffer ({len(m)} bytes)")
             msgs.append(m)
     return msgs
 
@@ -99,6 +99,26 @@ while True:
     got += [e["name"] for e in lst]; offset += len(lst)
 check(sorted(got) == sorted(names + ["CAF\u0082_DRUM.WAV"]), f"listing complete and exact ({len(got)} entries)")
 check(len(got) == len(set(got)), "no entry listed twice")
+
+# Listing like deluge-editor: 25 lines per page, and a shorter page ends the listing. Every page but the last must be
+# full, even with long names
+def list_like_dedit(path):
+    got, pages = [], []
+    while True:
+        r, _ = send({"dir": {"path": path, "offset": len(got), "lines": 25}})
+        lst = r[0][2]["^dir"]["list"]
+        pages.append(len(lst))
+        got += [e["name"] for e in lst]
+        if len(lst) < 25:
+            return got, pages
+got, pages = list_like_dedit("/SAMPLES")
+check(sorted(got) == sorted(names + ["CAF\u0082_DRUM.WAV"]), f"deluge-editor sees the whole folder (pages {pages})")
+cmd("MKDIR /LONG")
+long_names = [f"L{i:02d}_" + "y" * (250 - 8) + ".WAV" for i in range(30)]  # 250 characters each
+for n in long_names:
+    cmd(f"PUT /LONG/{n} 00")
+got, pages = list_like_dedit("/LONG")
+check(sorted(got) == sorted(long_names) and pages[0] == 25, f"full pages with 250-character names (pages {pages})")
 
 # Upload like DEx: open for write, 128-byte blocks, close
 data = os.urandom(5000)
@@ -175,20 +195,27 @@ for i in range(20):
 lines += cmd("RUN")
 check(len(replies(lines)) == 16, f"queue bounded ({len(replies(lines))} replies to 20)")
 
-# A reply waits for room in the USB send buffer, but not forever
-cmd("SPACE 100")
-lines = cmd("S " + (bytes([0xF0, 0, 0x21, 0x7B, 1, 4, session["min"]]) + b'{"ping":{}}' + b"\xF7").hex())
+# A reply goes out only whole: it waits for room in the USB send buffer, the next request waits behind it, and after
+# two seconds without room it's dropped rather than sent in part
+ping = lambda: cmd("S " + (bytes([0xF0, 0, 0x21, 0x7B, 1, 4, session["min"]]) + b'{"ping":{}}' + b"\xF7").hex())
+ping_len = len(replies(ping() + cmd("RUN"))[0])
+cmd(f"SPACE {ping_len - 1}")
+lines = ping() + ping()
 for i in range(50):
     lines += cmd("RUN1")
-check(len(replies(lines)) == 0, "waits while the send buffer is full")
-cmd("SPACE 3072"); lines += cmd("RUN1")
-check(len(replies(lines)) == 1, "sends once there is room")
+check(len(replies(lines)) == 0, "waits while the send buffer has less room than the reply")
+cmd(f"SPACE {ping_len}"); lines += cmd("RUN1")  # the fake buffer doesn't fill up, so both fit one after the other
+got = replies(lines)
+check(len(got) == 2 and all(len(m) == ping_len for m in got), "sends once the whole reply fits, then the one behind it")
+cmd("SPACE 12288")
 cmd("SPACE 0")
-lines = cmd("S " + (bytes([0xF0, 0, 0x21, 0x7B, 1, 4, session["min"]]) + b'{"ping":{}}' + b"\xF7").hex())
-for i in range(101):
+lines = ping()
+for i in range(20):
     lines += cmd("RUN1")
-check(len(replies(lines)) == 1, "sends after 100 tries regardless")
-cmd("SPACE 3072")
+lines += cmd("TICK 88200") + cmd("RUN1")
+cmd("SPACE 12288"); lines += cmd("RUN")
+check(len(replies(lines)) == 0, "after two seconds without room the reply is dropped, not sent in part")
+r, _ = send({"ping": {}}); check(len(r) == 1, "the next request works normally")
 
 H.stdin.close(); H.wait()
 print(f"{len(fails)} failures" if fails else "all checks passed")
