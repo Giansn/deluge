@@ -1,7 +1,9 @@
 // Benchmark of the oscillators, per voice and block of 128 samples: the firmware's Voice::renderOsc (cut out of
 // model/voice/voice.cpp by run.sh) as Voice::renderBasicSource calls it for a synth voice: into a mono oscBuffer,
 // with amplitude, once per unison part. Each case warms up, then counts 10 blocks (instructions per block with ARM=1).
-// The checksum of the output is printed so the PC and the Cortex-A9 (and a changed firmware) can be compared bit for bit.
+// The checksum of the output is printed so a changed firmware can be compared bit for bit with the old one (on the same
+// machine: on the PC, the firmware's fallbacks of the *_rounded multiplies in util/fixedpoint.h truncate instead of
+// rounding, so the crude saw/square, the triangle below ~700 Hz and PW on saws differ from the Cortex-A9's smmulr/smmlar).
 #include "emu_count.h"
 #include "osc_shim.h"
 #include <cmath>
@@ -85,6 +87,7 @@ int main() {
 	    {"triangle 1760 Hz (table)", OscType::TRIANGLE, 1760, 0, 0, 1, 0},
 	    {"analog saw 220 Hz", OscType::ANALOG_SAW_2, 220, 0, 0, 1, 0},
 	    {"analog square 220 Hz", OscType::ANALOG_SQUARE, 220, 0, 0, 1, 0},
+	    {"analog square 220 Hz PW", OscType::ANALOG_SQUARE, 220, 1u << 30, 0, 1, 0},
 	    {"saw 220 Hz PW (sync path)", OscType::SAW, 220, 1u << 30, 0, 1, 0},
 	    {"saw 330 Hz synced to 110 Hz", OscType::SAW, 330, 0, 110, 1, 0},
 	    {"saw 220 Hz unison 4", OscType::SAW, 220, 0, 0, 4, 12},

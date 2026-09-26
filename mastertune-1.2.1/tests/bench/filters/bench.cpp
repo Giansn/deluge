@@ -38,7 +38,7 @@ static int32_t freqFor(double hz) {
 }
 
 constexpr int32_t kRes = 536870911; // resonance full scale (paramFinalValues[LOCAL_LPF_RESONANCE])
-constexpr int32_t kMorph = 1 << 28; // morph / drive full scale (q28; configure shifts it to q31... well, << 2)
+constexpr int32_t kMorph = 1 << 28; // morph full scale as the voice passes it (Filter::configure shifts it left by 2)
 
 struct Case {
 	const char* name;
@@ -60,9 +60,12 @@ static const Case cases[] = {
     {"LP24 drive res30", FilterMode::TRANSISTOR_24DB_DRIVE, 1200, kRes / 10 * 3, 0, OFF, 0, 0, 0},
     {"LP24 drive res60 9k (oversampled)", FilterMode::TRANSISTOR_24DB_DRIVE, 9000, kRes / 10 * 6, 0, OFF, 0, 0, 0},
     {"SVF LPF res30", FilterMode::SVF_BAND, 1200, kRes / 10 * 3, 0, OFF, 0, 0, 0},
-    {"SVF BPF res30", FilterMode::SVF_BAND, 1200, kRes / 10 * 3, kMorph / 2 - 16, OFF, 0, 0, 0},
+    {"SVF BPF res30", FilterMode::SVF_BAND, 1200, kRes / 10 * 3, kMorph - 16, OFF, 0, 0, 0},
+    {"SVF notch res30", FilterMode::SVF_NOTCH, 1200, kRes / 10 * 3, 0, OFF, 0, 0, 0},
     {"HP ladder res0", OFF, 0, 0, 0, FilterMode::HPLADDER, 150, 0, 0},
     {"HP ladder res20", OFF, 0, 0, 0, FilterMode::HPLADDER, 150, kRes / 5, 0},
+    // below ~39 % resonance the HP ladder does not saturate, above ~50 % it uses the antialiased 2D tanh
+    {"HP ladder res60", OFF, 0, 0, 0, FilterMode::HPLADDER, 150, kRes / 10 * 6, 0},
     {"HP ladder res20 morph50", OFF, 0, 0, 0, FilterMode::HPLADDER, 150, kRes / 5, kMorph / 2},
     {"LP24+HP ladder res30/20", FilterMode::TRANSISTOR_24DB, 1200, kRes / 10 * 3, 0, FilterMode::HPLADDER, 150,
      kRes / 5, 0},
@@ -124,7 +127,7 @@ int main() {
 			printf("%-45s hash %016llx\n", label, (unsigned long long)hash);
 		}
 	}
-	// setConfig alone (runs once per voice per block too), for a ladder pair and an SVF pair
+	// setConfig alone (runs once per voice per block too; the double divisions are one slow instruction each), for a ladder pair and an SVF pair
 	{
 		FilterSet fs;
 		fs.reset();
