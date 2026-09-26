@@ -342,11 +342,14 @@ int main() {
 			double limit;
 		};
 		std::vector<Case> cases = {
-		    // 1.2.1 had 1.90, 1.69, 3.77, 1.72 and 1.69 here. 30% longer at once kinks the pitch of the repeats, which
-		    // shows up as a step of about that size by itself.
+		    // 1.2.1 had 1.90, 1.69, 2.46, 3.77, 4.05, 1.72 and 1.69 here. A larger jump makes a new buffer at once, which
+		    // has to glide along with the one it replaces, or the time jumps when it takes over (1.82, 5.75 and 1.45 in
+		    // v11 before its review).
 		    {"5% longer", [](double s) { return s < 1.5 ? 1.0 : 0.95; }, 0.5},
-		    {"30% longer", [](double s) { return s < 1.5 ? 1.0 : 0.7; }, 2.2},
+		    {"40% longer", [](double s) { return s < 1.5 ? 1.0 : 0.7; }, 0.5},
+		    {"70% longer", [](double s) { return s < 1.5 ? 1.0 : 0.6; }, 0.5},
 		    {"5% shorter", [](double s) { return s < 1.5 ? 1.0 : 1.05; }, 0.5},
+		    {"less than half", [](double s) { return s < 1.5 ? 1.0 : 2.2; }, 0.5},
 		    {"sweep across the buffer's speed",
 		     [](double s) { return s < 1.5 ? 1.0 : (s < 1.6 ? 1.05 : std::max(0.95, 1.05 - (s - 1.6) * 0.2)); }, 0.5},
 		    {"LFO +-3% at 1 Hz", [](double s) { return s < 1.5 ? 1.0 : 1.0 + 0.03 * std::sin(2 * M_PI * (s - 1.5)); },
@@ -376,6 +379,44 @@ int main() {
 		off.silence(40000, rate);
 		Response flat = repeatResponse(off, rate);
 		CHECK(std::abs(flat.at10k) < 0.1, "filters off: flat repeats");
+	}
+#endif
+
+	// 10. Very long delay, where the buffer runs below half speed: 1.2.1 wrote there with triangles, which lost half
+	// the bandwidth (-0.95 dB at 2 kHz, -6.89 dB at 5 kHz here). The buffer itself stops at 0.38 x 22.05 kHz = 8.5 kHz,
+	// and the cubic kernels for writing and reading take 1.5 dB each at 5 kHz.
+	{
+		Runner r;
+		int32_t slowest = kNativeRate / 14; // About 5.2 s, the buffer at 0.38x
+		r.silence(240000, slowest);
+		Response resp = repeatResponse(r, slowest);
+		printf("5 s delay: repeat at 2 kHz %.2f dB, 5 kHz %.2f dB\n", resp.at2k, resp.at5k);
+		CHECK(resp.at5k > -4.f, "5 s delay: repeats should keep more of 5 kHz (%.2f dB)", resp.at5k);
+	}
+
+#ifndef NO_DELAY_FILTERS
+	// 11. The low cut in the digital mode at full feedback: the repeats stay at the clipping level, which leaves the
+	// headroom for adding them to the sound, give or take the DC blocker after it (1.14 without the low cut, as in
+	// 1.2.1). With the low cut after the clipping, its overshoot reached 1.84, and wrapped around.
+	{
+		Runner r;
+		r.feedback = 2147483647;
+		r.delay.lowCut = 50;
+		int64_t peak = 0;
+		for (size_t pos = 0; pos < 3 * 44100; pos += kBlock) {
+			std::vector<int32_t> in(kBlock);
+			for (int i = 0; i < kBlock; i++) {
+				size_t t = pos + i;
+				double saw = (double)((t * 55) % 44100) / 44100.0 * 2 - 1; // 55 Hz
+				in[i] = (t < 44100) ? (int32_t)(saw * (1 << 29)) : 0;
+			}
+			auto out = r.block(in.data(), kBlock, rate);
+			for (int i = 0; i < kBlock; i++) {
+				peak = std::max(peak, std::abs((int64_t)out[i].l - in[i]));
+			}
+		}
+		printf("low cut at full feedback: repeats peak at %.2f of the clipping level\n", peak / 1073741824.0);
+		CHECK(peak < (int64_t)(1.15 * 1073741824.0), "repeats beyond the clipping level (%.2f)", peak / 1073741824.0);
 	}
 #endif
 
