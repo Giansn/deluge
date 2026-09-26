@@ -362,6 +362,18 @@ Grundlage: Anteil im vollen Song mal geschätzte Einsparung aus den Benchmarks. 
 2. Ein Gegenprüfer kontrolliert.
 3. Zum Schluss der ganze Song vorher/nachher: gleicher Ausgang (`measured.wav`), weniger Befehle.
 
+## 7a. Umsetzung (läuft)
+
+- **Referenz:** `/home/user/work/baseline-v12/song`, der Volllast-Test mit der v12-ELF.
+  - Bedarf ohne CPU-Schutz: 1 370 014 Befehle pro 128 Samples.
+  - `measured.wav` SHA-256 `b6766a67…`.
+  - Jede bitgleiche Optimierung muss diesen `measured.wav` exakt reproduzieren.
+- **Workflow `perf-filters-oscillators`:**
+  - Filter und Oszillatoren, je in einer eigenen Arbeitskopie (Branch `perf-filters`, `perf-oscillators`).
+  - Pro Bereich ein Umsetzer und ein Gegenprüfer.
+  - Nachweis: Prüfsummen der Benchmarks inklusive Zufallsfällen (ARM gegen ARM), gleicher Song-Ausgang und ein Argument pro Änderung.
+  - Patches kommen nach `perf/`.
+
 ## 8. Offen
 
 - [x] Volllast-Test Lauf 1 eingetragen, Priorisierung angepasst.

@@ -315,7 +315,7 @@ Das OLED zeigt Ton, Modus, Tonhöhe und den Beat mit seinem Bereich (Delta, Thet
   - Knackfreiheit bei allen Änderungen
   - Sidechain-Rampe, Bandbegrenzung, Tempo-Lock und Pegel
   - Ausblenden zwischen zwei Songs ohne Sprung, Neustart aus der Stille
-- **Build:** ohne Compiler-Warnungen (eine Stack-Warnung beim Aufbau der Wellentabellen ist behoben), zwei Builds mit identischer SHA-256.
+- **Build:** ohne Compiler-Warnungen (eine Stack-Warnung beim Aufbau der Wellentabellen ist behoben). Zwei komplette Neubauten aus dem Commit, in einer eigenen Arbeitskopie mit allen 448 Dateien neu übersetzt, ergeben dieselbe SHA-256 wie die ausgelieferte Datei.
 - **Code-Prüfung:** zwei Prüfer (Bedienung und Menüs; Speichern und Audio), acht Befunde, jeder einmal gegengeprüft:
   - Sechs bestätigt und behoben:
     - möglicher Absturz bei Undo per MIDI in der Drone-Ansicht
