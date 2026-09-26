@@ -134,6 +134,9 @@ class Emulator:
             uc.mem_map_ptr(base, size, UC_PROT_ALL, ctypes.addressof(buf))
             uc.mem_map_ptr(base + UNCACHED_MIRROR_OFFSET, size, UC_PROT_ALL, ctypes.addressof(buf))
         uc.mem_map(STOP & ~0xFFF, 0x1000)
+        # What's at address 0 on the Deluge (the boot ROM area) reads, but isn't written: the firmware does read
+        # through null pointers now and then (e.g. Clip::~Clip() looks at currentSong while there's none)
+        uc.mem_map(0, 0x100000, unicorn.UC_PROT_READ)
 
         # Timers, DMA, SPI registers behave (models below); the rest of the peripherals is plain memory, mapped when
         # first touched
@@ -214,6 +217,8 @@ class Emulator:
         # SPIBSC (the SPI flash holding the settings): every transfer has ended at once (CMNSR: TEND, SSL negated),
         # the flash reads as zeros (no settings saved: the firmware's defaults)
         r[0x3FEFA000 + 0x48] = lambda size: 0x1
+        r[0x3FEFA000 + 0x38] = lambda size: (1 << (8 * size)) - 1  # SMRDR0: erased flash
+        r[0x3FEFA000 + 0x3C] = lambda size: (1 << (8 * size)) - 1  # SMRDR1
         r[spi + 3] = spsr
         r[spi + 4] = spdr_read
         w[spi + 4] = spdr_write
@@ -247,7 +252,7 @@ class Emulator:
 
     def on_unmapped(self, uc, access, address, size, value, _):
         region = address & ~0xFFFFF
-        if region in (0x00000000,) or address < 0x1000:
+        if address < 0x100000:
             self.log(f"access to {address:#x} (null pointer?) at {self.sym.name_at(uc.reg_read(UC_ARM_REG_PC))}")
             return False
         try:
