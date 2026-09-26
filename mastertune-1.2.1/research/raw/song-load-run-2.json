@@ -1,0 +1,68 @@
+{
+ "works": true,
+ "demand": {
+  "mean": 1366716,
+  "meanCpuPercent": 117.7,
+  "max": 2143439,
+  "maxCpuPercent": 184.6,
+  "voicesMean": 45.2,
+  "voicesMax": 66
+ },
+ "withCulling": "Device-Lauf (--culling): Mittel 701'452 Instruktionen pro 128er-Fenster (60,4 %), Maximum 1'714'556 (147,7 %, bei Akkordwechseln), Perzentile 5/50/95/99: 57/59/68/86 %. 14,2 Culls/s (4 Takte: 94 SOFT_ALWAYS, 20 FORCE, alle aus routine()). Stimmen im Mittel 20,7, max 52 (ohne Culling 45,2). Die Pads behalten im Mittel 1,5 bis 2,1 Stimmen, also wird rund die Hälfte der Akkordtöne gecullt. cpuDireness liegt in 100 % der Fenster bei 14. Direness 14 ist bereits ab 63 Samples dspTime erreicht, das entspricht 49 % CPU. Die Stufe 14 senkt auch die Kosten pro Stimme, etwa weil das Oversampling des LP-Ladder-Filters entfällt. Den Stall am echten Gerät bei über 100 % modelliert der Emulator nicht.",
+ "perTrack": "Ohne Culling (Mittel/Max/Anteil der Zeit mit Stimmen): PADA–E und WT 5,6/8/100 %, ARP 2,3/3/100 %, FM 4,5/8/100 %, KICK 1,0/1/100 %, SNARE 0,4/1/40 %, CLAP 0,3/2/27 %, HATC 0,6/1/59 %, HATO 1,0/1/100 %, RIM 0,1/1/10 %, TOM 0,35/2/35 %, BELL 1,0/2/100 %. Mit Culling: Pads 1,5–2,1 (max 6–7), ARP 2,3, FM 1,3, Kit unverändert. Die Daten pro Fenster stehen in result.json unter voices_by_sound_log.",
+ "areas": [
+  {
+   "area": "filters",
+   "percentOfTotal": 39
+  },
+  {
+   "area": "oscillators",
+   "percentOfTotal": 28.9
+  },
+  {
+   "area": "voices/patcher/envelopes",
+   "percentOfTotal": 9.5
+  },
+  {
+   "area": "per-track FX",
+   "percentOfTotal": 7.8
+  },
+  {
+   "area": "reverb (Mutable)",
+   "percentOfTotal": 2.9
+  },
+  {
+   "area": "FM",
+   "percentOfTotal": 2.7
+  },
+  {
+   "area": "sidechain/compressors",
+   "percentOfTotal": 2.3
+  },
+  {
+   "area": "sample reading",
+   "percentOfTotal": 1.6
+  },
+  {
+   "area": "delay",
+   "percentOfTotal": 1.5
+  },
+  {
+   "area": "drone",
+   "percentOfTotal": 1.5
+  }
+ ],
+ "topFunctions": [
+  "LpLadderFilter::doFilter 403,108",
+  "Voice::renderOsc 279,575",
+  "HpLadderFilter::doFilter 121,254",
+  "Sound::render 110,416",
+  "WaveTable::doRenderingLoop 88,073",
+  "ModControllableAudio::processReverbSendAndVolume 59,412",
+  "Mutable::process 39,819",
+  "ModControllableAudio::processFX 38,643"
+ ],
+ "reverbCompare": "Gemessen über dieselben 352'896 Samples (je 4 Takte, ohne Culling). Reverb-Bereich: Mutable 39'909 (3,4 % CPU), Digital 54'343 (4,7 %), also +14'434. Die Gesamtsumme steigt um genau diesen Betrag (1'370'014 auf 1'384'448), der Rest ist identisch.",
+ "shortWindows": "64 von 2816 Fenstern sind kürzer als 128 Samples, weil sie an Clock-Ticks enden; sie haben je 10 Samples. Ohne Culling kostet ein solches Fenster 248'877 Instruktionen, das sind 24'888 pro Sample gegenüber 10'677 in vollen Fenstern (2,3×). Über alles gerechnet kommen damit +3'299 pro 128 Samples dazu. Lineare Schätzung: ein routine()-Aufruf kostet etwa 154k plus 9'473 pro Sample. Der Fixanteil ist eine Obergrenze, weil in diesen Fenstern auch die Tick-Arbeit anfällt. Würde routine() alle 64 Samples aufgerufen, ergäbe das etwa 131 % statt 118 %.",
+ "notes": "Alle 4 Punkte sind umgesetzt, run.sh braucht rund 2 Minuten. Zum Befund: Akkorde (NOTE_LENGTH=BAR) und ARP (Gate knob 50) spielen jetzt 100 % der Zeit. Alle 16 Sounds gleichzeitig kommen in diesem Song aber nie vor, höchstens 15 (6 % der Zeit). Grund sind die kurzen One-Shots im Kit (RIM klingt nur 10 % der Zeit und nie zusammen mit SNARE). Die Ausgabe zeigt deshalb eine Aufschlüsselung nach Anzahl klingender Sounds.\n\nWie das Culling angeschlossen ist: getLastRunTimeforCurrentTask() ist inline. routine() liest taskManager.list[currentID].durationStats.average (Offset aus der Disassemblierung) und multipliziert mit 44100. Vor jedem Aufruf wird dort ein Mittelwert der emulierten Laufzeiten der vorherigen routine()-Aufrufe (Instruktionen / 400 MHz) geschrieben, fortgeschrieben mit (avg + runtime)/2 wie in TaskManager::runTask. Daraus leitet setDireness() cpuDireness ab.\n\nNamen der Sounds: Der Harness sucht einen String-Zeiger in der Nähe des Sound* und gleicht ihn mit den Namen aus der XML ab. Er wählt den Offset, der am häufigsten zutrifft. Alle 16 Namen wurden aufgelöst.\n\nDateien: /home/user/deluge/mastertune-1.2.1/tests/song/{run.sh,song_emu.py,make_sd.py}. Ergebnisse: /tmp/claude-0/-home-user-deluge/4d876f0c-a63e-5ea2-9619-9eb6cb5cd747/scratchpad/r2/ (Unterordner device/, digital/). Nicht committet."
+}

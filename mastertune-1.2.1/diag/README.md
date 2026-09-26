@@ -6,6 +6,21 @@
 
 Das ist **v12 plus Messung, sonst nichts**. Klang, DSP und Culling sind unverändert. Die Messung zeigt, wie stark die CPU ausgelastet ist, und schickt die Werte an den Computer, wo man sie mitschreiben kann. Zwei saubere Builds (Objektdateien gelöscht, alle 356 neu übersetzt) ergaben dieselbe SHA-256, ohne Compiler-Warnungen. Ersetzt die erste Messversion `b1ba466f`: Deren Culling-Zähler zählte auch Aufrufe, die nichts änderten, und ihre SD-Zeit enthielt das Audio-Rendern während des Lesens. Quellcode: `0001-CPU-monitor-…patch` gegen v12 (`f89b478c`), Branch `mastertune-v12-diag`.
 
+## Test-Song für den Abgleich mit dem Emulator
+
+`loadtest-card.zip` enthält den Song aus dem Volllast-Test (`tests/song/`). Er hat 17 Spuren bei 120 BPM und spielt durchgehend alles gleichzeitig: 8 Synths mit Akkorden, Unison, Filtern und Effekten, FM, Wavetable, ein Kit, eine gestretchte Audiospur, Reverb, Sidechain und den Drone.
+
+1. Den Inhalt der ZIP-Datei ins Hauptverzeichnis der SD-Karte kopieren. Es kommen nur `SONGS/MT_LOADTEST.XML` und der Ordner `SAMPLES/MT_LOADTEST/` dazu, vorhandene Dateien werden nicht überschrieben.
+2. Die Messversion starten, den Song `MT_LOADTEST` laden, **Settings → CPU monitor → On**.
+3. `tools/cpu_monitor.html` verbinden, **Play** drücken und etwa eine Minute laufen lassen.
+4. **CSV exportieren** und hier hochladen. Gern auch einen zweiten Lauf mit einem eigenen, typischen Song.
+
+Der Emulator erwartet für diesen Song:
+- ohne CPU-Schutz etwa 118 % Bedarf im Mittel, 45 Stimmen
+- mit CPU-Schutz wie auf dem Gerät etwa 60 %, rund 21 Stimmen, etwa 14 abgeschaltete Stimmen pro Sekunde, Direness dauerhaft 14
+
+Der Vergleich zeigt, wie gut der Emulator die echte Hardware trifft. Er zählt Befehle, nicht Takte; Cache und Pipeline fehlen ihm.
+
 ## Einschalten
 
 **Settings → CPU monitor → On** (7-Segment: `CPU`). Nach jedem Einschalten des Deluge ist der Monitor wieder aus. Ausgeschaltet kostet er pro Aufruf der Audio-Routine eine einzige Abfrage.

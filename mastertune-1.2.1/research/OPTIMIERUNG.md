@@ -289,7 +289,41 @@ Top-Funktionen:
 - HP-Ladder: 7 200 gegen 7 700.
 - Oszillatoren: 179 000 hochgerechnet, 178 000 gemessen.
 
-**Vom Gegenprüfer gefunden, Korrekturlauf läuft:**
+**Lauf 2: Korrekturlauf** (Rohdaten `raw/song-load-run-2.json`). Akkorde und Arp spielen jetzt den ganzen Takt, das ist die Dauerlast.
+
+| | Bedarf ohne CPU-Schutz | wie auf dem Gerät (Culling und Direness nachgebildet) |
+|---|---|---|
+| Befehle pro 128 Samples (Mittel) | 1 366 716 = **118 %** | 701 452 = **60 %** |
+| Spitze | 2 143 439 = 185 % | 1 714 556 = 148 % (Akkordwechsel) |
+| Perzentile 5/50/95/99 | – | 57 / 59 / 68 / 86 % |
+| Stimmen Mittel / max | 45,2 / 66 | 20,7 / 52 |
+| Abgeschaltete Stimmen | – | **14,2 pro Sekunde** (94 soft, 20 force in 4 Takten) |
+| `cpuDireness` | – | **in 100 % der Fenster auf 14** (Maximum) |
+
+- Die Pads behalten mit CPU-Schutz nur 1,5–2,1 Stimmen. **Etwa die Hälfte der Akkordtöne wird abgeschaltet.**
+- Direness 14 senkt auch die Kosten pro Stimme, z. B. weil das Oversampling im LP-Ladder wegfällt.
+- Anteile bei Dauerlast: Filter 39 %, Oszillatoren 28,9 %, Stimmen/Patcher/Hüllkurven 9,5 %, Spur-FX 7,8 %, Reverb 2,9 %, FM 2,7 %, Sidechain/Kompressoren 2,3 %, Sample-Lesen 1,6 %, Delay 1,5 %, Drone 1,5 %.
+- Top-Funktionen: `LpLadderFilter::doFilter` 403 108, `Voice::renderOsc` 279 575, `HpLadderFilter::doFilter` 121 254, `Sound::render` 110 416, `WaveTable::doRenderingLoop` 88 073, `processReverbSendAndVolume` 59 412.
+- **Stimmen pro Spur** ohne CPU-Schutz (Mittel / max / Anteil der Zeit):
+  - Pads und Wavetable 5,6 / 8 / 100 %
+  - Arp 2,3 / 3
+  - FM 4,5 / 8
+  - Kit 0,1–1,0
+- **Kurze Fenster:** 64 von 2 816 Fenstern haben wegen Clock-Ticks nur 10 Samples. Sie kosten pro Sample 2,3-mal so viel. Grob gilt: ein Aufruf von `routine()` kostet etwa 154 000 plus 9 500 pro Sample. Würde `routine()` alle 64 statt 128 Samples aufgerufen, stiege der Bedarf von 118 % auf etwa 131 %.
+- **Reverb** über dieselben Samples: Mutable 39 909, Digital 54 343 Befehle pro Fenster (+14 434, +1,2 % CPU). Sonst ist alles gleich.
+
+**Schwellen des CPU-Schutzes** (`audio_engine.cpp`, gleich in 1.2.1 und upstream main): Grundlage ist die Renderzeit des letzten Aufrufs, gemessen in Samples.
+
+| Renderzeit (Samples) | Anteil eines 128er-Fensters | Folge |
+|---|---|---|
+| ab 50 | 39 % | `cpuDireness` 1: erste Qualitätsabsenkung |
+| ab 63 | 49 % | Direness 14 (Maximum): gröbste Oszillator-Tabellen, lineare statt Sinc-Interpolation, kein Filter-Oversampling |
+| ab 80 | 62,5 % | Soft-Culling: Stimmen schnell ausblenden |
+| ab 112 | 87,5 % | Hard-Culling |
+
+**Folgerung:** Der Deluge spart schon ab etwa 40 % Last an der Qualität und ab etwa 60 % an Stimmen. Jede Einsparung wirkt darum doppelt: Sie bringt mehr Stimmen und bessere Qualität. Ob die Schwellen zu vorsichtig sind, zeigt erst die Messversion auf dem Gerät. Sie zeigt die Direness live an. Eine Änderung der Schwellen wäre nicht bitgleich und bräuchte Tests auf dem Gerät gegen Aussetzer.
+
+**Lauf 1, vom Gegenprüfer gefunden, in Lauf 2 behoben:**
 1. Im letzten Achtel jedes Takts schweigen die Synths. Im Dauerzustand liegt die Last bei **etwa 89 %**, nicht 83 %.
 2. **Culling auf dem Gerät:** Der Soft-Cull beginnt, wenn ein Fenster mehr als 62,5 % seiner Zeit braucht, der Hard-Cull ab 87,5 %. Bei rund 89 % würde ein echter Deluge mit diesem Song **dauernd Stimmen abschalten** und `cpuDireness` hochsetzen. Im Emulator lief das nicht, weil die Laufzeitmessung 0 lieferte. Der Korrekturlauf bildet es nach.
 3. Stimmen pro Spur werden ergänzt.
@@ -331,12 +365,13 @@ Grundlage: Anteil im vollen Song mal geschätzte Einsparung aus den Benchmarks. 
 ## 8. Offen
 
 - [x] Volllast-Test Lauf 1 eingetragen, Priorisierung angepasst.
-- [ ] Korrekturlauf eintragen: Dauerlast, Culling und `cpuDireness` wie auf dem Gerät, Stimmen pro Spur.
+- [x] Korrekturlauf eingetragen (Lauf 2).
+- [ ] Messversion auf dem Gerät mit `MT_LOADTEST`: Emulator kalibrieren, Direness- und Culling-Schwellen prüfen.
 - [ ] Benchmarks für `processReverbSendAndVolume`, den Aufwand pro Fenster in `Sound::render` und die Wavetable-Schleife.
 - [ ] Wavetable-Oszillator, Grain, `hopEnd` und die Stereo-Unison-Pan-Schleife messen, falls der Volllast-Test sie als relevant zeigt.
 - [ ] MIDI/Clock-Fix: Übertragbarkeit am Code bestätigen.
 - [ ] L2-Cache: Nachbesserungen vollständig sammeln.
-- [ ] **Messversion** (v12 + Messanzeige, läuft, Workflow `diag-build`):
+- [x] **Messversion** gebaut (`diag/`, SHA `8c94cf68…`). Der Test-Song für die SD-Karte ist `diag/loadtest-card.zip`.
   - CPU-Last pro Block (Mittel/Spitze), Stimmen, `cpuDireness`, Culling, SD-Latenz pro Cluster.
   - Anzeige auf dem OLED, per SysEx nur über USB, dazu eine Web-MIDI-Seite `tools/cpu_monitor.html` mit CSV-Export.
   - Ziele:

@@ -474,6 +474,8 @@ def main():
     ap.add_argument("image")
     ap.add_argument("--reverb-model", type=int, default=1, help="0 Freeverb, 1 Mutable (default), 2 Digital")
     ap.add_argument("--xml-out")
+    ap.add_argument("--files-out", help="also write the song and samples as files for a real SD card, under their own "
+                    "names (SONGS/MT_LOADTEST.XML, SAMPLES/MT_LOADTEST/), so nothing on the card is overwritten")
     args = ap.parse_args()
     files, lengths = samples()
     xml = song_xml(lengths, args.reverb_model)
@@ -481,6 +483,15 @@ def main():
     if args.xml_out:
         open(args.xml_out, "w").write(xml)
     fat32.build(args.image, files)
+    if args.files_out:
+        for path, data in files.items():
+            if path == "SONGS/DEFAULT.XML":
+                path, data = "SONGS/MT_LOADTEST.XML", xml.replace("SAMPLES/", "SAMPLES/MT_LOADTEST/").encode()
+            elif path.startswith("SAMPLES/"):
+                path = "SAMPLES/MT_LOADTEST/" + path[len("SAMPLES/"):]
+            out = os.path.join(args.files_out, path)
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            open(out, "wb").write(data)
     print(f"{args.image}: {len(files)} files, song {len(xml):,} bytes")
 
 
