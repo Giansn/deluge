@@ -905,8 +905,8 @@ int main() {
 	// on the PC nothing is counted): steady (native), with the time modulated (resampling), with the filters on, and
 	// the analog mode
 	{
-		auto measure = [&](const char* label, bool modulated, bool filters, bool analog) {
-			Runner r;
+		auto measure = [&](const char* label, bool modulated, bool filters, bool analog, bool fade = false) {
+			Runner r(fade);
 			r.delay.analog = analog;
 #ifndef NO_DELAY_FILTERS
 			if (filters) {
@@ -925,6 +925,9 @@ int main() {
 			}
 		};
 		measure("delay steady, 128 samples", false, false, false);
+#ifndef NO_DELAY_TIME_CHANGE
+		measure("delay steady, fade mode, 128 samples", false, false, false, true);
+#endif
 #ifndef NO_DELAY_TIME_CHANGE
 		{
 			// v14: while the time changes in the fade mode, two buffers are read and written

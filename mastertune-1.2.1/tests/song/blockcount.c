@@ -22,6 +22,8 @@ static uint32_t used;        // Entries in the table
 static const uint8_t* code;  // Host memory holding the code (the firmware's internal RAM)
 static uint32_t code_base, code_size;
 static uc_hook hook;
+static uint64_t deadline = UINT64_MAX; // bc_set_deadline()
+static int deadline_hit;
 
 static uint32_t decode(uc_engine* uc, uint64_t address, uint32_t size) {
 	uint32_t cpsr = 0;
@@ -47,7 +49,7 @@ static uint32_t decode(uc_engine* uc, uint64_t address, uint32_t size) {
 	return n ? n : 1;
 }
 
-static void on_block(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
+static void count_block(uc_engine* uc, uint64_t address, uint32_t size) {
 	uint64_t key = (address & 0xFFFFFFFFu) | ((uint64_t)size << 32);
 	uint32_t i = (uint32_t)((key * 0x9E3779B97F4A7C15ull) >> (64 - TABLE_BITS));
 	for (;;) {
@@ -73,6 +75,15 @@ static void on_block(uc_engine* uc, uint64_t address, uint32_t size, void* user_
 	}
 }
 
+static void on_block(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
+	count_block(uc, address, size);
+	if (total >= deadline) {
+		deadline = UINT64_MAX;
+		deadline_hit = 1;
+		uc_emu_stop(uc);
+	}
+}
+
 int bc_install(uc_engine* uc, const uint8_t* code_memory, uint32_t base, uint32_t size) {
 	code = code_memory;
 	code_base = base;
@@ -82,6 +93,19 @@ int bc_install(uc_engine* uc, const uint8_t* code_memory, uint32_t base, uint32_
 
 uint64_t bc_total(void) {
 	return total;
+}
+
+// Stops the emulation (uc_emu_stop(), at the end of the block) once the total reaches this: song_emu.py's interrupts
+// (--midi-timing). UINT64_MAX: none.
+void bc_set_deadline(uint64_t instructions) {
+	deadline = instructions;
+}
+
+// Whether the last stop was the deadline's (and forgets it)
+int bc_deadline_hit(void) {
+	int hit = deadline_hit;
+	deadline_hit = 0;
+	return hit;
 }
 
 // Forgets how often each block ran (the running total stays), so the profile covers only what runs from here on

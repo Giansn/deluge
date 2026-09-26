@@ -184,6 +184,8 @@ class Emulator:
         lib = ctypes.CDLL(os.path.join(build_dir, "blockcount.so"))
         lib.bc_total.restype = ctypes.c_uint64
         lib.bc_dump.restype = ctypes.c_uint32
+        lib.bc_set_deadline.argtypes = [ctypes.c_uint64]
+        lib.bc_deadline_hit.restype = ctypes.c_int
         lib.bc_install.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32]
         if lib.bc_install(uc._uch, ctypes.addressof(self.iram), INTERNAL_RAM, INTERNAL_RAM_SIZE) != 0:
             raise SystemExit("could not install the block hook")
@@ -193,8 +195,10 @@ class Emulator:
         self.sd_fd = os.open(sd_image, os.O_RDWR)
         self.sd_reads = self.sd_writes = 0
         self.dma_free = 0  # See ssi_position()
-        self.dma = None  # A RealTimeDma from when it takes over (--save-while-playing)
+        self.dma = None  # A RealTimeDma from when it takes over (--save-while-playing, --midi-timing)
         self.stopped = False
+        self.idle = 0  # Instructions of emulated time that passed without any code running (play_realtime())
+        self.interrupts = None  # Interrupts (--midi-timing)
 
     @staticmethod
     def section(data, wanted):
@@ -208,9 +212,13 @@ class Emulator:
                 return addr, bytes(size)
         raise KeyError(wanted)
 
+    def now(self):
+        """Emulated time in instructions (at 400 MHz): those executed, plus idle time (see play_realtime())."""
+        return self.bc.bc_total() + self.idle
+
     def seconds(self):
         """Emulated time: instructions at 400 MHz."""
-        return self.bc.bc_total() / CPU_HZ
+        return self.now() / CPU_HZ
 
     # --- peripherals
 
@@ -357,6 +365,11 @@ class Emulator:
                 raise SystemExit(f"emulator error: {e} at {self.sym.name_at(uc.reg_read(UC_ARM_REG_PC))}, "
                                  f"lr {self.sym.name_at(uc.reg_read(UC_ARM_REG_LR))}")
             pc = uc.reg_read(UC_ARM_REG_PC)
+            if self.bc.bc_deadline_hit() and self.interrupts:  # An interrupt is due (Interrupts): run it, go on
+                self.interrupts.service()
+                if pc != until:
+                    pc |= 1 if uc.reg_read(UC_ARM_REG_CPSR) & 0x20 else 0
+                    continue
             if pc == until or self.stopped or not timeout_s:
                 self.stopped = False
                 return
@@ -856,7 +869,7 @@ class RealTimeDma:
         self.cached = emu.sym["ssiTxBuffer"]
         self.base = self.cached + UNCACHED_MIRROR_OFFSET
         slot = (emu.u32(emu.sym["_ZN11AudioEngine14i2sTXBufferPosE"]) - self.base) // 8
-        self.start_instructions = emu.bc.bc_total()
+        self.start_instructions = emu.now()
         self.start_position = slot  # The DMA reads where the firmware writes next: the buffer is full
         self.written = slot + 128  # Absolute number of the next sample the firmware writes (the DMA's count + 128)
         self.max_gap = 0
@@ -864,13 +877,18 @@ class RealTimeDma:
         self.misplaced = 0  # Samples not written where expected (only after an underrun)
         self.pending = []  # Addresses written since the last collect()
         self.samples = []  # (left, right) as written, in order
+        self.numbers = []  # The absolute number (see position()) of every sample written, in order (MidiTiming)
         for b in (self.base, self.cached):
             emu.uc.hook_add(unicorn.UC_HOOK_MEM_WRITE, self.on_write, begin=b, end=b + 128 * 8 - 1)
         emu.dma = self
 
     def position(self):
         """The number of the sample the DMA reads now (counted from where the firmware wrote first)."""
-        return self.start_position + (self.emu.bc.bc_total() - self.start_instructions) * SAMPLE_RATE // int(CPU_HZ)
+        return self.start_position + (self.emu.now() - self.start_instructions) * SAMPLE_RATE // int(CPU_HZ)
+
+    def exact_position(self, instructions):
+        """Where the DMA is at that emulated time, in samples with their fraction: sample n plays from n.0."""
+        return self.start_position + (instructions - self.start_instructions) * SAMPLE_RATE / CPU_HZ
 
     def gap(self):
         return self.position() + 128 - self.written
@@ -887,6 +905,7 @@ class RealTimeDma:
             self.max_gap = max(self.max_gap, gap)
             if gap >= 128:
                 self.underruns += 1
+            self.numbers.append(self.written)
             self.written += 1
             self.pending.append(base + slot * 8)
 
