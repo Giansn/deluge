@@ -184,50 +184,6 @@ class Emulator:
         self.sd_reads = self.sd_writes = 0
         self.dma_free = 0  # See ssi_position()
         self.stopped = False
-        self.uninit = None  # See track_uninitialised_reads()
-
-    def track_uninitialised_reads(self, build_dir):
-        """--uninit: uninit.c's shadow of the RAM, with what's written so far (the ELF's segments, .bss) and from here
-        on everything this harness writes into the RAM marked as written."""
-        so = os.path.join(build_dir, "uninit.so")
-        uc_dir = os.path.dirname(unicorn.__file__)
-        subprocess.run(["cc", "-O2", "-shared", "-fPIC", f"-I{uc_dir}/include", os.path.join(HERE, "uninit.c"), "-o", so,
-                        f"-L{uc_dir}/lib", "-l:libunicorn.so.2", f"-Wl,-rpath,{uc_dir}/lib"], check=True)
-        lib = ctypes.CDLL(so)
-        lib.un_dump.restype = ctypes.c_uint32
-        if lib.un_install(self.uc._uch, int(os.environ.get("UNINIT_HOOKS", "0"))) != 0:
-            raise SystemExit("could not install the memory hooks")
-        data = open(self.elf, "rb").read()
-        for paddr, content in self.segments:
-            lib.un_mark(paddr, len(content))
-        bss, zeros = self.section(data, ".bss")
-        lib.un_mark(bss, len(zeros))
-        write = self.uc.mem_write
-
-        def mem_write(address, content):
-            write(address, content)
-            lib.un_mark(address & 0xFFFFFFFF, len(content))
-        self.uc.mem_write = mem_write
-        self.uninit = lib
-
-    def report_uninitialised_reads(self, path):
-        n = 1 << 16
-        buf = (ctypes.c_uint32 * (7 * n))()
-        k = self.uninit.un_dump(buf, n)
-        entries = sorted((tuple(buf[7 * i:7 * i + 7]) for i in range(k)), key=lambda e: (e[5], e[6], e[0]))
-        pcs = sorted({e[0] for e in entries} | {e[4] & ~1 for e in entries})
-        lines = subprocess.run([self.tool_prefix + "addr2line", "-e", self.elf, "-C"] + [f"{a:#x}" for a in pcs],
-                               capture_output=True, text=True).stdout.splitlines()
-        where = {a: os.path.relpath(l.split(" (")[0], os.path.dirname(os.path.dirname(os.path.dirname(self.elf))))
-                 if l.startswith("/") else l for a, l in zip(pcs, lines)}
-        phases = {0: "boot", 1: "load", 2: "playback"}
-        with open(path, "w") as f:
-            f.write("# reads of RAM never written, per PC: phase, window (playback), count, first data address/size, "
-                    "function, source, caller (LR)\n")
-            for pc, count, address, size, lr, phase, window in entries:
-                f.write(f"{phases.get(phase, phase)}\t{window}\t{count}\t{address:#010x}/{size}\t{self.sym.name_at(pc)}"
-                        f"\t{where.get(pc)}\tlr {self.sym.name_at(lr & ~1)} {where.get(lr & ~1)}\n")
-        self.log(f"uninitialised reads: {len(entries)} instructions, written to {path}")
 
     @staticmethod
     def section(data, wanted):
@@ -446,6 +402,40 @@ def setup_sd(emu):
     emu.skip_to(begin, code[call - 2][0], lambda e: e.uc.mem_write(disk_status, b"\0"))
 
 
+# What Sound::Sound() (and ModControllableAudio's constructor) leave uninitialised although it is read (see --init-sounds):
+# LFO() = default leaves phase and holdValue as they were, and the constructor sets skippingRendering = true without
+# startSkippingRendering(), so the first stopSkippingRendering() ticks the LFOs and the arp by audioSampleTimer minus
+# whatever these timestamps held
+SOUND_UNINITIALISED = {"globalLFO": 0, "modFXLFO": 0, "timeStartedSkippingRenderingModFX": "timer",
+                       "timeStartedSkippingRenderingLFO": "timer", "timeStartedSkippingRenderingArp": "timer"}
+
+
+def init_sounds(emu):
+    """--init-sounds: at the start of every Sound's constructor (every synth and kit row the song loads), the fields in
+    SOUND_UNINITIALISED get what the proposed fix would give them: the LFOs (phase, holdValue) 0, the timestamps
+    AudioEngine::audioSampleTimer. Their offsets come from the ELF's debug info (the toolchain's gdb)."""
+    fields = list(SOUND_UNINITIALISED)
+    out = subprocess.run([emu.tool_prefix + "gdb", "-batch", "-ex", "list SoundInstrument::SoundInstrument",
+                          "-ex", "print sizeof(LFO)"]
+                         + [x for f in fields for x in ("-ex", f"print (int)&((Sound*)0)->{f}")] + [emu.elf],
+                         capture_output=True, text=True).stdout
+    values = [int(v) for v in re.findall(r"^\$\d+ = (\d+)$", out, re.M)]
+    if len(values) != len(fields) + 1:
+        raise SystemExit(f"--init-sounds: no offsets for {fields} from gdb:\n{out[-500:]}")
+    lfo_size, offsets = values[0], dict(zip(fields, values[1:]))
+    timer = emu.sym["_ZN11AudioEngine16audioSampleTimerE"]
+    emu.sounds_initialised = 0
+
+    def at_constructor(e):
+        this = e.uc.reg_read(UC_ARM_REG_R0)
+        now = e.u32(timer)
+        for f, how in SOUND_UNINITIALISED.items():
+            e.uc.mem_write(this + offsets[f], bytes(lfo_size) if how == 0 else struct.pack("<I", now))
+        e.sounds_initialised += 1
+    emu.intercept(emu.sym.find("_ZN5SoundC2Ev"), at_constructor)
+    emu.log("--init-sounds: " + ", ".join(f"{f} (+{o})" for f, o in offsets.items()))
+
+
 def boot(emu):
     """resetprg() up to where deluge_main() would start the task manager, right after registerTasks()."""
     stop_hook = []
@@ -580,9 +570,6 @@ class Player:
         voices per Sound*)."""
         emu = self.emu
         emu.dma_free = 127
-        if emu.uninit:
-            self.window_number = getattr(self, "window_number", 0) + 1
-            emu.uninit.un_set_window(self.window_number)
         if self.culling:
             emu.uc.mem_write(self.task_average_address, struct.pack("<d", self.task_average))
         self.window_culls = 0
@@ -857,9 +844,10 @@ def main():
                     help="fill the internal RAM and the SDRAM (not the peripherals) with this 32-bit word before boot "
                          "(default: zeros); two different words give the same measured.wav unless the firmware reads "
                          "memory it never wrote")
-    ap.add_argument("--uninit", metavar="FILE",
-                    help="track which bytes of the RAM were written (uninit.c, compiled into --build; slow: use few "
-                         "bars) and write every instruction that reads bytes never written to FILE")
+    ap.add_argument("--init-sounds", action="store_true",
+                    help="initialise what Sound::Sound() leaves uninitialised but reads (SOUND_UNINITIALISED: the LFO "
+                         "and mod FX LFO phases, the skip-rendering timestamps), as the proposed fix would; without it "
+                         "the output depends on what the RAM held before (stale pointers: the code and data layout)")
     ap.add_argument("--seed", type=lambda x: int(x, 0),
                     help="set the random generator (jcong) to this after boot, before the song loads: Song::"
                          "setupDefault() seeds it from the MTU2's fast timer (TCNT_0), i.e. from the emulated time, "
@@ -874,12 +862,10 @@ def main():
         print(s, flush=True)
 
     emu = Emulator(args.elf, args.sd, tools, args.build, log, fill=args.fill)
-    if args.uninit:
-        emu.track_uninitialised_reads(args.build)
     setup_sd(emu)
+    if args.init_sounds:
+        init_sounds(emu)
     boot(emu)
-    if emu.uninit:
-        emu.uninit.un_set_phase(1)
     jcong = emu.sym["jcong"]
     log(f"random seed after boot (jcong, from TCNT_0 in Song::setupDefault()): {emu.u32(jcong):#010x}"
         + (f", set to {args.seed:#010x} (--seed)" if args.seed is not None else ""))
@@ -891,14 +877,12 @@ def main():
     # The Sounds' names in the song (synths: presetName, kit rows: name), in its order
     xml = fat32.read_file(args.sd, "SONGS/DEFAULT.XML").decode(errors="replace")
     song_names = list(dict.fromkeys(re.findall(r'<sound\b[^>]*?\b(?:presetName|name)="([^"]+)"', xml)))
+    if args.init_sounds:
+        log(f"--init-sounds: {emu.sounds_initialised} Sounds constructed")
     player = Player(emu, culling=args.culling)
-    if emu.uninit:
-        emu.uninit.un_set_phase(2)
     player.start()
     result = measure(emu, player, args.warmup_bars, args.bars, args.out, log, song_names)
     json.dump(result, open(os.path.join(args.out, "result.json"), "w"), indent=1)
-    if emu.uninit:
-        emu.report_uninitialised_reads(args.uninit)
     report(result, log)
 
 

@@ -255,6 +255,8 @@ v11 enthält v10, überarbeitet das Delay (Sounds, Kits, Audio-Spuren und Song),
 
 ## v12: Frequenz-Drone
 
+Ausführliches Handbuch mit Schnellstart, allen Bedienelementen, Menü, Rezepten und technischen Daten: **`docs/Drone-Handbuch.pdf`** (Quelle: `docs/drone-handbuch.html`).
+
 v12 enthält v11 und bringt einen Drone: bis zu 16 Dauertöne, eingestellt in Hz oder als Note, unter die Musik gemischt. Jeder Ton kann schweben wie in Brainwave-Apps, im Tempo des Songs pulsieren und mit der Sidechain ducken.
 
 **Öffnen:** Im Song-View die Taste **Scale** drücken, oder im Song-Menü des Song-Views (Select drücken) den Punkt **Drone** wählen. Zurück in den Song-View geht es mit **Back**, **Song** oder **Scale**. Im Arranger fehlt der Menüpunkt, weil der Rückweg in den Song-View führt.

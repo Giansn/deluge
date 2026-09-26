@@ -1,5 +1,6 @@
 // Bench shim: what the effect functions cut out of model/mod_controllable/mod_controllable_audio.cpp (processFX with
-// mod FX and EQ, processSRRAndBitcrushing, extracted by run.sh) need, without the rest of ModControllableAudio.
+// mod FX and EQ, processSRRAndBitcrushing, processReverbSendAndVolume, extracted by run.sh) need, without the rest of
+// ModControllableAudio.
 // The class here holds only the members those functions touch; the delay is a no-op (benchmarked in tests/delay).
 #pragma once
 #include "definitions_cxx.hpp"
@@ -16,7 +17,15 @@ namespace params = deluge::modulation::params;
 namespace AudioEngine {
 inline void logAction(const char*) {
 }
+extern bool renderInStereo;                  // bench.cpp
+extern uint32_t audioSampleTimer;            // bench.cpp
+extern uint32_t timeThereWasLastSomeReverb; // bench.cpp
 } // namespace AudioEngine
+
+// The optimised trees keep the effects' inner loops here
+#if __has_include("model/mod_controllable/track_fx_kernels.h")
+#include "model/mod_controllable/track_fx_kernels.h"
+#endif
 
 // Only the grain's tempo sync reads these
 struct BenchSong {
@@ -51,6 +60,10 @@ public:
 	               const Delay::State& delayWorkingState, int32_t* postFXVolume, ParamManager* paramManager);
 	void processSRRAndBitcrushing(StereoSample* buffer, int32_t numSamples, int32_t* postFXVolume,
 	                              ParamManager* paramManager);
+	void processReverbSendAndVolume(StereoSample* buffer, int32_t numSamples, int32_t* reverbBuffer,
+	                                int32_t postFXVolume, int32_t postReverbVolume, int32_t reverbSendAmount,
+	                                int32_t pan = 0, bool doAmplitudeIncrement = false,
+	                                StereoSample* addToBuffer = nullptr);
 	bool isBitcrushingEnabled(ParamManager* paramManager);
 	bool isSRREnabled(ParamManager* paramManager);
 	bool hasBassAdjusted(ParamManager* paramManager);
@@ -75,4 +88,5 @@ public:
 	bool grainLastTickCountIsZero, grainInitialized;
 	uint32_t lowSampleRatePos, highSampleRatePos;
 	StereoSample lastSample, grabbedSample, lastGrabbedSample;
+	int32_t postReverbVolumeLastTime;
 };
