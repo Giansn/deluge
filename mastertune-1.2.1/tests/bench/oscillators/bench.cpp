@@ -4,6 +4,8 @@
 // The checksum of the output is printed so a changed firmware can be compared bit for bit with the old one (on the same
 // machine: on the PC, the firmware's fallbacks of the *_rounded multiplies in util/fixedpoint.h truncate instead of
 // rounding, so the crude saw/square, the triangle below ~700 Hz and PW on saws differ from the Cortex-A9's smmulr/smmlar).
+// After the fixed cases, 30000 randomized ones (one checksum, not counted), and, with the optimised render_wave.h, a
+// check of its exact VFP divisions against the integer ones. The whole song, call by call: song_trace.sh.
 #include "emu_count.h"
 #include "osc_shim.h"
 #include <cmath>
@@ -217,6 +219,49 @@ uint64_t runRandomCases(int numCases, uint64_t seed) {
 	AudioEngine::cpuDireness = 0;
 	return hash;
 }
+
+#ifdef WAVE_RENDER_FUNCTION_LOOP // The optimised render_wave.h, with divideExactly() and divideShiftedExactly()
+// The two VFP divisions against the integer ones, on random and on the hardest operands: for divideShiftedExactly(),
+// remainders just short of the divisor with big quotients, where the double quotient rounds up to the next integer
+// (x * 2^shift = -k modulo an odd divisor: x = -k / 2^shift modulo it); for divideExactly(), remainders 0, 1 and
+// divisor - 1. Returns the number of wrong quotients.
+uint64_t inverseModulo(uint64_t a, uint64_t m) { // a^-1 mod m, for a and m coprime
+	int64_t t = 0, newT = 1, r = (int64_t)m, newR = (int64_t)(a % m);
+	while (newR) {
+		int64_t q = r / newR, x = t - q * newT, y = r - q * newR;
+		t = newT, newT = x, r = newR, newR = y;
+	}
+	return (uint64_t)(t < 0 ? t + (int64_t)m : t);
+}
+
+int checkDivisions(int numCases, uint64_t seed, int* numChecked) {
+	Rng rng{seed};
+	int wrong = 0;
+	*numChecked = 0;
+	for (int c = 0; c < numCases; c++) {
+		int32_t shift = 30 + (int32_t)rng.below(2);
+		uint32_t divisor = (1u << shift) + rng.below(0xFFFFFFFFu - (1u << shift));
+		divisor |= (c & 1); // Odd half the time: then x can be picked for any remainder
+		uint32_t x = rng.next();
+		if ((divisor & 1) && rng.chance(80)) {
+			uint64_t k = 1 + rng.below(64);
+			x = (uint32_t)((divisor - k) * inverseModulo((uint64_t)1 << shift, divisor) % divisor);
+		}
+		uint64_t exact = ((uint64_t)x << shift) / divisor;
+		wrong += (divideShiftedExactly(x, shift, divisor) != exact);
+		uint32_t b = rng.chance(10) ? 1 + rng.below(3) : rng.next() >> rng.below(32);
+		b += !b;
+		uint32_t q = rng.next() / b;
+		uint32_t remainders[3] = {0, 1 % b, b - 1};
+		for (uint32_t r : remainders) {
+			uint32_t a = (uint32_t)std::min((uint64_t)q * b + r, (uint64_t)0xFFFFFFFFu);
+			wrong += (divideExactly(a, b) != a / b);
+		}
+		*numChecked += 4;
+	}
+	return wrong;
+}
+#endif
 } // namespace
 
 int main() {
@@ -245,5 +290,10 @@ int main() {
 	constexpr int kRandomCases = 30000;
 	printf("%-30s checksum %016llx\n", "random cases (30000)",
 	       (unsigned long long)runRandomCases(kRandomCases, 0x2545F4914F6CDD1Dull));
+#ifdef WAVE_RENDER_FUNCTION_LOOP
+	int numChecked;
+	int wrong = checkDivisions(200000, 0x9E3779B97F4A7C15ull, &numChecked);
+	printf("exact divisions: %d checked, %d wrong\n", numChecked, wrong);
+#endif
 	return 0;
 }
