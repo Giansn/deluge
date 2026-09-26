@@ -399,6 +399,23 @@ Rohdaten: `raw/perf-filters-oscillators.json`. Patches: `perf/`. Branches `perf-
 - **Zwei Hänger, schon in 1.2.1:** Analog-Square mit PW bei `phaseIncrement` 1 und Sync bei `resetterPhaseIncrement` 1 (`samplesIncludingNextCrossoverSample` läuft auf 0 über). Praktisch kaum erreichbar, weil so tiefe Frequenzen nötig sind. Optional die Inkremente nach unten begrenzen.
 - Der Test-Song deckt Dreieck unter 711 Hz, Analog-Square mit PW, Osc-Sync und Ringmod nicht ab. Diese Pfade sind nur per Benchmark bewiesen.
 
+## 7b. Leistungsversion v12-perf und nächste Runde
+
+- **v12-perf** (`perf/`, SHA `d08b09bc…`, Branch `mastertune-v12-perf` = v12 + Filter + Oszillatoren + CPU-Monitor):
+  - Bedarf im Volllast-Test 1 095 537 statt 1 370 014 (−20 %).
+  - Wie auf dem Gerät: 28,5 statt 20,7 Stimmen im Mittel (+38 %), etwa gleich viele Abschaltungen (14/s), Direness dauernd 14.
+  - Zwei komplette Neubauten sind identisch. Die Patch-Serie ist geprüft.
+- **Referenz für die nächste Runde:** `/home/user/work/baseline-v12-perf`, Song-Ergebnis in `song/`, `measured.wav` SHA `c825dab9…`.
+- **Nächste Runde, Spur-Effekte** (Workflow `perf-trackfx`, läuft):
+  - `processReverbSendAndVolume` 59 412
+  - `processFX` 38 643
+  - Kompressor 30 725
+  - SRR/Bitcrush 5 397
+  - Nachweis per Benchmark und Vergleich jedes Aufrufs im Song.
+- **Danach, Stimmen-Pfad:** `Sound::render` 110 543, Aufwand pro Block und Stimme, `renderBasicSource` 28 168.
+  - Das geht nur mit Song-Nachweis und wartet darum auf das Ergebnis der Layout-Untersuchung.
+- **Später:** Wavetable-Schleife 88 073, FM 36 614.
+
 ## 8. Offen
 
 - [x] Volllast-Test Lauf 1 eingetragen, Priorisierung angepasst.
