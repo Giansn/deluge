@@ -1,0 +1,53 @@
+From 49f46c191478cd0f43c1fa315a0799099d70bc3e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 23:43:41 +0000
+Subject: [PATCH 34/35] Song change: a dot marks the beats on the 7-segment
+ display; the old song's FX popup always goes at the swap
+
+Review points of the song change: bars (4 3 2) and beats (4 3 2 1) looked the same on the
+7-segment display, now the beats have a dot on the last digit. And a mod button's popup with the
+old song's FX section could stay up when its release came in the same pass as the swap; at the
+swap it now always goes (the loading animation follows anyway).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/ui/load/load_song_ui.cpp | 15 ++++++---------
+ 1 file changed, 6 insertions(+), 9 deletions(-)
+
+diff --git a/src/deluge/gui/ui/load/load_song_ui.cpp b/src/deluge/gui/ui/load/load_song_ui.cpp
+index 409664b6..4d774830 100644
+--- a/src/deluge/gui/ui/load/load_song_ui.cpp
++++ b/src/deluge/gui/ui/load/load_song_ui.cpp
+@@ -211,7 +211,9 @@ void LoadSongUI::displayCountdown(bool force) {
+ 		if (countdown.unit == Unit::NONE) {
+ 			intToString(session.numRepeatsTilLaunch, number);
+ 		}
+-		display->setText(number, true, 255, countingLoops, nullptr, false, countingLoops);
++		// A dot on the last digit while it counts beats, so 4 3 2 (bars) and 4 3 2 1 (beats) look different
++		uint8_t dot = (countdown.unit == Unit::BEATS) ? 3 : 255;
++		display->setText(number, true, dot, countingLoops, nullptr, false, countingLoops);
+ 	}
+ }
+ 
+@@ -497,14 +499,9 @@ gotErrorAfterCreatingSong:
+ swapDone:
+ 	removeCountdown();
+ 	if (songChangePending && display->haveOLED()) {
+-		// mastertune-v14: a mod button held through the swap has the old song's FX section up as a popup, which its
+-		// release, now for the new song, might not take down
+-		for (int32_t i = 0; i < kNumModButtons; i++) {
+-			if (Buttons::isButtonPressed(deluge::hid::button::fromXY(modButtonX[i], modButtonY[i]))) {
+-				display->cancelPopup();
+-				break;
+-			}
+-		}
++		// mastertune-v14: a mod button's popup with the old song's FX section mustn't stay up for the new song. Its
++		// release may come later, or may have come in the same pass as the swap, before the popup could be taken down
++		display->cancelPopup();
+ 	}
+ 	if (display->haveOLED()) {
+ 		// To override our popup if we did one. (Still necessary?)
+-- 
+2.43.0
+

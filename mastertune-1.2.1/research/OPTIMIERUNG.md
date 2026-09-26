@@ -484,7 +484,7 @@ Rohdaten: `raw/midi-timing.json`. Commits `c89b7b35` und `a8e8af32` (auf v13). M
   - Noten gehen etwa 2,3–2,6 ms vor dem Ton hinaus, weil `doMIDIClockOutTick()` den Puffer sofort sendet, wenn eine Clock auf denselben Tick fällt. Für externe Geräte mit eigener Latenz ist das eher günstig; eine Änderung wäre mit dem Nutzer abzusprechen.
 - **Mess-Modell** in `song_emu.py`: Timer (MTU2 Kanal 2) samt Zähler, MIDI-UART mit DMA und 16-Byte-FIFO bei 31 250 Baud, Interrupts mit Sperrzeiten, Wiedergabe in Echtzeit wie der Task-Manager.
 
-## 7g. Delay ohne Tonhöhensprung (v14, in Arbeit)
+## 7g. Delay ohne Tonhöhensprung (v14)
 
 Rohdaten: `raw/delay-v14.json`. Commits `cd7f09ef`, `9ec940a2` (Branch `delay-v14`).
 - **Ursache des Verbiegens:** Bei einer Zeitänderung dreht der Puffer mit einer anderen Rate. Was schon drin liegt, spielt schneller oder langsamer ab, die Tonhöhe verschiebt sich um das Ratenverhältnis (25 % kürzer: +386 Cent), und das Feedback trägt es weiter.
@@ -512,6 +512,51 @@ Rohdaten: `raw/pad-dim.json`. Commits `29a22d25`, `9b861a5c` (auf v13). Test: `t
 - Nur ein anderer Quarz würde alles beschleunigen, ausserhalb der Spezifikation und mit Folgen für SDRAM-Timing, MIDI-Baudrate, SD, Timer und Wärme. Gewinn höchstens etwa 10 %.
 - Mehr bringt Software: die Optimierungen (−25 % Bedarf von v12 zu v13) und der ungenutzte L2-Cache (128 KB, upstream eingeschaltet).
 
+## 7j. L2-Cache: Testversionen (zu v14)
+
+Ordner `l2test/`, Tests `tests/l2`. Commits auf v14: `d29b4fd5` und `198e9822` (nur Code), `d0791052` (auch Daten). Eine erste Fassung auf v13 (`1ac6d827`, `67a80eb8`) ist nach der Gegenprüfung ersetzt.
+- **Nur Code:** L2 nach dem L1 eingeschaltet, alle Wege für Daten gesperrt (`REG9_D_LOCKDOWN0`).
+  - Vor jeder DMA-Übertragung (SD lesen und schreiben, OLED) werden L1 und L2 für den Puffer zurückgeschrieben und geleert, nach dem Lesen noch einmal.
+  - Der Grund (Gegenprüfer): RAM ist ausführbar (`TTB_PARA_NORMAL_CACHE` ohne XN). Ein spekulativer Befehlsabruf kann so eine Zeile eines Puffers in den L2 holen, und Daten treffen sie trotz Sperre.
+  - FatFS-Puffer auf eigenen Cache-Zeilen.
+- **Auch Daten:** dazu Prefetch für Daten und Code. Die Daten werden am Ende des Starts freigegeben, mit gesperrten Interrupts, nachdem alle Wege zurückgeschrieben und geleert sind (`CLEAN_INV_WAY`, Sync).
+  - Interrupts aus, weil eine Operation per Adresse während der Operation per Weg beim L2C-310 einen Fehler zurückgibt.
+  - Zurückschreiben statt nur Leeren, weil Zeilen aus spekulativen Befehlsabrufen inzwischen geänderte Daten halten können.
+- **Gegenprüfer, ältere Fehler** (in v14 behoben):
+  - `v7_dma_inv_range()` verlor einen Schreibzugriff neben dem Puffer (Linux-Fix von 2014).
+  - Die SysEx-Dateipuffer aus v7 teilten Cache-Zeilen mit dem Allokator.
+- **DMA in v13 vollständig:**
+  - SD-Karte und OLED brauchen die Pflege.
+  - Audio (SSI) und UART (MIDI, PIC) laufen über die ungecachte Spiegeladresse.
+  - USB läuft ohne DMA.
+  - Die Cluster der Samples haben Rohans Polster (`dummy[32]` davor, 32 Bytes danach). Ihr DMA-Bereich teilt deshalb keine Cache-Zeile mit Feldern, die während des Ladens geschrieben werden.
+- **Chainloader** (Firmware per USB-SysEx) ist in Release-Builds nicht enthalten (`ENABLE_SYSEX_LOAD` aus). Für Builds mit ihm: L1-Pflege (upstream `c0586341`), dazu L2 zurückschreiben, leeren und ausschalten.
+- **Emulator:** Startfolge, Pflege vor dem OLED-DMA (25 von 25 Zeilen, dann Sync) und Pflege bei krummen Adressen geprüft. Der Volllast-Song ist bei beiden Versionen bitgleich zu v14.
+- **Offen:** der Gewinn. Nur am Gerät messbar (CPU-Monitor, `MT_LOADTEST`).
+
+## 7k. Reverb: Wabbeln und Verwaschenes (v14)
+
+Rohdaten: `raw/reverb-v14.json`. Commit `7c1ffede`, Tests `tests/reverb/modulation_test.cpp`.
+- **Ursache:** Die modulierten Verzögerungen (Mutable: Smear im ersten Diffusor und zwei Tank-Delays; Digital: die zwei Tank-Allpässe) lassen einen gehaltenen Ton im Hall schwanken:
+  - Mutable um 16,4 dB und 5 Cent
+  - Digital um 15,5 dB und 19 Cent
+  - Bei 1.2.1-Tempo (16-mal langsamer, v10 hat das auf das Original beschleunigt) sind es 8,4 dB und 5,6 Cent.
+  - Ohne Modulation 0,1 dB und 0,3 Cent.
+- **Tiefe gegen Wabbeln** (gehaltener 220-Hz-Ton, 5–95 %):
+
+| Tiefe | Mutable dB | Mutable Cent | Digital dB | Digital Cent |
+|---|---|---|---|---|
+| 0 | 0,1 | 0,3 | 0,1 | 0,3 |
+| 0,1 | 0,7 | 0,3 | 1,7 | 0,4 |
+| 0,2 | 1,4 | 0,5 | 3,5 | 0,8 |
+| 0,4 | 6,1 | 1,1 | 8,0 | 2,7 |
+| 1 | 16,4 | 5,0 | 15,5 | 19,4 |
+
+- **Resonanzen** (Spitzen im Spektrum des Nachhalls über dem Median): Mutable 20,5 dB ohne Modulation gegen 17,3 dB mit voller, Digital 11,2 gegen 12,3 dB. Die Modulation glättet also nur beim Mutable-Modell etwas, und nur um 3 dB.
+- **Nachhall ohne Modulation:** beim Mutable-Modell breitbandig 5 % länger, bei 4 kHz etwa 23 % länger (Damping 14). Beim Digital-Modell unverändert.
+- **Umsetzung:** Menü Modulation 0–50 (Standard 0, 50 = v10–v13) und Pre-delay 0–100 ms (17,6 KB RAM).
+  - Bei 50 ist der Volllast-Song mit Mutable bitgleich zu v13. Mit Digital weichen 176 von 705 792 Samples um 1 LSB ab (Rundung der Offsets).
+
 ## 8. Offen
 
 - [x] Volllast-Test Lauf 1 eingetragen, Priorisierung angepasst.
@@ -521,7 +566,7 @@ Rohdaten: `raw/pad-dim.json`. Commits `29a22d25`, `9b861a5c` (auf v13). Test: `t
 - [ ] Wavetable-Oszillator, Grain, `hopEnd` und die Stereo-Unison-Pan-Schleife messen, falls der Volllast-Test sie als relevant zeigt.
 - [ ] MIDI/Clock-Fix in `routineForSD()` (`9cd09fb7`): Übertragbarkeit am Code bestätigen.
 - [x] MIDI-/Gate-Timer: 2,9 ms zu früh und Zählerrest behoben (7f).
-- [ ] Noten 2,5 ms vor dem Ton (7f): mit dem Nutzer entscheiden.
+- [x] Noten 2,5 ms vor dem Ton (7f): bleibt so (Entscheid des Nutzers).
 - [x] L2-Cache: Nachbesserungen gesammelt und die DMA-Pfade von v13 geprüft (Abschnitt 5).
 - [x] **Messversion** gebaut (`diag/`, SHA `8c94cf68…`). Der Test-Song für die SD-Karte ist `diag/loadtest-card.zip`.
   - CPU-Last pro Block (Mittel/Spitze), Stimmen, `cpuDireness`, Culling, SD-Latenz pro Cluster.

@@ -1,0 +1,238 @@
+From 198e9822ca2ec464ccf820f2395a04a0b0dc635c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 23:51:52 +0000
+Subject: [PATCH 2/3] L2 cache for code only: DMA buffers maintained in the L2
+ too (test version)
+
+Review of the code-only version: RAM is executable, so a speculative instruction fetch can bring
+a line of a DMA buffer into the L2, and data hits that line even though data can't allocate. So
+every DMA transfer now also cleans and invalidates its buffer in the L2, as the data version does
+(upstream a2f8bc51, 260ac76c): SD read before and after, SD write, OLED. The FatFS window and file
+buffers sit on their own cache lines.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/RZA1/cache/cache.c                 | 43 ++++++++++++++++++++++++--
+ src/RZA1/cache/cache.h                 |  3 ++
+ src/RZA1/oled/oled_low_level.c         |  3 +-
+ src/RZA1/sdhi/src/sd/access/sd_read.c  |  7 +++--
+ src/RZA1/sdhi/src/sd/access/sd_write.c |  3 +-
+ src/deluge/hid/display/oled.cpp        |  3 +-
+ src/fatfs/ff.h                         |  4 +--
+ 7 files changed, 56 insertions(+), 10 deletions(-)
+
+diff --git a/src/RZA1/cache/cache.c b/src/RZA1/cache/cache.c
+index bc9235b8..ec698fbd 100644
+--- a/src/RZA1/cache/cache.c
++++ b/src/RZA1/cache/cache.c
+@@ -31,6 +31,8 @@
+ Includes   <System Includes> , "Project Includes"
+ ******************************************************************************/
+ #include "RZA1/cache/cache.h"
++
++#include "RZA1/compiler/asm/inc/asm.h"
+ #include "RZA1/system/iodefine.h"
+ #include "RZA1/system/r_typedefs.h"
+ 
+@@ -240,8 +242,8 @@ void L2CacheFlushAll(void)
+ void L2CacheEnable(void)
+ {
+     L2C.REG2_INT_CLEAR   = 0x000001FFuL; /* Clear the reg2_int_raw_status register */
+-    /* Data never allocates in the L2 (all ways locked for data): DMA buffers stay coherent with the L1 maintenance
+-       alone. Only instruction fetches fill it. */
++    /* Data never allocates in the L2 (all ways locked for data). Only instruction fetches fill it. A speculative one
++       can still bring in a line of a DMA buffer, so DMA transfers maintain the L2 too (invalidate_range_all_caches()). */
+     L2C.REG9_D_LOCKDOWN0 = 0xFFFFFFFFuL;
+     L2C.REG9_I_LOCKDOWN0 = 0x00000000uL;
+ 
+@@ -290,4 +292,41 @@ void L2CacheCleanFlushAllAndDisable(void)
+     L2CacheDisable();
+ }
+ 
++/******************************************************************************
++ * Function Name: L2CacheCleanInvalidateRange
++ * Description  : Clean and invalidate the L2 cache lines of a range (by physical address, which is the
++ *                virtual one here).
++ * Arguments    : start - start address
++ *                end   - end address (exclusive)
++ * Return Value : none
++ ******************************************************************************/
++void L2CacheCleanInvalidateRange(uintptr_t start, uintptr_t end)
++{
++    uint32_t addr = start & ~31uL;
++    while (addr < end)
++    {
++        L2C.REG7_CLEAN_INV_PA = addr;
++        while (L2C.REG7_CLEAN_INV_PA & 1uL)
++        {
++        }
++        addr += 32;
++    }
++    L2C.REG7_CACHE_SYNC = 0;
++}
++
++/******************************************************************************
++ * Function Name: invalidate_range_all_caches
++ * Description  : A DMA buffer, before and after the transfer: dirty lines written back through L1 and L2, then
++ *                both emptied for the range.
++ * Arguments    : start - start address
++ *                end   - end address (exclusive)
++ * Return Value : none
++ ******************************************************************************/
++void invalidate_range_all_caches(uintptr_t start, uintptr_t end)
++{
++    v7_dma_flush_range(start, end);
++    L2CacheCleanInvalidateRange(start, end);
++    v7_dma_inv_range(start, end);
++}
++
+ /* End of File */
+diff --git a/src/RZA1/cache/cache.h b/src/RZA1/cache/cache.h
+index e7d4cc6d..340fbc66 100644
+--- a/src/RZA1/cache/cache.h
++++ b/src/RZA1/cache/cache.h
+@@ -35,6 +35,7 @@ extern "C" {
+ /******************************************************************************
+ Includes   <System Includes> , "Project Includes"
+ ******************************************************************************/
++#include <stdint.h>
+ 
+ /******************************************************************************
+ Typedef definitions
+@@ -68,6 +69,8 @@ void L2CacheFlushAll(void);
+ void L2CacheEnable(void);
+ void L2CacheDisable(void);
+ void L2CacheCleanFlushAllAndDisable(void);
++void L2CacheCleanInvalidateRange(uintptr_t start, uintptr_t end);
++void invalidate_range_all_caches(uintptr_t start, uintptr_t end);
+ 
+ extern void R_CACHE_L1Init(void);
+ 
+diff --git a/src/RZA1/oled/oled_low_level.c b/src/RZA1/oled/oled_low_level.c
+index 670dc2c1..336052d0 100644
+--- a/src/RZA1/oled/oled_low_level.c
++++ b/src/RZA1/oled/oled_low_level.c
+@@ -20,6 +20,7 @@
+ #include "deluge/drivers/oled/oled.h"
+ 
+ #include "OSLikeStuff/timers_interrupts/timers_interrupts.h"
++#include "RZA1/cache/cache.h"
+ #include "RZA1/compiler/asm/inc/asm.h"
+ #include "RZA1/gpio/gpio.h"
+ #include "RZA1/mtu/mtu.h"
+@@ -83,7 +84,7 @@ void oledSelectingComplete()
+     uint32_t dataAddress               = (uint32_t)spiTransferQueue[spiTransferQueueReadPos].dataAddress;
+     DMACn(OLED_SPI_DMA_CHANNEL).N0SA_n = dataAddress;
+     spiTransferQueueReadPos            = (spiTransferQueueReadPos + 1) & (SPI_TRANSFER_QUEUE_SIZE - 1);
+-    v7_dma_flush_range(dataAddress, dataAddress + transferSize);
++    invalidate_range_all_caches(dataAddress, dataAddress + transferSize);
+     DMACn(OLED_SPI_DMA_CHANNEL).CHCTRL_n |=
+         DMAC_CHCTRL_0S_CLRTC | DMAC_CHCTRL_0S_SETEN; // ---- Enable DMA Transfer and clear TC bit ----
+ }
+diff --git a/src/RZA1/sdhi/src/sd/access/sd_read.c b/src/RZA1/sdhi/src/sd/access/sd_read.c
+index 9b1c3815..6d5f1e31 100644
+--- a/src/RZA1/sdhi/src/sd/access/sd_read.c
++++ b/src/RZA1/sdhi/src/sd/access/sd_read.c
+@@ -41,6 +41,7 @@
+ #include "RZA1/compiler/asm/inc/asm.h"
+ #include "deluge/drivers/uart/uart.h"
+ #include "deluge/deluge.h"
++#include "RZA1/cache/cache.h"
+ 
+ #ifdef __CC_ARM
+ #pragma arm section code = "CODE_SDHI"
+@@ -82,7 +83,7 @@ int doActualReadRohan(int sd_port, SDHNDL *hndl, unsigned char *buff, long cnt,
+ 		// for this memory which hasn't been written/flushed back out yet, and that happens during the DMA transfer, overwriting the audio data in actual RAM.
+ 		// https://support.xilinx.com/s/article/64839?language=en_US - seems to concur with this, and actually suggests that it is normal and necessary to
+ 		// invalidate both before and after transfer.
+-		v7_dma_inv_range((intptr_t)buff, (intptr_t)(buff + cnt * 512));
++		invalidate_range_all_caches((intptr_t)buff, (intptr_t)(buff + cnt * 512));
+ 
+ 		/* ---- initialize DMAC ---- */
+ 		unsigned long reg_base_here = hndl->reg_base;
+@@ -311,7 +312,7 @@ int sd_read_sect(int sd_port, unsigned char *buff,unsigned long psn,long cnt)
+ 
+ 		if (mode != SD_MODE_SW) {
+ 			// Invalidate ram
+-			v7_dma_inv_range((uintptr_t)buff, (uintptr_t)(buff + cnt * 512));
++			invalidate_range_all_caches((uintptr_t)buff, (uintptr_t)(buff + cnt * 512));
+ 		}
+ 
+ 		/* clear All end bit */
+@@ -536,7 +537,7 @@ static int _sd_single_read(SDHNDL *hndl,unsigned char *buff,unsigned long psn,
+ 
+ 	if (mode != SD_MODE_SW) {
+ 		// Invalidate ram
+-		v7_dma_inv_range((uintptr_t)buff, (uintptr_t)(buff + 512));
++		invalidate_range_all_caches((uintptr_t)buff, (uintptr_t)(buff + 512));
+ 	}
+ 
+ 	/* clear All end bit */
+diff --git a/src/RZA1/sdhi/src/sd/access/sd_write.c b/src/RZA1/sdhi/src/sd/access/sd_write.c
+index 3b7d79c8..cff856de 100644
+--- a/src/RZA1/sdhi/src/sd/access/sd_write.c
++++ b/src/RZA1/sdhi/src/sd/access/sd_write.c
+@@ -40,6 +40,7 @@
+ 
+ #include "RZA1/compiler/asm/inc/asm.h"
+ #include "deluge/drivers/uart/uart.h"
++#include "RZA1/cache/cache.h"
+ 
+ #ifdef __CC_ARM
+ #pragma arm section code = "CODE_SDHI"
+@@ -161,7 +162,7 @@ int _sd_write_sect(SDHNDL *hndl,unsigned char const*buff,unsigned long psn,
+ 		mode = SD_MODE_DMA;	/* set DMA mode */
+ 
+ 		// Flush ram
+-		v7_dma_flush_range((intptr_t)buff, (intptr_t)(buff + cnt * 512));
++		invalidate_range_all_caches((intptr_t)buff, (intptr_t)(buff + cnt * 512));
+ 
+ 		#if		(TARGET_RZ_A1 == 1)
+ 		if(hndl->trans_mode & SD_MODE_DMA_64){
+diff --git a/src/deluge/hid/display/oled.cpp b/src/deluge/hid/display/oled.cpp
+index 5d7d0049..8ea98c23 100644
+--- a/src/deluge/hid/display/oled.cpp
++++ b/src/deluge/hid/display/oled.cpp
+@@ -42,6 +42,7 @@ extern "C" {
+ #include "gui/fonts/fonts.h"
+ extern void v7_dma_flush_range(uint32_t start, uint32_t end);
+ }
++#include "RZA1/cache/cache.h"
+ 
+ extern uint8_t usbInitializationPeriodComplete;
+ 
+@@ -1322,7 +1323,7 @@ void OLED::freezeWithError(char const* text) {
+ 	uint32_t dataAddress = (uint32_t)(&OLED::main.hackGetImageStore()[0][0]);
+ 	DMACn(OLED_SPI_DMA_CHANNEL).N0SA_n = dataAddress;
+ 	// spiTransferQueueReadPos = (spiTransferQueueReadPos + 1) & (SPI_TRANSFER_QUEUE_SIZE - 1);
+-	v7_dma_flush_range(dataAddress, dataAddress + transferSize);
++	invalidate_range_all_caches(dataAddress, dataAddress + transferSize);
+ 	DMACn(OLED_SPI_DMA_CHANNEL).CHCTRL_n |=
+ 	    DMAC_CHCTRL_0S_CLRTC | DMAC_CHCTRL_0S_SETEN; // ---- Enable DMA Transfer and clear TC bit ----
+ 
+diff --git a/src/fatfs/ff.h b/src/fatfs/ff.h
+index 429cdd52..a55788a9 100644
+--- a/src/fatfs/ff.h
++++ b/src/fatfs/ff.h
+@@ -172,7 +172,7 @@ typedef struct {
+ 	LBA_t	bitbase;		/* Allocation bitmap base sector */
+ #endif
+ 	LBA_t	winsect;		/* Current sector appearing in the win[] */
+-	BYTE	dummy[32]; // Inserted by Rohan. This is the cache line size
++	BYTE	dummy[32] __attribute__((aligned(32))); // Inserted by Rohan. This is the cache line size
+ 	BYTE	win[FF_MAX_SS];	/* Disk access window for Directory, FAT (and file data at tiny cfg) */
+ 	BYTE	dummy2[32]; // Inserted by Rohan. This somehow stops occasional intermittent errors
+ } FATFS;
+@@ -219,7 +219,7 @@ typedef struct {
+ 	DWORD*	cltbl;			/* Pointer to the cluster link map table (nulled on open, set by application) */
+ #endif
+ #if !FF_FS_TINY
+-	BYTE	buf[FF_MAX_SS];	/* File private data read/write window */
++	BYTE	buf[FF_MAX_SS] __attribute__((aligned(32)));	/* File private data read/write window */
+ #endif
+ } FIL;
+ 
+-- 
+2.43.0
+

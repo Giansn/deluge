@@ -1,0 +1,102 @@
+From d079105214663bedd0addd6484edc575fd05c90e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 23:52:22 +0000
+Subject: [PATCH 3/3] L2 cache for data too (test version)
+
+On top of the code-only version (which already maintains the L2 for every DMA buffer): data and
+instruction prefetch on, and data unlocked in the L2 once the boot is done (upstream a2f8bc51).
+Unlocking cleans and invalidates all ways with interrupts off: an operation by address from an
+interrupt during the background operation by way would get an error from the L2C-310, and lines
+a speculative instruction fetch brought in may hold data a store has changed since.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/RZA1/cache/cache.c | 28 ++++++++++++++++++++++++++--
+ src/RZA1/cache/cache.h |  1 +
+ src/deluge/deluge.cpp  |  2 ++
+ 3 files changed, 29 insertions(+), 2 deletions(-)
+
+diff --git a/src/RZA1/cache/cache.c b/src/RZA1/cache/cache.c
+index ec698fbd..4d3af4f1 100644
+--- a/src/RZA1/cache/cache.c
++++ b/src/RZA1/cache/cache.c
+@@ -242,10 +242,10 @@ void L2CacheFlushAll(void)
+ void L2CacheEnable(void)
+ {
+     L2C.REG2_INT_CLEAR   = 0x000001FFuL; /* Clear the reg2_int_raw_status register */
+-    /* Data never allocates in the L2 (all ways locked for data). Only instruction fetches fill it. A speculative one
+-       can still bring in a line of a DMA buffer, so DMA transfers maintain the L2 too (invalidate_range_all_caches()). */
++    /* Data stays locked out until L2CacheUnlockData() late in the boot, once everything is set up. */
+     L2C.REG9_D_LOCKDOWN0 = 0xFFFFFFFFuL;
+     L2C.REG9_I_LOCKDOWN0 = 0x00000000uL;
++    L2C.REG1_AUX_CONTROL |= 0x30000000uL; /* Data and instruction prefetch (bits 28, 29) */
+ 
+     L2C.REG1_CONTROL = 0x00000001uL; /* Enable L2 cache */
+ }
+@@ -274,6 +274,30 @@ void L2CacheInit(void)
+     L2CacheEnable();
+ }
+ 
++/******************************************************************************
++ * Function Name: L2CacheUnlockData
++ * Description  : Let data allocate in the L2 too. Called with interrupts on; they're off meanwhile, as an operation by
++ *                address (the OLED's DMA interrupt) during the background operation by way would get an error back
++ *                from the L2C-310. Lines filled by a speculative instruction fetch may hold data a store has changed
++ *                since, so they're written back, not only dropped.
++ * Arguments    : none
++ * Return Value : none
++ ******************************************************************************/
++void L2CacheUnlockData(void)
++{
++    __disable_irq();
++    __disable_fiq();
++    L2C.REG7_CLEAN_INV_WAY = L2CACHE_8WAY;
++    while ((L2C.REG7_CLEAN_INV_WAY & L2CACHE_8WAY) != 0x00000000uL)
++    {
++        /* Wait completion */
++    }
++    L2C.REG7_CACHE_SYNC  = 0x00000000uL;
++    L2C.REG9_D_LOCKDOWN0 = 0x00000000uL;
++    __enable_fiq();
++    __enable_irq();
++}
++
+ /******************************************************************************
+  * Function Name: L2CacheCleanFlushAllAndDisable
+  * Description  : Write back and invalidate the whole L2 cache, then disable it, so that code started without a
+diff --git a/src/RZA1/cache/cache.h b/src/RZA1/cache/cache.h
+index 340fbc66..181860fe 100644
+--- a/src/RZA1/cache/cache.h
++++ b/src/RZA1/cache/cache.h
+@@ -69,6 +69,7 @@ void L2CacheFlushAll(void);
+ void L2CacheEnable(void);
+ void L2CacheDisable(void);
+ void L2CacheCleanFlushAllAndDisable(void);
++void L2CacheUnlockData(void);
+ void L2CacheCleanInvalidateRange(uintptr_t start, uintptr_t end);
+ void invalidate_range_all_caches(uintptr_t start, uintptr_t end);
+ 
+diff --git a/src/deluge/deluge.cpp b/src/deluge/deluge.cpp
+index 8259606d..18cc836f 100644
+--- a/src/deluge/deluge.cpp
++++ b/src/deluge/deluge.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include "deluge.h"
+ 
++#include "RZA1/cache/cache.h"
+ #include "RZA1/sdhi/inc/sdif.h"
+ #include "definitions_cxx.hpp"
+ #include "drivers/pic/pic.h"
+@@ -950,6 +951,7 @@ extern "C" int32_t deluge_main(void) {
+ 	uiTimerManager.setTimer(TimerName::GRAPHICS_ROUTINE, 50);
+ 
+ 	D_PRINTLN("going into main loop");
++	L2CacheUnlockData();
+ 	sdRoutineLock = false; // Allow SD routine to start happening
+ 
+ #ifdef USE_TASK_MANAGER
+-- 
+2.43.0
+

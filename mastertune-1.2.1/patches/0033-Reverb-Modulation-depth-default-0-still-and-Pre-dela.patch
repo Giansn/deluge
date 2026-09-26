@@ -1,0 +1,495 @@
+From 6087f6b26fec84a417ff569e3e709a25db774b90 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 23:41:57 +0000
+Subject: [PATCH 33/35] Reverb: Modulation (depth, default 0: still) and
+ Pre-delay (0 to 100 ms)
+
+A held tone wobbled in the reverb: the modulated delays of the Mutable model (since v10 at
+Mutable Instruments' speed, 16 times the speed of 1.2.1) and of the Digital plate move its
+level by about 16 dB and its pitch by 5 cents (Mutable) or 16 dB and 19 cents (Digital),
+measured on a held 220 Hz tone. That's also much of the washed-out sound of the tail.
+
+- Modulation (Reverb menu, song and sound, 0 to 50, not for Freeverb): the depth of the
+  modulated delays and of Mutable's smear. 0, the default, keeps the reverb still, a held tone
+  stays within 0.2 dB. 50 is the depth of v10 to v13, bit for bit. Songs without the attribute
+  load with 0; saved as "modulation" (Q31) in the reverb element.
+- Pre-delay (0 to 100 ms, all models): a delay before the reverb, so the dry sound stands on
+  its own before the reverb sets in. Saved as "preDelay" (ms). 0 leaves the input untouched;
+  switched on, the delay starts empty. 17.6 KB of RAM.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/reverb/base.hpp                |  6 +++
+ src/deluge/dsp/reverb/digital.hpp             |  5 ++-
+ src/deluge/dsp/reverb/mutable/reverb.hpp      | 12 ++++--
+ src/deluge/dsp/reverb/reverb.hpp              | 37 ++++++++++++++++
+ src/deluge/gui/l10n/english.json              |  2 +
+ src/deluge/gui/l10n/g_english.cpp             |  2 +
+ src/deluge/gui/l10n/g_seven_segment.cpp       |  2 +
+ src/deluge/gui/l10n/seven_segment.json        |  2 +
+ src/deluge/gui/l10n/strings.h                 |  2 +
+ src/deluge/gui/menu_item/reverb/modulation.h  | 42 +++++++++++++++++++
+ src/deluge/gui/menu_item/reverb/pre_delay.h   | 34 +++++++++++++++
+ src/deluge/gui/ui/menus.cpp                   |  8 ++++
+ src/deluge/model/song/song.cpp                | 16 ++++++-
+ src/deluge/model/song/song.h                  |  6 ++-
+ .../processing/engines/audio_engine.cpp       |  2 +
+ 15 files changed, 170 insertions(+), 8 deletions(-)
+ create mode 100644 src/deluge/gui/menu_item/reverb/modulation.h
+ create mode 100644 src/deluge/gui/menu_item/reverb/pre_delay.h
+
+diff --git a/src/deluge/dsp/reverb/base.hpp b/src/deluge/dsp/reverb/base.hpp
+index 8ff08198..79d277dd 100644
+--- a/src/deluge/dsp/reverb/base.hpp
++++ b/src/deluge/dsp/reverb/base.hpp
+@@ -50,6 +50,12 @@ struct Base {
+ 	virtual void setWidth(float value) {}
+ 	[[nodiscard]] virtual float getWidth() const { return 0; };
+ 
++	/// Depth of the modulated delays, 0 to 1. At 0 the reverb doesn't move: a held tone stays steady in it. 1 is the
++	/// depth of Mutable Instruments' and Dattorro's designs (mastertune-v10 to v13), where a held tone wobbles in the
++	/// reverb by about 16 dB and 5 cents (Mutable) or 16 dB and 19 cents (Digital).
++	virtual void setModulation(float value) {}
++	[[nodiscard]] virtual float getModulation() const { return 0; }
++
+ 	[[nodiscard]] constexpr int32_t getPanLeft() const { return amplitude_left_; }
+ 	[[nodiscard]] constexpr int32_t getPanRight() const { return amplitude_right_; }
+ 
+diff --git a/src/deluge/dsp/reverb/digital.hpp b/src/deluge/dsp/reverb/digital.hpp
+index 46151314..d623a02d 100644
+--- a/src/deluge/dsp/reverb/digital.hpp
++++ b/src/deluge/dsp/reverb/digital.hpp
+@@ -65,6 +65,7 @@ public:
+ 
+ 	void process(std::span<int32_t> in, std::span<StereoSample> output) override {
+ 		typename FxEngine::Context c;
++		const float excursion = kExcursion * modulation_;
+ 
+ 		typename FxEngine::AllPass ap1(scaled(142));
+ 		typename FxEngine::AllPass ap2(scaled(107));
+@@ -117,7 +118,7 @@ public:
+ 
+ 			// Left half. The modulated allpass has its coefficient's sign reversed, as in the paper.
+ 			c.Set(diffused + fromRight);
+-			dap1a.ProcessInterpolate(c, scaled(672) - kExcursion / 2, LFO_1, kExcursion, -kDecayDiffusion1);
++			dap1a.ProcessInterpolate(c, scaled(672) - excursion / 2, LFO_1, excursion, -kDecayDiffusion1);
+ 			del1a.Process(c);
+ 			c.Lp(lp_1, damping);
+ 			c.Multiply(decay);
+@@ -126,7 +127,7 @@ public:
+ 
+ 			// Right half
+ 			c.Set(diffused + fromLeft);
+-			dap2a.ProcessInterpolate(c, scaled(908) - kExcursion / 2, LFO_2, kExcursion, -kDecayDiffusion1);
++			dap2a.ProcessInterpolate(c, scaled(908) - excursion / 2, LFO_2, excursion, -kDecayDiffusion1);
+ 			del2a.Process(c);
+ 			c.Lp(lp_2, damping);
+ 			c.Multiply(decay);
+diff --git a/src/deluge/dsp/reverb/mutable/reverb.hpp b/src/deluge/dsp/reverb/mutable/reverb.hpp
+index 45f96b9e..29b872ed 100644
+--- a/src/deluge/dsp/reverb/mutable/reverb.hpp
++++ b/src/deluge/dsp/reverb/mutable/reverb.hpp
+@@ -67,7 +67,7 @@ public:
+ 
+ 			// Smear AP1 inside the loop. (mastertune-v10: back in, as in Mutable Instruments' Rings and Elements)
+ 			c.Set(0.0f);
+-			ap1.Interpolate(c, 10.0f, LFO_1, 80.0f, 1.0f);
++			ap1.Interpolate(c, 10.0f, LFO_1, 80.0f * modulation_, 1.0f);
+ 			ap1.Write(c, static_cast<int32_t>(100), 0.0f);
+ 
+ 			const float input_sample = in[frame] / static_cast<float>(std::numeric_limits<int32_t>::max());
+@@ -84,7 +84,7 @@ public:
+ 
+ 			// Main reverb loop.
+ 			c.Set(apout);
+-			del2.Interpolate(c, 6261.0f, LFO_2, 50.0f, krt);
++			del2.Interpolate(c, 6261.0f, LFO_2, 50.0f * modulation_, krt);
+ 			c.Lp(lp_1, klp);
+ 			dap1a.Process(c, -kap);
+ 			dap1b.Process(c, kap);
+@@ -95,7 +95,7 @@ public:
+ 			    static_cast<int32_t>(wet * static_cast<float>(std::numeric_limits<uint32_t>::max()) * 0xF);
+ 
+ 			c.Set(apout);
+-			del1.Interpolate(c, 4460.0f, LFO_1, 40.0f, krt);
++			del1.Interpolate(c, 4460.0f, LFO_1, 40.0f * modulation_, krt);
+ 			c.Lp(lp_2, klp);
+ 			dap2a.Process(c, -kap);
+ 			dap2b.Process(c, kap);
+@@ -156,6 +156,9 @@ public:
+ 	}
+ 	[[nodiscard]] float getLPF() const override { return lp_cutoff_val_; }
+ 
++	void setModulation(float value) override { modulation_ = std::clamp(value, 0.f, 1.f); }
++	[[nodiscard]] float getModulation() const override { return modulation_; }
++
+ protected:
+ 	/// Low cut and, unless it's off, high cut for one output channel. While the high cut is off, its state follows the
+ 	/// signal, so switching it on doesn't click.
+@@ -177,6 +180,9 @@ protected:
+ 
+ 	float input_gain_ = 0.2;
+ 
++	// Depth of the smear and of the modulated delays (0: still)
++	float modulation_ = 0.f;
++
+ 	// size
+ 	float reverb_time_ = 0.665f;
+ 
+diff --git a/src/deluge/dsp/reverb/reverb.hpp b/src/deluge/dsp/reverb/reverb.hpp
+index 598d2e28..53c3d98b 100644
+--- a/src/deluge/dsp/reverb/reverb.hpp
++++ b/src/deluge/dsp/reverb/reverb.hpp
+@@ -4,6 +4,7 @@
+ #include "freeverb/freeverb.hpp"
+ #include "mutable/reverb.hpp"
+ #include <algorithm>
++#include <array>
+ #include <cstdint>
+ #include <variant>
+ 
+@@ -42,6 +43,7 @@ public:
+ 		base_->setWidth(width_);
+ 		base_->setHPF(hpf_);
+ 		base_->setLPF(lpf_);
++		base_->setModulation(modulation_);
+ 		model_ = m;
+ 	}
+ 
+@@ -49,6 +51,14 @@ public:
+ 
+ 	void process(std::span<int32_t> input, std::span<StereoSample> output) override {
+ 		using namespace reverb;
++		if (pre_delay_ != 0) {
++			for (int32_t& sample : input) {
++				pre_delay_buffer_[pre_delay_pos_] = sample;
++				size_t read = pre_delay_pos_ + kPreDelayBufferSize - pre_delay_;
++				sample = pre_delay_buffer_[read >= kPreDelayBufferSize ? read - kPreDelayBufferSize : read];
++				pre_delay_pos_ = (pre_delay_pos_ + 1 == kPreDelayBufferSize) ? 0 : pre_delay_pos_ + 1;
++			}
++		}
+ 		switch (model_) {
+ 		case Model::FREEVERB:
+ 			reverb_as<Freeverb>().process(input, output);
+@@ -99,6 +109,26 @@ public:
+ 	}
+ 	[[nodiscard]] float getLPF() const override { return lpf_; }
+ 
++	void setModulation(float value) override {
++		modulation_ = std::clamp(value, 0.f, 1.f);
++		base_->setModulation(modulation_);
++	}
++	[[nodiscard]] float getModulation() const override { return modulation_; }
++
++	static constexpr int32_t kMaxPreDelayMs = 100;
++
++	/// Delay before the reverb, in ms (0 to kMaxPreDelayMs): the dry sound stands on its own before the reverb sets in
++	void setPreDelayMs(int32_t ms) {
++		ms = std::clamp<int32_t>(ms, 0, kMaxPreDelayMs);
++		size_t samples = static_cast<size_t>(ms) * kSampleRate / 1000;
++		if (pre_delay_ == 0 && samples != 0) {
++			pre_delay_buffer_.fill(0); // Nothing old comes out when it's switched on
++		}
++		pre_delay_ = samples;
++		pre_delay_ms_ = ms;
++	}
++	[[nodiscard]] int32_t getPreDelayMs() const { return pre_delay_ms_; }
++
+ 	template <typename T>
+ 	constexpr T& reverb_as() {
+ 		return std::get<T>(reverb_);
+@@ -121,6 +151,13 @@ private:
+ 	float width_;
+ 	float hpf_ = 0.f;
+ 	float lpf_ = 1.f; // Off
++	float modulation_ = 0.f;
++
++	static constexpr size_t kPreDelayBufferSize = kMaxPreDelayMs * kSampleRate / 1000 + 1;
++	std::array<int32_t, kPreDelayBufferSize> pre_delay_buffer_{};
++	size_t pre_delay_pos_ = 0;
++	size_t pre_delay_ = 0; // In samples
++	int32_t pre_delay_ms_ = 0;
+ };
+ 
+ namespace reverb {
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index 912ad301..347f699b 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -566,6 +566,8 @@
+         "STRING_FOR_LPF": "LPF",
+         "STRING_FOR_FREQUENCY": "Frequency",
+         "STRING_FOR_HPF": "HPF",
++        "STRING_FOR_MODULATION": "Modulation",
++        "STRING_FOR_PRE_DELAY": "Pre-delay",
+         "STRING_FOR_TYPE": "TYPE",
+         "STRING_FOR_MOD_FX_TYPE": "MOD FX type",
+         "STRING_FOR_MOD_FX_RATE": "MOD FX rate",
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index aab26019..1b509bf6 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -520,6 +520,8 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_LPF, "LPF"},
+         {STRING_FOR_FREQUENCY, "Frequency"},
+         {STRING_FOR_HPF, "HPF"},
++        {STRING_FOR_MODULATION, "Modulation"},
++        {STRING_FOR_PRE_DELAY, "Pre-delay"},
+         {STRING_FOR_TYPE, "TYPE"},
+         {STRING_FOR_MOD_FX_TYPE, "MOD FX type"},
+         {STRING_FOR_MOD_FX_RATE, "MOD FX rate"},
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index 62847ec3..017ef128 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -491,6 +491,8 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_RATCHET_NOTES, "RNUM"},
+         {STRING_FOR_BOUNCE_FADE, "BVEL"},
+         {STRING_FOR_BOUNCE_LENGTH, "BLEN"},
++        {STRING_FOR_MODULATION, "MOD"},
++        {STRING_FOR_PRE_DELAY, "PDLY"},
+         {STRING_FOR_ROLL, "ROLL"},
+         {STRING_FOR_BOUNCE_EVEN, "EVEN"},
+         {STRING_FOR_BOUNCE_SOFTER, "FADE"},
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index b475efee..d638c8aa 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -526,6 +526,8 @@
+         "STRING_FOR_RATCHET_NOTES": "RNUM",
+         "STRING_FOR_BOUNCE_FADE": "BVEL",
+         "STRING_FOR_BOUNCE_LENGTH": "BLEN",
++        "STRING_FOR_MODULATION": "MOD",
++        "STRING_FOR_PRE_DELAY": "PDLY",
+         "STRING_FOR_ROLL": "ROLL",
+         "STRING_FOR_BOUNCE_EVEN": "EVEN",
+         "STRING_FOR_BOUNCE_SOFTER": "FADE",
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index bf5f326b..bb103b29 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -563,6 +563,8 @@ enum class String : size_t {
+ 	STRING_FOR_RESONANCE,
+ 	STRING_FOR_HPF_RESONANCE,
+ 	STRING_FOR_HPF,
++	STRING_FOR_MODULATION,
++	STRING_FOR_PRE_DELAY,
+ 	STRING_FOR_BLEND,
+ 	STRING_FOR_TYPE,
+ 	STRING_FOR_MOD_FX_TYPE,
+diff --git a/src/deluge/gui/menu_item/reverb/modulation.h b/src/deluge/gui/menu_item/reverb/modulation.h
+new file mode 100644
+index 00000000..2472336e
+--- /dev/null
++++ b/src/deluge/gui/menu_item/reverb/modulation.h
+@@ -0,0 +1,42 @@
++/*
++ * Copyright (c) 2014-2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include "definitions_cxx.hpp"
++#include "dsp/reverb/reverb.hpp"
++#include "gui/l10n/strings.h"
++#include "gui/menu_item/integer.h"
++#include "processing/engines/audio_engine.h"
++#include <cmath>
++
++namespace deluge::gui::menu_item::reverb {
++/// Depth of the reverb's modulated delays: 0 = still, a held tone stays steady in the reverb (the default);
++/// 50 = the depth of mastertune v10 to v13 (Mutable Instruments' and Dattorro's designs)
++class Modulation final : public Integer {
++public:
++	using Integer::Integer;
++	void readCurrentValue() override {
++		this->setValue(std::round(AudioEngine::reverb.getModulation() * kMaxMenuValue));
++	}
++	void writeCurrentValue() override { AudioEngine::reverb.setModulation((float)this->getValue() / kMaxMenuValue); }
++
++	[[nodiscard]] int32_t getMaxValue() const override { return kMaxMenuValue; }
++
++	bool isRelevant(ModControllableAudio* modControllable, int32_t whichThing) override {
++		return (AudioEngine::reverb.getModel() != dsp::Reverb::Model::FREEVERB);
++	}
++};
++} // namespace deluge::gui::menu_item::reverb
+diff --git a/src/deluge/gui/menu_item/reverb/pre_delay.h b/src/deluge/gui/menu_item/reverb/pre_delay.h
+new file mode 100644
+index 00000000..edc40952
+--- /dev/null
++++ b/src/deluge/gui/menu_item/reverb/pre_delay.h
+@@ -0,0 +1,34 @@
++/*
++ * Copyright (c) 2014-2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include "definitions_cxx.hpp"
++#include "dsp/reverb/reverb.hpp"
++#include "gui/l10n/strings.h"
++#include "gui/menu_item/integer.h"
++#include "processing/engines/audio_engine.h"
++
++namespace deluge::gui::menu_item::reverb {
++/// Delay before the reverb in ms, 0 to 100: the dry sound stands on its own before the reverb sets in
++class PreDelay final : public Integer {
++public:
++	using Integer::Integer;
++	void readCurrentValue() override { this->setValue(AudioEngine::reverb.getPreDelayMs()); }
++	void writeCurrentValue() override { AudioEngine::reverb.setPreDelayMs(this->getValue()); }
++
++	[[nodiscard]] int32_t getMaxValue() const override { return dsp::Reverb::kMaxPreDelayMs; }
++};
++} // namespace deluge::gui::menu_item::reverb
+diff --git a/src/deluge/gui/ui/menus.cpp b/src/deluge/gui/ui/menus.cpp
+index 6171c87c..75056ca4 100644
+--- a/src/deluge/gui/ui/menus.cpp
++++ b/src/deluge/gui/ui/menus.cpp
+@@ -147,7 +147,9 @@
+ #include "gui/menu_item/reverb/hpf.h"
+ #include "gui/menu_item/reverb/lpf.h"
+ #include "gui/menu_item/reverb/model.h"
++#include "gui/menu_item/reverb/modulation.h"
+ #include "gui/menu_item/reverb/pan.h"
++#include "gui/menu_item/reverb/pre_delay.h"
+ #include "gui/menu_item/reverb/room_size.h"
+ #include "gui/menu_item/reverb/sidechain/shape.h"
+ #include "gui/menu_item/reverb/sidechain/volume.h"
+@@ -550,6 +552,8 @@ reverb::Pan reverbPanMenu{STRING_FOR_PAN, STRING_FOR_REVERB_PAN};
+ reverb::Model reverbModelMenu{STRING_FOR_MODEL};
+ reverb::HPF reverbHPFMenu{STRING_FOR_HPF};
+ reverb::LPF reverbLPFMenu{STRING_FOR_LPF};
++reverb::Modulation reverbModulationMenu{STRING_FOR_MODULATION};
++reverb::PreDelay reverbPreDelayMenu{STRING_FOR_PRE_DELAY};
+ 
+ Submenu reverbMenu{
+     STRING_FOR_REVERB,
+@@ -561,6 +565,8 @@ Submenu reverbMenu{
+         &reverbWidthMenu,
+         &reverbHPFMenu,
+         &reverbLPFMenu,
++        &reverbModulationMenu,
++        &reverbPreDelayMenu,
+         &reverbPanMenu,
+         &reverbSidechainMenu,
+     },
+@@ -711,6 +717,8 @@ Submenu globalReverbMenu{
+         &reverbWidthMenu,
+         &reverbHPFMenu,
+         &reverbLPFMenu,
++        &reverbModulationMenu,
++        &reverbPreDelayMenu,
+         &reverbPanMenu,
+         &reverbSidechainMenu,
+     },
+diff --git a/src/deluge/model/song/song.cpp b/src/deluge/model/song/song.cpp
+index b79944b3..a61716e3 100644
+--- a/src/deluge/model/song/song.cpp
++++ b/src/deluge/model/song/song.cpp
+@@ -173,7 +173,9 @@ Song::Song() : backedUpParamManagers(sizeof(BackedUpParamManager)) {
+ 	reverbRoomSize = (float)30 / 50;
+ 	reverbDamp = (float)36 / 50;
+ 	reverbHPF = 0;
+-	reverbLPF = 1; // Off
++	reverbLPF = 1;        // Off
++	reverbModulation = 0; // Still. Songs from before v14 (no attribute) come with it too
++	reverbPreDelayMs = 0;
+ 	reverbWidth = 1;
+ 	reverbPan = 0;
+ 	reverbSidechainVolume = getParamFromUserValue(params::STATIC_SIDECHAIN_VOLUME, -1);
+@@ -1146,18 +1148,22 @@ weAreInArrangementEditorOrInClipInstance:
+ 	uint32_t width = AudioEngine::reverb.getWidth() * (uint32_t)2147483648u;
+ 	uint32_t lowCut = AudioEngine::reverb.getHPF() * (uint32_t)2147483648u;
+ 	uint32_t highCut = AudioEngine::reverb.getLPF() * (uint32_t)2147483648u;
++	uint32_t modulation = AudioEngine::reverb.getModulation() * (uint32_t)2147483648u;
+ 
+ 	roomSize = std::min(roomSize, (uint32_t)2147483647);
+ 	damping = std::min(damping, (uint32_t)2147483647);
+ 	width = std::min(width, (uint32_t)2147483647);
+ 	lowCut = std::min(lowCut, (uint32_t)2147483647);
+ 	highCut = std::min(highCut, (uint32_t)2147483647);
++	modulation = std::min(modulation, (uint32_t)2147483647);
+ 
+ 	writer.writeAttribute("roomSize", roomSize);
+ 	writer.writeAttribute("dampening", damping);
+ 	writer.writeAttribute("width", width);
+ 	writer.writeAttribute("lowCut", lowCut);
+ 	writer.writeAttribute("highCut", highCut);
++	writer.writeAttribute("modulation", modulation);
++	writer.writeAttribute("preDelay", AudioEngine::reverb.getPreDelayMs());
+ 	writer.writeAttribute("pan", AudioEngine::reverbPan);
+ 	writer.writeAttribute("model", util::to_underlying(model));
+ 	writer.writeOpeningTagEnd();
+@@ -1402,6 +1408,14 @@ Error Song::readFromFile(Deserializer& reader) {
+ 						}
+ 						reader.exitTag("lpf");
+ 					}
++					else if (!strcmp(tagName, "modulation")) {
++						reverbModulation = (float)reader.readTagOrAttributeValueInt() / 2147483648u;
++						reader.exitTag("modulation");
++					}
++					else if (!strcmp(tagName, "preDelay")) {
++						reverbPreDelayMs = reader.readTagOrAttributeValueInt();
++						reader.exitTag("preDelay");
++					}
+ 					else if (!strcmp(tagName, "pan")) {
+ 						reverbPan = reader.readTagOrAttributeValueInt();
+ 						reader.exitTag("pan");
+diff --git a/src/deluge/model/song/song.h b/src/deluge/model/song/song.h
+index f6ac1c29..af3f9634 100644
+--- a/src/deluge/model/song/song.h
++++ b/src/deluge/model/song/song.h
+@@ -397,8 +397,10 @@ public:
+ 	// Reverb params to be stored here between loading and song being made the active one
+ 	dsp::Reverb::Model model;
+ 	float reverbRoomSize;
+-	float reverbHPF; // Low cut, in the scale of the menu
+-	float reverbLPF; // High cut, in the scale of the menu
++	float reverbHPF;        // Low cut, in the scale of the menu
++	float reverbLPF;        // High cut, in the scale of the menu
++	float reverbModulation; // 0 to 1, see dsp/reverb/base.hpp
++	int32_t reverbPreDelayMs;
+ 	float reverbDamp;
+ 	float reverbWidth;
+ 	int32_t reverbPan;
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index f354d09f..1f319eb4 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -1586,6 +1586,8 @@ void getReverbParamsFromSong(Song* song) {
+ 	reverb.setWidth(song->reverbWidth);
+ 	reverb.setHPF(song->reverbHPF); // 1.2.1 never did this, so a song's low cut only held until it was loaded again
+ 	reverb.setLPF(song->reverbLPF);
++	reverb.setModulation(song->reverbModulation);
++	reverb.setPreDelayMs(song->reverbPreDelayMs);
+ 	reverbPan = song->reverbPan;
+ 	reverbSidechainVolume = song->reverbSidechainVolume;
+ 	reverbSidechainShape = song->reverbSidechainShape;
+-- 
+2.43.0
+

@@ -1,0 +1,165 @@
+From 1dafca0f9275954572fa5e278851782c592e612b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 21:57:26 +0000
+Subject: [PATCH 31/35] Delay time change: an older file's mode is never fixed
+ to fade before it's decided; automation counts too
+
+- timeChange is only written once the mode is decided. A delay from an older file that hasn't
+  rendered and whose menu hasn't opened (and saving had no params to decide from, as for a song's
+  sounds) writes none, so it's decided again after loading instead of staying fade for good.
+- Sounds decide when saved with their params (presets) as well, and an automated delay rate
+  keeps tape like a patch cable on it.
+- The song's, a kit's and an audio track's delay decide the same way (automation only, they have
+  no patching): when they first render, their menu opens, or they're saved with their params.
+
+In the emulator (song harness, an old song with an LFO on synth A's delay rate): saved right
+after loading, no timeChange is written; saved after one bar of playback, A gets 1 (tape), B and
+the song 0 (fade).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/menu_item/delay/time_change.h     |  9 ++++++++-
+ .../global_effectable/global_effectable.cpp      | 16 ++++++++++++++++
+ .../model/global_effectable/global_effectable.h  |  1 +
+ .../mod_controllable/mod_controllable_audio.cpp  |  8 ++++++--
+ src/deluge/processing/sound/sound.cpp            | 11 ++++++++---
+ 5 files changed, 39 insertions(+), 6 deletions(-)
+
+diff --git a/src/deluge/gui/menu_item/delay/time_change.h b/src/deluge/gui/menu_item/delay/time_change.h
+index f1caf984..9c0a7a26 100644
+--- a/src/deluge/gui/menu_item/delay/time_change.h
++++ b/src/deluge/gui/menu_item/delay/time_change.h
+@@ -18,6 +18,7 @@
+ #include "gui/l10n/l10n.h"
+ #include "gui/menu_item/selection.h"
+ #include "gui/ui/sound_editor.h"
++#include "model/global_effectable/global_effectable.h"
+ #include "model/mod_controllable/mod_controllable_audio.h"
+ #include "processing/sound/sound.h"
+ 
+@@ -29,10 +30,16 @@ class TimeChange final : public Selection {
+ public:
+ 	using Selection::Selection;
+ 	void readCurrentValue() override {
+-		// A sound from an older file that hasn't played yet: its choice made now, from its patching
++		// A delay from an older file that hasn't played yet: its choice made now, from its patching and automation
+ 		if (soundEditor.currentSound != nullptr) {
+ 			soundEditor.currentSound->resolveDelayTimeChange(soundEditor.currentParamManager);
+ 		}
++		else if (soundEditor.currentModControllable != nullptr) {
++			// No sound: the song's, a kit's or an audio track's delay, all GlobalEffectables (the only other kind of
++			// ModControllableAudio; no RTTI for a dynamic_cast)
++			static_cast<GlobalEffectable*>(soundEditor.currentModControllable)
++			    ->resolveDelayTimeChange(soundEditor.currentParamManager);
++		}
+ 		this->setValue(static_cast<int32_t>(soundEditor.currentModControllable->delay.timeChange));
+ 	}
+ 	void writeCurrentValue() override {
+diff --git a/src/deluge/model/global_effectable/global_effectable.cpp b/src/deluge/model/global_effectable/global_effectable.cpp
+index 69850fa0..cfd975e2 100644
+--- a/src/deluge/model/global_effectable/global_effectable.cpp
++++ b/src/deluge/model/global_effectable/global_effectable.cpp
+@@ -831,6 +831,7 @@ void GlobalEffectable::writeTagsToFile(Serializer& writer, ParamManager* paramMa
+ 		writer.writeClosingTag("defaultParams");
+ 	}
+ 
++	resolveDelayTimeChange(paramManager); // mastertune-v14: an older file's delay mode, decided before it's written
+ 	ModControllableAudio::writeTagsToFile(writer);
+ }
+ 
+@@ -1160,11 +1161,26 @@ Delay::State GlobalEffectable::createDelayWorkingState(ParamManager& paramManage
+ 	    getFinalParameterValueExp(paramNeutralValues[params::GLOBAL_DELAY_RATE],
+ 	                              cableToExpParamShortcut(unpatchedParams->getValue(params::UNPATCHED_DELAY_RATE)));
+ 	uint32_t timePerTickInverse = playbackHandler.getTimePerInternalTickInverse(true);
++	if (delay.timeChangeFromOldFile) [[unlikely]] {
++		resolveDelayTimeChange(&paramManager);
++	}
+ 	delay.setupWorkingState(delayWorkingState, timePerTickInverse, soundComingIn);
+ 
+ 	return delayWorkingState;
+ }
+ 
++// mastertune-v14: like Sound::resolveDelayTimeChange(), for the song's, a kit's and an audio track's delay: no patching
++// here, so from an older file it keeps tape only if its delay rate is automated
++void GlobalEffectable::resolveDelayTimeChange(ParamManager* paramManager) {
++	if (!delay.timeChangeFromOldFile || !paramManager || !paramManager->containsAnyMainParamCollections()) {
++		return;
++	}
++	delay.timeChangeFromOldFile = false;
++	if (paramManager->getUnpatchedParamSet()->params[params::UNPATCHED_DELAY_RATE].isAutomated()) {
++		delay.timeChange = Delay::TimeChange::TAPE;
++	}
++}
++
+ void GlobalEffectable::processFXForGlobalEffectable(StereoSample* inputBuffer, int32_t numSamples,
+                                                     int32_t* postFXVolume, ParamManager* paramManager,
+                                                     const Delay::State& delayWorkingState, bool grainHadInput) {
+diff --git a/src/deluge/model/global_effectable/global_effectable.h b/src/deluge/model/global_effectable/global_effectable.h
+index dcb50822..88d7db50 100644
+--- a/src/deluge/model/global_effectable/global_effectable.h
++++ b/src/deluge/model/global_effectable/global_effectable.h
+@@ -42,6 +42,7 @@ public:
+ 
+ 	void writeAttributesToFile(Serializer& writer, bool writeToFile);
+ 	void writeTagsToFile(Serializer& writer, ParamManager* paramManager, bool writeToFile);
++	void resolveDelayTimeChange(ParamManager* paramManager);
+ 	Error readTagFromFile(Deserializer& reader, char const* tagName, ParamManagerForTimeline* paramManager,
+ 	                      int32_t readAutomationUpToPos, Song* song);
+ 	static void writeParamAttributesToFile(Serializer& writer, ParamManager* paramManager, bool writeAutomation,
+diff --git a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+index c0e650af..2169a0f1 100644
+--- a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
++++ b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+@@ -731,8 +731,12 @@ void ModControllableAudio::writeTagsToFile(Serializer& writer) {
+ 	if (delay.lowCut != Delay::kLowCutOff) {
+ 		writer.writeAttribute("lowCut", delay.lowCut);
+ 	}
+-	// mastertune-v14: what a change of the delay time does, 0 fade, 1 tape
+-	writer.writeAttribute("timeChange", static_cast<int32_t>(delay.timeChange));
++	// mastertune-v14: what a change of the delay time does, 0 fade, 1 tape. Not for a delay from an older file whose
++	// mode isn't decided yet (it hasn't rendered, its menu hasn't opened, and saving had no params to decide it from):
++	// it's decided again after loading, from its patching and automation, rather than fixed to fade now
++	if (!delay.timeChangeFromOldFile) {
++		writer.writeAttribute("timeChange", static_cast<int32_t>(delay.timeChange));
++	}
+ 	writer.closeTag();
+ 
+ 	// MIDI knobs
+diff --git a/src/deluge/processing/sound/sound.cpp b/src/deluge/processing/sound/sound.cpp
+index 49fadad2..37ec129d 100644
+--- a/src/deluge/processing/sound/sound.cpp
++++ b/src/deluge/processing/sound/sound.cpp
+@@ -3226,14 +3226,18 @@ Error Sound::readFromFile(Deserializer& reader, ModelStackWithModControllable* m
+ }
+ 
+ // mastertune-v14: the fade mode, the default since v14, turns a modulated delay time into steps, one fade per new
+-// time. A sound saved before there was a choice, with something patched to its delay rate, keeps the tape mode it was
+-// made with. Decided when it first renders, or its delay menu opens: the patch cables of a song's sounds are only read
+-// with its clips.
++// time. A sound saved before there was a choice, with something patched to its delay rate or its delay rate automated,
++// keeps the tape mode it was made with. Decided when it first renders, its delay menu opens, or it's saved with its
++// params: the patch cables and automation of a song's sounds are only read with its clips.
+ void Sound::resolveDelayTimeChange(ParamManager* paramManager) {
+ 	if (!delay.timeChangeFromOldFile || !paramManager || !paramManager->containsAnyMainParamCollections()) {
+ 		return;
+ 	}
+ 	delay.timeChangeFromOldFile = false;
++	if (paramManager->getPatchedParamSet()->params[params::GLOBAL_DELAY_RATE].isAutomated()) {
++		delay.timeChange = Delay::TimeChange::TAPE;
++		return;
++	}
+ 	PatchCableSet* patchCableSet = paramManager->getPatchCableSet();
+ 	for (int32_t c = 0; c < patchCableSet->numPatchCables; c++) {
+ 		if (patchCableSet->patchCables[c].destinationParamDescriptor.getJustTheParam() == params::GLOBAL_DELAY_RATE) {
+@@ -4140,6 +4144,7 @@ void Sound::writeToFile(Serializer& writer, bool savingSong, ParamManager* param
+ 	}
+ 	writer.writeClosingTag("modKnobs");
+ 
++	resolveDelayTimeChange(paramManager); // mastertune-v14: an older file's delay mode, decided if the params are here
+ 	ModControllableAudio::writeTagsToFile(writer);
+ }
+ 
+-- 
+2.43.0
+

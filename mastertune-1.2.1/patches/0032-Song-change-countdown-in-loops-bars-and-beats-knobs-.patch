@@ -1,0 +1,481 @@
+From 1137f130378c0eaaae465f4e8c1ef3efc8afc581 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 23:14:44 +0000
+Subject: [PATCH 32/35] Song change: countdown in loops, bars and beats; knobs
+ on the playing song's master FX until it changes
+
+While a loaded song is armed to start (LoadSongUI, UI_MODE_LOADING_SONG_UNESSENTIAL_SAMPLES_ARMED), the display
+counts down to the change instead of 1.2.1's "Song will begin..." and "Loops remaining: N" popups:
+- Session::getLaunchCountdown(): while repeats remain the loops remaining (numRepeatsTilLaunch, the current loop
+  counting), in the last loop the bars remaining, in the last bar the beats (4-3-2-1 in 4/4), counted back from the
+  launch event in swung ticks as getNumSixteenthNotesRemainingTilLaunch() does (so with swing and an external clock),
+  each number shown for its whole bar or beat
+- OLED: permanently on the title row (label, number in the title font), so the browser stays as it was with the song
+  to come selected; 7-segment: the number, blinking while it counts loops as 1.2.1's repeats did, steady in the last
+  loop. LoadSongUI::graphicsRoutine() redraws when what's shown changes, the launch event and the select encoder
+  (repeats) at once; after the swap the title comes back
+- OLED::removeWorkingAnimation() cleared one column past the image's right edge, i.e. the first pixel of the next
+  row: a gap in the line under the title
+
+From LOAD on while playing, the gold knobs and mod buttons are on the playing song's master FX (its GlobalEffectable
+and params, as in the song view with affect entire, whatever that is set to; View::setActiveModControllableToSongFX()),
+not whatever was selected (1.2.1 left e.g. a clip of the old song there), with the mod LEDs and knob indicators
+showing its section and values (setKnobIndicatorLevels() works without a root UI while the knobs are on the playing
+song). The mod knobs also act while LOAD is still held with the SD card busy, as they already did once armed. At the
+swap (PlaybackHandler::doSongSwap()) the knobs are on nothing until the new song's view takes them, so nothing points
+into the old song when it's deleted; knob turns held back in the encoders then are dropped, and a mod button's popup
+held through the swap is taken down: the new song starts with its own values.
+
+Tested in the emulator on this ELF (tests/songchange: OLED, 7-segment, swing, external clock, stop while armed): the
+countdown right in every window, the swap at the launch event, the knobs on the old song's FX only.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/ui/load/load_song_ui.cpp  | 117 +++++++++++++++++++----
+ src/deluge/gui/ui/load/load_song_ui.h    |  12 ++-
+ src/deluge/gui/views/session_view.cpp    |   5 +-
+ src/deluge/gui/views/view.cpp            |  18 +++-
+ src/deluge/gui/views/view.h              |   1 +
+ src/deluge/hid/display/oled.cpp          |   4 +-
+ src/deluge/hid/encoders.cpp              |   5 +-
+ src/deluge/playback/mode/session.cpp     |  34 ++++++-
+ src/deluge/playback/mode/session.h       |   9 ++
+ src/deluge/playback/playback_handler.cpp |   6 ++
+ 10 files changed, 181 insertions(+), 30 deletions(-)
+
+diff --git a/src/deluge/gui/ui/load/load_song_ui.cpp b/src/deluge/gui/ui/load/load_song_ui.cpp
+index b92fa81d..409664b6 100644
+--- a/src/deluge/gui/ui/load/load_song_ui.cpp
++++ b/src/deluge/gui/ui/load/load_song_ui.cpp
+@@ -43,6 +43,7 @@
+ #include "storage/flash_storage.h"
+ #include "storage/storage_manager.h"
+ #include "task_scheduler.h"
++#include "util/functions.h"
+ #include <string.h>
+ 
+ LoadSongUI loadSongUI{};
+@@ -166,19 +167,70 @@ void LoadSongUI::enterKeyPress() {
+ 	}
+ }
+ 
+-void LoadSongUI::displayArmedPopup() {
+-	display->removeWorkingAnimation();
+-	display->popupText("Song will begin...", PopupType::LOADING);
+-}
+-
+ char loopsRemainingText[] = "Loops remaining: xxxxxxxxxxx";
+ 
+-void LoadSongUI::displayLoopsRemainingPopup() {
+-	if (currentUIMode == UI_MODE_LOADING_SONG_UNESSENTIAL_SAMPLES_ARMED) {
+-		display->removeWorkingAnimation();
+-		intToString(session.numRepeatsTilLaunch, &loopsRemainingText[17]);
+-		display->popupText(loopsRemainingText, PopupType::LOADING);
++namespace {
++// The OLED's title row (Canvas::drawScreenTitle()): the title's top, and the line under it
++constexpr int32_t kTitleY = OLED_MAIN_TOPMOST_PIXEL + ((OLED_MAIN_HEIGHT_PIXELS == 64) ? 0 : 1);
++constexpr int32_t kTitleLineY = kTitleY + 11;
++} // namespace
++
++// mastertune-v14: replaces 1.2.1's popups ("Song will begin...", "Loops remaining: N"), which covered the browser: on
++// the OLED the countdown takes the title row, so the browser stays as it was, with the song to come selected
++void LoadSongUI::displayCountdown(bool force) {
++	if (currentUIMode != UI_MODE_LOADING_SONG_UNESSENTIAL_SAMPLES_ARMED) {
++		return;
++	}
++	Session::LaunchCountdown countdown = session.getLaunchCountdown();
++	if (!force && countdown == shownCountdown) {
++		return;
++	}
++	shownCountdown = countdown;
++
++	using Unit = Session::LaunchCountdown::Unit;
++	char number[12];
++	intToString(countdown.count, number);
++
++	if (display->haveOLED()) {
++		deluge::hid::display::oled_canvas::Canvas& canvas = deluge::hid::display::OLED::main;
++		canvas.clearAreaExact(0, OLED_MAIN_TOPMOST_PIXEL, OLED_MAIN_WIDTH_PIXELS - 1, kTitleLineY - 1);
++		char const* label = (countdown.unit == Unit::LOOPS)   ? "Loops remaining"
++		                    : (countdown.unit == Unit::BARS)  ? "Bars remaining"
++		                    : (countdown.unit == Unit::BEATS) ? "Beats remaining"
++		                                                      : "Song will begin...";
++		canvas.drawString(label, 0, kTitleY + 2, kTextSpacingX, kTextSpacingY);
++		if (countdown.unit != Unit::NONE) {
++			canvas.drawStringAlignRight(number, kTitleY, kTextTitleSpacingX, kTextTitleSizeY);
++		}
++		countdownOnOLED = true;
++		deluge::hid::display::OLED::markChanged();
+ 	}
++	else {
++		// Just the number: blinking while it counts loops (as 1.2.1 showed the repeats), steady in the last loop
++		bool countingLoops = (countdown.unit == Unit::LOOPS || countdown.unit == Unit::NONE);
++		if (countdown.unit == Unit::NONE) {
++			intToString(session.numRepeatsTilLaunch, number);
++		}
++		display->setText(number, true, 255, countingLoops, nullptr, false, countingLoops);
++	}
++}
++
++// The title back where the countdown was, once the song has changed (the 7-segment display then shows the loading
++// animation, PlaybackHandler::doSongSwap())
++void LoadSongUI::removeCountdown() {
++	if (countdownOnOLED) {
++		deluge::hid::display::oled_canvas::Canvas& canvas = deluge::hid::display::OLED::main;
++		canvas.clearAreaExact(0, OLED_MAIN_TOPMOST_PIXEL, OLED_MAIN_WIDTH_PIXELS - 1, kTitleLineY - 1);
++		canvas.drawScreenTitle(title);
++		countdownOnOLED = false;
++		deluge::hid::display::OLED::markChanged();
++	}
++	shownCountdown = {};
++}
++
++void LoadSongUI::graphicsRoutine() {
++	// The countdown follows the playback; the launch event itself only comes once per loop
++	displayCountdown(false);
+ }
+ 
+ ActionResult LoadSongUI::buttonAction(deluge::hid::Button b, bool on, bool inCardRoutine) {
+@@ -210,10 +262,11 @@ ActionResult LoadSongUI::buttonAction(deluge::hid::Button b, bool on, bool inCar
+ 				else {
+ 					currentUIMode = UI_MODE_LOADING_SONG_UNESSENTIAL_SAMPLES_ARMED;
+ 					if (display->haveOLED()) {
+-						displayArmedPopup();
++						display->removeWorkingAnimation(); // And the "Loading complete" popup
++						displayCountdown();
+ 					}
+ 					else {
+-						sessionView.redrawNumericDisplay();
++						sessionView.redrawNumericDisplay(); // The countdown, displayCountdown()
+ 					}
+ 				}
+ 			}
+@@ -260,6 +313,7 @@ void LoadSongUI::performLoad(StorageManager& bdsm) {
+ 	nullifyUIs();
+ 
+ 	deletedPartsOfOldSong = true;
++	bool songChangePending = false; // The old song plays on until the new one starts
+ 
+ 	// If not currently playing, don't load both songs at once (this avoids any RAM overfilling, fragmentation etc.)
+ 	if (!playbackHandler.isEitherClockActive()) {
+@@ -269,8 +323,14 @@ void LoadSongUI::performLoad(StorageManager& bdsm) {
+ 		deleteOldSongBeforeLoadingNew();
+ 	}
+ 	else {
+-		// Note: this is dodgy, but in this case we don't reset view.activeControllableClip here - we let the user keep
+-		// fiddling with it. It won't get deleted.
++		// mastertune-v14: until the song changes, the gold knobs and mod buttons (and their LEDs) are on the playing
++		// song's master FX, as in the song view (with affect entire, whether that's on or not; 1.2.1 left them on
++		// whatever was selected, e.g. a clip). PlaybackHandler::doSongSwap() lets go of them when the old song goes;
++		// no region of a held note
++		view.setModRegion();
++		view.setActiveModControllableToSongFX();
++		songChangePending = true;
++
+ 		AudioEngine::logAction("arming for song swap");
+ 		AudioEngine::songSwapAboutToHappen();
+ 		AudioEngine::logAction("song swap armed");
+@@ -389,10 +449,11 @@ gotErrorAfterCreatingSong:
+ 
+ 			currentUIMode = UI_MODE_LOADING_SONG_UNESSENTIAL_SAMPLES_ARMED;
+ 			if (display->haveOLED()) {
+-				displayArmedPopup();
++				display->removeWorkingAnimation();
++				displayCountdown();
+ 			}
+ 			else {
+-				sessionView.redrawNumericDisplay();
++				sessionView.redrawNumericDisplay(); // The countdown, displayCountdown()
+ 			}
+ 		}
+ 
+@@ -434,6 +495,17 @@ gotErrorAfterCreatingSong:
+ 	}
+ 
+ swapDone:
++	removeCountdown();
++	if (songChangePending && display->haveOLED()) {
++		// mastertune-v14: a mod button held through the swap has the old song's FX section up as a popup, which its
++		// release, now for the new song, might not take down
++		for (int32_t i = 0; i < kNumModButtons; i++) {
++			if (Buttons::isButtonPressed(deluge::hid::button::fromXY(modButtonX[i], modButtonY[i]))) {
++				display->cancelPopup();
++				break;
++			}
++		}
++	}
+ 	if (display->haveOLED()) {
+ 		// To override our popup if we did one. (Still necessary?)
+ 		deluge::hid::display::OLED::displayWorkingAnimation("Loading");
+@@ -459,6 +531,14 @@ swapDone:
+ 
+ 	audioFileManager.thingFinishedLoading();
+ 
++	if (songChangePending) {
++		// mastertune-v14: turns of the gold knobs held back while the new song finished loading (while the SD card is
++		// busy they wait) were meant for the old song: the new one starts with its own values
++		using namespace deluge::hid::encoders;
++		getEncoder(EncoderName::MOD_0).encPos = 0;
++		getEncoder(EncoderName::MOD_1).encPos = 0;
++	}
++
+ 	PadLEDs::doGreyoutInstantly(); // This will get faded out of just below
+ 	setUIForLoadedSong(currentSong);
+ 	currentUIMode = UI_MODE_NONE;
+@@ -631,11 +711,10 @@ void LoadSongUI::selectEncoderAction(int8_t offset) {
+ 			session.numRepeatsTilLaunch = 9999;
+ 		}
+ 		if (display->haveOLED()) {
+-			// renderUIsForOled();
+-			displayLoopsRemainingPopup();
++			displayCountdown();
+ 		}
+ 		else {
+-			sessionView.redrawNumericDisplay();
++			sessionView.redrawNumericDisplay(); // The countdown, displayCountdown()
+ 		}
+ 	}
+ 
+diff --git a/src/deluge/gui/ui/load/load_song_ui.h b/src/deluge/gui/ui/load/load_song_ui.h
+index ec5c0a81..698504e0 100644
+--- a/src/deluge/gui/ui/load/load_song_ui.h
++++ b/src/deluge/gui/ui/load/load_song_ui.h
+@@ -19,6 +19,7 @@
+ 
+ #include "gui/ui/load/load_ui.h"
+ #include "hid/button.h"
++#include "playback/mode/session.h"
+ 
+ class LoadSongUI final : public LoadUI {
+ public:
+@@ -26,13 +27,15 @@ public:
+ 	ActionResult buttonAction(deluge::hid::Button b, bool on, bool inCardRoutine);
+ 	ActionResult timerCallback();
+ 	ActionResult verticalEncoderAction(int32_t offset, bool inCardRoutine);
+-	void graphicsRoutine() {}
++	void graphicsRoutine();
+ 	void scrollFinished();
+ 	ActionResult padAction(int32_t x, int32_t y, int32_t velocity);
+ 	bool opened();
+ 	void selectEncoderAction(int8_t offset);
+ 	void performLoad(StorageManager& bdsm);
+-	void displayLoopsRemainingPopup();
++	// mastertune-v14: the song-change countdown while the loaded song is armed to start (OLED: on the title row,
++	// 7-segment: the number); without force only when what it shows has changed
++	void displayCountdown(bool force = true);
+ 
+ 	bool deletedPartsOfOldSong;
+ 
+@@ -49,7 +52,10 @@ protected:
+ 
+ private:
+ 	void drawSongPreview(StorageManager& bdsm, bool toStore = true);
+-	void displayArmedPopup();
++	void removeCountdown();
++
++	Session::LaunchCountdown shownCountdown;
++	bool countdownOnOLED = false; // The title row shows the countdown instead of the title
+ 
+ 	bool scrollingIntoSlot;
+ 	// int32_t findNextFile(int32_t offset);
+diff --git a/src/deluge/gui/views/session_view.cpp b/src/deluge/gui/views/session_view.cpp
+index 3f1872ce..3a8a61db 100644
+--- a/src/deluge/gui/views/session_view.cpp
++++ b/src/deluge/gui/views/session_view.cpp
+@@ -1915,9 +1915,8 @@ void SessionView::redrawNumericDisplay() {
+ 			}
+ 
+ 			if (currentUI == &loadSongUI) {
+-				if (currentUIMode == UI_MODE_LOADING_SONG_UNESSENTIAL_SAMPLES_ARMED) {
+-					displayRepeatsTilLaunch();
+-				}
++				// mastertune-v14: the song-change countdown (loops, bars, beats), only while armed
++				loadSongUI.displayCountdown();
+ 			}
+ 
+ 			else if (isArrangerView) {
+diff --git a/src/deluge/gui/views/view.cpp b/src/deluge/gui/views/view.cpp
+index 781384aa..96e64013 100644
+--- a/src/deluge/gui/views/view.cpp
++++ b/src/deluge/gui/views/view.cpp
+@@ -1183,7 +1183,10 @@ void View::modEncoderButtonAction(uint8_t whichModEncoder, bool on) {
+ }
+ 
+ void View::setKnobIndicatorLevels() {
+-	if (!getRootUI()) {
++	// No root UI while a song loads (nullifyUIs()). mastertune-v14: but while a song change is pending, the knobs are
++	// on the playing song (LoadSongUI::performLoad()), and show its values as in the song view
++	bool onPlayingSong = (currentSong && activeModControllableModelStack.getTimelineCounterAllowNull() == currentSong);
++	if (!getRootUI() && !onPlayingSong) {
+ 		return; // What's this?
+ 	}
+ 
+@@ -1782,6 +1785,19 @@ void View::setActiveModControllableWithoutTimelineCounter(ModControllable* modCo
+ 	sendMidiFollowFeedback();
+ }
+ 
++// mastertune-v14: the gold knobs and mod buttons on the song's master FX (its GlobalEffectable and params), as in the
++// song view with "affect entire" on, but whatever that is: while a song change is pending (LoadSongUI::performLoad())
++void View::setActiveModControllableToSongFX() {
++	pretendModKnobsUntouchedForAWhile();
++
++	setupModelStackWithSong(&activeModControllableModelStack, currentSong)
++	    ->addTimelineCounter(currentSong)
++	    ->addOtherTwoThingsButNoNoteRow(&currentSong->globalEffectable, &currentSong->paramManager);
++
++	setModLedStates();
++	setKnobIndicatorLevels();
++}
++
+ void View::setModRegion(uint32_t pos, uint32_t length, int32_t noteRowId) {
+ 
+ 	modPos = pos;
+diff --git a/src/deluge/gui/views/view.h b/src/deluge/gui/views/view.h
+index 604d9405..b54c6d6c 100644
+--- a/src/deluge/gui/views/view.h
++++ b/src/deluge/gui/views/view.h
+@@ -78,6 +78,7 @@ public:
+ 	void setActiveModControllableTimelineCounter(TimelineCounter* playPositionCounter,
+ 	                                             bool shouldSendMidiFeedback = true);
+ 	void setActiveModControllableWithoutTimelineCounter(ModControllable* modControllable, ParamManager* paramManager);
++	void setActiveModControllableToSongFX(); // mastertune-v14
+ 	void cycleThroughReverbPresets();
+ 	char const* getReverbPresetDisplayName(int32_t preset);
+ 	int32_t getCurrentReverbPreset();
+diff --git a/src/deluge/hid/display/oled.cpp b/src/deluge/hid/display/oled.cpp
+index d41cbe6e..5d7d0049 100644
+--- a/src/deluge/hid/display/oled.cpp
++++ b/src/deluge/hid/display/oled.cpp
+@@ -873,8 +873,10 @@ void OLED::removeWorkingAnimation() {
+ 		removePopup();
+ 	}
+ 	if (working_animation_count) {
++		// mastertune-v14: up to the last column (maxX is inclusive), not one past it, which cleared the first column
++		// of the next image row: a gap in the line under the title (the song-change countdown's row)
+ 		deluge::hid::display::OLED::main.clearAreaExact(OLED_MAIN_WIDTH_PIXELS - 18, OLED_MAIN_TOPMOST_PIXEL,
+-		                                                OLED_MAIN_WIDTH_PIXELS, OLED_MAIN_TOPMOST_PIXEL + 10);
++		                                                OLED_MAIN_WIDTH_PIXELS - 1, OLED_MAIN_TOPMOST_PIXEL + 10);
+ 		markChanged();
+ 		uiTimerManager.unsetTimer(TimerName::LOADING_ANIMATION);
+ 		working_animation_count = 0;
+diff --git a/src/deluge/hid/encoders.cpp b/src/deluge/hid/encoders.cpp
+index ead62f09..6a9f9102 100644
+--- a/src/deluge/hid/encoders.cpp
++++ b/src/deluge/hid/encoders.cpp
+@@ -183,7 +183,10 @@ checkResult:
+ 		}
+ 	}
+ 
+-	if (!skipActioning || currentUIMode == UI_MODE_LOADING_SONG_UNESSENTIAL_SAMPLES_ARMED) {
++	// While a loaded song waits to start, the mod knobs work even while the SD card is busy (loading the new song's
++	// samples): they're on the playing song's master FX then. mastertune-v14: also while the load button is still held
++	if (!skipActioning || currentUIMode == UI_MODE_LOADING_SONG_UNESSENTIAL_SAMPLES_ARMED
++	    || currentUIMode == UI_MODE_LOADING_SONG_UNESSENTIAL_SAMPLES_UNARMED) {
+ 		// Mod knobs
+ 		for (int32_t e = 0; e < 2; e++) {
+ 			// check encoder 0, then encoder 1
+diff --git a/src/deluge/playback/mode/session.cpp b/src/deluge/playback/mode/session.cpp
+index 65a1ace1..1b4aff5c 100644
+--- a/src/deluge/playback/mode/session.cpp
++++ b/src/deluge/playback/mode/session.cpp
+@@ -735,6 +735,36 @@ int32_t Session::getNumSixteenthNotesRemainingTilLaunch() {
+ 	return static_cast<int32_t>(sixteenthNotesRemaining);
+ }
+ 
++// mastertune-v14: while repeats of the loop remain, the loops remaining (the current one counts, as in 1.2.1's "Loops
++// remaining"); in the last loop the bars remaining, and in the last bar the beats remaining (4-3-2-1 in 4/4). Counted
++// back from the launch event in swung ticks, as getNumSixteenthNotesRemainingTilLaunch() does, so it holds with swing
++// and follows an external clock; each number shows for its whole bar or beat (rounded up)
++Session::LaunchCountdown Session::getLaunchCountdown() {
++	LaunchCountdown countdown;
++	if (!launchEventAtSwungTickCount || !playbackHandler.isEitherClockActive()) {
++		return countdown;
++	}
++	if (numRepeatsTilLaunch > 1) {
++		countdown.unit = LaunchCountdown::Unit::LOOPS;
++		countdown.count = numRepeatsTilLaunch;
++		return countdown;
++	}
++	int64_t ticksRemaining = launchEventAtSwungTickCount - playbackHandler.lastSwungTickActioned
++	                         - playbackHandler.getNumSwungTicksInSinceLastActionedSwungTick();
++	int64_t barLength = currentSong->getBarLength();
++	int64_t beatLength = currentSong->getQuarterNoteLength();
++	if (ticksRemaining > barLength) {
++		countdown.unit = LaunchCountdown::Unit::BARS;
++		countdown.count = (ticksRemaining + barLength - 1) / barLength;
++	}
++	else {
++		// At least 1: an external clock's position is an estimate between its ticks, and may run past the event
++		countdown.unit = LaunchCountdown::Unit::BEATS;
++		countdown.count = std::max<int64_t>((ticksRemaining + beatLength - 1) / beatLength, 1);
++	}
++	return countdown;
++}
++
+ void Session::scheduleFillEvent(Clip* clip, int64_t atTickCount) {
+ 	clip->fillEventAtTickCount = atTickCount;
+ 	int32_t ticksTilFillEvent = atTickCount - playbackHandler.lastSwungTickActioned;
+@@ -754,7 +784,7 @@ void Session::launchSchedulingMightNeedCancelling() {
+ 		if (display->haveOLED()) {
+ 			RootUI* rootUI = getRootUI();
+ 			if (getCurrentUI() == &loadSongUI) {
+-				loadSongUI.displayLoopsRemainingPopup(); // Wait, could this happen?
++				loadSongUI.displayCountdown(); // Wait, could this happen?
+ 			}
+ 			else if ((rootUI == &sessionView || rootUI == &performanceSessionView)
+ 			         && !isUIModeActive(UI_MODE_CLIP_PRESSED_IN_SONG_VIEW)) {
+@@ -2280,7 +2310,7 @@ traverseClips:
+ 			if (display->haveOLED()) {
+ 				RootUI* rootUI = getRootUI();
+ 				if (getCurrentUI() == &loadSongUI) {
+-					loadSongUI.displayLoopsRemainingPopup();
++					loadSongUI.displayCountdown();
+ 				}
+ 				else if ((rootUI == &sessionView || rootUI == &performanceSessionView)
+ 				         && !isUIModeActive(UI_MODE_CLIP_PRESSED_IN_SONG_VIEW)) {
+diff --git a/src/deluge/playback/mode/session.h b/src/deluge/playback/mode/session.h
+index b450575c..77acdfb0 100644
+--- a/src/deluge/playback/mode/session.h
++++ b/src/deluge/playback/mode/session.h
+@@ -29,11 +29,20 @@ class Session final : public PlaybackMode {
+ public:
+ 	Session();
+ 
++	/// mastertune-v14: what remains until the launch event, for the song-change countdown (LoadSongUI)
++	struct LaunchCountdown {
++		enum class Unit : uint8_t { NONE, LOOPS, BARS, BEATS };
++		Unit unit = Unit::NONE; // NONE: no launch event scheduled, or not playing
++		int32_t count = 0;
++		bool operator==(const LaunchCountdown&) const = default;
++	};
++
+ 	void armAllClipsToStop(int32_t afterNumRepeats);
+ 	void armNextSection(int32_t oldSection, int32_t numRepetitions = -1);
+ 	void doLaunch(bool isFillLaunch);
+ 	void scheduleLaunchTiming(int64_t atTickCount, int32_t numRepeatsUntil, int32_t armedLaunchLengthForOneRepeat);
+ 	int32_t getNumSixteenthNotesRemainingTilLaunch();
++	LaunchCountdown getLaunchCountdown();
+ 	void scheduleFillEvent(Clip* clip, int64_t atTickCount);
+ 	void cancelAllLaunchScheduling();
+ 	void launchSchedulingMightNeedCancelling();
+diff --git a/src/deluge/playback/playback_handler.cpp b/src/deluge/playback/playback_handler.cpp
+index a815f57e..f741b7bf 100644
+--- a/src/deluge/playback/playback_handler.cpp
++++ b/src/deluge/playback/playback_handler.cpp
+@@ -1314,6 +1314,12 @@ void PlaybackHandler::doSongSwap(bool preservePlayPosition) {
+ 	AudioEngine::unassignAllVoices(true);
+ 	midiFollow.clearStoredClips(); // need to clear clip pointers stored for previous song
+ 	currentSong = preLoadedSong;
++	// mastertune-v14: while the swap was pending, the gold knobs and mod buttons were on the old song's master FX
++	// (LoadSongUI::performLoad()); the old song is deleted soon, so they're on nothing until the new song's view takes
++	// them (setUIForLoadedSong()). (Their changes left no undo history: no view is open while a song loads.)
++	setupModelStackWithSong(&view.activeModControllableModelStack, currentSong)
++	    ->addTimelineCounter(nullptr)
++	    ->addOtherTwoThingsButNoNoteRow(nullptr, nullptr);
+ 	AudioEngine::mustUpdateReverbParamsBeforeNextRender = true;
+ 	preLoadedSong = NULL;
+ 	loadSongUI.deletedPartsOfOldSong = false;
+-- 
+2.43.0
+

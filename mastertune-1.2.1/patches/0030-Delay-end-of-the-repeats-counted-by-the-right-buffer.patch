@@ -1,0 +1,301 @@
+From fa2534b4ff13394e9c3a08b45e64d8ae6a45067e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 21:30:56 +0000
+Subject: [PATCH 30/35] Delay: end of the repeats counted by the right buffer,
+ tail fade that always fits, Tape for old files with a modulated rate
+
+- Fade mode: while a change to a shorter time fades, the repeats are counted
+  by the old buffer (the one the sound still goes round), not the new one.
+  Counting the new, shorter buffer gave up before the old one had played out:
+  at feedback 0.2 and 0.5 -> 0.12 s after the notes, the second repeat
+  (-28 dB) was missing; at 0.5 and 1 -> 0.05 s the echo on its way was cut
+  off. Now the same as with no countdown. A change to a longer time still
+  counts the new buffer; an LFO on the time, which keeps the delay fading,
+  still lets it give up.
+- End of the repeats: the fade of the last time round is set each block to
+  reach 0 where the counting buffer comes round (samplesUntilWrap()), or a
+  time round later where that would be steeper than full level in 1024
+  samples; hasWrapped() waits for it. Before, it assumed a whole round and
+  cut off at full echo level when the last round began partway (feedback
+  below 3 %, or turned down after note-off): -33.8 dB, now below -110 dB.
+- Below 3 % feedback the delay no longer gives up while sound comes in:
+  1.2.1 discarded the buffer at every time round while playing, so its
+  repeats were cut off a block after they came round (tape mode too).
+- Files from before v14 (no timeChange): a sound with a patch cable to the
+  delay rate (LFO, envelope, ...) gets Tape, so its modulation doesn't turn
+  into steps; others Fade. Decided when the sound first renders or its delay
+  menu opens (Sound::resolveDelayTimeChange), as a song's patch cables are
+  only read with its clips; picking a value in the menu settles it. Song,
+  kit and audio track delays have no patch cables and keep Fade.
+- Note (verifier finding 3): with the 4 s buffers, tape mode also differs
+  from v13 for delays between 2 and 4 s (a buffer of their own instead of
+  one resampling at 2 s).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/delay/delay.cpp                | 44 +++++++++++++++----
+ src/deluge/dsp/delay/delay.h                  |  5 +++
+ src/deluge/dsp/delay/delay_buffer.h           | 13 ++++++
+ src/deluge/gui/menu_item/delay/time_change.h  |  9 +++-
+ .../mod_controllable_audio.cpp                |  4 +-
+ src/deluge/processing/sound/sound.cpp         | 21 +++++++++
+ src/deluge/processing/sound/sound.h           |  3 ++
+ 7 files changed, 89 insertions(+), 10 deletions(-)
+
+diff --git a/src/deluge/dsp/delay/delay.cpp b/src/deluge/dsp/delay/delay.cpp
+index 4ba0ffaf..067883d5 100644
+--- a/src/deluge/dsp/delay/delay.cpp
++++ b/src/deluge/dsp/delay/delay.cpp
+@@ -192,6 +192,12 @@ void Delay::hasWrapped() {
+ 	if (repeatsUntilAbandon == 255) {
+ 		return;
+ 	}
++	// mastertune-v14: the last time round goes on until its fade has come down (see process()), and while sound comes
++	// in. Below 3 % feedback, where it's the only one, 1.2.1 gave up at every time round while playing, so the repeats
++	// were cut off a block after they came round (the buffer made again each time).
++	if (repeatsUntilAbandon == 1 && tailGain > 0) {
++		return;
++	}
+ 
+ 	repeatsUntilAbandon--;
+ 	if (!repeatsUntilAbandon) {
+@@ -349,6 +355,29 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 		}
+ 	}
+ 
++	// mastertune-v14: the buffer whose times round count the repeats (repeatsUntilAbandon): the newest one, as
++	// in 1.2.1, but while the fade mode changes to a shorter time, the old one. What it holds still has to come out and
++	// go round, and counting the new one's rounds gave up on it before it had (a repeat 28 dB down missing, at feedback
++	// 0.2 and 0.5 to 0.12 s).
++	bool countSecondary = secondaryBuffer.isActive() && !(fading && primaryBuffer.rate() < secondaryBuffer.rate());
++	const DelayBuffer& counting = countSecondary ? secondaryBuffer : primaryBuffer;
++
++	// mastertune-v14: in the last time round before the delay gives up, how far the fade out has to go: to where the
++	// counting buffer comes round, or, where that would take it down faster than from full level in
++	// kFadeCrossfadeSamples, as when the last time round began partway through (feedback below 3 %, or turned down
++	// after the sound stopped), a time round or more later, hasWrapped() waiting for it. Counting from the start of the
++	// round only cut off the repeats at full level then. Measured each block: a fade that fits goes on fitting.
++	constexpr int32_t kFullLevel = 2147483647;
++	bool lastTimeRound = (!soundComingIn && repeatsUntilAbandon == 1);
++	uint32_t tailSamples = 1;
++	if (lastTimeRound) {
++		tailSamples = std::max(counting.samplesUntilWrap(), (uint32_t)1);
++		uint32_t round = std::max(counting.samplesPerRound(), (uint32_t)1);
++		while ((uint64_t)tailGain * kFadeCrossfadeSamples > (uint64_t)kFullLevel * tailSamples) {
++			tailSamples += round;
++		}
++	}
++
+ 	bool wrapped = false;
+ 
+ 	std::span<StereoSample> working_buffer{reinterpret_cast<StereoSample*>(spareRenderingBuffer[0]), buffer.size()};
+@@ -392,12 +421,12 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 	// round. Before that, it holds whatever the memory held.
+ 	DelayBuffer::Position secondaryBufferOldPosition{};
+ 	if (fading) {
+-		wrapped = false; // Counting the repeats by the new buffer, as the tape mode does while making one
++		bool secondaryWrapped = false;
+ 		secondaryBufferOldPosition = secondaryBuffer.position();
+ 		if (secondaryBuffer.isNative()) {
+ 			for (StereoSample& sample : working_buffer) {
+ 				if (secondaryBuffer.clearAndMoveOn()) {
+-					wrapped = true;
++					secondaryWrapped = true;
+ 					fadeSecondaryReadable = true;
+ 				}
+ 				if (fadeSecondaryReadable) {
+@@ -410,7 +439,7 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 			for (StereoSample& sample : working_buffer) {
+ 				int32_t secondaryStrength2 = secondaryBuffer.advance([&] {
+ 					if (secondaryBuffer.clearAndMoveOn()) {
+-						wrapped = true;
++						secondaryWrapped = true;
+ 						fadeSecondaryReadable = true;
+ 					}
+ 				});
+@@ -421,18 +450,17 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 				}
+ 			}
+ 		}
++		if (countSecondary) {
++			wrapped = secondaryWrapped;
++		}
+ 	}
+ 
+ 	// mastertune-v14: the last time round before the delay gives up fades out, so the repeats don't stop dead (1.2.1
+ 	// cut them off 42 to 60 dB down, a tick in the quiet). It comes back if sound comes in again.
+-	constexpr int32_t kFullLevel = 2147483647;
+-	bool lastTimeRound = (!soundComingIn && repeatsUntilAbandon == 1);
+ 	if (lastTimeRound || tailGain < kFullLevel) {
+ 		int32_t step = kFullLevel / kFadeCrossfadeSamples; // Back up quickly
+ 		if (lastTimeRound) {
+-			const DelayBuffer& newest = secondaryBuffer.isActive() ? secondaryBuffer : primaryBuffer;
+-			uint32_t timeRound = std::max(DelayBuffer::delaySamplesForRate(newest.rate()), (uint32_t)1);
+-			step = -(int32_t)std::max((uint32_t)kFullLevel / timeRound, (uint32_t)1);
++			step = -(int32_t)(((uint64_t)tailGain + tailSamples - 1) / tailSamples); // Down to 0 in tailSamples
+ 		}
+ 		for (StereoSample& sample : working_buffer) {
+ 			tailGain = (int32_t)std::clamp((int64_t)tailGain + step, (int64_t)0, (int64_t)kFullLevel);
+diff --git a/src/deluge/dsp/delay/delay.h b/src/deluge/dsp/delay/delay.h
+index 74ba1ed6..87486087 100644
+--- a/src/deluge/dsp/delay/delay.h
++++ b/src/deluge/dsp/delay/delay.h
+@@ -46,6 +46,7 @@ public:
+ 		highCut = rhs.highCut;
+ 		lowCut = rhs.lowCut;
+ 		timeChange = rhs.timeChange;
++		timeChangeFromOldFile = rhs.timeChangeFromOldFile;
+ 		return *this;
+ 	}
+ 
+@@ -83,6 +84,10 @@ public:
+ 	/// their way bend in pitch like on a tape delay (the only way before).
+ 	enum class TimeChange : uint8_t { FADE, TAPE };
+ 	TimeChange timeChange = TimeChange::FADE;
++	/// A file from before v14 left the choice open: the tape mode if something is patched to the delay rate (an LFO,
++	/// say, whose modulation the fade mode would turn into steps), Fade otherwise. Decided once the patching is known
++	/// (Sound::resolveDelayTimeChange()); only sounds have patching, song, kit and audio track delays keep Fade.
++	bool timeChangeFromOldFile = false;
+ 
+ 	SyncType syncType = SYNC_TYPE_EVEN;
+ 
+diff --git a/src/deluge/dsp/delay/delay_buffer.h b/src/deluge/dsp/delay/delay_buffer.h
+index 347a0bfc..f30e2987 100644
+--- a/src/deluge/dsp/delay/delay_buffer.h
++++ b/src/deluge/dsp/delay/delay_buffer.h
+@@ -79,6 +79,12 @@ public:
+ 	/// The rate this buffer was last set up for (mastertune-v14: in the fade mode, each buffer keeps the one it was
+ 	/// made for, so what it holds keeps its pitch)
+ 	[[nodiscard]] constexpr int32_t rate() const { return rate_; }
++	/// How many samples of sound until reading comes round to the start of the buffer again, and how many a whole time
++	/// round takes, at the speed it runs at now (mastertune-v14: the last time round before a delay gives up fades out
++	/// by then)
++	[[nodiscard]] constexpr uint32_t samplesUntilWrap() const { return samplesForPositions(end_ - current_); }
++	[[nodiscard]] constexpr uint32_t samplesPerRound() const { return samplesForPositions(end_ - start_); }
++
+ 	/// The delay time at a rate, in samples
+ 	[[nodiscard]] static constexpr uint32_t delaySamplesForRate(uint32_t rate) {
+ 		return (uint64_t)kNeutralSize * kMaxSampleValue / std::max(rate, (uint32_t)1);
+@@ -274,6 +280,13 @@ public:
+ 	size_t sizeIncludingExtra;
+ 
+ private:
++	[[nodiscard]] constexpr uint32_t samplesForPositions(ptrdiff_t positions) const {
++		if (isNative()) {
++			return positions;
++		}
++		return ((uint64_t)positions * kMaxSampleValue) / std::max(spinRateNow_, (uint32_t)1);
++	}
++
+ 	struct ResampleConfig {
+ 		uint32_t actualSpinRate; // 1 is represented as 16777216
+ 	};
+diff --git a/src/deluge/gui/menu_item/delay/time_change.h b/src/deluge/gui/menu_item/delay/time_change.h
+index 0925b761..f1caf984 100644
+--- a/src/deluge/gui/menu_item/delay/time_change.h
++++ b/src/deluge/gui/menu_item/delay/time_change.h
+@@ -19,6 +19,7 @@
+ #include "gui/menu_item/selection.h"
+ #include "gui/ui/sound_editor.h"
+ #include "model/mod_controllable/mod_controllable_audio.h"
++#include "processing/sound/sound.h"
+ 
+ namespace deluge::gui::menu_item::delay {
+ 
+@@ -28,10 +29,16 @@ class TimeChange final : public Selection {
+ public:
+ 	using Selection::Selection;
+ 	void readCurrentValue() override {
++		// A sound from an older file that hasn't played yet: its choice made now, from its patching
++		if (soundEditor.currentSound != nullptr) {
++			soundEditor.currentSound->resolveDelayTimeChange(soundEditor.currentParamManager);
++		}
+ 		this->setValue(static_cast<int32_t>(soundEditor.currentModControllable->delay.timeChange));
+ 	}
+ 	void writeCurrentValue() override {
+-		soundEditor.currentModControllable->delay.timeChange = static_cast<Delay::TimeChange>(this->getValue());
++		Delay& delay = soundEditor.currentModControllable->delay;
++		delay.timeChange = static_cast<Delay::TimeChange>(this->getValue());
++		delay.timeChangeFromOldFile = false;
+ 	}
+ 	deluge::vector<std::string_view> getOptions() override {
+ 		using enum l10n::String;
+diff --git a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+index 383888c0..c0e650af 100644
+--- a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
++++ b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+@@ -1046,7 +1046,8 @@ Error ModControllableAudio::readTagFromFile(Deserializer& reader, char const* ta
+ 		delay.syncLevel = SYNC_LEVEL_NONE;
+ 		delay.highCut = Delay::kHighCutOff;
+ 		delay.lowCut = Delay::kLowCutOff;
+-		delay.timeChange = Delay::TimeChange::FADE; // mastertune-v14: also for files from before there was a choice
++		delay.timeChange = Delay::TimeChange::FADE; // mastertune-v14: or tape for older files, see below
++		delay.timeChangeFromOldFile = true;
+ 
+ 		while (*(tagName = reader.readNextTagOrAttributeName())) {
+ 
+@@ -1098,6 +1099,7 @@ doReadPatchedParam:
+ 			else if (!strcmp(tagName, "timeChange")) {
+ 				delay.timeChange =
+ 				    (reader.readTagOrAttributeValueInt() == 1) ? Delay::TimeChange::TAPE : Delay::TimeChange::FADE;
++				delay.timeChangeFromOldFile = false;
+ 				reader.exitTag("timeChange");
+ 			}
+ 			else if (!strcmp(tagName, "syncLevel")) {
+diff --git a/src/deluge/processing/sound/sound.cpp b/src/deluge/processing/sound/sound.cpp
+index b25e287c..49fadad2 100644
+--- a/src/deluge/processing/sound/sound.cpp
++++ b/src/deluge/processing/sound/sound.cpp
+@@ -2319,6 +2319,9 @@ void Sound::render(ModelStackWithThreeMainThings* modelStack, StereoSample* outp
+ 	}
+ 	delayWorkingState.userDelayRate = paramFinalValues[params::GLOBAL_DELAY_RATE - params::FIRST_GLOBAL];
+ 	uint32_t timePerTickInverse = playbackHandler.getTimePerInternalTickInverse(true);
++	if (delay.timeChangeFromOldFile) [[unlikely]] {
++		resolveDelayTimeChange(paramManager);
++	}
+ 	delay.setupWorkingState(delayWorkingState, timePerTickInverse, numVoicesAssigned != 0);
+ 	delayWorkingState.analog_saturation = 8;
+ 
+@@ -3222,6 +3225,24 @@ Error Sound::readFromFile(Deserializer& reader, ModelStackWithModControllable* m
+ 	return Error::NONE;
+ }
+ 
++// mastertune-v14: the fade mode, the default since v14, turns a modulated delay time into steps, one fade per new
++// time. A sound saved before there was a choice, with something patched to its delay rate, keeps the tape mode it was
++// made with. Decided when it first renders, or its delay menu opens: the patch cables of a song's sounds are only read
++// with its clips.
++void Sound::resolveDelayTimeChange(ParamManager* paramManager) {
++	if (!delay.timeChangeFromOldFile || !paramManager || !paramManager->containsAnyMainParamCollections()) {
++		return;
++	}
++	delay.timeChangeFromOldFile = false;
++	PatchCableSet* patchCableSet = paramManager->getPatchCableSet();
++	for (int32_t c = 0; c < patchCableSet->numPatchCables; c++) {
++		if (patchCableSet->patchCables[c].destinationParamDescriptor.getJustTheParam() == params::GLOBAL_DELAY_RATE) {
++			delay.timeChange = Delay::TimeChange::TAPE;
++			return;
++		}
++	}
++}
++
+ Error Sound::createParamManagerForLoading(ParamManagerForTimeline* paramManager) {
+ 
+ 	Error error = paramManager->setupWithPatching();
+diff --git a/src/deluge/processing/sound/sound.h b/src/deluge/processing/sound/sound.h
+index fc8f5a61..efacc2d6 100644
+--- a/src/deluge/processing/sound/sound.h
++++ b/src/deluge/processing/sound/sound.h
+@@ -251,6 +251,9 @@ public:
+ 	void fastReleaseAllVoices(ModelStackWithSoundFlags* modelStack);
+ 	void recalculatePatchingToParam(uint8_t p, ParamManagerForTimeline* paramManager);
+ 	void doneReadingFromFile();
++	/// mastertune-v14: for a file from before there was a choice of what a change of the delay time does, the tape
++	/// mode if something is patched to the delay rate (see Delay::timeChangeFromOldFile)
++	void resolveDelayTimeChange(ParamManager* paramManager);
+ 	virtual void setupPatchingForAllParamManagers(Song* song) {}
+ 	void compensateVolumeForResonance(ModelStackWithThreeMainThings* modelStack);
+ 	// void channelAftertouchReceivedFromInputMIDIChannel(int32_t newValue);
+-- 
+2.43.0
+

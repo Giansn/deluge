@@ -4,10 +4,11 @@ what the firmware does with the L2 at boot, and the cache maintenance before a D
 
   boot:   the controller is set up once, after the L1: disabled, emptied (invalidate by way), data locked out
           (D lockdown 0xFF...), instructions open, enabled. Data version: prefetch on (aux control bits 28, 29) and
-          data unlocked once at the end of the boot (emptied again first). Code version: no maintenance by address,
-          data locked all along. v13: the controller is never touched.
-  OLED:   a transfer through the real oledSelectingComplete() (the path of every OLED frame): data version, every
-          line of the image cleaned and invalidated in the L2 (and synced) before the DMA starts.
+          data unlocked once at the end of the boot, right after cleaning and invalidating all ways and a sync. Code
+          version: data locked all along. v13/v14: the controller is never touched.
+  OLED:   a transfer through the real oledSelectingComplete() (the path of every OLED frame): both L2 versions clean
+          and invalidate every line of the image in the L2 (and sync) before the DMA starts (the code version too:
+          a speculative instruction fetch can bring a line of a DMA buffer into the L2).
   ranges: invalidate_range_all_caches() on unaligned ranges: each line exactly once, then a sync.
   chainloader: L2CacheCleanFlushAllAndDisable(): cleaned and invalidated by way, synced, disabled (only in builds
           with ENABLE_SYSEX_LOAD, which release builds leave off).
@@ -15,7 +16,7 @@ what the firmware does with the L2 at boot, and the cache maintenance before a D
 The SD transfers can't run here (the harness reads and writes the card image below FatFS); their maintenance is the
 same function, checked in the source and by 'ranges'.
 
-Usage: l2_emu.py <deluge.elf> <v13 | l2i | l2d>
+Usage: l2_emu.py <deluge.elf> <v13 | v14 | l2i | l2d>
   TOOLS: the toolchain prefix (arm-none-eabi-), if the ELF is not in a firmware tree's build/Release"""
 import os
 import sys
@@ -69,8 +70,8 @@ def pa_lines(log, op="clean_inv_pa"):
 
 
 def check_boot(check, log, variant):
-    if variant == "v13":
-        check(not log, f"v13: the L2 controller is never touched ({len(log)} accesses)")
+    if variant in ("v13", "v14"):
+        check(not log, f"{variant}: the L2 controller is never touched ({len(log)} accesses)")
         return
     enable = [i for i, (n, v, _) in enumerate(log) if n == "control" and v & 1]
     check(len(enable) == 1, f"enabled once ({len(enable)})")
@@ -87,7 +88,6 @@ def check_boot(check, log, variant):
     aux = [v for n, v, _ in before if n == "aux_control"]
     if variant == "l2i":
         check(not aux, "code version: prefetch untouched")
-        check(not pa_lines(log) and "clean_inv_way" not in names(log), "code version: no maintenance by address")
         later = [v for n, v, _ in log[enable[0]:] if n in ("d_lockdown", "i_lockdown")]
         check(not later, "code version: data stays locked out")
     else:
@@ -96,8 +96,9 @@ def check_boot(check, log, variant):
         unlock = [k for k, (n, v, _) in enumerate(after) if n == "d_lockdown"]
         check(len(unlock) == 1 and after[unlock[0]][1] == UNLOCKED, "data version: data unlocked once")
         if unlock:
-            check(unlock[0] >= 1 and after[unlock[0] - 1][0] == "inv_way" and after[unlock[0] - 1][1] == 0xFF,
-                  "  ... right after invalidating all ways")
+            before_unlock = [(n, v) for n, v, _ in after[max(0, unlock[0] - 2):unlock[0]]]
+            check(before_unlock == [("clean_inv_way", 0xFF), ("sync", 0)],
+                  f"  ... right after cleaning and invalidating all ways and a sync: {before_unlock}")
 
 
 def check_oled(check, emu, variant):
@@ -119,8 +120,8 @@ def check_oled(check, emu, variant):
     before = new[:k]
     lines = pa_lines(before)
     want = list(range(address & ~(LINE - 1), address + size, LINE))
-    if variant == "l2d":
-        check(sorted(lines) == want, f"data version: every line of the image cleaned and invalidated in the L2 "
+    if variant in ("l2i", "l2d"):
+        check(sorted(lines) == want, f"{variant}: every line of the image cleaned and invalidated in the L2 "
               f"({len(lines)} of {len(want)})")
         last_pa = max(i for i, (n, _, _) in enumerate(before) if n.endswith("_pa")) if lines else -1
         check(any(n == "sync" for n, _, _ in before[last_pa + 1:]), "  ... then synced, before the DMA starts")
@@ -176,10 +177,9 @@ def main():
     check_boot(check, list(emu.l2_log), variant)
     print("OLED:")
     check_oled(check, emu, variant)
-    if variant != "v13":
-        if variant == "l2d":
-            print("ranges:")
-            check_ranges(check, emu)
+    if variant in ("l2i", "l2d"):
+        print("ranges:")
+        check_ranges(check, emu)
         print("chainloader:")
         check_chainloader(check, emu)
     print(f"{'all ok' if not check.failed else str(check.failed) + ' FAILED'}")

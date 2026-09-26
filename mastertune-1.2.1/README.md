@@ -1,6 +1,6 @@
 # Deluge 1.2.1 mit Master Tune
 
-Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern, v12 einen Frequenz-Drone mit bis zu 16 Tönen, v13 mehr Leistung, einen Ping-Pong-Arp, flimmerfreies Dimmen der Pads, genaueres MIDI und einen überarbeiteten Drone.
+Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern, v12 einen Frequenz-Drone mit bis zu 16 Tönen, v13 mehr Leistung, einen Ping-Pong-Arp, flimmerfreies Dimmen der Pads, genaueres MIDI und einen überarbeiteten Drone, v14 ein Reverb ohne Wabbeln, ein Delay ohne Tonhöhensprung und einen Countdown beim Song-Wechsel.
 
 | Datei | Version (Settings → Firmware version) | Inhalt |
 |---|---|---|
@@ -16,10 +16,11 @@ Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit
 | `deluge-1.2.1-mastertune-v11-dc37f26a.bin` | `1.2.1-mastertune-v11-dc37f26a` | v10 + Delay: saubere Wiederholungen, kein Knacken bei Zeitänderungen, LPF und HPF im Feedback; kein Knacksen beim Speichern |
 | `deluge-1.2.1-mastertune-v12-f89b478c.bin` | `1.2.1-mastertune-v12-f89b478c` | v11 + Frequenz-Drone: 16 Töne, binaural, monaural, isochron, Tempo-Sync, Sidechain, eigene Ansicht |
 | `deluge-1.2.1-mastertune-v13-9b861a5c.bin` | `1.2.1-mastertune-v13-9b861a5c` | v12-perf + Drone-Feinschliff, Ping-Pong-Arp, flimmerfreies Dimmen, schnelleres Speichern, genaueres MIDI, CPU-Monitor in Worten |
+| `@@V14_BIN@@` | `@@V14_VERSION@@` | v13 + Reverb ohne Wabbeln (Modulation, Pre-delay), Delay ohne Tonhöhensprung, Countdown beim Song-Wechsel, zwei Korrekturen für die Karte |
 
-SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7` (vollständig: `sha256sum *.bin`).
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7`, v14 `@@V14_SHA_SHORT@@` (vollständig: `sha256sum *.bin`).
 Nachgeprüft am 26.09.2026: Jede Version v2–v12 wurde aus ihrem Commit in einer eigenen Arbeitskopie komplett neu gebaut, mit 441–448 neu übersetzten Dateien. Jede SHA-256 stimmt mit der ausgelieferten Datei überein.
-Quellcode: `patches/0001` bis `0028` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 sind die Leistungsversion v12-perf, gleich wie `perf/0001`–`0003`).
+Quellcode: `patches/0001` bis `0035` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 sind die Leistungsversion v12-perf, gleich wie `perf/0001`–`0003`), v14 = 0001–0035.
 
 ## v3 und v4: Unterschiede
 
@@ -331,7 +332,7 @@ Das OLED zeigt Ton, Modus, Tonhöhe und den Beat mit seinem Bereich (Delta, Thet
   - Einer ist nicht hörbar (externe Clock), wurde aber trotzdem verbessert.
   - Einer ist widerlegt (MIDI Follow verhält sich wie im Song-View).
 
-## Leistungsversion und Messversion (zu v12)
+## Leistungs-, Mess- und Testversionen
 
 - **`perf/`:** v12-perf, `deluge-1.2.1-mastertune-v12-perf-ef5caee8.bin`, SHA-256 `d08b09bc…19ce4060c`.
   - v12 mit bitgleich schnelleren Filtern und Oszillatoren: im Volllast-Test −20 % Rechenlast.
@@ -340,6 +341,9 @@ Das OLED zeigt Ton, Modus, Tonhöhe und den Beat mit seinem Bereich (Delta, Thet
 - **`diag/`:** die Messversion v12-diag, v12 plus CPU-Monitor.
   - Zeigt CPU-Last, Stimmen, Qualitätsabsenkung und SD-Zeiten auf dem OLED und per USB-MIDI.
   - Dazu `tools/cpu_monitor.html` und ein Test-Song. Details: `diag/README.md`.
+- **`l2test/`:** zwei Testversionen von v14 mit eingeschaltetem L2-Cache, einmal nur für Code, einmal auch für Daten.
+  - Zum Messen mit dem CPU-Monitor am Gerät, noch nicht für Auftritte.
+  - Anleitung, Risiken und Prüfungen: `l2test/README.md`.
 - **`research/OPTIMIERUNG.md`:** alle Messungen und Erkenntnisse zur Optimierung.
 
 ## v13: mehr Leistung, Ping-Pong-Arp, flimmerfreies Dimmen, genaueres MIDI, Drone-Feinschliff
@@ -401,6 +405,56 @@ v13 enthält v12 und die Leistungsversion v12-perf, dazu die folgenden Neuerunge
 - **Pads:** was an den PIC geht, auf allen 26 Helligkeitsstufen, On und Off (`tests/pads`).
 - **Song:** Der Volllast-Song klingt bit-gleich, soweit nichts Hörbares geändert wurde.
 - **Build:** ohne neue Warnungen. Zwei komplette Neubauten ergeben dieselbe SHA-256 (je 465 neu übersetzte Dateien, `9ff41174…7c4c50e7`). Die Patches ergeben mit `git am` auf `release_1_2_1` genau diesen Stand.
+
+## v14: Reverb ohne Wabbeln, Delay ohne Tonhöhensprung, Countdown beim Song-Wechsel
+
+v14 enthält v13 und bringt drei Neuerungen und zwei Korrekturen beim Lesen und Schreiben der Karte. **Auf dem Gerät ist nichts davon getestet.** Geprüft ist alles im Emulator mit dem Maschinencode der Firmware, auf dem PC mit dem Code von Reverb und Delay und von unabhängigen Gegenprüfern.
+
+**Reverb: steht still, klarer Einsatz** (Menü Reverb, im Song und in jedem Sound, nach LPF):
+- **Warum es wabbelte:** Die Modelle Mutable und Digital lesen ihre Verzögerungen an langsam wandernden Stellen. Das soll metallisches Klingeln verhindern. Bei einem gehaltenen Ton schwankt der Hall dadurch um etwa 16 dB in der Lautstärke und um 5 Cent (Mutable) bzw. 19 Cent (Digital) in der Tonhöhe. Das ist das Wabbeln und ein guter Teil des Verwaschenen.
+  - Seit v10 lief diese Bewegung beim Mutable-Modell im Tempo des Originals, 16-mal schneller als in 1.2.1.
+- **Modulation 0–50, neu Standard 0:**
+  - Bei 0 steht der Hall still: Ein gehaltener Ton bleibt darin auf 0,2 dB genau. Die Resonanzen ragen beim Mutable-Modell etwa 3 dB mehr heraus als mit voller Bewegung, beim Digital-Modell nicht.
+  - 50 klingt wie v10 bis v13.
+  - Für Freeverb nicht vorhanden, Freeverb moduliert nicht.
+- **Pre-delay 0–100 ms, Standard 0 (alle Modelle):** Der Hall setzt später ein, der trockene Klang steht zuerst für sich. 10–30 ms machen den Hall deutlich klarer, ohne dass er abgesetzt wirkt.
+- **Tipps gegen Verwaschenes:** HPF auf etwa 25 (190 Hz) nimmt den Bass aus dem Hall. Etwas mehr Damping macht die Fahne dunkler. Ohne Modulation klingen beim Mutable-Modell die Höhen etwas länger nach; wem das zu hell ist, nimmt Damping ein paar Schritte höher.
+- Songs ohne diese Einstellungen laden mit Modulation 0 und ohne Pre-delay, also stiller als bisher. Wer den alten Klang will, stellt Modulation auf 50.
+
+**Delay: Zeitänderung ohne Tonhöhensprung** (Menü Delay, nach Type):
+- **Time change: Fade (neu, Standard) oder Tape.**
+  - Bisher bog eine neue Delay-Zeit die Echos in der Tonhöhe, denn was schon im Puffer lag, spielte schneller oder langsamer ab. Bei 25 % kürzerer Zeit waren das +386 Cent, und das Feedback trug es weiter.
+  - Mit **Fade** startet die neue Zeit in einem frischen Puffer. Der Eingang blendet in 23 ms hinüber, der alte Puffer spielt seine Echos mit alter Zeit und Tonhöhe aus. Die Tonhöhe bleibt auf 0,01 Cent genau.
+  - **Tape** klingt wie bisher, mit Tonhöhengleiten.
+- **Alte Songs:** Delays mit moduliertem oder automatisiertem Delay-Rate laden als Tape, damit sie klingen wie bisher. Alle anderen laden als Fade.
+- **Mitbehoben:**
+  - kein Klick mehr beim ersten Echo nach einer Pause
+  - das Ende der Echos blendet aus statt abzureissen
+  - Delays bis 4 s ohne Aliasing (Puffer bis 4 statt 2 s)
+  - Fehler aus 1.2.1: Unter 3 % Feedback warf der Delay seinen Puffer bei jeder Runde weg.
+- **Rechenlast:** +0,8 % pro Delay im Ruhezustand, +1,1 % während eines Wechsels.
+
+**Song-Wechsel mit Countdown** (Song laden, während einer spielt):
+- **Countdown:** Solange Wiederholungen bleiben, zählt er die Loops, in der letzten Loop die Takte, im letzten Takt die Beats 4-3-2-1. Er stimmt auch mit Swing und externer MIDI-Clock.
+  - **OLED:** dauerhaft in der Titelzeile, z. B. «Bars remaining 3». Die Songliste mit dem nächsten Song bleibt sichtbar.
+  - **7-Segment:** die Zahl, blinkend solange Loops gezählt werden. Beats tragen einen Punkt, damit man sie von Takten unterscheidet.
+- **Regler bis zum Wechsel:** Ab LOAD steuern Goldknöpfe und Mod-Tasten die Master-FX des laufenden Songs, auch wenn Affect Entire aus ist. Der neue Song behält seine eigenen Werte. Beim Wechsel zeigt nichts mehr auf den alten Song.
+
+**Karte: zwei seltene Fehler behoben** (gefunden vom Gegenprüfer der L2-Testversionen):
+- **Cache-Pflege aus 1.2.1:** Rund um jede Übertragung von und zur Karte konnte ein gleichzeitiger Schreibzugriff direkt neben dem Puffer verloren gehen. Jetzt so, wie Linux es seit 2014 macht.
+- **SD-Karte über USB (seit v7):** Die Puffer teilten Cache-Zeilen mit der Speicherverwaltung. Beim Kopieren konnten so in seltenen Fällen falsche Bytes in die Datei geraten. Jetzt haben sie eigene Cache-Zeilen.
+
+**Geprüft:**
+- **Reverb** (`tests/reverb`, Code der Firmware auf dem PC):
+  - 47 Prüfungen aus v10 bei voller Modulation, alle bestanden.
+  - 14 neue Prüfungen: Ein gehaltener Ton bleibt bei Modulation 0 auf 0,17 dB (Mutable) bzw. 0,36 dB (Digital) genau, bei 50 schwankt er um 5,6 dB bzw. 19,5 dB. Pre-delay verschiebt den Hall Bit für Bit genau, und beim Einschalten kommt kein alter Klang heraus.
+- **Song im Emulator:**
+  - Mit Modulation 50 klingt der Volllast-Song beim Mutable-Modell Bit für Bit wie v13.
+  - Beim Digital-Modell weichen 176 von 705 792 Samples um 1 LSB ab, eine Rundungsfrage.
+- **Delay** (`tests/delay`): Tonhöhe, Artefakte, erstes Echo und Echo-Ende auf dem PC. Im Emulator zusätzlich die Wahl Fade/Tape für alte Songs.
+- **Song-Wechsel** (`tests/songchange`, Emulator): Countdown in rund 5000 Audio-Fenstern, höchstens 15 ms später als die Takt- und Beatgrenzen. Dazu kommen Swing, externe Clock mit 123 BPM, Stopp während des Wartens und die Regler auf dem laufenden Song. Ein Gegenprüfer fand zwei kleine Punkte, beide sind behoben (Punkt für Beats, hängendes Popup).
+- **SD-Karte über USB** (`tests/smsysex`): Host-Test mit AddressSanitizer auf einer FAT32-RAM-Disk, alle Prüfungen bestanden.
+- **Build:** @@V14_BUILD_NOTE@@
 
 ## Bedienung
 

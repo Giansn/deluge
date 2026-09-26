@@ -1,0 +1,800 @@
+From f62b97d4072f7743aacf77ca74878f37f7373976 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 20:56:34 +0000
+Subject: [PATCH 29/35] Delay: time change without pitch bend (Fade), clean
+ first repeat and tail, 4 s buffers
+
+- New per-delay setting "Time change" (Delay menu, after Type): Fade (default)
+  or Tape. In Fade, a new delay time starts in a fresh buffer at its own speed;
+  what goes into the delay crossfades into it over 1024 samples, while the old
+  buffer plays out what it holds at its own speed, so no repeat changes pitch
+  (measured within 0.01 cent) and nothing clicks. A new time is taken after
+  31 ms without change or 125 ms of turning, one change at a time, within a
+  0.05 % tolerance for tempo drift. Tape is the previous behaviour (pitch glide),
+  bit-exact apart from the fixes below. Saved as delay attribute timeChange
+  (0 fade, 1 tape); files without it load as Fade.
+- First repeat: the first buffer of a delay was only read after its content had
+  come round, at the end of that block, losing up to 128 samples of the first
+  repeat (a click on every first echo after a pause). It now takes over while
+  the read position is in a cleared stretch (1024 samples cleared).
+- End of the repeats: the last time round before the delay gives up fades out
+  instead of cutting off 42 to 60 dB down; comes back if sound comes in.
+- Largest buffer 4 s (was 2 s): 2 to 4 s delays no longer resample (images of a
+  15 kHz tone only 7 dB down at 2.5 s before).
+- A tape-mode buffer made right after a fade glides from the rate the primary
+  buffer really ran at (no step when it takes over).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/delay/delay.cpp                | 275 +++++++++++++-----
+ src/deluge/dsp/delay/delay.h                  |  30 ++
+ src/deluge/dsp/delay/delay_buffer.cpp         |   8 +-
+ src/deluge/dsp/delay/delay_buffer.h           |  53 +++-
+ src/deluge/gui/l10n/english.json              |   6 +-
+ src/deluge/gui/l10n/g_english.cpp             |   4 +
+ src/deluge/gui/l10n/g_seven_segment.cpp       |   3 +
+ src/deluge/gui/l10n/seven_segment.json        |   5 +-
+ src/deluge/gui/l10n/strings.h                 |   6 +
+ src/deluge/gui/menu_item/delay/time_change.h  |  42 +++
+ src/deluge/gui/ui/menus.cpp                   |   4 +
+ .../mod_controllable_audio.cpp                |   8 +
+ 12 files changed, 374 insertions(+), 70 deletions(-)
+ create mode 100644 src/deluge/gui/menu_item/delay/time_change.h
+
+diff --git a/src/deluge/dsp/delay/delay.cpp b/src/deluge/dsp/delay/delay.cpp
+index 2d8d8fc9..4ba0ffaf 100644
+--- a/src/deluge/dsp/delay/delay.cpp
++++ b/src/deluge/dsp/delay/delay.cpp
+@@ -101,6 +101,7 @@ void Delay::setupWorkingState(Delay::State& workingState, uint32_t timePerIntern
+ 	// BUG: we want to be able to reduce the 256 to 1, but for some reason, the
+ 	// patching engine spits out 112 even when this should be 0...
+ 	bool mightDoDelay = (workingState.delayFeedbackAmount >= 256 && (anySoundComingIn || repeatsUntilAbandon));
++	soundComingIn = anySoundComingIn;
+ 
+ 	if (mightDoDelay) {
+ 
+@@ -205,6 +206,9 @@ void Delay::discardBuffers() {
+ 	prevFeedback = 0;
+ 	repeatsUntilAbandon = 0;
+ 	feedbackLastTime = -1;
++	fading = false;
++	fadeWaitedSamples = 0;
++	tailGain = 2147483647;
+ }
+ 
+ void Delay::initializeSecondaryBuffer(int32_t newNativeRate, bool makeNativeRatePreciseRelativeToOtherBuffer,
+@@ -228,12 +232,55 @@ void Delay::initializeSecondaryBuffer(int32_t newNativeRate, bool makeNativeRate
+ 	sizeLeftUntilBufferSwap = secondaryBuffer.size() + 5;
+ }
+ 
++// mastertune-v14: whether a buffer holds the delay time for a rate, for the fade mode: within a sample and 0.05 % (a
++// tempo that drifts by less leaves it), and at its own speed, unless the time is longer than the largest buffer
++bool Delay::fadeBufferFits(const DelayBuffer& buffer, int32_t rate) {
++	if (rate == buffer.rate() && buffer.isNative()) {
++		return true; // Most of the time, without dividing
++	}
++	int64_t want = DelayBuffer::delaySamplesForRate(rate);
++	int64_t have = DelayBuffer::delaySamplesForRate(buffer.rate());
++	if (std::abs(want - have) > 1 + (want >> 11)) {
++		return false;
++	}
++	return buffer.isNative() || DelayBuffer::getIdealBufferSizeFromRate(rate).second;
++}
++
++// mastertune-v14: in the fade mode, starts a change of time into a new buffer when the time has moved and settled (or
++// kept moving for a while). One change at a time: a further one waits until the old buffer has played out.
++void Delay::prepareFade(int32_t rate, int32_t numSamples) {
++	if (fading || !primaryBuffer.isActive()) {
++		return; // The first buffer fills at the time it began with, and becomes the primary one, before any change
++	}
++	if (secondaryBuffer.isActive()) {
++		secondaryBuffer.discard(); // A copy the tape mode was making when it was switched to the fade mode
++	}
++	if (fadeBufferFits(primaryBuffer, rate)) {
++		fadeWaitedSamples = 0;
++		return;
++	}
++	fadeWaitedSamples += numSamples;
++	if (countCyclesWithoutChange < kFadeSettleSamples && fadeWaitedSamples < kFadeMaxWaitSamples) {
++		return;
++	}
++	fadeWaitedSamples = 0;
++	if (secondaryBuffer.init(rate) != Error::NONE) {
++		return; // No memory for it now: try again after another wait
++	}
++	fading = true;
++	fadeSecondaryReadable = false;
++	fadeCrossfadeDone = 0;
++	int32_t oldTime = (int32_t)std::min(DelayBuffer::delaySamplesForRate(primaryBuffer.rate()), (uint32_t)1 << 30);
++	// What goes in last, at the end of the crossfade, comes out one time later (plus the reach of the resampling
++	// kernels, at most 2 positions of the buffer either side)
++	fadeSamplesLeft = kFadeCrossfadeSamples + oldTime + (oldTime >> 13) + 64;
++}
++
+ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingState) {
+ 	if (!delayWorkingState.doDelay) {
+ 		return;
+ 	}
+ 
+-	int32_t ratePrevious = userRateLastTime;
+ 	if (delayWorkingState.userDelayRate != userRateLastTime) {
+ 		userRateLastTime = delayWorkingState.userDelayRate;
+ 		countCyclesWithoutChange = 0;
+@@ -242,48 +289,64 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 		countCyclesWithoutChange += buffer.size();
+ 	}
+ 
+-	// If just a single buffer is being used for reading and writing, we can consider making a 2nd buffer
+-	if (!secondaryBuffer.isActive()) {
+-
+-		// If resampling previously recorded as happening, or just about to be recorded as happening
+-		if (primaryBuffer.resampling() || delayWorkingState.userDelayRate != primaryBuffer.nativeRate()) {
++	// mastertune-v14: in the fade mode, and until a change of time made in it is done, each buffer keeps the speed it
++	// was made for
++	if (timeChange == TimeChange::FADE || fading) {
++		prepareFade(delayWorkingState.userDelayRate, (int32_t)buffer.size());
++		primaryBuffer.setupForRender(primaryBuffer.rate(), buffer.size());
++		if (secondaryBuffer.isActive()) {
++			secondaryBuffer.setupForRender(secondaryBuffer.rate(), buffer.size());
++		}
++	}
+ 
+-			// If delay speed has settled for a split second...
+-			if (countCyclesWithoutChange >= (kSampleRate >> 5)) {
+-				// D_PRINTLN("settling");
+-				// mastertune-v11: also when the new buffer comes out the same size as this one. 1.2.1 refused that,
+-				// which left the delay resampling for good after most changes of the delay time, even the knob moved
+-				// and back, and then every repeat lost treble (9 dB at 10 kHz). Only a delay longer than the largest
+-				// buffer has to go on resampling, and must not keep making new buffers.
+-				bool newBufferCanBeNative =
+-				    !DelayBuffer::getIdealBufferSizeFromRate(delayWorkingState.userDelayRate).second;
+-				initializeSecondaryBuffer(delayWorkingState.userDelayRate, true, newBufferCanBeNative);
+-			}
++	else {
++		// The rate the primary buffer spun for in the last block: the last one in the tape mode (so far always
++		// userRateLastTime), and its own after the fade mode (mastertune-v14)
++		int32_t ratePrevious = primaryBuffer.rate();
++
++		// If just a single buffer is being used for reading and writing, we can consider making a 2nd buffer
++		if (!secondaryBuffer.isActive()) {
++
++			// If resampling previously recorded as happening, or just about to be recorded as happening
++			if (primaryBuffer.resampling() || delayWorkingState.userDelayRate != primaryBuffer.nativeRate()) {
++
++				// If delay speed has settled for a split second...
++				if (countCyclesWithoutChange >= (kSampleRate >> 5)) {
++					// D_PRINTLN("settling");
++					// mastertune-v11: also when the new buffer comes out the same size as this one. 1.2.1 refused
++					// that, which left the delay resampling for good after most changes of the delay time, even the
++					// knob moved and back, and then every repeat lost treble (9 dB at 10 kHz). Only a delay longer
++					// than the largest buffer has to go on resampling, and must not keep making new buffers.
++					bool newBufferCanBeNative =
++					    !DelayBuffer::getIdealBufferSizeFromRate(delayWorkingState.userDelayRate).second;
++					initializeSecondaryBuffer(delayWorkingState.userDelayRate, true, newBufferCanBeNative);
++				}
+ 
+-			// If spinning at double native rate, there's no real need to be using such a big buffer, so make a new
+-			// (smaller) buffer at our new rate
+-			else if (delayWorkingState.userDelayRate >= (primaryBuffer.nativeRate() << 1)) {
+-				initializeSecondaryBuffer(delayWorkingState.userDelayRate, false);
+-			}
++				// If spinning at double native rate, there's no real need to be using such a big buffer, so make a
++				// new (smaller) buffer at our new rate
++				else if (delayWorkingState.userDelayRate >= (primaryBuffer.nativeRate() << 1)) {
++					initializeSecondaryBuffer(delayWorkingState.userDelayRate, false);
++				}
+ 
+-			// If spinning below native rate, the quality's going to be suffering, so make a new buffer whose native
+-			// rate is half our current rate (double the quality). (mastertune-v11: from 0.8x down. The cubic kernel
+-			// is fine above that, and a delay time wobbling around its setting no longer makes a new buffer each
+-			// time it goes a little longer, and a small step each time the buffers change over.)
+-			else if ((int64_t)delayWorkingState.userDelayRate * 5 < (int64_t)primaryBuffer.nativeRate() * 4) {
+-				initializeSecondaryBuffer(delayWorkingState.userDelayRate >> 1, false);
++				// If spinning below native rate, the quality's going to be suffering, so make a new buffer whose
++				// native rate is half our current rate (double the quality). (mastertune-v11: from 0.8x down. The
++				// cubic kernel is fine above that, and a delay time wobbling around its setting no longer makes a new
++				// buffer each time it goes a little longer, and a small step each time the buffers change over.)
++				else if ((int64_t)delayWorkingState.userDelayRate * 5 < (int64_t)primaryBuffer.nativeRate() * 4) {
++					initializeSecondaryBuffer(delayWorkingState.userDelayRate >> 1, false);
++				}
+ 			}
+ 		}
+-	}
+ 
+-	// Figure some stuff out for the primary buffer
+-	primaryBuffer.setupForRender(delayWorkingState.userDelayRate, buffer.size());
++		// Figure some stuff out for the primary buffer
++		primaryBuffer.setupForRender(delayWorkingState.userDelayRate, buffer.size());
+ 
+-	// Figure some stuff out for the secondary buffer - only if it's active. (mastertune-v11: a new one glides along
+-	// with the primary buffer, see setupForRender())
+-	if (secondaryBuffer.isActive()) {
+-		secondaryBuffer.setupForRender(delayWorkingState.userDelayRate, buffer.size(),
+-		                               primaryBuffer.isActive() ? ratePrevious : 0);
++		// Figure some stuff out for the secondary buffer - only if it's active. (mastertune-v11: a new one glides
++		// along with the primary buffer, see setupForRender())
++		if (secondaryBuffer.isActive()) {
++			secondaryBuffer.setupForRender(delayWorkingState.userDelayRate, buffer.size(),
++			                               primaryBuffer.isActive() ? ratePrevious : 0);
++		}
+ 	}
+ 
+ 	bool wrapped = false;
+@@ -292,9 +355,7 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 
+ 	GeneralMemoryAllocator::get().checkStack("delay");
+ 
+-	StereoSample* primaryBufferOldPos;
+-	uint32_t primaryBufferOldLongPos;
+-	uint8_t primaryBufferOldLastShortPos;
++	DelayBuffer::Position primaryBufferOldPosition{};
+ 
+ 	// If nothing to read yet, easy
+ 	if (!primaryBuffer.isActive()) {
+@@ -304,9 +365,7 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 	// Or...
+ 	else {
+ 
+-		primaryBufferOldPos = &primaryBuffer.current();
+-		primaryBufferOldLongPos = primaryBuffer.longPos;
+-		primaryBufferOldLastShortPos = primaryBuffer.lastShortPos;
++		primaryBufferOldPosition = primaryBuffer.position();
+ 
+ 		// Native read
+ 		if (primaryBuffer.isNative()) {
+@@ -324,29 +383,64 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 				int32_t primaryStrength2 = primaryBuffer.advance([&] {
+ 					wrapped = primaryBuffer.clearAndMoveOn() || wrapped; //<
+ 				});
++				sample = primaryBuffer.readResampled(primaryStrength2);
++			}
++		}
++	}
+ 
+-				StereoSample* nextPos = &primaryBuffer.current() + 1;
+-				if (nextPos == primaryBuffer.end()) {
+-					nextPos = primaryBuffer.begin();
++	// mastertune-v14: while the time changes in the fade mode, the new buffer plays too, once what went into it comes
++	// round. Before that, it holds whatever the memory held.
++	DelayBuffer::Position secondaryBufferOldPosition{};
++	if (fading) {
++		wrapped = false; // Counting the repeats by the new buffer, as the tape mode does while making one
++		secondaryBufferOldPosition = secondaryBuffer.position();
++		if (secondaryBuffer.isNative()) {
++			for (StereoSample& sample : working_buffer) {
++				if (secondaryBuffer.clearAndMoveOn()) {
++					wrapped = true;
++					fadeSecondaryReadable = true;
++				}
++				if (fadeSecondaryReadable) {
++					sample.l = add_saturate(sample.l, secondaryBuffer.current().l);
++					sample.r = add_saturate(sample.r, secondaryBuffer.current().r);
+ 				}
+-				StereoSample* afterNextPos = nextPos + 1;
+-				if (afterNextPos == primaryBuffer.end()) {
+-					afterNextPos = primaryBuffer.begin();
++			}
++		}
++		else {
++			for (StereoSample& sample : working_buffer) {
++				int32_t secondaryStrength2 = secondaryBuffer.advance([&] {
++					if (secondaryBuffer.clearAndMoveOn()) {
++						wrapped = true;
++						fadeSecondaryReadable = true;
++					}
++				});
++				if (fadeSecondaryReadable) {
++					StereoSample read = secondaryBuffer.readResampled(secondaryStrength2);
++					sample.l = add_saturate(sample.l, read.l);
++					sample.r = add_saturate(sample.r, read.r);
+ 				}
+-				float t = primaryStrength2 * (1.f / 65536.f);
+-				auto hermite = [t](float xm1, float x0, float x1, float x2) {
+-					float c1 = 0.5f * (x1 - xm1);
+-					float c2 = xm1 - 2.5f * x0 + 2.f * x1 - 0.5f * x2;
+-					float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
+-					return ((c3 * t + c2) * t + c1) * t + x0;
+-				};
+-				const StereoSample& previous = primaryBuffer.history;
+-				sample.l = (int32_t)hermite(previous.l, primaryBuffer.current().l, nextPos->l, afterNextPos->l);
+-				sample.r = (int32_t)hermite(previous.r, primaryBuffer.current().r, nextPos->r, afterNextPos->r);
+ 			}
+ 		}
+ 	}
+ 
++	// mastertune-v14: the last time round before the delay gives up fades out, so the repeats don't stop dead (1.2.1
++	// cut them off 42 to 60 dB down, a tick in the quiet). It comes back if sound comes in again.
++	constexpr int32_t kFullLevel = 2147483647;
++	bool lastTimeRound = (!soundComingIn && repeatsUntilAbandon == 1);
++	if (lastTimeRound || tailGain < kFullLevel) {
++		int32_t step = kFullLevel / kFadeCrossfadeSamples; // Back up quickly
++		if (lastTimeRound) {
++			const DelayBuffer& newest = secondaryBuffer.isActive() ? secondaryBuffer : primaryBuffer;
++			uint32_t timeRound = std::max(DelayBuffer::delaySamplesForRate(newest.rate()), (uint32_t)1);
++			step = -(int32_t)std::max((uint32_t)kFullLevel / timeRound, (uint32_t)1);
++		}
++		for (StereoSample& sample : working_buffer) {
++			tailGain = (int32_t)std::clamp((int64_t)tailGain + step, (int64_t)0, (int64_t)kFullLevel);
++			sample.l = multiply_32x32_rshift32(sample.l, tailGain) << 1;
++			sample.r = multiply_32x32_rshift32(sample.r, tailGain) << 1;
++		}
++	}
++
+ 	// mastertune-v11: the feedback glides from the last block's value instead of jumping, which zippered when it
+ 	// was turned or modulated
+ 	int32_t feedback = (feedbackLastTime >= 0) ? feedbackLastTime : delayWorkingState.delayFeedbackAmount;
+@@ -463,15 +557,65 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 		output += current;
+ 	}
+ 
++	// mastertune-v14: while the time changes in the fade mode, what goes into the delay fades out of the old buffer and
++	// into the new one, and the old one plays out what it holds before the new one takes over
++	if (fading) {
++		auto writeInto = [&](DelayBuffer& delayBuffer, const DelayBuffer::Position& from, auto gainAt) {
++			if (delayBuffer.isNative()) {
++				StereoSample* writePos = from.current - delaySpaceBetweenReadAndWrite + 1;
++				if (writePos < delayBuffer.begin()) {
++					writePos += delayBuffer.sizeIncludingExtra;
++				}
++				int32_t i = 0;
++				for (StereoSample sample : working_buffer) {
++					int32_t gain = gainAt(i++);
++					delayBuffer.writeNativeAndMoveOn({.l = multiply_32x32_rshift32(sample.l, gain) << 1,
++					                                  .r = multiply_32x32_rshift32(sample.r, gain) << 1},
++					                                 &writePos);
++				}
++			}
++			else {
++				delayBuffer.setPosition(from);
++				delayBuffer.restartBlock();
++				int32_t i = 0;
++				for (StereoSample sample : working_buffer) {
++					int32_t strength2 = delayBuffer.advance([&] {
++						delayBuffer.moveOn(); //<
++					});
++					int32_t gain = gainAt(i++);
++					delayBuffer.writeResampled({.l = multiply_32x32_rshift32(sample.l, gain) << 1,
++					                            .r = multiply_32x32_rshift32(sample.r, gain) << 1},
++					                           65536 - strength2, strength2);
++				}
++			}
++		};
++		// Rising from 0 to full over the crossfade
++		constexpr int32_t kStep = kFullLevel / kFadeCrossfadeSamples;
++		auto newGain = [&](int32_t i) {
++			return (int32_t)std::min((int64_t)(fadeCrossfadeDone + i + 1) * kStep, (int64_t)kFullLevel);
++		};
++		if (fadeCrossfadeDone < kFadeCrossfadeSamples) {
++			writeInto(primaryBuffer, primaryBufferOldPosition, [&](int32_t i) { return kFullLevel - newGain(i); });
++		}
++		writeInto(secondaryBuffer, secondaryBufferOldPosition, newGain);
++
++		fadeCrossfadeDone = std::min(fadeCrossfadeDone + (int32_t)buffer.size(), kFadeCrossfadeSamples);
++		fadeSamplesLeft -= (int32_t)buffer.size();
++		if (fadeSamplesLeft <= 0 && fadeSecondaryReadable) {
++			fading = false;
++			copySecondaryToPrimary();
++		}
++	}
++
+ 	// And actually feedback being applied back into the actual delay primary buffer...
+-	if (primaryBuffer.isActive()) {
++	else if (primaryBuffer.isActive()) {
+ 
+ 		// Native
+ 		if (primaryBuffer.isNative()) {
+ 			// mastertune-v11: delaySpaceBetweenReadAndWrite behind where the read pass put each sample, like all other
+ 			// writing to delay buffers (1.2.1 started one step further back here, a delay one sample shorter than the
+ 			// secondary buffer's and resampled writing's, so the time jumped by a sample going from one to the other)
+-			StereoSample* writePos = primaryBufferOldPos - delaySpaceBetweenReadAndWrite + 1;
++			StereoSample* writePos = primaryBufferOldPosition.current - delaySpaceBetweenReadAndWrite + 1;
+ 			if (writePos < primaryBuffer.begin()) {
+ 				writePos += primaryBuffer.sizeIncludingExtra;
+ 			}
+@@ -483,9 +627,7 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 
+ 		// Resampling
+ 		else {
+-			primaryBuffer.setCurrent(primaryBufferOldPos);
+-			primaryBuffer.longPos = primaryBufferOldLongPos;
+-			primaryBuffer.lastShortPos = primaryBufferOldLastShortPos;
++			primaryBuffer.setPosition(primaryBufferOldPosition);
+ 			primaryBuffer.restartBlock();
+ 
+ 			for (StereoSample sample : working_buffer) {
+@@ -502,7 +644,7 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 
+ 	// And secondary buffer
+ 	// If secondary buffer active, we need to tick it along and write to it too
+-	if (secondaryBuffer.isActive()) {
++	if (!fading && secondaryBuffer.isActive()) {
+ 
+ 		// We want to disregard whatever the primary buffer told us, and just use the secondary one now
+ 		wrapped = false;
+@@ -535,7 +677,10 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 			}
+ 		}
+ 
+-		if (sizeLeftUntilBufferSwap < 0) {
++		// mastertune-v14: the first buffer of a delay starts being read before what went into it first comes round,
++		// while the read position is still in the stretch clear() emptied. Once it had come round, as 1.2.1 did, up
++		// to a block of the first repeat had gone by, which then started with a click.
++		if (sizeLeftUntilBufferSwap < (primaryBuffer.isActive() ? 0 : kStartupSwapBefore)) {
+ 			copySecondaryToPrimary();
+ 		}
+ 	}
+diff --git a/src/deluge/dsp/delay/delay.h b/src/deluge/dsp/delay/delay.h
+index 5afb38e2..74ba1ed6 100644
+--- a/src/deluge/dsp/delay/delay.h
++++ b/src/deluge/dsp/delay/delay.h
+@@ -45,6 +45,7 @@ public:
+ 		syncType = rhs.syncType; // mastertune-v11: 1.2.1 left it out, a copied sound lost its triplet or dotted delay
+ 		highCut = rhs.highCut;
+ 		lowCut = rhs.lowCut;
++		timeChange = rhs.timeChange;
+ 		return *this;
+ 	}
+ 
+@@ -76,12 +77,22 @@ public:
+ 	int32_t highCut = kHighCutOff;
+ 	int32_t lowCut = kLowCutOff;
+ 
++	/// What a change of the delay time does to the repeats (mastertune-v14). Fade: the sound goes on into a new buffer
++	/// at the new time, fading over from the old one in kFadeCrossfadeSamples, and the old one plays out what it holds
++	/// at its own speed, so no repeat changes its pitch. Tape: the buffer speeds up or slows down, and the repeats on
++	/// their way bend in pitch like on a tape delay (the only way before).
++	enum class TimeChange : uint8_t { FADE, TAPE };
++	TimeChange timeChange = TimeChange::FADE;
++
+ 	SyncType syncType = SYNC_TYPE_EVEN;
+ 
+ 	// Basically, 0 is off, max value is 9. Higher numbers are shorter intervals (higher speed).
+ 	SyncLevel syncLevel = SYNC_LEVEL_16TH;
+ 
+ 	int32_t sizeLeftUntilBufferSwap;
++	// mastertune-v14: how far from coming round the first buffer of a delay starts being read. Up to 4x its speed, a
++	// block takes it no further than DelayBuffer::kClearedTail.
++	static constexpr int32_t kStartupSwapBefore = 512;
+ 
+ 	int32_t postLPFL;
+ 	int32_t postLPFR;
+@@ -100,9 +111,28 @@ public:
+ 	uint32_t saturationLastL = 2147483648u;
+ 	uint32_t saturationLastR = 2147483648u;
+ 
++	// mastertune-v14: a change of time in the fade mode. While fading, the secondary buffer holds the new time and the
++	// primary one plays out what it holds; the sound going into the delay moves over in kFadeCrossfadeSamples.
++	static constexpr int32_t kFadeCrossfadeSamples = 1024;
++	// A new time is taken once it has held for this long, or has kept moving for kFadeMaxWaitSamples
++	static constexpr int32_t kFadeSettleSamples = kSampleRate >> 5;
++	static constexpr int32_t kFadeMaxWaitSamples = kSampleRate >> 3;
++	bool fading = false;
++	bool fadeSecondaryReadable = false; // It has gone round once, so it holds what was written into it
++	int32_t fadeCrossfadeDone = 0;
++	int32_t fadeSamplesLeft = 0;   // Until the primary buffer has played out what it holds
++	int32_t fadeWaitedSamples = 0; // How long the time has been off what the newest buffer holds
++
++	// mastertune-v14: the last time round before the delay gives up (repeatsUntilAbandon) fades out, rather than the
++	// repeats stopping dead. 2147483647 is full level.
++	int32_t tailGain = 2147483647;
++	bool soundComingIn = true;
++
+ 	void process(std::span<StereoSample> buffer, const State& delayWorkingState);
+ 
+ private:
++	void prepareFade(int32_t rate, int32_t numSamples);
++	[[nodiscard]] static bool fadeBufferFits(const DelayBuffer& buffer, int32_t rate);
+ 	void prepareToBeginWriting();
+ 	[[nodiscard]] constexpr int32_t getAmountToWriteBeforeReadingBegins() const { return secondaryBuffer.size(); }
+ };
+diff --git a/src/deluge/dsp/delay/delay_buffer.cpp b/src/deluge/dsp/delay/delay_buffer.cpp
+index 2e351c52..613900fe 100644
+--- a/src/deluge/dsp/delay/delay_buffer.cpp
++++ b/src/deluge/dsp/delay/delay_buffer.cpp
+@@ -29,6 +29,7 @@ Error DelayBuffer::init(uint32_t rate, uint32_t failIfThisSize, bool includeExtr
+ 	auto [size, make_precise] = getIdealBufferSizeFromRate(rate);
+ 
+ 	native_rate_ = rate;
++	rate_ = (int32_t)rate;
+ 	size_ = size;
+ 
+ 	// Uart::print("buffer size_: ");
+@@ -59,8 +60,10 @@ void DelayBuffer::clear() {
+ 	memset(start_, 0, sizeof(StereoSample) * (delaySpaceBetweenReadAndWrite + 2));
+ 	// mastertune-v11: resampled writing reaches up to 16 steps behind the write position, which at first is the end of
+ 	// the buffer, not cleared by the read position yet. It gets cleared before it's read, but adding to whatever
+-	// memory held before could overflow, so clear that much there too.
+-	size_t tail = std::min(sizeIncludingExtra, (size_t)40);
++	// memory held before could overflow, so clear that much there too. (mastertune-v14: and as much as the first buffer
++	// of a delay can still have to go before what went into it first comes round, when it starts being read, see
++	// Delay::kStartupSwapBefore.)
++	size_t tail = std::min(sizeIncludingExtra, (size_t)kClearedTail);
+ 	memset(end_ - tail, 0, sizeof(StereoSample) * tail);
+ 	current_ = start_ + delaySpaceBetweenReadAndWrite;
+ 	resample_config_ = std::nullopt;
+@@ -104,6 +107,7 @@ void DelayBuffer::discard() {
+ }
+ 
+ void DelayBuffer::setupForRender(int32_t rate, int32_t numSamples, int32_t ratePrevious) {
++	rate_ = rate;
+ 	bool fresh = fresh_;
+ 	fresh_ = false;
+ 	if (start_ == nullptr) {
+diff --git a/src/deluge/dsp/delay/delay_buffer.h b/src/deluge/dsp/delay/delay_buffer.h
+index 205e963f..347a0bfc 100644
+--- a/src/deluge/dsp/delay/delay_buffer.h
++++ b/src/deluge/dsp/delay/delay_buffer.h
+@@ -32,9 +32,14 @@ constexpr ptrdiff_t delaySpaceBetweenReadAndWrite = 20;
+ 
+ class DelayBuffer {
+ public:
+-	constexpr static size_t kMaxSize = 88200;
++	// mastertune-v14: 4 s (1.4 MB), was 2 s. A longer delay has to resample slower than the sound, which lets the
++	// treble fold back down (at 2.5 s, a 15 kHz tone came back with a tone at 20.3 kHz 7 dB below it). Up to 4 s, as a
++	// bar at 60 BPM, the repeats are now exact copies.
++	constexpr static size_t kMaxSize = 176400;
+ 	constexpr static size_t kMinSize = 1;
+ 	constexpr static size_t kNeutralSize = 16384;
++	/// How much of the end of the buffer clear() empties (mastertune-v14)
++	constexpr static size_t kClearedTail = 1024;
+ 
+ 	DelayBuffer() = default;
+ 	~DelayBuffer() { discard(); }
+@@ -71,6 +76,51 @@ public:
+ 	/// Back to the speed at the start of the block, for another pass over it
+ 	constexpr void restartBlock() { spinRateNow_ = spinRateBlockStart_; }
+ 
++	/// The rate this buffer was last set up for (mastertune-v14: in the fade mode, each buffer keeps the one it was
++	/// made for, so what it holds keeps its pitch)
++	[[nodiscard]] constexpr int32_t rate() const { return rate_; }
++	/// The delay time at a rate, in samples
++	[[nodiscard]] static constexpr uint32_t delaySamplesForRate(uint32_t rate) {
++		return (uint64_t)kNeutralSize * kMaxSampleValue / std::max(rate, (uint32_t)1);
++	}
++
++	/// Where reading is, to go over the same block again for writing
++	struct Position {
++		StereoSample* current;
++		uint32_t longPos;
++		uint8_t lastShortPos;
++	};
++	[[nodiscard]] constexpr Position position() const { return {current_, longPos, lastShortPos}; }
++	constexpr void setPosition(const Position& p) {
++		current_ = p.current;
++		longPos = p.longPos;
++		lastShortPos = p.lastShortPos;
++	}
++
++	/// Resampled reading: the four samples around the read position, cubic (Catmull-Rom) at strength2 (0 to 65535)
++	/// past the current one (mastertune-v11)
++	[[gnu::always_inline]] StereoSample readResampled(int32_t strength2) const {
++		StereoSample* nextPos = current_ + 1;
++		if (nextPos == end_) {
++			nextPos = start_;
++		}
++		StereoSample* afterNextPos = nextPos + 1;
++		if (afterNextPos == end_) {
++			afterNextPos = start_;
++		}
++		float t = strength2 * (1.f / 65536.f);
++		auto hermite = [t](float xm1, float x0, float x1, float x2) {
++			float c1 = 0.5f * (x1 - xm1);
++			float c2 = xm1 - 2.5f * x0 + 2.f * x1 - 0.5f * x2;
++			float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
++			return ((c3 * t + c2) * t + c1) * t + x0;
++		};
++		StereoSample out;
++		out.l = (int32_t)hermite(history.l, current_->l, nextPos->l, afterNextPos->l);
++		out.r = (int32_t)hermite(history.r, current_->r, nextPos->r, afterNextPos->r);
++		return out;
++	}
++
+ 	static std::pair<int32_t, bool> getIdealBufferSizeFromRate(uint32_t rate);
+ 
+ 	[[nodiscard]] constexpr bool isActive() const { return (start_ != nullptr); }
+@@ -229,6 +279,7 @@ private:
+ 	};
+ 
+ 	uint32_t native_rate_ = 0;
++	int32_t rate_ = 0;
+ 
+ 	// Nothing's been written since clear(), so the speed starts where it is instead of gliding there from 1x
+ 	bool fresh_ = true;
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index 1e11aa8a..912ad301 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -947,6 +947,10 @@
+         "STRING_FOR_RICH": "Rich",
+         "STRING_FOR_LEVEL": "Level",
+         "STRING_FOR_CPU_MONITOR": "CPU monitor",
+-        "STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING": "Flicker-free dimming"
++        "STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING": "Flicker-free dimming",
++        "STRING_FOR_TIME_CHANGE": "Time change",
++        "STRING_FOR_DELAY_TIME_CHANGE": "Delay time change",
++        "STRING_FOR_FADE": "Fade",
++        "STRING_FOR_TAPE": "Tape"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index bb29c514..aab26019 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -876,6 +876,10 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_LEVEL, "Level"},
+         {STRING_FOR_CPU_MONITOR, "CPU monitor"},
+         {STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING, "Flicker-free dimming"},
++        {STRING_FOR_TIME_CHANGE, "Time change"},
++        {STRING_FOR_DELAY_TIME_CHANGE, "Delay time change"},
++        {STRING_FOR_FADE, "Fade"},
++        {STRING_FOR_TAPE, "Tape"},
+     },
+ };
+ } // namespace deluge::l10n::built_in
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index dd9ed8b4..62847ec3 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -517,6 +517,9 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_LEVEL, "LEVL"},
+         {STRING_FOR_CPU_MONITOR, "CPU"},
+         {STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING, "DIMM"},
++        {STRING_FOR_TIME_CHANGE, "TIME"},
++        {STRING_FOR_FADE, "FADE"},
++        {STRING_FOR_TAPE, "TAPE"},
+     },
+     &built_in::english,
+ };
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index 61c4723d..b475efee 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -551,6 +551,9 @@
+         "STRING_FOR_RICH": "RICH",
+         "STRING_FOR_LEVEL": "LEVL",
+         "STRING_FOR_CPU_MONITOR": "CPU",
+-        "STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING": "DIMM"
++        "STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING": "DIMM",
++        "STRING_FOR_TIME_CHANGE": "TIME",
++        "STRING_FOR_FADE": "FADE",
++        "STRING_FOR_TAPE": "TAPE"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index 410c3aca..bf5f326b 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -996,6 +996,12 @@ enum class String : size_t {
+ 	// CPU monitor (mastertune-diag)
+ 	STRING_FOR_CPU_MONITOR,
+ 
++	// delay time change (mastertune-v14)
++	STRING_FOR_TIME_CHANGE,
++	STRING_FOR_DELAY_TIME_CHANGE,
++	STRING_FOR_FADE,
++	STRING_FOR_TAPE,
++
+ 	STRING_LAST
+ };
+ 
+diff --git a/src/deluge/gui/menu_item/delay/time_change.h b/src/deluge/gui/menu_item/delay/time_change.h
+new file mode 100644
+index 00000000..0925b761
+--- /dev/null
++++ b/src/deluge/gui/menu_item/delay/time_change.h
+@@ -0,0 +1,42 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include "gui/l10n/l10n.h"
++#include "gui/menu_item/selection.h"
++#include "gui/ui/sound_editor.h"
++#include "model/mod_controllable/mod_controllable_audio.h"
++
++namespace deluge::gui::menu_item::delay {
++
++/// What a change of the delay time does to the repeats on their way (mastertune-v14): Fade keeps their pitch, the new
++/// time taking over from the old one, Tape bends it like a tape delay
++class TimeChange final : public Selection {
++public:
++	using Selection::Selection;
++	void readCurrentValue() override {
++		this->setValue(static_cast<int32_t>(soundEditor.currentModControllable->delay.timeChange));
++	}
++	void writeCurrentValue() override {
++		soundEditor.currentModControllable->delay.timeChange = static_cast<Delay::TimeChange>(this->getValue());
++	}
++	deluge::vector<std::string_view> getOptions() override {
++		using enum l10n::String;
++		return {l10n::getView(STRING_FOR_FADE), l10n::getView(STRING_FOR_TAPE)};
++	}
++};
++
++} // namespace deluge::gui::menu_item::delay
+diff --git a/src/deluge/gui/ui/menus.cpp b/src/deluge/gui/ui/menus.cpp
+index c968ad41..6171c87c 100644
+--- a/src/deluge/gui/ui/menus.cpp
++++ b/src/deluge/gui/ui/menus.cpp
+@@ -59,6 +59,7 @@
+ #include "gui/menu_item/delay/filter.h"
+ #include "gui/menu_item/delay/ping_pong.h"
+ #include "gui/menu_item/delay/sync.h"
++#include "gui/menu_item/delay/time_change.h"
+ #include "gui/menu_item/drone/items.h"
+ #include "gui/menu_item/drum_name.h"
+ #include "gui/menu_item/dx/browse.h"
+@@ -468,6 +469,7 @@ patched_param::Integer delayFeedbackMenu{STRING_FOR_AMOUNT, STRING_FOR_DELAY_AMO
+ patched_param::Integer delayRateMenu{STRING_FOR_RATE, STRING_FOR_DELAY_RATE, params::GLOBAL_DELAY_RATE};
+ delay::PingPong delayPingPongMenu{STRING_FOR_PINGPONG, STRING_FOR_DELAY_PINGPONG};
+ delay::Analog delayAnalogMenu{STRING_FOR_TYPE, STRING_FOR_DELAY_TYPE};
++delay::TimeChange delayTimeChangeMenu{STRING_FOR_TIME_CHANGE, STRING_FOR_DELAY_TIME_CHANGE};
+ delay::Sync delaySyncMenu{STRING_FOR_SYNC, STRING_FOR_DELAY_SYNC};
+ delay::HighCut delayHighCutMenu{STRING_FOR_LPF};
+ delay::LowCut delayLowCutMenu{STRING_FOR_HPF};
+@@ -479,6 +481,7 @@ Submenu delayMenu{
+         &delayRateMenu,
+         &delayPingPongMenu,
+         &delayAnalogMenu,
++        &delayTimeChangeMenu,
+         &delaySyncMenu,
+         &delayHighCutMenu,
+         &delayLowCutMenu,
+@@ -683,6 +686,7 @@ Submenu globalDelayMenu{
+         &globalDelayRateMenu,
+         &delayPingPongMenu,
+         &delayAnalogMenu,
++        &delayTimeChangeMenu,
+         &delaySyncMenu,
+         &delayHighCutMenu,
+         &delayLowCutMenu,
+diff --git a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+index 682cce8b..383888c0 100644
+--- a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
++++ b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+@@ -731,6 +731,8 @@ void ModControllableAudio::writeTagsToFile(Serializer& writer) {
+ 	if (delay.lowCut != Delay::kLowCutOff) {
+ 		writer.writeAttribute("lowCut", delay.lowCut);
+ 	}
++	// mastertune-v14: what a change of the delay time does, 0 fade, 1 tape
++	writer.writeAttribute("timeChange", static_cast<int32_t>(delay.timeChange));
+ 	writer.closeTag();
+ 
+ 	// MIDI knobs
+@@ -1044,6 +1046,7 @@ Error ModControllableAudio::readTagFromFile(Deserializer& reader, char const* ta
+ 		delay.syncLevel = SYNC_LEVEL_NONE;
+ 		delay.highCut = Delay::kHighCutOff;
+ 		delay.lowCut = Delay::kLowCutOff;
++		delay.timeChange = Delay::TimeChange::FADE; // mastertune-v14: also for files from before there was a choice
+ 
+ 		while (*(tagName = reader.readNextTagOrAttributeName())) {
+ 
+@@ -1092,6 +1095,11 @@ doReadPatchedParam:
+ 				delay.lowCut = std::clamp(reader.readTagOrAttributeValueInt(), 0_i32, Delay::kHighCutOff);
+ 				reader.exitTag("lowCut");
+ 			}
++			else if (!strcmp(tagName, "timeChange")) {
++				delay.timeChange =
++				    (reader.readTagOrAttributeValueInt() == 1) ? Delay::TimeChange::TAPE : Delay::TimeChange::FADE;
++				reader.exitTag("timeChange");
++			}
+ 			else if (!strcmp(tagName, "syncLevel")) {
+ 				delay.syncLevel =
+ 				    (SyncLevel)song->convertSyncLevelFromFileValueToInternalValue(reader.readTagOrAttributeValueInt());
+-- 
+2.43.0
+

@@ -1,0 +1,104 @@
+From c1d1c8bbae978d621266de941c65f2c900182dc2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 23:51:10 +0000
+Subject: [PATCH 35/35] Cache maintenance: no lost write next to a DMA buffer;
+ SysEx file buffers on their own cache lines
+
+Found in the review of the L2 test versions, both older than them:
+- v7_dma_inv_range() cleaned and invalidated a partial first line and then invalidated it again,
+  so a write to the rest of that line in between (an interrupt) was lost; and its loop ran at
+  least once. As Linux has done it since 2014: the partial line is only cleaned and invalidated,
+  and the loop runs only over whole lines in between. (1.2.1's code, used around every SD
+  transfer.)
+- The block buffers of the SD access over USB (v7) sat right next to the allocator's header and
+  footer. f_read() and f_write() of whole sectors DMA straight into them, and a neighbouring
+  allocation changed meanwhile made the shared line dirty; cleaning it after the transfer could
+  write old bytes into the data, and from there into a copied file. They now have cache lines of
+  their own.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/drivers/cache/invalidate.S | 10 ++++++----
+ src/deluge/storage/smsysex.cpp        | 19 ++++++++++++++++---
+ 2 files changed, 22 insertions(+), 7 deletions(-)
+
+diff --git a/src/deluge/drivers/cache/invalidate.S b/src/deluge/drivers/cache/invalidate.S
+index 312c7eb8..ac5b52a0 100644
+--- a/src/deluge/drivers/cache/invalidate.S
++++ b/src/deluge/drivers/cache/invalidate.S
+@@ -40,14 +40,16 @@ v7_dma_inv_range:
+          ALT_UP(W(nop))
+ #endif
+          mcrne   p15, 0, r0, c7, c14, 1          @ clean & invalidate D / U line
+-
++         addne   r0, r0, r2                      @ mastertune-v14: and not invalidated again below, which lost a
++                                                 @ write to the rest of the line in between (as in Linux since 2014)
+          tst     r1, r3
+          bic     r1, r1, r3
+          mcrne   p15, 0, r1, c7, c14, 1          @ clean & invalidate D / U line
++         cmp     r0, r1                          @ nothing left in between (the loop used to run at least once)
+  1:
+-         mcr     p15, 0, r0, c7, c6, 1           @ invalidate D / U line
+-         add     r0, r0, r2
+-         cmp     r0, r1
++         mcrlo   p15, 0, r0, c7, c6, 1           @ invalidate D / U line
++         addlo   r0, r0, r2
++         cmplo   r0, r1
+          blo     1b
+          dsb     st
+          bx     lr
+diff --git a/src/deluge/storage/smsysex.cpp b/src/deluge/storage/smsysex.cpp
+index dfec8012..b6787cca 100644
+--- a/src/deluge/storage/smsysex.cpp
++++ b/src/deluge/storage/smsysex.cpp
+@@ -57,6 +57,19 @@ const size_t blockBufferMax = 1024;
+ const size_t sysexBufferMax = blockBufferMax + 256;
+ uint8_t* writeBlockBuffer = nullptr;
+ uint8_t* readBlockBuffer = nullptr;
++
++// mastertune-v14: f_read() and f_write() of whole sectors go straight between the card and these buffers by DMA. So
++// they get cache lines of their own: the allocator's header and footer right next to them, written by other code
++// during the transfer, would otherwise share a line with them, and cleaning that line after the transfer writes old
++// bytes over what just came in. (The buffers are kept for good, never freed.)
++static uint8_t* allocBlockBuffer() {
++	auto raw =
++	    reinterpret_cast<uintptr_t>(GeneralMemoryAllocator::get().allocLowSpeed(blockBufferMax + CACHE_LINE_SIZE));
++	if (!raw) {
++		return nullptr;
++	}
++	return reinterpret_cast<uint8_t*>((raw + CACHE_LINE_SIZE - 1) & ~static_cast<uintptr_t>(CACHE_LINE_SIZE - 1));
++}
+ const uint32_t MAX_OPEN_FILES = 4;
+ 
+ struct FILdata {
+@@ -624,7 +637,7 @@ void smSysex::readBlock(MIDICable& cable, JsonDeserializer& reader) {
+ 	uint8_t* srcAddr = (uint8_t*)addr;
+ 	if (errCode == FRESULT::FR_OK) {
+ 		if (!readBlockBuffer && fp) {
+-			readBlockBuffer = (uint8_t*)GeneralMemoryAllocator::get().allocLowSpeed(blockBufferMax);
++			readBlockBuffer = allocBlockBuffer();
+ 		}
+ 
+ 		if (!readBlockBuffer) {
+@@ -709,7 +722,7 @@ void smSysex::writeBlock(MIDICable& cable, JsonDeserializer& reader) {
+ 		}
+ 	}
+ 	if (!writeBlockBuffer) {
+-		writeBlockBuffer = (uint8_t*)GeneralMemoryAllocator::get().allocLowSpeed(blockBufferMax);
++		writeBlockBuffer = allocBlockBuffer();
+ 	}
+ 	reader.match('}');
+ 	reader.match('}'); // skip box too.
+@@ -1018,7 +1031,7 @@ retry_copy:
+ 			// Copy file contents
+ 			uint8_t* copyBuffer = nullptr;
+ 			if (!readBlockBuffer) {
+-				readBlockBuffer = (uint8_t*)GeneralMemoryAllocator::get().allocLowSpeed(blockBufferMax);
++				readBlockBuffer = allocBlockBuffer();
+ 			}
+ 			copyBuffer = readBlockBuffer;
+ 
+-- 
+2.43.0
+
