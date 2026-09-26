@@ -58,6 +58,11 @@ MTU_TCNT = {0x306: (0, 64), 0x386: (1, 1), 0x006: (2, 64), 0x210: (3, 64), 0x212
 DMAC = 0xE8200000
 SSI_TX_DMA_CHANNEL = 6
 
+# Status registers that the firmware waits on, preset once to "ready" (the peripherals are plain memory)
+SEEDS = {
+    0xE800C803: b"\xA0",  # RSPI0 SPSR: transmit buffer empty (SPTEF), receive buffer full (SPRF)
+}
+
 
 def dmac_channel_base(n):
     return n * 64 + (0x200 if n >= 8 else 0)
@@ -123,11 +128,14 @@ class Emulator:
             uc.mem_map_ptr(base + UNCACHED_MIRROR_OFFSET, size, UC_PROT_ALL, ctypes.addressof(buf))
         uc.mem_map(STOP & ~0xFFF, 0x1000)
 
-        # Timers and DMA registers behave; the rest of the peripherals is plain memory, mapped when first touched
+        # Timers, DMA, SPI registers behave (models below); the rest of the peripherals is plain memory, mapped when
+        # first touched
         self.mmio = {}
-        uc.mmio_map(OSTM0, 0x1000, self.ostm_read, None, self.plain_write, OSTM0)
-        uc.mmio_map(MTU2, 0x1000, self.mtu_read, None, self.plain_write, MTU2)
-        uc.mmio_map(DMAC, 0x1000, self.dmac_read, None, self.plain_write, DMAC)
+        self.readers = {}  # Absolute address -> function(size) returning the value
+        self.writers = {}  # Absolute address -> function(size, value)
+        self.setup_models()
+        for page in sorted({a & ~0xFFF for a in list(self.readers) + list(self.writers)}):
+            uc.mmio_map(page, 0x1000, self.mmio_read, page, self.mmio_write, page)
         self.mapped_lazily = []
         uc.hook_add(UC_HOOK_MEM_UNMAPPED, self.on_unmapped)
         uc.hook_add(UC_HOOK_INTR, self.on_interrupt)
@@ -166,36 +174,61 @@ class Emulator:
     def seconds(self):
         return self.bc.bc_total() / CPU_HZ + self.time_offset
 
-    def ostm_read(self, uc, offset, size, base):
-        if offset == 4:  # OSTMnCNT, counting up in the free-running mode
-            return int(self.seconds() * PERIPHERAL_HZ) & 0xFFFFFFFF
-        return self.plain_read(base, offset, size)
+    def setup_models(self):
+        r, w = self.readers, self.writers
+        # OSTM0: free-running counter (the task manager's clock)
+        r[OSTM0 + 4] = lambda size: int(self.seconds() * PERIPHERAL_HZ) & 0xFFFFFFFF
+        # MTU2: the 16-bit system timers, counting at the peripheral clock / their prescaler
+        for offset, (_, prescaler) in MTU_TCNT.items():
+            r[MTU2 + offset] = lambda size, p=prescaler: int(self.seconds() * PERIPHERAL_HZ / p) & 0xFFFF
+        # DMA channels stand still: current address = where they start; the SSI's is ssi_position()
+        for ch in range(16):
+            base = DMAC + dmac_channel_base(ch)
+            r[base + 0x18] = lambda size, b=base: self.plain_read(b, 4)
+            r[base + 0x1C] = lambda size, b=base: self.plain_read(b + 4, 4)
+            r[base + 0x24] = lambda size: 0x60  # CHSTAT: transfer ended (END, TC), not enabled
+        r[DMAC + dmac_channel_base(SSI_TX_DMA_CHANNEL) + 0x18] = lambda size: self.ssi_position()
+        # RSPI0 (CV, OLED): transmit buffer always empty, the receive buffer full after each write until read
+        spi = 0xE800C800
+        self.spi_rx_full = False
 
-    def mtu_read(self, uc, offset, size, base):
-        if offset in MTU_TCNT:
-            _, prescaler = MTU_TCNT[offset]
-            return int(self.seconds() * PERIPHERAL_HZ / prescaler) & 0xFFFF
-        return self.plain_read(base, offset, size)
+        def spsr(size):
+            return 0x20 | (0x80 if self.spi_rx_full else 0)
 
-    def dmac_read(self, uc, offset, size, base):
-        channel_offset = offset & 0x3F
-        channel = (offset - (0x200 if offset >= 0x400 else 0)) // 64 if offset < 0x200 or offset >= 0x400 else None
-        if channel is not None and channel_offset in (0x18, 0x1C):
-            if channel == SSI_TX_DMA_CHANNEL and channel_offset == 0x18:
-                return self.ssi_position()
-            # A DMA that stands still: current address = where it started
-            return self.plain_read(base, offset - 0x18, 4)
-        return self.plain_read(base, offset, size)
+        def spdr_read(size):
+            self.spi_rx_full = False
+            return 0
 
-    def plain_read(self, base, offset, size):
+        def spdr_write(size, value):
+            self.spi_rx_full = True
+
+        # SPIBSC (the SPI flash holding the settings): every transfer has ended at once (CMNSR: TEND, SSL negated),
+        # the flash reads as zeros (no settings saved: the firmware's defaults)
+        r[0x3FEFA000 + 0x48] = lambda size: 0x1
+        r[spi + 3] = spsr
+        r[spi + 4] = spdr_read
+        w[spi + 4] = spdr_write
+
+    def mmio_read(self, uc, offset, size, page):
+        address = page + offset
+        reader = self.readers.get(address)
+        if reader:
+            return reader(size)
+        return self.plain_read(address, size)
+
+    def mmio_write(self, uc, offset, size, value, page):
+        address = page + offset
+        writer = self.writers.get(address)
+        if writer:
+            writer(size, value)
+        for i in range(size):
+            self.mmio[address + i] = (value >> (8 * i)) & 0xFF
+
+    def plain_read(self, address, size):
         value = 0
         for i in range(size):
-            value |= self.mmio.get(base + offset + i, 0) << (8 * i)
+            value |= self.mmio.get(address + i, 0) << (8 * i)
         return value
-
-    def plain_write(self, uc, offset, size, value, base):
-        for i in range(size):
-            self.mmio[base + offset + i] = (value >> (8 * i)) & 0xFF
 
     def on_unmapped(self, uc, access, address, size, value, _):
         region = address & ~0xFFFFF
@@ -209,6 +242,9 @@ class Emulator:
             region = address & ~0xFFF
             uc.mem_map(region, 0x1000)
         self.mapped_lazily.append(region)
+        for seed_address, seed in SEEDS.items():
+            if region <= seed_address < region + (0x100000 if (region & 0xFFFFF) == 0 else 0x1000):
+                uc.mem_write(seed_address, seed)
         return True
 
     def on_interrupt(self, uc, intno, _):
@@ -304,3 +340,34 @@ class Emulator:
     def stop(self):
         self.stopped = True
         self.uc.emu_stop()
+
+
+def boot(emu):
+    """resetprg up to where deluge_main registers the task manager's tasks."""
+    sym = emu.sym
+    emu.intercept(sym["_Z13registerTasksv"], lambda e: e.stop())
+    emu.uc.reg_write(UC_ARM_REG_SP, PROGRAM_STACK_TOP)
+    t = time.time()
+    emu.run(sym["resetprg"] | 1, STOP, timeout_s=3)
+    emu.log(f"boot: {emu.bc.bc_total() / 1e6:,.1f}M instructions, {time.time() - t:.1f} s")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("elf")
+    ap.add_argument("sd")
+    ap.add_argument("out")
+    ap.add_argument("--tools", default=None)
+    args = ap.parse_args()
+    tools = args.tools or os.path.join(os.path.dirname(os.path.abspath(args.elf)), "../../toolchain/v16/linux-x86_64/arm-none-eabi-gcc/bin/arm-none-eabi-")
+    os.makedirs(args.out, exist_ok=True)
+
+    def log(s):
+        print(s, flush=True)
+
+    emu = Emulator(args.elf, args.sd, tools, log)
+    boot(emu)
+
+
+if __name__ == "__main__":
+    main()
