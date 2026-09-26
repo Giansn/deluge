@@ -1,0 +1,36 @@
+[
+ {
+  "ok": false,
+  "tested": "Diff v12-perf..v13 gelesen (Audio-Pfad, UI, Datei-I/O, LFO/Arp). Drone-Test Host (UBSan) und ARM=1: 46/46 bestanden. Build lag schon vor, kein eigener Build. Geprüft und in Ordnung: Triplet-Mathematik und Lock, Sync-Stufen, DIRECT/BUFFERED ohne doppeltes Rendern, Sidechain einmal pro Block, Glide des Sends, Stem-Export, Fade ohne Song, int64-Summe, Clamping, Tone wird bei nur neuen Feldern geschrieben (defaulted ==), LEDs beim Wechsel in Song View.",
+  "problems": [
+   {
+    "problem": "Der Hall des Drones bekommt die Song-Lautstärke doppelt: Wet skaliert mit Volume², Dry nur mit Volume.",
+    "where": "src/deluge/processing/engines/audio_engine.cpp:952, 986, 1054",
+    "evidence": "context.volume (Song-Volume) ist schon im Drone-Signal (drone.cpp:258). Dieses Signal geht in reverbBuffer, und der Hall wird vor renderSongFX gemischt, das mit compressor.render(songVolume>>3) die Lautstärke noch einmal anwendet. Der trockene Drone kommt erst danach dazu (mixDrone).",
+    "fix": "Die Send-Verstärkung durch context.volume teilen (nur wenn >0), damit der Hall die Song-Lautstärke nur einmal bekommt.",
+    "severity": "medium"
+   },
+   {
+    "problem": "std::clamp mit lo>hi (UB), wenn beatHz >500 Hz: die Flanken werden dann >0.5 und der Puls springt (Klick).",
+    "where": "src/deluge/dsp/drone/drone.cpp:196-198",
+    "evidence": "shortest = 0.001*beatHz. Synchron 1/64T = 24 Zyklen pro Viertel, das ergibt ab etwa 1250 BPM (kMinTimePerTimerTick=1 erlaubt das) oder mit externer Clock und einem Ton ≥500 Hz shortest >0.5. v12 hat sicher auf [0.001,0.25] begrenzt.",
+    "fix": "float shortest = std::min(kMinEdgeSeconds * beatHz, 0.5f);",
+    "severity": "low"
+   },
+   {
+    "problem": "Auf dem 7-Segment zeigt das Menü Attack/Release 0-50, das Knopf-Popup zeigt 0-100 (edge*2), das OLED-Menü zeigt %.",
+    "where": "src/deluge/gui/menu_item/drone/items.h:215 (PulseEdge); drone_view.cpp:472",
+    "evidence": "Integer::drawValue nutzt getDisplayValue() (= getValue()). PulseEdge überschreibt nur drawInteger, also nur für das OLED.",
+    "fix": "In PulseEdge getDisplayValue() überschreiben mit return getValue()*2.",
+    "severity": "low"
+   },
+   {
+    "problem": "Wenn Song-Parameter automatisiert abgespielt werden, überschreibt das die Knopf-Anzeigen des Drones mit Song-Werten.",
+    "where": "drone_view.cpp:164 (setActiveModControllableTimelineCounter(currentSong)); view.cpp:1601-1603",
+    "evidence": "notifyParamAutomationOccurred passt zum paramManager des Songs, und displayAutomation() ruft dann setKnobIndicatorLevels() für den modKnobMode des Songs auf.",
+    "fix": "In DroneView die Anzeige nach einem DISPLAY_AUTOMATION-Update wiederherstellen, z.B. mit graphicsRoutine: showKnobSection(), wenn sich Werte geändert haben. Oder in displayAutomation überspringen, wenn getRootUI()==&droneView.",
+    "severity": "low"
+   }
+  ]
+ }
+]
