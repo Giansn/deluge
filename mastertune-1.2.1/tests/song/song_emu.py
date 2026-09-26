@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Runs the real Deluge firmware (deluge.elf) in unicorn and measures what a whole song costs its Cortex-A9.
 
-Usage: song_emu.py <deluge.elf> <sd.img> <out dir> [--warmup-bars N] [--bars N] [--write-back song.xml]
+Usage: song_emu.py <deluge.elf> <sd.img> <out dir> [--warmup-bars N] [--bars N] [--culling] [--write-back song.xml]
 
 Not a sum of unit benchmarks: the firmware's own code boots, loads the song from the SD card image and renders it
 through AudioEngine::routine(), with everything the Deluge runs for it (Song, clips, Sounds, voices, kit, audio clip,
@@ -20,9 +20,18 @@ effects, reverb, sidechain, drone, the playback handler's ticks).
   per window: the SSI's DMA position shows 127 free samples until the song renders, and none after, so each call
   renders exactly one window of 128 samples, cut short only where the song's clock ticks (as on the Deluge; one
   window in 44 here). Between windows it runs the other tasks that matter while playing: the playback handler's
-  routine and the SD card's cluster loading. The task list is emptied first, so getLastRunTimeforCurrentTask(), what
-  the audio routine culls voices by, reads 0: no culling for CPU load (a Sound over its voice limit still steals, as
-  on the Deluge; cullVoice() calls are counted by caller).
+  routine and the SD card's cluster loading. The task list is emptied first (currentID 0).
+- Culling and cpuDireness: setDireness() (inlined in routine()) takes both from getLastRunTimeforCurrentTask() (also
+  inlined): the audio task's durationStats.average in seconds, times 44100 = dspTime in samples; cpuDireness =
+  dspTime - 49 (at most 14) from 50 samples on, soft culling from 80, hard culling from 112 (+20 per voice started in
+  the last render, at most 4). Without --culling that average stays 0 (the emptied task list): no culling for CPU load
+  and cpuDireness 0, i.e. the song's full demand. With --culling it is, before each routine() call, what the task
+  manager would hold: the running average (average + runtime) / 2 over the previous routine() calls' emulated
+  durations (instructions / 400 MHz), as TaskManager::runTask() updates it: the device's behaviour. Either way a Sound
+  over its voice limit steals, as on the Deluge; cullVoice() calls are counted by caller and type.
+- Per window it records the cpuDireness, the culls and the voices per Sound (AudioEngine::activeVoices, Sound* ->
+  count); the Sounds are named by their String name (Output::name, SoundDrum::name), found near the Sound* pointer
+  and matched against the names in the song's XML.
 - Counting: per translated block, in C (blockcount.c): exact instruction counts of the firmware's machine code, per
   window and per function. CPU % = instructions per 128 samples / 1,161,000 (400 MHz at 1 instruction per cycle).
 """
@@ -267,6 +276,14 @@ class Emulator:
     def u8(self, address):
         return self.uc.mem_read(address, 1)[0]
 
+    def ram(self, address, n):
+        """n bytes of internal RAM or SDRAM (or their uncached mirrors), or None where there's none."""
+        for base, buf, size in ((INTERNAL_RAM, self.iram, INTERNAL_RAM_SIZE), (SDRAM, self.sdram, SDRAM_SIZE)):
+            for b in (base, base + UNCACHED_MIRROR_OFFSET):
+                if b <= address and address + n <= b + size:
+                    return ctypes.string_at(ctypes.addressof(buf) + address - b, n)
+        return None
+
     # --- hooks and calls
 
     def intercept(self, address, handler):
@@ -408,13 +425,38 @@ def write_back_song(emu, path_out):
     open(path_out, "wb").write(fat32.read_file(emu.sd_path, "SONGS/DEFAULT.XML"))
 
 
+CULL_TYPES = ["HARD", "FORCE", "SOFT_ALWAYS", "SOFT"]  # AudioEngine's enum CullType
+
+
+def task_stats_address(emu):
+    """Where routine() reads getLastRunTimeforCurrentTask() (inlined): taskManager.list[currentID].durationStats
+    .average. From the code: movs r1, #sizeof(Task); ldrsb.w r2, [r3, #offsetof(currentID)]; mla r3, r1, r2, r3;
+    vldr d16, [r3, #offsetof(average)]; vmul.f64 (by 44100)."""
+    code = disassemble(emu, "_ZN11AudioEngine7routineEv")
+    for i in range(5, len(code) - 1):
+        if (code[i][1] == "vldr" and code[i + 1][1] == "vmul.f64" and code[i - 1][1] == "mla"
+                and code[i - 2][1].startswith("ldrsb")):
+            mla = [r.strip() for r in code[i - 1][2].split(",")]  # mla rd, rsize, rindex, rbase
+            size_at = next((j for j in range(i - 3, i - 6, -1)
+                            if code[j][1] == "movs" and code[j][2].startswith(mla[1] + ",")), None)
+            if size_at is None:
+                continue
+            task_size, current_id, average = (int(re.search(r"#(\d+)", code[j][2]).group(1))
+                                              for j in (size_at, i - 2, i))
+            base = emu.sym["taskManager"]
+            index = struct.unpack("<b", emu.uc.mem_read(base + current_id, 1))[0]
+            return base + index * task_size + average
+    raise SystemExit("routine() doesn't read the task's durationStats as expected")
+
+
 class Player:
     """Plays the song one AudioEngine::routine() call (one window) at a time."""
 
-    def __init__(self, emu):
+    def __init__(self, emu, culling=False):
         self.emu = emu
         sym = emu.sym
         self.routine = sym["_ZN11AudioEngine7routineEv"]
+        self.direness = sym["_ZN11AudioEngine11cpuDirenessE"]
         # The task manager's tasks are lambdas in registerTasks(), numbered in the order they're added: the 2nd is
         # playbackHandler.routine(), the 3rd audioFileManager.loadAnyEnqueuedClusters(128, false)
         self.playback_routine = sym.find("_ZZ13registerTasksvENUlvE0_4_FUNEv")
@@ -423,20 +465,40 @@ class Player:
         self.active_voices = sym["_ZN11AudioEngine12activeVoicesE"]
         self.rendering_buffer = sym["_ZN11AudioEngine15renderingBufferE"]
         self.master = sym["_ZN11AudioEngine23masterVolumeAdjustmentLE"], sym["_ZN11AudioEngine23masterVolumeAdjustmentRE"]
-        self.culls = collections.Counter()  # AudioEngine::cullVoice() calls by caller
+        self.culls = collections.Counter()  # AudioEngine::cullVoice() calls by caller and type
+        self.window_culls = 0
         emu.intercept(sym.find("_ZN4Song11renderAudioEP12StereoSample"), self.on_render)
         emu.intercept(sym.find("_ZN11AudioEngine9cullVoiceE"), self.on_cull)
         # From here on the tasks are called from here, and an empty task list makes getLastRunTimeforCurrentTask()
-        # read 0: no culling for CPU load, whatever the emulated time
+        # read 0: no culling for CPU load, whatever the emulated time. With culling, the audio task's
+        # durationStats.average is written before each routine() call, as the task manager would have it
         start, size = sym.by_name["taskManager"]
         emu.uc.mem_write(start, bytes(size))
+        self.culling = culling
+        self.task_average_address = task_stats_address(emu) if culling else None
+        self.task_average = 0.0  # Seconds
 
     def on_render(self, emu):
         emu.dma_free = 0  # After this window, the DMA shows no more space: one window per routine() call
 
     def on_cull(self, emu):
         caller = emu.sym.function_at(emu.uc.reg_read(UC_ARM_REG_LR))
-        self.culls[caller[2].split("(")[0] if caller else "?"] += 1
+        kind = emu.uc.reg_read(UC_ARM_REG_R1)
+        self.culls[f"{caller[2].split('(')[0] if caller else '?'} "
+                   f"{CULL_TYPES[kind] if kind < len(CULL_TYPES) else kind}"] += 1
+        self.window_culls += 1
+
+    def voices_by_sound(self):
+        """AudioEngine::activeVoices (a VoiceVector: elements {Sound*, Voice*}, in a ring buffer): Sound* -> voices."""
+        es, _, _, memory, n, size, start = struct.unpack("<7I", self.emu.uc.mem_read(self.active_voices, 28))
+        counts = collections.Counter()
+        if n:
+            block = bytes(self.emu.uc.mem_read(memory, size * es))
+            for i in range(n):
+                j = i + start
+                j -= size if j >= size else 0
+                counts[struct.unpack_from("<I", block, j * es)[0]] += 1
+        return counts
 
     def start(self):
         self.emu.call(self.emu.sym.find("_ZN15PlaybackHandler17playButtonPressedEl"), 0)
@@ -448,15 +510,24 @@ class Player:
 
     def window(self):
         """One AudioEngine::routine() call and the other tasks after it: (instructions, samples rendered, voices,
-        other tasks' instructions, output samples scaled to the codec's full scale)."""
+        other tasks' instructions, output samples scaled to the codec's full scale, cpuDireness, cullVoice() calls,
+        voices per Sound*)."""
         emu = self.emu
         emu.dma_free = 127
+        if self.culling:
+            emu.uc.mem_write(self.task_average_address, struct.pack("<d", self.task_average))
+        self.window_culls = 0
         timer = emu.u32(self.sample_timer)
         before = emu.bc.bc_total()
         emu.call(self.routine)
         instructions = emu.bc.bc_total() - before
+        # TaskManager::runTask(): durationStats.update(runtime), i.e. average = (average + runtime) / 2
+        self.task_average = (self.task_average + instructions / CPU_HZ) / 2
         samples = (emu.u32(self.sample_timer) - timer) & 0xFFFFFFFF
         voices = self.voices()
+        direness = struct.unpack("<i", emu.uc.mem_read(self.direness, 4))[0]
+        culls = self.window_culls
+        by_sound = self.voices_by_sound()
         # What doSomeOutputting() sends to the codec: (sample * master volume) >> 32, << 8 with saturation
         x = np.frombuffer(bytes(emu.uc.mem_read(self.rendering_buffer, samples * 8)), "<i4").reshape(-1, 2)
         gain = np.array([struct.unpack("<i", emu.uc.mem_read(a, 4))[0] for a in self.master]) / 2 ** 55
@@ -464,7 +535,7 @@ class Player:
         before = emu.bc.bc_total()
         emu.call(self.playback_routine)
         emu.call(self.load_clusters)
-        return instructions, samples, voices, emu.bc.bc_total() - before, x * gain
+        return instructions, samples, voices, emu.bc.bc_total() - before, x * gain, direness, culls, by_sound
 
     def play(self, samples_wanted, record=None):
         total = 0
@@ -507,6 +578,34 @@ def area_of(name):
     return next((area for area, pattern in AREAS if re.search(pattern, name)), OTHER)
 
 
+def sound_names(emu, pointers, known):
+    """Sound* -> name: a String (a char pointer) near each Sound (Output::name of its SoundInstrument, SoundDrum::name)
+    pointing at one of the names in the song. The offset that names the most Sounds wins (the same field in every
+    object of a class), so a neighbouring object's name isn't taken."""
+    known = {n.encode() + b"\0" for n in known}
+    longest = max(map(len, known))
+    candidates = {}
+    for p in pointers:
+        found = {}
+        span = 0x2000
+        block = emu.ram(p - span, 2 * span) or emu.ram(p, span) or b""
+        origin = p - span if len(block) == 2 * span else p
+        for i in range(0, len(block) - 3, 4):
+            target = struct.unpack_from("<I", block, i)[0]
+            s = emu.ram(target, longest)
+            if s:
+                name = s[:s.find(b"\0") + 1] if b"\0" in s else None
+                if name in known:
+                    found[origin + i - p] = name[:-1].decode()
+        candidates[p] = found
+    votes = collections.Counter(d for found in candidates.values() for d in found)
+    names = {}
+    for p, found in candidates.items():
+        best = max(found, key=lambda d: (votes[d], -abs(d)), default=None)
+        names[p] = found[best] if best is not None else f"{p:#x}"
+    return names
+
+
 def profile_by_function(emu):
     n = 1 << 20
     addresses, instructions, counts = (ctypes.c_uint32 * n)(), (ctypes.c_uint32 * n)(), (ctypes.c_uint64 * n)()
@@ -518,7 +617,7 @@ def profile_by_function(emu):
     return by_function
 
 
-def measure(emu, player, warmup_bars, bars, out_dir, log):
+def measure(emu, player, warmup_bars, bars, out_dir, log, song_names=()):
     t = time.time()
     player.play(int(warmup_bars * BAR))
     log(f"warm-up: {warmup_bars:g} bar(s) ({time.time() - t:.1f} s)")
@@ -531,9 +630,32 @@ def measure(emu, player, warmup_bars, bars, out_dir, log):
     instr = np.array([w[0] for w in windows], dtype=np.float64)
     samples = np.array([w[1] for w in windows])
     voices = np.array([w[2] for w in windows])
+    direness = np.array([w[5] for w in windows])
+    culls = np.array([w[6] for w in windows])
     total_samples = int(samples.sum())
+    seconds = total_samples / SAMPLE_RATE
     per_block = instr.sum() / total_samples * 128
-    full = instr[samples == 128]
+    is_full = samples == 128
+    full = instr[is_full]
+
+    # Voices per Sound, named, in the song's order
+    pointers = sorted({p for w in windows for p in w[7]})
+    names = sound_names(emu, pointers, song_names) if song_names else {p: f"{p:#x}" for p in pointers}
+    order = list(song_names)
+    pointers.sort(key=lambda p: (order.index(names[p]) if names[p] in order else len(order), p))
+    by_sound = np.array([[w[7].get(p, 0) for p in pointers] for w in windows]).reshape(len(windows), len(pointers))
+    weights = samples / total_samples
+    per_sound = {names[p]: dict(mean=float(weights @ by_sound[:, i]), max=int(by_sound[:, i].max()),
+                                sounding=float(weights @ (by_sound[:, i] > 0)))
+                 for i, p in enumerate(pointers)}
+    all_sounding = (by_sound > 0).all(axis=1) if pointers else np.zeros(len(windows), bool)
+    all_full = instr[all_sounding & is_full]
+    num_sounding = (by_sound > 0).sum(axis=1)
+    by_num_sounding = {int(k): dict(share=float(weights @ (num_sounding == k)),
+                                    mean=float(instr[(num_sounding == k) & is_full].mean())
+                                    if np.any((num_sounding == k) & is_full) else None)
+                       for k in np.unique(num_sounding)}
+    short = ~is_full
     log(f"measured: {bars:g} bars, {len(windows)} windows, {instr.sum() / 1e6:,.0f}M instructions ({elapsed:.1f} s, "
         f"{instr.sum() / elapsed / 1e6:.0f}M instructions/s)")
 
@@ -558,21 +680,48 @@ def measure(emu, player, warmup_bars, bars, out_dir, log):
         return x / CYCLES_PER_BLOCK * 100
 
     return dict(
-        bars=bars, windows=len(windows), short_windows=int(np.sum(samples != 128)), samples=total_samples,
-        instructions_per_128=per_block, cpu_percent=cpu(per_block),
+        bars=bars, culling=player.culling, windows=len(windows), short_windows=int(np.sum(short)),
+        samples=total_samples, instructions_per_128=per_block, cpu_percent=cpu(per_block),
         full_windows=dict(count=len(full), mean=float(full.mean()), max=float(full.max()), min=float(full.min()),
                           percentiles={p: float(np.percentile(full, p)) for p in (5, 25, 50, 75, 95, 99)}),
         max_cpu_percent=cpu(float(full.max())),
+        # Windows shorter than 128 samples (here: cut at the song's clock ticks). What they cost per sample, against the
+        # full windows: on the Deluge, whenever the main loop comes back sooner, routine() renders fewer samples
+        short_window_cost=dict(
+            count=int(short.sum()), mean_samples=float(samples[short].mean()) if short.any() else None,
+            mean_instructions=float(instr[short].mean()) if short.any() else None,
+            per_sample=float(instr[short].sum() / samples[short].sum()) if short.any() else None,
+            full_per_sample=float(full.mean() / 128),
+            extra_per_128=(float(instr.sum() / total_samples * 128 - full.mean())),
+            # A straight line through the short and the full windows' means: a routine() call rendering n samples costs
+            # about per_call + per_sample_slope * n (per_call is an upper bound: the short windows also do a tick's work)
+            **(dict(per_call=float((instr[short].mean() * 128 - full.mean() * samples[short].mean())
+                                   / (128 - samples[short].mean())),
+                    per_sample_slope=float((full.mean() - instr[short].mean()) / (128 - samples[short].mean())))
+               if short.any() else {})),
+        all_sounds_sounding=dict(
+            sounds=len(pointers), windows=int(all_sounding.sum()), full_windows=len(all_full),
+            share=float(weights @ all_sounding),
+            mean=float(all_full.mean()) if len(all_full) else None,
+            mean_cpu_percent=cpu(float(all_full.mean())) if len(all_full) else None,
+            max=float(all_full.max()) if len(all_full) else None,
+            by_number_sounding=by_num_sounding),
         other_tasks_per_128=float(sum(w[3] for w in windows)) / total_samples * 128,
         voices=dict(mean=float(voices.mean()), max=int(voices.max()), min=int(voices.min())),
+        voices_by_sound=per_sound,
         culls={k: v - culls_before[k] for k, v in player.culls.items() if v - culls_before[k]},
+        culls_per_second=float(culls.sum() / seconds),
         culls_since_playback_started=dict(player.culls),
+        cpu_direness=dict(mean=float(direness.mean()),
+                          share={int(d): float(np.mean(direness == d)) for d in np.unique(direness)}),
         output=dict(peak_dbfs=20 * math.log10(peak) if peak else None, rms_dbfs=20 * math.log10(rms) if rms else None,
                     clipped_samples=int(np.sum(np.abs(out) >= 1.0)), nan=bool(np.isnan(out).any())),
         areas={a: dict(per_128=v, percent_of_total=v / per_block * 100, cpu_percent=cpu(v),
                        top=area_functions[a][:6]) for a, v in areas.most_common()},
         top_functions=[(name, round(n / total_samples * 128)) for name, n in functions.most_common(40)],
-        window_log=[(int(w[0]), int(w[1]), int(w[2])) for w in windows],
+        window_log_fields=["instructions", "samples", "voices", "cpuDireness", "cullVoice calls"],
+        window_log=[(int(w[0]), int(w[1]), int(w[2]), int(w[5]), int(w[6])) for w in windows],
+        voices_by_sound_log=dict(sounds=[names[p] for p in pointers], windows=by_sound.tolist()),
     )
 
 
@@ -584,9 +733,35 @@ def report(r, log):
     log(f"full windows (128): mean {fw['mean']:,.0f} ({fw['mean'] / CYCLES_PER_BLOCK * 100:.1f}%), max "
         f"{fw['max']:,.0f} ({r['max_cpu_percent']:.1f}%), min {fw['min']:,.0f}; percentiles 5/25/50/75/95/99: "
         + " / ".join(f"{p[k] / CYCLES_PER_BLOCK * 100:.0f}%" for k in p))
+    a = r["all_sounds_sounding"]
+    if a["mean"] is not None:
+        log(f"full windows with all {a['sounds']} Sounds sounding (voices in each): {a['full_windows']} "
+            f"({a['share'] * 100:.0f}% of the time), mean {a['mean']:,.0f} ({a['mean_cpu_percent']:.1f}%), max "
+            f"{a['max']:,.0f} ({a['max'] / CYCLES_PER_BLOCK * 100:.1f}%)")
+    else:
+        log(f"no window with all {a['sounds']} Sounds sounding")
+    log("by the number of Sounds with voices (share of the time, mean of its full windows): " + ", ".join(
+        f"{k}: {x['share'] * 100:.0f}% " + (f"{x['mean'] / CYCLES_PER_BLOCK * 100:.0f}%" if x['mean'] else "-")
+        for k, x in a["by_number_sounding"].items()))
+    s = r["short_window_cost"]
+    if s["count"]:
+        log(f"short windows (< 128 samples, cut at clock ticks): {s['count']}, mean {s['mean_samples']:.0f} samples, "
+            f"{s['mean_instructions']:,.0f} instructions = {s['per_sample']:,.0f} per sample (full windows: "
+            f"{s['full_per_sample']:,.0f}, {s['per_sample'] / s['full_per_sample']:.1f}x); they add "
+            f"{s['extra_per_128']:,.0f} per 128 overall")
+        a64 = (s['per_call'] * 2 + s['per_sample_slope'] * 128) / CYCLES_PER_BLOCK * 100
+        log(f"  a routine() call costs about {s['per_call']:,.0f} + {s['per_sample_slope']:,.0f} per sample (the fixed "
+            f"part at most: short windows also do a tick's work); called every 64 samples instead of 128 that would be "
+            f"about {a64:.0f}% instead of {fw['mean'] / CYCLES_PER_BLOCK * 100:.0f}%")
     v = r["voices"]
-    log(f"voices: mean {v['mean']:.1f}, max {v['max']}, min {v['min']}; cullVoice() calls: {r['culls'] or 'none'} "
-        f"(since playback started: {r['culls_since_playback_started'] or 'none'})")
+    log(f"voices: mean {v['mean']:.1f}, max {v['max']}, min {v['min']}; cullVoice() calls: {r['culls'] or 'none'}, "
+        f"{r['culls_per_second']:.1f}/s (since playback started: {r['culls_since_playback_started'] or 'none'})")
+    d = r["cpu_direness"]
+    log(f"cpuDireness: mean {d['mean']:.1f}; share of windows: "
+        + ", ".join(f"{k}: {x * 100:.1f}%" for k, x in d["share"].items()))
+    log("\nvoices per Sound (mean, max, share of the time with voices):")
+    for name, x in r["voices_by_sound"].items():
+        log(f"  {name:8s} {x['mean']:5.1f} {x['max']:3d} {x['sounding'] * 100:5.1f}%")
     o = r["output"]
     log(f"output: peak {o['peak_dbfs']:.1f} dBFS, RMS {o['rms_dbfs']:.1f} dBFS, {o['clipped_samples']} clipped, "
         f"NaN: {o['nan']}")
@@ -606,6 +781,8 @@ def main():
     ap.add_argument("--build", default=HERE, help="directory with blockcount.so")
     ap.add_argument("--warmup-bars", type=float, default=1)
     ap.add_argument("--bars", type=float, default=2)
+    ap.add_argument("--culling", action="store_true",
+                    help="as on the Deluge: routine() culls voices and sets cpuDireness by its emulated duration")
     ap.add_argument("--write-back", help="also save the song as the firmware writes it after loading, to this file")
     args = ap.parse_args()
     tools = args.tools or os.path.join(os.path.dirname(os.path.abspath(args.elf)),
@@ -621,9 +798,12 @@ def main():
     load_startup_song(emu)
     if args.write_back:
         write_back_song(emu, args.write_back)
-    player = Player(emu)
+    # The Sounds' names in the song (synths: presetName, kit rows: name), in its order
+    xml = fat32.read_file(args.sd, "SONGS/DEFAULT.XML").decode(errors="replace")
+    song_names = list(dict.fromkeys(re.findall(r'<sound\b[^>]*?\b(?:presetName|name)="([^"]+)"', xml)))
+    player = Player(emu, culling=args.culling)
     player.start()
-    result = measure(emu, player, args.warmup_bars, args.bars, args.out, log)
+    result = measure(emu, player, args.warmup_bars, args.bars, args.out, log, song_names)
     json.dump(result, open(os.path.join(args.out, "result.json"), "w"), indent=1)
     report(result, log)
 

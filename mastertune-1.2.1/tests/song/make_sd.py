@@ -7,12 +7,12 @@ The song ("everything at once", 120 BPM, 4/4, the firmware's default resolution 
 - 8 synth tracks, all playing 4-bar clips of 4-note chords (Cm9, Abmaj7, Fm9, G7sus4, one chord per bar), 2
   oscillators (saw and square) each, a
   24 dB ladder low-pass with an envelope, all sidechain-ducked by the kick and sending to the reverb (the chords' notes
-  last 2 beats, and ring on with a long release):
+  last the whole bar, legato: every synth plays all the time, and each chord's release rings on into the next):
     PADA  unison 4, HPF, LFO1 on the LPF, chorus
     PADB  unison 4, LFO1 on the LPF, phaser, delay (dotted 8ths, ping-pong)
     PADC  HPF, flanger, compressor
     PADD  unison 2, LFO1 on the LPF, bitcrush and sample rate reduction
-    ARP   arpeggiator in 16ths (up, 2 octaves) on the chords, delay
+    ARP   arpeggiator in 16ths (up, 2 octaves) on the chords, gate 100 % (legato), delay
     PADE  unison 4, HPF, LFO1 on the LPF (the big plain pad)
     FM    the DX7 engine (an electric piano, algorithm 5), no filter use
     WT    a wavetable (32 frames morphing, LFO2 on its position) and a square, LFO1 on the LPF
@@ -229,7 +229,7 @@ def instrument_clip(name, folder, length, note_rows, extra="", params_block="", 
     return out
 
 
-NOTE_LENGTH = BAR // 2  # The chords' notes: 2 beats, then their release rings on
+NOTE_LENGTH = BAR  # The chords' notes: the whole bar (legato), then their release rings on into the next
 CHORDS = [[48, 55, 58, 63], [44, 51, 55, 60], [41, 48, 51, 55], [43, 50, 53, 60]]  # Cm9, Abmaj7, Fm9, G7sus4
 
 
@@ -314,7 +314,7 @@ def synths():
                        PAD_ENV1, PAD_ENV2, BASE_CABLES + [LFO_FILTER], notes_octave=0))
     arp_env = dict(attack=knob(0), decay=knob(18), sustain=knob(15), release=knob(3))
     parts.append(synth("ARP", SAW, SQUARE, 1, dict(delayFeedback=knob(22), lpfFrequency=knob(34),
-                                                   arpeggiatorGate=knob(20)),
+                                                   arpeggiatorGate=knob(50)),  # Gate 100 %: legato
                        arp_env, PAD_ENV2, BASE_CABLES, notes_octave=1,
                        arp=dict(arpMode="arp", noteMode="up", octaveMode="up", numOctaves=2, syncLevel=6)))
     parts.append(synth("PADE", SAW, SQUARE, 4, dict(hpfFrequency=knob(10), reverbAmount=knob(30)),

@@ -58,7 +58,8 @@ details p { margin: 6px 0; }
 	<div class="tile"><div class="k">Stimmen jetzt / max</div><div class="v" id="voices">–</div><div class="s" id="voices-s"></div></div>
 	<div class="tile" id="t-dire"><div class="k">Direness max</div><div class="v" id="dire">–</div><div class="s" id="dire-s"></div></div>
 	<div class="tile" id="t-cull"><div class="k">Culling (Stimmen/s)</div><div class="v" id="culled">–</div><div class="s" id="culled-s"></div></div>
-	<div class="tile"><div class="k">SD-Cluster Ø / max</div><div class="v" id="sd">–</div><div class="s" id="sd-s"></div></div>
+	<div class="tile"><div class="k">SD-Karte Ø / max</div><div class="v" id="sdcard">–</div><div class="s" id="sdcard-s"></div></div>
+	<div class="tile"><div class="k">SD-Latenz inkl. Audio</div><div class="v" id="sd">–</div><div class="s" id="sd-s"></div></div>
 	<div class="tile" id="t-gap"><div class="k">Längste Audio-Lücke</div><div class="v" id="gap">–</div><div class="s" id="gap-s"></div></div>
 	<div class="tile"><div class="k">Messungen</div><div class="v" id="count">0</div><div class="s" id="count-s"></div></div>
 </div>
@@ -78,7 +79,9 @@ details p { margin: 6px 0; }
 	<p><b>CPU Durchschnitt:</b> Rechenzeit der Audio-Routine geteilt durch die Dauer des Audios, das sie in dieser Sekunde erzeugt hat. Dauerhaft über etwa 90 % wird es eng.</p>
 	<p><b>CPU Spitze:</b> der teuerste einzelne Block (ab 16 Samples) im Verhältnis zu seiner Länge. Einzelne Spitzen über 100 % fängt der Ausgabepuffer auf.</p>
 	<p><b>Direness:</b> 0 bis 14. Über 0 senkt der Deluge die Qualität (z. B. lineare statt Sinc-Interpolation) und schneidet bei Bedarf Stimmen ab (Culling).</p>
-	<p><b>SD-Cluster:</b> Lesezeit eines Sample-Clusters von der Karte, Durchschnitt und längster Zugriff. <b>Audio-Lücke:</b> längster Abstand zwischen zwei Aufrufen der Audio-Routine.</p>
+	<p><b>SD-Karte:</b> Lesezeit eines Sample-Clusters ohne die Audio-Routine, die während des Wartens auf die Karte lief (Durchschnitt / längster Zugriff). Sie zeigt, wie schnell die Karte ist, und steht auch auf dem OLED.</p>
+	<p><b>SD-Latenz inkl. Audio:</b> dieselben Zugriffe vom Start bis zum Ende gemessen (Wanduhr). Darin steckt die Audio-Routine, die der Deluge währenddessen rechnet; der Wert steigt deshalb mit der CPU-Last. So lange wartet das Streaming auf einen Cluster.</p>
+	<p><b>Culling:</b> Stimmen, die der CPU-Schutz wirklich ausblendet oder abschaltet, jede einmal. <b>Audio-Lücke:</b> längster Abstand zwischen zwei Aufrufen der Audio-Routine.</p>
 </details>
 </main>
 
@@ -89,6 +92,8 @@ details p { margin: 6px 0; }
 /// Decodes one CPU monitor SysEx message of the Deluge (mastertune-v12-diag) or returns null.
 /// Header F0 00 21 7B 01 10 (or F0 7D 10 once a client used the old developer ID), then fixed fields of 7-bit groups,
 /// least significant first, then F7. Units: permille (0.1 %), microseconds, milliseconds, samples.
+/// Format 1 has 36 payload bytes, format 2 adds the SD card time (without the audio rendered meanwhile) at the end;
+/// for format 1 those two fields are null.
 function decodeCpuStats(data) {
 	let p;
 	if (data.length >= 6 && data[0] === 0xF0 && data[1] === 0x00 && data[2] === 0x21 && data[3] === 0x7B && data[4] === 0x01) {
@@ -119,7 +124,7 @@ function decodeCpuStats(data) {
 		p += numBytes;
 		return value;
 	};
-	return {
+	const d = {
 		version: field(1),
 		seq: field(2),
 		windowMs: field(2),
@@ -135,7 +140,14 @@ function decodeCpuStats(data) {
 		sdMaxUs: field(4),
 		maxGapUs: field(4),
 		samples: field(4),
+		sdCardAvgUs: null,
+		sdCardMaxUs: null,
 	};
+	if (d.version >= 2 && end - p >= 8) {
+		d.sdCardAvgUs = field(4);
+		d.sdCardMaxUs = field(4);
+	}
+	return d;
 }
 // END decode
 
@@ -168,7 +180,10 @@ function show(r) {
 	setTile("voices", r.voicesNow + " / " + r.voicesMax);
 	setTile("dire", String(r.direMax), fmt(r.direShare, 1) + " % der Zeit über 0", r.direMax > 0);
 	setTile("culled", String(r.culled), "", r.culled > 0);
-	setTile("sd", r.sdLoads ? fmt(r.sdAvgMs, 2) + " / " + fmt(r.sdMaxMs, 1) + " ms" : "–", r.sdLoads + " Cluster/s");
+	const card = r.sdCardAvgMs !== null;
+	setTile("sdcard", r.sdLoads && card ? fmt(r.sdCardAvgMs, 2) + " / " + fmt(r.sdCardMaxMs, 1) + " ms" : "–",
+		card ? r.sdLoads + " Cluster/s, ohne Audio" : "Firmware sendet das nicht");
+	setTile("sd", r.sdLoads ? fmt(r.sdAvgMs, 2) + " / " + fmt(r.sdMaxMs, 1) + " ms" : "–", "Wanduhr, Ø / max");
 	setTile("gap", fmt(r.maxGapMs, 2) + " ms", "zwischen zwei Audio-Aufrufen", r.maxGapMs >= 2.9);
 	setTile("count", String(rows.length), lost ? lost + " verloren" : "keine verloren");
 }
@@ -204,6 +219,8 @@ function onMessage(event, inputName) {
 		sdMaxMs: d.sdMaxUs / 1000,
 		maxGapMs: d.maxGapUs / 1000,
 		samples: d.samples,
+		sdCardAvgMs: d.sdCardAvgUs === null ? null : d.sdCardAvgUs / 1000,
+		sdCardMaxMs: d.sdCardMaxUs === null ? null : d.sdCardMaxUs / 1000,
 	};
 	rows.push(r);
 	$("csv").disabled = false;
@@ -276,13 +293,15 @@ $("clear").addEventListener("click", () => {
 
 $("csv").addEventListener("click", () => {
 	const head = ["time", "t_s", "seq", "window_ms", "cpu_avg_pct", "cpu_peak_pct", "voices_now", "voices_max",
-		"direness_max", "direness_share_pct", "voices_culled", "sd_cluster_loads", "sd_avg_ms", "sd_max_ms",
-		"max_audio_gap_ms", "samples", "input"];
+		"direness_max", "direness_share_pct", "voices_culled", "sd_cluster_loads", "sd_card_avg_ms", "sd_card_max_ms",
+		"sd_latency_incl_audio_avg_ms", "sd_latency_incl_audio_max_ms", "max_audio_gap_ms", "samples", "input"];
 	const lines = [head.join(";")];
 	for (const r of rows) {
 		lines.push([r.time.toISOString(), fmt(r.t, 3), r.seq, r.windowMs, fmt(r.cpuAvg, 1), fmt(r.cpuPeak, 1),
-			r.voicesNow, r.voicesMax, r.direMax, fmt(r.direShare, 1), r.culled, r.sdLoads, fmt(r.sdAvgMs, 3),
-			fmt(r.sdMaxMs, 3), fmt(r.maxGapMs, 3), r.samples, '"' + r.input.replace(/"/g, '""') + '"'].join(";"));
+			r.voicesNow, r.voicesMax, r.direMax, fmt(r.direShare, 1), r.culled, r.sdLoads,
+			r.sdCardAvgMs === null ? "" : fmt(r.sdCardAvgMs, 3), r.sdCardMaxMs === null ? "" : fmt(r.sdCardMaxMs, 3),
+			fmt(r.sdAvgMs, 3), fmt(r.sdMaxMs, 3), fmt(r.maxGapMs, 3), r.samples,
+			'"' + r.input.replace(/"/g, '""') + '"'].join(";"));
 	}
 	const blob = new Blob([lines.join("\r\n") + "\r\n"], { type: "text/csv" });
 	const a = document.createElement("a");

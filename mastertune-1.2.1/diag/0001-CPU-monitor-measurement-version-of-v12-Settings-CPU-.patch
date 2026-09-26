@@ -1,4 +1,4 @@
-From b1ba466fbb3ffb4484153dd0c45997c975518025 Mon Sep 17 00:00:00 2001
+From d0d03dccd26bc3ef4970bab093e3fe6b86762bdb Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 26 Sep 2026 16:07:22 +0000
 Subject: [PATCH] CPU monitor: measurement version of v12 (Settings > CPU
@@ -9,18 +9,24 @@ Off after every power-up. While on:
   free running since the task manager started it; only read): render time
   over the audio time rendered, average and busiest call, per half second
 - counts voices (now, max), cpuDireness (max, share of the audio rendered
-  above 0), voices culled by the CPU guard, SD sample cluster reads (count,
-  average and longest read time) and the longest gap between two calls
+  above 0), voices the CPU guard really cuts short (each once: a cull call
+  that leaves its voice as it was, or hits one already fading fast or
+  stopped, doesn't count), SD sample cluster reads (count; average and
+  longest read time, both as wall clock and without the audio routine
+  calls that ran while the read waited for the card) and the longest gap
+  between two calls
 - OLED: one inverted line at the bottom, drawn on top of the finished
   image in a canvas of its own, new twice a second
-  ("C43/71% V24 D0 S2.4/9"); 7-segment: short "C 43" popup every 2 s
-- sends the per-second numbers as SysEx F0 00 21 7B 01 10 ... F7 (format in
-  cpu_stats_core.h) only on USB MIDI port 3 to the computer, never DIN, and
-  only while the USB send buffer has room
+  ("C43/71% V24 D0 S2.4/9", SD without the audio meanwhile);
+  7-segment: short "C 43" popup every 2 s
+- sends the per-second numbers as SysEx F0 00 21 7B 01 10 ... F7 (format 2,
+  in cpu_stats_core.h) only on USB MIDI port 3 to the computer, never DIN,
+  and only while the USB send buffer has room
 
 No sound changes: the audio routine is kept whole in routineUnmeasured()
 (its machine code is the same as v12's routine() apart from data offsets)
 and routine() only wraps it; while off, the wrapper costs one flag test.
+cullVoice() only gains the counter, its choices are unchanged.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
@@ -34,13 +40,13 @@ Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
  src/deluge/gui/ui/menus.cpp                   |   5 +
  src/deluge/hid/display/oled.cpp               |  14 +
  src/deluge/io/midi/sysex.h                    |  14 +-
- .../processing/engines/audio_engine.cpp       |  22 +-
- src/deluge/processing/engines/cpu_stats.cpp   | 142 ++++++++
- src/deluge/processing/engines/cpu_stats.h     |  57 ++++
- .../processing/engines/cpu_stats_core.cpp     | 306 ++++++++++++++++++
- .../processing/engines/cpu_stats_core.h       | 142 ++++++++
+ .../processing/engines/audio_engine.cpp       |  36 +-
+ src/deluge/processing/engines/cpu_stats.cpp   | 146 ++++++++
+ src/deluge/processing/engines/cpu_stats.h     |  65 ++++
+ .../processing/engines/cpu_stats_core.cpp     | 323 ++++++++++++++++++
+ .../processing/engines/cpu_stats_core.h       | 154 +++++++++
  .../storage/audio/audio_file_manager.cpp      |   3 +
- 15 files changed, 710 insertions(+), 9 deletions(-)
+ 15 files changed, 765 insertions(+), 9 deletions(-)
  create mode 100644 src/deluge/processing/engines/cpu_stats.cpp
  create mode 100644 src/deluge/processing/engines/cpu_stats.h
  create mode 100644 src/deluge/processing/engines/cpu_stats_core.cpp
@@ -226,7 +232,7 @@ index f88eef07..056685da 100644
  };
  
 diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
-index 80ef32c3..16ad7c7e 100644
+index 80ef32c3..49e9d0d0 100644
 --- a/src/deluge/processing/engines/audio_engine.cpp
 +++ b/src/deluge/processing/engines/audio_engine.cpp
 @@ -46,6 +46,7 @@
@@ -237,18 +243,54 @@ index 80ef32c3..16ad7c7e 100644
  #include "processing/engines/cv_engine.h"
  #include "processing/live/live_input_buffer.h"
  #include "processing/metronome/metronome.h"
-@@ -378,6 +379,10 @@ Voice* cullVoice(bool saveVoice, CullType type, size_t numSamples, Sound* stopFr
- 		}
- 	}
+@@ -297,6 +298,15 @@ char audioLogStrings[AUDIO_LOG_SIZE][64];
+ int32_t numAudioLogItems = 0;
+ #endif
  
-+	// mastertune-diag: only the CPU guard (cullVoices()) culls without naming a Sound; count those for the CPU monitor
-+	if (bestVoice != nullptr && stopFrom == nullptr) {
++// mastertune-diag: Settings > CPU monitor counts the voices the CPU guard (cullVoices(), the only caller that names no
++// Sound) really cuts short, each once: not a call that leaves its voice as it was, nor a voice already fading fast or
++// stopped
++static void countCulledVoice(Sound* stopFrom) {
++	if (stopFrom == nullptr) {
 +		cpu_stats::voiceCulled();
 +	}
- 	return bestVoice;
- }
- int32_t getNumAudio() {
-@@ -1064,7 +1069,9 @@ void scheduleMidiGateOutISR(uint32_t saddrPosAtStart, int32_t unadjustedNumSampl
++}
++
+ // To be called when CPU is overloaded and we need to free it up. This stops the voice which has been
+ // releasing longest, or if none, the voice playing longest.
+ Voice* cullVoice(bool saveVoice, CullType type, size_t numSamples, Sound* stopFrom) {
+@@ -335,6 +345,9 @@ Voice* cullVoice(bool saveVoice, CullType type, size_t numSamples, Sound* stopFr
+ 		case SOFT: {
+ 			if (bestVoice->envelopes[0].state < EnvelopeStage::FAST_RELEASE
+ 			    || bestVoice->envelopes[0].fastReleaseIncrement < SOFT_CULL_INCREMENT) {
++				if (bestVoice->envelopes[0].state != EnvelopeStage::OFF) { // mastertune-diag
++					countCulledVoice(stopFrom);
++				}
+ 				bool stillGoing = bestVoice->doFastRelease(SOFT_CULL_INCREMENT);
+ 
+ 				if (!stillGoing) {
+@@ -353,7 +366,12 @@ Voice* cullVoice(bool saveVoice, CullType type, size_t numSamples, Sound* stopFr
+ 		}
+ 
+ 		case FORCE: {
++			// mastertune-diag: a voice still sounding normally, not one already stopped or counted as soft-culled
++			bool wasSounding = bestVoice->envelopes[0].state < EnvelopeStage::FAST_RELEASE;
+ 			bool stillGoing = bestVoice->doImmediateRelease();
++			if (wasSounding || !stillGoing) {
++				countCulledVoice(stopFrom);
++			}
+ 
+ 			if (!stillGoing) {
+ 				unassignVoice(bestVoice, bestVoice->assignedToSound);
+@@ -365,6 +383,7 @@ Voice* cullVoice(bool saveVoice, CullType type, size_t numSamples, Sound* stopFr
+ 			break;
+ 		}
+ 		case HARD:
++			countCulledVoice(stopFrom); // mastertune-diag
+ 			unassignVoice(bestVoice, bestVoice->assignedToSound, NULL, true, !saveVoice);
+ 			D_PRINTLN("hard-culled 1 voice.  numSamples:  %d. Voices left: %d. Audio clips left: %d", numSamples,
+ 			          getNumVoices(), getNumAudio());
+@@ -1064,7 +1083,9 @@ void scheduleMidiGateOutISR(uint32_t saddrPosAtStart, int32_t unadjustedNumSampl
  	}
  }
  
@@ -259,7 +301,7 @@ index 80ef32c3..16ad7c7e 100644
  
  	logAction("AudioDriver::routine");
  
-@@ -1117,6 +1124,19 @@ void routine() {
+@@ -1117,6 +1138,19 @@ void routine() {
  	routineBeenCalled = true;
  }
  
@@ -281,10 +323,10 @@ index 80ef32c3..16ad7c7e 100644
  }
 diff --git a/src/deluge/processing/engines/cpu_stats.cpp b/src/deluge/processing/engines/cpu_stats.cpp
 new file mode 100644
-index 00000000..f7c532cf
+index 00000000..aa3b1e5e
 --- /dev/null
 +++ b/src/deluge/processing/engines/cpu_stats.cpp
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,146 @@
 +/*
 + * Copyright © 2026 Synthstrom Audible Limited
 + *
@@ -368,9 +410,13 @@ index 00000000..f7c532cf
 +	collector.routineDone(time, AudioEngine::audioSampleTimer, AudioEngine::getNumVoices(), AudioEngine::cpuDireness);
 +}
 +
-+void clusterLoaded(uint32_t startTime) {
++ReadStart readStart() {
++	return ReadStart{now(), collector.busyTicksTotal()};
++}
++
++void clusterLoaded(ReadStart start) {
 +	if (enabled) {
-+		collector.clusterLoaded(now() - startTime);
++		collector.clusterLoaded(now() - start.time, collector.busyTicksTotal() - start.busyTicks);
 +	}
 +}
 +
@@ -429,10 +475,10 @@ index 00000000..f7c532cf
 +} // namespace cpu_stats
 diff --git a/src/deluge/processing/engines/cpu_stats.h b/src/deluge/processing/engines/cpu_stats.h
 new file mode 100644
-index 00000000..26f5efa8
+index 00000000..1923001f
 --- /dev/null
 +++ b/src/deluge/processing/engines/cpu_stats.h
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,65 @@
 +/*
 + * Copyright © 2026 Synthstrom Audible Limited
 + *
@@ -480,8 +526,16 @@ index 00000000..26f5efa8
 +	}
 +}
 +
-+/// A sample cluster read from the SD card that started at startTime (a now() value) has finished
-+void clusterLoaded(uint32_t startTime);
++/// Taken just before a sample cluster is read from the SD card
++struct ReadStart {
++	uint32_t time;      ///< now()
++	uint32_t busyTicks; ///< Collector::busyTicksTotal()
++};
++ReadStart readStart();
++
++/// That read has finished. Records its wall-clock time and, apart, the time without the audio routine calls that ran
++/// while the read waited for the card (it yields to the task manager meanwhile).
++void clusterLoaded(ReadStart start);
 +
 +/// Task, a few times a second: display and SysEx
 +void routine();
@@ -492,10 +546,10 @@ index 00000000..26f5efa8
 +} // namespace cpu_stats
 diff --git a/src/deluge/processing/engines/cpu_stats_core.cpp b/src/deluge/processing/engines/cpu_stats_core.cpp
 new file mode 100644
-index 00000000..a25aa7d0
+index 00000000..7debba11
 --- /dev/null
 +++ b/src/deluge/processing/engines/cpu_stats_core.cpp
-@@ -0,0 +1,306 @@
+@@ -0,0 +1,323 @@
 +/*
 + * Copyright © 2026 Synthstrom Audible Limited
 + *
@@ -575,8 +629,12 @@ index 00000000..a25aa7d0
 +	into.culled = addSaturated(into.culled, later.culled);
 +	into.sdLoads = addSaturated(into.sdLoads, later.sdLoads);
 +	into.sdTicks += later.sdTicks;
++	into.sdCardTicks += later.sdCardTicks;
 +	if (later.sdMaxTicks > into.sdMaxTicks) {
 +		into.sdMaxTicks = later.sdMaxTicks;
++	}
++	if (later.sdCardMaxTicks > into.sdCardMaxTicks) {
++		into.sdCardMaxTicks = later.sdCardMaxTicks;
 +	}
 +	if (later.maxGapTicks > into.maxGapTicks) {
 +		into.maxGapTicks = later.maxGapTicks;
@@ -598,6 +656,8 @@ index 00000000..a25aa7d0
 +	s.sdMaxUs = ticksToUs(w.sdMaxTicks);
 +	s.maxGapUs = ticksToUs(w.maxGapTicks);
 +	s.samples = w.samples;
++	s.sdCardAvgUs = (w.sdLoads != 0) ? ticksToUs(w.sdCardTicks / w.sdLoads) : 0;
++	s.sdCardMaxUs = ticksToUs(w.sdCardMaxTicks);
 +	return s;
 +}
 +
@@ -623,6 +683,7 @@ index 00000000..a25aa7d0
 +void Collector::routineDone(uint32_t now, uint32_t sampleCounter, uint32_t voices, int32_t direness) {
 +	uint32_t ticks = now - routineStart_;
 +	uint32_t samples = sampleCounter - routineSamplesStart_;
++	busyTotal_ += ticks; // Wraps, which is fine for differences
 +	acc_.busyTicks += ticks;
 +	acc_.samples = addSaturated(acc_.samples, samples);
 +	if (samples >= kMinPeakSamples && busier(ticks, samples, acc_.peakTicks, acc_.peakSamples)) {
@@ -657,11 +718,18 @@ index 00000000..a25aa7d0
 +	windowStart_ = now;
 +}
 +
-+void Collector::clusterLoaded(uint32_t readTicks) {
++void Collector::clusterLoaded(uint32_t readTicks, uint32_t audioTicks) {
++	// Only audio routine calls that ran while waiting for the card can be in audioTicks, so it can't be more than the
++	// read took (unless the monitor was switched on in between); be safe anyway
++	uint32_t cardTicks = (audioTicks < readTicks) ? readTicks - audioTicks : 0;
 +	acc_.sdLoads = addSaturated(acc_.sdLoads, 1);
 +	acc_.sdTicks += readTicks;
++	acc_.sdCardTicks += cardTicks;
 +	if (readTicks > acc_.sdMaxTicks) {
 +		acc_.sdMaxTicks = readTicks;
++	}
++	if (cardTicks > acc_.sdCardMaxTicks) {
++		acc_.sdCardMaxTicks = cardTicks;
 +	}
 +}
 +
@@ -736,6 +804,8 @@ index 00000000..a25aa7d0
 +	w.value(s.sdMaxUs, 4);
 +	w.value(s.maxGapUs, 4);
 +	w.value(s.samples, 4);
++	w.value(s.sdCardAvgUs, 4);
++	w.value(s.sdCardMaxUs, 4);
 +	w.byte(0xF7);
 +	return w.length();
 +}
@@ -762,7 +832,8 @@ index 00000000..a25aa7d0
 +	unsigned voices = atMost999(s.voicesNow);
 +	unsigned dire = atMost999(s.direMax);
 +
-+	// SD: average read with one decimal below 10 ms, longest read rounded up to whole ms, "S-" if nothing was read
++	// SD, without the audio rendered while waiting for the card: average read with one decimal below 10 ms, longest
++	// read rounded up to whole ms, "S-" if nothing was read
 +	char sdLong[24];
 +	char sdShort[8];
 +	if (s.sdLoads == 0) {
@@ -770,13 +841,13 @@ index 00000000..a25aa7d0
 +		strcpy(sdShort, "S-");
 +	}
 +	else {
-+		unsigned sdMaxMs = atMost999((s.sdMaxUs + 999) / 1000);
-+		if (s.sdAvgUs < 9950) {
-+			unsigned tenths = (s.sdAvgUs + 50) / 100;
++		unsigned sdMaxMs = atMost999((s.sdCardMaxUs + 999) / 1000);
++		if (s.sdCardAvgUs < 9950) {
++			unsigned tenths = (s.sdCardAvgUs + 50) / 100;
 +			snprintf(sdLong, sizeof(sdLong), "S%u.%u/%u", tenths / 10, tenths % 10, sdMaxMs);
 +		}
 +		else {
-+			snprintf(sdLong, sizeof(sdLong), "S%u/%u", (unsigned)atMost999((s.sdAvgUs + 500) / 1000), sdMaxMs);
++			snprintf(sdLong, sizeof(sdLong), "S%u/%u", (unsigned)atMost999((s.sdCardAvgUs + 500) / 1000), sdMaxMs);
 +		}
 +		snprintf(sdShort, sizeof(sdShort), "S%u", sdMaxMs);
 +	}
@@ -804,10 +875,10 @@ index 00000000..a25aa7d0
 +} // namespace cpu_stats
 diff --git a/src/deluge/processing/engines/cpu_stats_core.h b/src/deluge/processing/engines/cpu_stats_core.h
 new file mode 100644
-index 00000000..360714d9
+index 00000000..8215e098
 --- /dev/null
 +++ b/src/deluge/processing/engines/cpu_stats_core.h
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,154 @@
 +/*
 + * Copyright © 2026 Synthstrom Audible Limited
 + *
@@ -848,20 +919,22 @@ index 00000000..360714d9
 +
 +/// Raw sums of one measuring window. Everything shown or sent is derived from it, and two windows can be merged.
 +struct Window {
-+	uint32_t ticks = 0;       ///< Wall-clock length of the window
-+	uint64_t busyTicks = 0;   ///< Time spent in AudioEngine::routine()
-+	uint32_t samples = 0;     ///< Samples it rendered
-+	uint32_t peakTicks = 0;   ///< The busiest call (relative to the audio it rendered): its time
-+	uint32_t peakSamples = 0; ///< and the samples it rendered
-+	uint32_t voicesNow = 0;   ///< Active voices after the last call
-+	uint32_t voicesMax = 0;   ///< Most active voices after any call
-+	uint32_t direMax = 0;     ///< Highest AudioEngine::cpuDireness after any call
-+	uint32_t direSamples = 0; ///< Samples rendered while cpuDireness was above 0
-+	uint32_t culled = 0;      ///< Voices culled because the CPU was behind
-+	uint32_t sdLoads = 0;     ///< Sample clusters read from the SD card
-+	uint64_t sdTicks = 0;     ///< Their summed read time
-+	uint32_t sdMaxTicks = 0;  ///< The longest read
-+	uint32_t maxGapTicks = 0; ///< Longest time between the starts of two audio routine calls
++	uint32_t ticks = 0;          ///< Wall-clock length of the window
++	uint64_t busyTicks = 0;      ///< Time spent in AudioEngine::routine()
++	uint32_t samples = 0;        ///< Samples it rendered
++	uint32_t peakTicks = 0;      ///< The busiest call (relative to the audio it rendered): its time
++	uint32_t peakSamples = 0;    ///< and the samples it rendered
++	uint32_t voicesNow = 0;      ///< Active voices after the last call
++	uint32_t voicesMax = 0;      ///< Most active voices after any call
++	uint32_t direMax = 0;        ///< Highest AudioEngine::cpuDireness after any call
++	uint32_t direSamples = 0;    ///< Samples rendered while cpuDireness was above 0
++	uint32_t culled = 0;         ///< Voices culled because the CPU was behind
++	uint32_t sdLoads = 0;        ///< Sample clusters read from the SD card
++	uint64_t sdTicks = 0;        ///< Their summed read time (wall clock, including the audio routine calls meanwhile)
++	uint64_t sdCardTicks = 0;    ///< The same without the audio routine calls that ran while waiting for the card
++	uint32_t sdMaxTicks = 0;     ///< The longest read (wall clock)
++	uint32_t sdCardMaxTicks = 0; ///< The longest read without the audio routine calls meanwhile
++	uint32_t maxGapTicks = 0;    ///< Longest time between the starts of two audio routine calls
 +};
 +
 +/// Adds a later window to an earlier one (or to an empty one)
@@ -878,10 +951,12 @@ index 00000000..360714d9
 +	uint32_t direSharePermille; ///< Share of the audio rendered while cpuDireness was above 0, in 0.1 %
 +	uint32_t culled;
 +	uint32_t sdLoads;
-+	uint32_t sdAvgUs;
++	uint32_t sdAvgUs; ///< Wall clock from the start of a read to its end: what streaming has to wait
 +	uint32_t sdMaxUs;
 +	uint32_t maxGapUs;
 +	uint32_t samples;
++	uint32_t sdCardAvgUs; ///< The same without the audio rendered meanwhile: how fast the card is
++	uint32_t sdCardMaxUs;
 +};
 +
 +Summary summarize(const Window& w);
@@ -898,7 +973,12 @@ index 00000000..360714d9
 +	/// voices and direness as they are after the call
 +	void routineDone(uint32_t now, uint32_t sampleCounter, uint32_t voices, int32_t direness);
 +
-+	void clusterLoaded(uint32_t readTicks);
++	/// Time spent in the audio routine since it first ran: never reset, wraps (every 129 s of rendering). The
++	/// difference (as uint32_t) of two readings is the render time in between.
++	uint32_t busyTicksTotal() const { return busyTotal_; }
++
++	/// readTicks: wall clock of the read; audioTicks: busyTicksTotal() at its end minus at its start
++	void clusterLoaded(uint32_t readTicks, uint32_t audioTicks);
 +	void voiceCulled() { acc_.culled++; }
 +
 +	/// The latest half-second window, if there is one newer than lastSeq (which is updated)
@@ -919,6 +999,7 @@ index 00000000..360714d9
 +	uint32_t routineStart_ = 0;
 +	uint32_t routineSamplesStart_ = 0;
 +	uint32_t lastVoices_ = 0;
++	uint32_t busyTotal_ = 0;
 +	int32_t halvesInSecond_ = 0;
 +	Window acc_;
 +	Window secondAcc_;
@@ -928,14 +1009,16 @@ index 00000000..360714d9
 +
 +/// SysEx: F0 00 21 7B 01 10, then the payload, then F7. Each field is 1, 2 or 4 bytes of 7 bits, least significant
 +/// first, saturated at the largest value that fits:
-+///   format version (1) = 1, sequence number (2, counts seconds, wraps at 16384), window length in ms (2),
++///   format version (1) = 2, sequence number (2, counts seconds, wraps at 16384), window length in ms (2),
 +///   CPU average in 0.1 % (2), CPU peak in 0.1 % (2), voices now (2), voices max (2), direness max (1),
 +///   time with direness above 0 in 0.1 % (2), voices culled (2), SD cluster reads (2), their average in us (4),
-+///   the longest in us (4), longest time between two audio routine calls in us (4), samples rendered (4).
++///   the longest in us (4), longest time between two audio routine calls in us (4), samples rendered (4),
++///   from version 2: SD cluster reads without the audio rendered meanwhile, average in us (4), the longest in us (4).
++/// The first SD pair is wall clock: while the read waits for the card, the audio routine and other tasks run.
 +/// Readers accept a longer payload, so fields can be added at the end.
 +constexpr uint8_t kSysexCommand = 0x10;
-+constexpr uint8_t kSysexFormatVersion = 1;
-+constexpr size_t kSysexPayloadLength = 36;
++constexpr uint8_t kSysexFormatVersion = 2;
++constexpr size_t kSysexPayloadLength = 44;
 +constexpr size_t kSysexLength = 6 + kSysexPayloadLength + 1;
 +
 +/// Writes the whole message (kSysexLength bytes, all data bytes below 0x80) and returns its length
@@ -943,15 +1026,15 @@ index 00000000..360714d9
 +
 +/// Characters that fit on one OLED line in the small font
 +constexpr size_t kLineChars = 21;
-+/// "C43/71% V24 D0 S2.4/9": CPU average/peak, voices, direness, SD average/longest read in ms. Gets shorter when the
-+/// numbers are big, never more than kLineChars.
++/// "C43/71% V24 D0 S2.4/9": CPU average/peak, voices, direness, SD average/longest read in ms (without the audio
++/// rendered meanwhile). Gets shorter when the numbers are big, never more than kLineChars.
 +void formatLine(const Summary& s, char* buffer, size_t size);
 +/// "C 43": CPU average for the 7-segment display
 +void formatSevenSegment(const Summary& s, char* buffer, size_t size);
 +
 +} // namespace cpu_stats
 diff --git a/src/deluge/storage/audio/audio_file_manager.cpp b/src/deluge/storage/audio/audio_file_manager.cpp
-index 3a3927cb..fb242355 100644
+index 3a3927cb..6f5990cd 100644
 --- a/src/deluge/storage/audio/audio_file_manager.cpp
 +++ b/src/deluge/storage/audio/audio_file_manager.cpp
 @@ -30,6 +30,7 @@
@@ -966,7 +1049,7 @@ index 3a3927cb..fb242355 100644
  	}
  #endif
  
-+	uint32_t statsReadStart = cpu_stats::now(); // mastertune-diag: read time for Settings > CPU monitor
++	cpu_stats::ReadStart statsReadStart = cpu_stats::readStart(); // mastertune-diag: read time for the CPU monitor
  	DRESULT result = disk_read_without_streaming_first(
  	    SD_PORT, (BYTE*)cluster->data, sample->clusters.getElement(cluster->clusterIndex)->sdAddress, numSectors);
 +	cpu_stats::clusterLoaded(statsReadStart);

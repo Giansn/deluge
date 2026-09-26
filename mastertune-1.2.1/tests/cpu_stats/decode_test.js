@@ -54,6 +54,7 @@ const rejects = {
 	"other command": good.map((b, i) => (i === 5 ? 0x04 : b)),
 	"other manufacturer": good.map((b, i) => (i === 3 ? 0x7C : b)),
 	"truncated": good.slice(0, 30).concat([0xF7]),
+	"shorter than format 1": good.slice(0, 6 + 35).concat([0xF7]),
 	"no F7": good.slice(0, good.length - 1),
 	"high bit in data": good.map((b, i) => (i === 20 ? 0x80 : b)),
 	"version 0": good.map((b, i) => (i === 6 ? 0 : b)),
@@ -63,6 +64,12 @@ for (const [name, bytes] of Object.entries(rejects)) {
 	if (decodeCpuStats(Uint8Array.from(bytes)) !== null) {
 		fail("accepted " + name);
 	}
+}
+// Format 1 (36 payload bytes, no SD card time) still decodes, with the new fields null
+const v1 = [...good.slice(0, 6), 1, ...good.slice(7, 6 + 36), 0xF7];
+const d1 = decodeCpuStats(Uint8Array.from(v1));
+if (!d1 || d1.version !== 1 || d1.sdCardAvgUs !== null || d1.sdCardMaxUs !== null || d1.samples !== cases[2].expected.samples) {
+	fail("format 1 message");
 }
 // A later format with more fields still decodes the known ones
 const longer = good.slice(0, good.length - 1).concat([1, 2, 3, 0xF7]);

@@ -32,7 +32,7 @@ static int failures = 0;
 	do {                                                                                                               \
 		double va = (double)(a), vb = (double)(b);                                                                     \
 		if (std::fabs(va - vb) > (tol)) {                                                                              \
-			printf("FAIL %s:%d: %s = %.3f, expected %.3f (+-%g)\n", __FILE__, __LINE__, #a, va, vb, (double)(tol));   \
+			printf("FAIL %s:%d: %s = %.3f, expected %.3f (+-%g)\n", __FILE__, __LINE__, #a, va, vb, (double)(tol));    \
 			failures++;                                                                                                \
 		}                                                                                                              \
 	} while (0)
@@ -45,7 +45,8 @@ static uint32_t ticksFor(double seconds) {
 
 /// A steady audio routine: every call renders `blockSamples` and takes `load` of that audio's duration.
 /// One call per half second is `peakLoad`, one call per second comes 5 ms late, 10 % of the blocks run with
-/// direness 3, 3 voices get culled and 11 clusters are read per second. Starts just before the timer wraps.
+/// direness 3, 3 voices get culled and 11 clusters are read per second (9 ms and 10 x 1 ms, of which the audio routine
+/// took 3 ms and 0.4 ms). Starts just before the timer wraps.
 static void testSteadyLoad() {
 	Collector c;
 	uint32_t now = UINT32_MAX - ticksFor(0.3); // wraps 0.3 s in
@@ -78,7 +79,7 @@ static void testSteadyLoad() {
 			c.voiceCulled();
 		}
 		if (inSecond % 250 == 0 && inSecond < 2750) {
-			c.clusterLoaded(ticksFor(inSecond == 0 ? 0.009 : 0.001));
+			c.clusterLoaded(ticksFor(inSecond == 0 ? 0.009 : 0.001), ticksFor(inSecond == 0 ? 0.003 : 0.0004));
 		}
 		now = start + interval;
 
@@ -103,9 +104,9 @@ static void testSteadyLoad() {
 	// The middle second is a clean one: check every number
 	Summary s = summarize(seconds[1]);
 	printf("steady: window %u ms, avg %u, peak %u permille, voices %u/%u, dire %u (%u permille), culled %u, "
-	       "sd %u x %u us (max %u), gap %u us, samples %u\n",
+	       "sd %u x %u us (max %u), card %u us (max %u), gap %u us, samples %u\n",
 	       s.windowMs, s.dspAvgPermille, s.dspPeakPermille, s.voicesNow, s.voicesMax, s.direMax, s.direSharePermille,
-	       s.culled, s.sdLoads, s.sdAvgUs, s.sdMaxUs, s.maxGapUs, s.samples);
+	       s.culled, s.sdLoads, s.sdAvgUs, s.sdMaxUs, s.sdCardAvgUs, s.sdCardMaxUs, s.maxGapUs, s.samples);
 	CHECK_NEAR(s.windowMs, 1000, 8);
 	CHECK_NEAR(s.dspAvgPermille, 300, 2);
 	CHECK_NEAR(s.dspPeakPermille, 600, 2);
@@ -117,8 +118,51 @@ static void testSteadyLoad() {
 	CHECK(s.sdLoads == 11);
 	CHECK_NEAR(s.sdAvgUs, (9000.0 + 10 * 1000.0) / 11, 1);
 	CHECK_NEAR(s.sdMaxUs, 9000, 1);
+	CHECK_NEAR(s.sdCardAvgUs, (6000.0 + 10 * 600.0) / 11, 1);
+	CHECK_NEAR(s.sdCardMaxUs, 6000, 1);
 	CHECK_NEAR(s.maxGapUs, 5000 + interval / (kTicksPerSecond / 1e6), 1);
 	CHECK_NEAR(s.samples, (s.windowMs - 5) * 44.1, 60); // the 5 ms late call rendered nothing extra
+}
+
+/// As the firmware does it (cpu_stats::readStart / clusterLoaded): the audio routine runs while the read waits for the
+/// card, and its render time comes off the card time. Also across a wrap of the running render total.
+static void testSdCardTime() {
+	Collector c;
+	uint32_t t = 5000, n = 0;
+	auto call = [&](uint32_t busy) {
+		c.routineStart(t, n);
+		n += 128;
+		c.routineDone(t + busy, n, 4, 0);
+		t += busy + 128 * 756;
+	};
+	// Push the running total just below its wrap: two calls of about 64 s each (the collector only takes differences)
+	call(0x7FFFFFF0u);
+	call(0x7FFFFF00u);
+	CHECK(c.busyTicksTotal() > 0xFFFF0000u);
+
+	uint32_t readStartTime = t;
+	uint32_t readStartBusy = c.busyTicksTotal();
+	for (int i = 0; i < 3; i++) { // 3 calls of 2 ms while waiting
+		call(ticksFor(0.002));
+	}
+	CHECK(c.busyTicksTotal() < readStartBusy); // wrapped
+	uint32_t readEnd = t + ticksFor(0.001);
+	c.clusterLoaded(readEnd - readStartTime, c.busyTicksTotal() - readStartBusy);
+	c.clusterLoaded(ticksFor(0.001), ticksFor(0.005)); // more audio than wall clock can't happen, but mustn't wrap
+
+	// Close the window
+	uint32_t halfSeq = 0;
+	Window w;
+	c.routineStart(t + kWindowTicks, n);
+	c.routineDone(t + kWindowTicks + 10, n + 16, 4, 0);
+	CHECK(c.readHalf(w, halfSeq));
+	Summary s = summarize(w);
+	double wallUs = (readEnd - readStartTime) / (kTicksPerSecond / 1e6);
+	CHECK(s.sdLoads == 2);
+	CHECK_NEAR(s.sdMaxUs, wallUs, 1);
+	CHECK_NEAR(s.sdCardMaxUs, wallUs - 6000, 1);
+	CHECK_NEAR(s.sdCardAvgUs, (wallUs - 6000) / 2, 1);
+	CHECK_NEAR(s.sdAvgUs, (wallUs + 1000) / 2, 1);
 }
 
 /// Stopping and starting again throws away the old window and doesn't count the pause as a gap
@@ -130,6 +174,7 @@ static void testRestart() {
 	c.routineDone(2000, 32, 5, 0);
 	c.stop();
 	CHECK(!c.running());
+	CHECK(c.busyTicksTotal() == 1000); // never reset: a read that spans the restart still gets the right difference
 	c.routineStart(1000 + ticksFor(30), 32); // 30 s later
 	CHECK(c.running());
 	uint32_t t = 1000 + ticksFor(30);
@@ -171,8 +216,10 @@ static void testLine() {
 	s.voicesNow = 24;
 	s.direMax = 0;
 	s.sdLoads = 5;
-	s.sdAvgUs = 2449;
-	s.sdMaxUs = 8800;
+	s.sdAvgUs = 5600; // wall clock: not on the line
+	s.sdMaxUs = 13000;
+	s.sdCardAvgUs = 2449;
+	s.sdCardMaxUs = 8800;
 	formatLine(s, line, sizeof(line));
 	printf("line: \"%s\"\n", line);
 	CHECK(strcmp(line, "C43/71% V24 D0 S2.4/9") == 0);
@@ -186,8 +233,8 @@ static void testLine() {
 	s.voicesNow = 128;
 	s.direMax = 14;
 	s.sdLoads = 3;
-	s.sdAvgUs = 12400;
-	s.sdMaxUs = 140000;
+	s.sdCardAvgUs = 12400;
+	s.sdCardMaxUs = 140000;
 	formatLine(s, line, sizeof(line));
 	printf("line: \"%s\"\n", line);
 	CHECK(strcmp(line, "C100/250 V128 D14") == 0); // "S140" doesn't fit any more
@@ -217,8 +264,8 @@ static void testLine() {
 		r.voicesNow = pick(5000);
 		r.direMax = pick(20);
 		r.sdLoads = pick(3);
-		r.sdAvgUs = pick(UINT32_MAX);
-		r.sdMaxUs = pick(UINT32_MAX);
+		r.sdCardAvgUs = pick(UINT32_MAX);
+		r.sdCardMaxUs = pick(UINT32_MAX);
 		formatLine(r, line, sizeof(line));
 		if (strlen(line) > kLineChars || line[0] != 'C') {
 			printf("FAIL line too long: \"%s\"\n", line);
@@ -252,10 +299,11 @@ static void writeCase(FILE* f, const Summary& s, uint32_t seq, bool first) {
 	fprintf(f,
 	        "],\"expected\":{\"version\":%u,\"seq\":%u,\"windowMs\":%u,\"dspAvgPermille\":%u,\"dspPeakPermille\":%u,"
 	        "\"voicesNow\":%u,\"voicesMax\":%u,\"direMax\":%u,\"direSharePermille\":%u,\"culled\":%u,\"sdLoads\":%u,"
-	        "\"sdAvgUs\":%u,\"sdMaxUs\":%u,\"maxGapUs\":%u,\"samples\":%u}}",
+	        "\"sdAvgUs\":%u,\"sdMaxUs\":%u,\"maxGapUs\":%u,\"samples\":%u,\"sdCardAvgUs\":%u,\"sdCardMaxUs\":%u}}",
 	        kSysexFormatVersion, seq & 0x3FFF, sat(s.windowMs, 2), sat(s.dspAvgPermille, 2), sat(s.dspPeakPermille, 2),
 	        sat(s.voicesNow, 2), sat(s.voicesMax, 2), sat(s.direMax, 1), sat(s.direSharePermille, 2), sat(s.culled, 2),
-	        sat(s.sdLoads, 2), sat(s.sdAvgUs, 4), sat(s.sdMaxUs, 4), sat(s.maxGapUs, 4), sat(s.samples, 4));
+	        sat(s.sdLoads, 2), sat(s.sdAvgUs, 4), sat(s.sdMaxUs, 4), sat(s.maxGapUs, 4), sat(s.samples, 4),
+	        sat(s.sdCardAvgUs, 4), sat(s.sdCardMaxUs, 4));
 }
 
 static void testSysex(const char* path) {
@@ -271,7 +319,7 @@ static void testSysex(const char* path) {
 	Summary big;
 	memset(&big, 0xFF, sizeof(big)); // everything saturates
 	writeCase(f, big, 0xFFFFFFFF, false);
-	Summary typical{1000, 431, 712, 24, 30, 3, 100, 3, 11, 1727, 9000, 5363, 44100};
+	Summary typical{1000, 431, 712, 24, 30, 3, 100, 3, 11, 1727, 9000, 5363, 44100, 1091, 6000};
 	writeCase(f, typical, 16384 + 5, false);
 	std::mt19937 rng(42);
 	for (int i = 0; i < 500; i++) {
@@ -288,6 +336,7 @@ static void testSysex(const char* path) {
 
 int main(int argc, char** argv) {
 	testSteadyLoad();
+	testSdCardTime();
 	testRestart();
 	testSmallCalls();
 	testLine();
