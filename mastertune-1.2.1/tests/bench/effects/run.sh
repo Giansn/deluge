@@ -24,8 +24,8 @@ awk '/^struct Grain \{/ {p = 1} p; p && /^\};/ {p = 0}' "$M/mod_controllable_aud
 	    p; p && /^}/ {p = 0}' "$M/mod_controllable_audio.cpp"
 } > "$B/fx_extract.cpp"
 [ "$(grep -c '^[a-z ]*ModControllableAudio::' "$B/fx_extract.cpp")" = 7 ] || { echo "effect functions not found"; exit 1; }
-# getExp (EQ, SRR), quickLog, random and shouldDoPanning (grain) straight out of functions.cpp
-{ echo '#include "util/functions.h"'; sed -n '/^int32_t getExp(/,/^}/p;/^int32_t quickLog(/,/^}/p;/^int32_t random(/,/^}/p;/^bool shouldDoPanning(/,/^}/p' \
+# getExp and interpolateTable (EQ, SRR), quickLog, random and shouldDoPanning (grain) straight out of functions.cpp
+{ echo '#include "util/functions.h"'; sed -n '/^int32_t interpolateTable(/,/^}/p;/^int32_t getExp(/,/^}/p;/^int32_t quickLog(/,/^}/p;/^int32_t random(/,/^}/p;/^bool shouldDoPanning(/,/^}/p' \
     "$D/deluge/util/functions.cpp"; } > "$B/fw_functions.cpp"
 CXX="g++ -std=gnu++23 -O2 -g -fsanitize=undefined -fno-sanitize-recover=undefined -fno-sanitize=signed-integer-overflow -w"
 RUN=""
