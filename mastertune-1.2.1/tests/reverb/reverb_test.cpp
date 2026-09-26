@@ -60,6 +60,10 @@ static std::unique_ptr<Reverb> make(const Settings& s) {
 	reverb->setHPF(s.hpf);
 	reverb->setLPF(s.lpf);
 	reverb->setPanLevels(kPanAmplitude, kPanAmplitude);
+	// From v14 the modulation is a setting (default 0, still); these checks are about v10's reverb, at its depth
+	if constexpr (requires(Reverb& r) { r.setModulation(1.f); }) {
+		reverb->setModulation(1.f);
+	}
 	return reverb;
 }
 

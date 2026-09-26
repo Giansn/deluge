@@ -464,7 +464,8 @@ def song_xml(lengths, reverb_model, num_synths=8, midi=False):
     out += "\t<modeNotes>\n" + "".join(f"\t\t<modeNote>{n}</modeNote>\n" for n in (0, 2, 3, 5, 7, 8, 10)) + \
            "\t</modeNotes>\n"
     out += f'\t<reverb roomSize="1288490112" dampening="1546188288" width="2147483647" lowCut="0" ' \
-           f'highCut="2147483647" pan="0" model="{reverb_model}">\n'
+           f'highCut="2147483647" pan="0" model="{reverb_model}"' \
+           f'{" " + os.environ["REVERB_EXTRA"] if os.environ.get("REVERB_EXTRA") else ""}>\n'
     out += '\t\t<compressor attack="0" release="0" volume="1073741824" shape="-601295438" syncLevel="7" />\n'
     out += "\t</reverb>\n"
     out += '\t<delay pingPong="1" analog="0" syncLevel="7" syncType="0" />\n'

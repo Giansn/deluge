@@ -2,42 +2,48 @@
 """Song change on the real firmware in the emulator (tests/song's Emulator): the countdown while a loaded song is
 armed to start, and the gold knobs and mod buttons on the playing song's master FX until the song changes.
 
-Usage: songchange_emu.py <deluge.elf> [--scenario NAME ...] [--out DIR] [--tools PREFIX] [--build DIR]
-  Scenarios: oled (default set: oled, 7seg, swing, extclock, stop), or any of them by name. --baseline marks the ELF
-  as a 1.2.1 / mastertune-v13 build without the change: then nothing is checked, only reported (what 1.2.1 shows and
-  what its knobs change), for comparison.
+Usage: songchange_emu.py <deluge.elf> [--scenario NAME ...] [--out DIR] [--tools PREFIX] [--build DIR] [--baseline]
+  Scenarios (default all): oled, 7seg (the 7-segment display), swing (song A with quarter swing 25; song B with affect
+  entire off), extclock (following an external MIDI clock, 123 BPM), stop (PLAY pressed while armed). --baseline: the
+  ELF is a build without the change (1.2.1, mastertune-v13): nothing is checked, it's only reported, for comparison.
+  EMU_DEBUG=1: where the firmware is every 5 s of host time, and every yield.
 
-What runs: the firmware boots (song_emu.boot()), loads song A (SONGS/DEFAULT.XML, opened in the clip view of its synth)
-and plays it. Then, as the user would: the song browser is opened (openUI(&loadSongUI), with song B, SONGS/SONGB.XML,
-selected), LOAD is pressed (Buttons::buttonAction(): LoadSongUI::buttonAction() -> performLoad()), turned knobs are
-UI::modEncoderAction() on the current UI (what interpretEncoders() calls), mod buttons and LOAD/BACK are
-Buttons::buttonAction(), the select encoder is LoadSongUI::selectEncoderAction(). The task manager isn't running (its
-list is emptied, see song_emu.Player); what it would run while performLoad() yields is run here, one window of 128
-samples at a time: AudioEngine::routine(), the playback handler's routine (the ticks, the launch event, the song swap),
-the cluster loading, UITimerManager::routine() (the graphics routine: the countdown, the knob LEDs, popups' timeouts)
-and doAnyPendingUIRendering() (OLED sending). performLoad()'s yields (TaskManager::yield()) are where it pauses: the
-CPU context is saved, and everything else runs on the stack below the paused frames (as the tasks run inside the
-yield on the Deluge), until the yield's own condition (the lambda it was given) holds; then performLoad() resumes.
+What runs: the firmware boots (song_emu.boot()), loads song A (SONGS/DEFAULT.XML, opened in the clip view of its
+synth) and plays it. Then, as the user would: the song browser is opened (openUI(&loadSongUI), with song B,
+SONGS/SONGB.XML, selected), LOAD is pressed and held (Buttons::buttonAction(): LoadSongUI::buttonAction() ->
+performLoad()), turned gold knobs are UI::modEncoderAction() on the current UI (what interpretEncoders() calls), mod
+buttons, LOAD and BACK are Buttons::buttonAction(), the select encoder is LoadSongUI::selectEncoderAction(). The task
+manager isn't running (its list is emptied, as in song_emu.Player); what it would run while performLoad() yields runs
+here, one window of 128 samples at a time: AudioEngine::routine(), the playback handler's routine (the ticks, the
+launch event, the song swap), the cluster loading, UITimerManager::routine() (the graphics routine: the countdown;
+the knob LEDs, popups' timeouts) and doAnyPendingUIRendering() (OLED sending). performLoad()'s yields
+(TaskManager::yield()) are where it pauses: the CPU context is saved, everything else runs on the stack below the
+paused frames (as the tasks run inside the yield on the Deluge), and performLoad() resumes once the yield's own
+condition (the lambda it was given) holds, checked between the tasks as the task manager does. Other yields return at
+once. The external clock: PlaybackHandler::setupPlaybackUsingExternalClock() (what a MIDI start does), then
+inputTick() every 7 windows.
 
 Songs (make_sd.py's synth, 120 BPM, 4/4, 96 ticks per quarter note): A: one synth ("SYNA", a 4-bar clip of chords),
-song mod section 1 (LPF), song LPF knob 40, the synth's own mod section 0; B: one synth ("SYNB", 2-bar clip), song mod
-section 3 (delay), song LPF knob 25, delay feedback knob 15.
+song mod section 1 (LPF), song LPF knob 40, affect entire off, the synth's own mod section 0; B: one synth ("SYNB",
+2-bar clip), song mod section 3 (delay), song LPF knob 25, delay feedback knob 15, affect entire on (off in swing).
 
 Recorded: every string the OLED gets (Canvas::drawString() on the main and popup canvas), popups, the 7-segment
-texts (SevenSegment::setText(), displayPopup()), per window the swung tick (getActualSwungTickCount()), the launch
-event and repeats; the OLED image at checkpoints (out/<scenario>/oled_*.png and .txt).
+texts (SevenSegment::setText(), displayPopup()); per window while armed the swung tick (getActualSwungTickCount()),
+the launch event and the repeats; the OLED image at checkpoints (out/<scenario>/oled_*.png and .txt).
 
 Checks (not with --baseline):
-- countdown: in every window while armed, what the display shows (title row on the OLED, the number on the 7-segment
-  display) is what remains until the launch event (loops while repeats remain, then bars, then beats: ceil of the
-  swung ticks remaining), at most one graphics routine period (15 ms) late at a change; the sequence of changes and
-  their ticks relative to the swap are printed; changing the repeats with the select encoder shows at once
-- the swap happens at the launch event, the countdown is gone after it (title back, no countdown drawn after)
-- knobs: from LOAD on, the gold knob changes song A's LPF (the playing song's master FX), not song B's and not A's
-  synth; the mod button changes A's mod section; mod LEDs and knob indicators show A's section and values; turned at
-  the swap, a knob changes nothing; knob movement held back in the encoder at the swap doesn't reach song B; after the
-  swap song B has its own saved LPF and mod section (LEDs) and the undo history is empty, and nothing points at A
-- the old song A's memory is freed and nothing the knobs use points into it
+- countdown: in every window while armed, what the display shows (the title row on the OLED, the number on the
+  7-segment display, blinking only while it counts loops) is what remains until the launch event: loops while repeats
+  remain, then bars, then beats (the swung ticks remaining, rounded up), at most one graphics routine period (15 ms)
+  late at a change; the changes and their ticks relative to the swap are printed; the select encoder's repeats show at
+  once, also back and forth in the last loop; BACK changes nothing
+- the swap happens at the launch event (or at once when stopped), the countdown is gone after it (the title back)
+- knobs: from LOAD on, the gold knob changes song A's LPF (the playing song's master FX, though A's affect entire is
+  off), not song B's and not A's synth (whose clip view A was in); the mod button changes A's section; mod LEDs and
+  knob indicators show A's section and values. At the swap the knobs are on nothing (the view's model stack holds no
+  pointer into A, which is deleted then), a knob turned right then changes nothing, knob movement held back in the
+  encoder doesn't reach B, a mod button held through the swap leaves no popup; after it B has its own saved LPF,
+  section, and its song view's knobs as saved (on its master FX with affect entire on, on nothing with it off)
 Needs python3 with unicorn 2 and numpy, a C compiler (blockcount.c, built into --build if missing).
 """
 import argparse
@@ -91,7 +97,7 @@ def log(s):
 
 # --- the songs
 
-def song_xml(name, clip_bars, song_mod, synth_mod, lpf_knob, delay_fb_knob, clip_attr, swing):
+def song_xml(name, clip_bars, song_mod, synth_mod, lpf_knob, delay_fb_knob, clip_attr, swing, affect_entire=0):
     make_sd.kit = lambda lengths: ("", "")
     make_sd.audio_track = lambda lengths: ("", "")
     make_sd.drone = lambda: ""
@@ -101,6 +107,7 @@ def song_xml(name, clip_bars, song_mod, synth_mod, lpf_knob, delay_fb_knob, clip
     xml = make_sd.song_xml({}, 1, 1)
     xml = xml.replace('\n\tactiveModFunction="1"', f'\n\tactiveModFunction="{song_mod}"', 1)
     xml = xml.replace('\n\t\t\tactiveModFunction="1"', f'\n\t\t\tactiveModFunction="{synth_mod}"', 1)
+    xml = xml.replace('\n\taffectEntire="0"', f'\n\taffectEntire="{affect_entire}"', 1)
     if swing:
         amount, interval = swing
         xml = xml.replace('\n\tswingAmount="0"', f'\n\tswingAmount="{amount}"', 1)
@@ -125,10 +132,11 @@ def song_xml(name, clip_bars, song_mod, synth_mod, lpf_knob, delay_fb_knob, clip
     return xml
 
 
-def build_sd(path, swing=None):
+def build_sd(path, swing=None, b_affect_entire=1):
     files = {
         "SONGS/DEFAULT.XML": song_xml("SYNA", 4, 1, 0, KNOB_A_LPF, 0, "beingEdited", swing).encode(),
-        "SONGS/SONGB.XML": song_xml("SYNB", 2, 3, 0, KNOB_B_LPF, KNOB_B_DELAY, "selected", None).encode(),
+        "SONGS/SONGB.XML": song_xml("SYNB", 2, 3, 0, KNOB_B_LPF, KNOB_B_DELAY, "selected", None,
+                                    b_affect_entire).encode(),
     }
     fat32.build(path, files)
 
@@ -143,7 +151,7 @@ def knob_value(k):
 class Deluge:
     def __init__(self, elf, sd, tools, build, oled, out_dir):
         self.out_dir = out_dir
-        self.emu = emu = Emulator(elf, sd, tools, build, lambda s: None)
+        self.emu = emu = Emulator(elf, sd, tools, build, log if os.environ.get("EMU_DEBUG") else lambda s: None)
         emu.stack_top = PROGRAM_STACK_TOP
         emu.call = types.MethodType(Deluge._call, emu)
         sym = emu.sym
@@ -160,13 +168,15 @@ class Deluge:
             "_ZN14UITimerManager7routineEv", "_Z23doAnyPendingUIRenderingv", "_Z6openUIP2UI",
             "_ZN7Buttons12buttonActionEhbb", "_ZN2UI16modEncoderActionEll", "_ZN10LoadSongUI19selectEncoderActionEa",
             "_ZN6String3setEPKcl", "_ZN15PlaybackHandler23getActualSwungTickCountEPm",
-            "_ZN15PlaybackHandler17playButtonPressedEl")}
+            "_ZN15PlaybackHandler17playButtonPressedEl", "_ZN15PlaybackHandler9inputTickEbm",
+            "_ZN15PlaybackHandler31setupPlaybackUsingExternalClockEbb")}
         self.var = {n: sym[n] for n in ("currentUIMode", "currentSong", "preLoadedSong", "loadSongUI", "view", "session",
                                         "playbackHandler", "uiTimerManager", "actionLogger", "uartItems",
                                         "_ZN11AudioEngine16audioSampleTimerE", "_ZN6deluge3hid8encoders8encodersE",
                                         "_ZN14indicator_leds19knobIndicatorLevelsE", "_ZN14indicator_leds9ledStatesE",
                                         "_ZN6deluge3hid7display4OLED4mainE", "_ZN6deluge3hid7display4OLED5popupE",
-                                        "_ZN6deluge3hid7display4OLED16oledCurrentImageE", "numUIsOpen")}
+                                        "_ZN6deluge3hid7display4OLED16oledCurrentImageE", "numUIsOpen",
+                                        "_ZN6deluge3hid7display14oledPopupWidthE")}
         # The task list emptied, the task manager's tasks are called from here (song_emu.Player)
         start, size = sym.by_name["taskManager"]
         emu.uc.mem_write(start, bytes(size))
@@ -179,6 +189,14 @@ class Deluge:
         self.events = []  # (window, kind, data)
         self.window_index = 0
         self._hook_display()
+        self.swaps = []
+
+        def on_swap(e):
+            self.swaps.append(dict(tick=self.last_swung_tick(), timer=self.timer(), window=self.window_index,
+                                   launch=self.launch_tick(), repeats=self.repeats()))
+        emu.intercept(sym.find("_ZN15PlaybackHandler10doSongSwapEb"), on_swap)
+        # Code already run (boot, the startup song) is translated without these hooks: retranslate
+        emu.uc.ctl_flush_tb()
         self.song_a = self.u32(self.var["currentSong"])
 
     # calls on the stack below whatever is paused (performLoad()'s frames), as the tasks run inside the yield
@@ -194,10 +212,19 @@ class Deluge:
 
     def call(self, name_or_address, *args):
         address = self.a.get(name_or_address, name_or_address)
-        return self.emu.call(address, *args)
+        return self.emu.call(address, *args, timeout_s=5 if os.environ.get("EMU_DEBUG") else 0)
 
     def _on_yield(self, uc, address, size, _):
+        try:
+            self._yield(uc)
+        except Exception as ex:  # unicorn would swallow it
+            log(f"yield hook: {ex!r}")
+            raise
+
+    def _yield(self, uc):
         lr = uc.reg_read(UC_ARM_REG_LR)
+        if os.environ.get("EMU_DEBUG"):
+            log(f"  yield from {self.sym.name_at(lr)}, paused {bool(self.paused)}")
         until = uc.reg_read(UC_ARM_REG_R0)
         timeout = struct.unpack("<d", struct.pack("<Q", uc.reg_read(UC_ARM_REG_D0)))[0]
         from_load = any(s <= (lr & ~1) < e for s, e, _ in self.load_fn)
@@ -277,9 +304,9 @@ class Deluge:
 
     def song_param(self, song, param_id):
         """AutoParam::currentValue of the song's unpatched param (Song::paramManager at +4, summaries[0]
-        .paramCollection, ParamSet::params at +16, sizeof(AutoParam) 64, currentValue at +52)."""
+        .paramCollection, ParamSet::params (a pointer) at +16, sizeof(AutoParam) 64, currentValue at +52)."""
         collection = self.u32(song + 4 + 4)
-        return self.i32(collection + 16 + 64 * param_id + 52)
+        return self.i32(self.u32(collection + 16) + 64 * param_id + 52)
 
     def song_mod_section(self, song):
         return self.emu.u8(song + 120 + 1328)  # Song::globalEffectable, GlobalEffectableForSong::modKnobMode
@@ -328,7 +355,11 @@ class Deluge:
         self.emu.uc.mem_write(item + 2, struct.pack("<HHBB", w, w, 1, 0))
 
     # --- one window of 128 samples and the tasks after it, checking the paused yield's condition between tasks
+    before_window = None
+
     def step(self):
+        if self.before_window:
+            self.before_window(self)
         self.drain_pic()
         emu = self.emu
         emu.dma_free = 127
@@ -434,8 +465,9 @@ LABELS = {"Loops remaining": "loops", "Bars remaining": "bars", "Beats remaining
 
 
 class Scenario:
-    def __init__(self, name, args, oled=True, swing=None, ext_clock=None, stop=False):
+    def __init__(self, name, args, oled=True, swing=None, ext_clock=None, stop=False, b_affect_entire=1):
         self.name, self.args = name, args
+        self.b_affect_entire = b_affect_entire
         self.oled, self.swing, self.ext_clock, self.stop = oled, swing, ext_clock, stop
         self.out = os.path.join(args.out, name)
         os.makedirs(self.out, exist_ok=True)
@@ -483,7 +515,7 @@ class Scenario:
             + (f", swing {self.swing}" if self.swing else "") + (", external clock" if self.ext_clock else "")
             + (", stopped while armed" if self.stop else ""))
         sd = os.path.join(self.out, "sd.img")
-        build_sd(sd, self.swing)
+        build_sd(sd, self.swing, self.b_affect_entire)
         t0 = time.time()
         d = Deluge(a.elf, sd, a.tools, a.build, self.oled, self.out)
         self.d = d
@@ -577,8 +609,9 @@ class Scenario:
             # The swap just happened (the yield's condition holds), performLoad() hasn't resumed: a knob turned
             # right now, and knob movement still in the encoder
             if dd.mode() == UI_MODE_LOADING_SONG_NEW_SONG_PLAYING and "window" not in swap:
-                swap.update(window=dd.window_index, tick=dd.last_swung_tick(), timer=dd.timer(),
-                            song=dd.song(), knobs=dd.knobs_on(), undo_empty=dd.undo_empty())
+                at = dd.swaps[-1] if dd.swaps else {}
+                swap.update(window=dd.window_index, tick=at.get("tick"), timer=at.get("timer"),
+                            launch=at.get("launch"), song=dd.song(), knobs=dd.knobs_on(), undo_empty=dd.undo_empty())
                 b = dd.song()
                 swap["b_lpf_before"] = dd.song_param(b, UNPATCHED_LPF_FREQ)
                 dd.mod_encoder(1, -5)
@@ -618,22 +651,39 @@ class Scenario:
                 knob_armed = (a0, d.song_param(song_a, UNPATCHED_LPF_FREQ), d.song_param(song_b, UNPATCHED_LPF_FREQ))
             if not back_pressed and ex == ("bars", 2):
                 back_pressed = True
+                before, n = self.shown(d, mark_armed), len(d.events)
                 d.button(BUTTON_BACK, True)
                 d.button(BUTTON_BACK, False)
-                self.check("BACK while armed: nothing happens, still armed with the countdown",
+                for _ in range(8):
+                    d.step()
+                self.check("BACK while armed: nothing happens, still armed, the countdown goes on",
                            d.mode() == UI_MODE_LOADING_SONG_UNESSENTIAL_SAMPLES_ARMED and
-                           self.matches(self.shown(d, mark_armed), ex) or self.baseline, f"mode {d.mode()}, "
-                           f"shown {self.shown(d, mark_armed)}")
+                           not [k for w, k, e in d.events[n:] if k in ("popupText", "7segPopup")] and
+                           self.matches(self.shown(d, mark_armed), self.expect(d, d.swung_tick())) or self.baseline,
+                           f"mode {d.mode()}, shown {before} -> {self.shown(d, mark_armed)}")
                 d.save_oled("armed_bars2")
             if ex == ("beats", 3) and "beats3" not in swap:
                 swap["beats3"] = True
                 d.save_oled("armed_beats3")
+            if self.oled and not self.stop and ex == ("beats", 1) and "held" not in swap:
+                # A mod button held through the swap (its popup up), released once the new song plays
+                swap["held"] = True
+                d.button(MOD_BUTTON[1], True)
+                swap["popup_held"] = d.i32(d.var["_ZN6deluge3hid7display14oledPopupWidthE"])
         # performLoad() finishes (the song swap is done, the old song deleted, the new song's UI set up)
         self.play_until(d, lambda: not d.paused and d.mode() == UI_MODE_NONE, limit=20000)
         if knob_armed:
             self.check("gold knob turned while armed (countdown running): A's LPF changes, B's not",
                        knob_armed[1] < knob_armed[0] and knob_armed[2] == knob_value(KNOB_B_LPF),
                        f"A {knob_armed[0]:#x} -> {knob_armed[1]:#x}, B {knob_armed[2]:#x}")
+        if swap.get("held"):
+            d.button(MOD_BUTTON[1], False)
+            for _ in range(5):
+                d.step()
+            popup = d.i32(d.var["_ZN6deluge3hid7display14oledPopupWidthE"])
+            self.check("a mod button held through the swap: its popup goes when it's released",
+                       swap["popup_held"] and not popup or self.baseline,
+                       f"popup width while held {swap['popup_held']}, after release {popup}")
         self.after_swap(d, swap, song_a, song_b)
         for _ in range(200):
             d.step()
@@ -646,7 +696,26 @@ class Scenario:
         return all(c["ok"] for c in self.checks)
 
     def start_playback(self, d):
-        d.call("_ZN15PlaybackHandler17playButtonPressedEl", 0)
+        if not self.ext_clock:
+            d.call("_ZN15PlaybackHandler17playButtonPressedEl", 0)
+            return
+        # MIDI start (what MidiEngine::midiMessageReceived() does for it, PlaybackHandler::startMessageReceived()
+        # inlined: usingAnalogClockInput and posToNextContinuePlaybackFrom 0, setupPlaybackUsingExternalClock(false)),
+        # then a MIDI clock every ext_clock windows (inputTick(false, 0): the tick's time is now)
+        ph = d.var["playbackHandler"]
+        d.emu.uc.mem_write(ph + 17, b"\0")
+        d.w32 = d.emu.w32
+        d.emu.w32(ph + 28, 0)
+        d.call("_ZN15PlaybackHandler31setupPlaybackUsingExternalClockEbb", 0, 0)
+        every = self.ext_clock
+
+        def clock(dd):
+            if dd.window_index % every == 0:
+                dd.call("_ZN15PlaybackHandler9inputTickEbm", 0, 0)
+                dd.midi_clocks = getattr(dd, "midi_clocks", 0) + 1
+        d.before_window = clock
+        log(f"  external clock: a MIDI clock every {every} windows ({every * 128} samples, "
+            f"{44100 * 60 / (24 * every * 128):.2f} BPM)")
 
     def play_until(self, d, cond, limit=100000):
         for _ in range(limit):
@@ -661,7 +730,7 @@ class Scenario:
         vals = []
         for i in range(2):
             coll = d.u32(self.synth_pm + 4 + 20 * i)
-            vals += [d.i32(coll + 16 + 64 * p + 52) for p in range(40)] if coll else []
+            vals += [d.i32(d.u32(coll + 16) + 64 * p + 52) for p in range(40)] if coll else []
         return vals
 
     def expect(self, d, tick):
@@ -679,7 +748,8 @@ class Scenario:
         else:
             last = self.trace[-1] if self.trace else None
             self.check("the song changes at the launch event", last and swap.get("song") == song_b and
-                       swap.get("tick") == last[5], f"swap at tick {swap.get('tick')}, launch event {last and last[5]}")
+                       swap.get("tick") == last[5], f"swap at tick {swap.get('tick')} (old song), launch event "
+                       f"{last and last[5]}, {len(d.swaps)} swap(s)")
         k = swap.get("knobs", {})
         self.check("at the swap: the knobs let go of the old song (view's model stack: nothing)",
                    k.get("mod") == 0 and k.get("params") == 0 and k.get("timeline") == 0 or self.baseline,
@@ -697,12 +767,17 @@ class Scenario:
         self.check("after: knob movement held back at the swap was dropped (encoder MOD_1 encPos 0)",
                    d.enc_pos(ENCODER_MOD_1) == 0 or self.baseline, f"encPos {d.enc_pos(ENCODER_MOD_1)}")
         k2 = d.knobs_on()
-        self.check("after: the knobs are on song B (its song view), mod LEDs show B's section 3",
-                   k2["timeline"] == b and k2["params"] == b + 4 and d.mod_leds() == [3],
-                   f"{ {n: hex(v) for n, v in k2.items()} }, LEDs {d.mod_leds()}, levels {d.knob_levels()}")
         lvl = d.knob_levels()
-        self.check("after: knob indicators show B's delay (feedback knob 15 -> level ~38)",
-                   abs(lvl[0] - KNOB_B_DELAY * 128 // 50) <= 2, f"levels {lvl}")
+        if self.b_affect_entire:
+            self.check("after: the knobs are on song B (its song view, affect entire on as saved), mod LEDs show B's "
+                       "section 3", k2["timeline"] == b and k2["params"] == b + 4 and d.mod_leds() == [3],
+                       f"{ {n: hex(v) for n, v in k2.items()} }, LEDs {d.mod_leds()}, levels {lvl}")
+            self.check("after: knob indicators show B's delay (feedback knob 15 -> level ~38)",
+                       abs(lvl[0] - KNOB_B_DELAY * 128 // 50) <= 2, f"levels {lvl}")
+        else:
+            self.check("after: song B's song view with affect entire off, as saved: the knobs on nothing, mod LEDs off",
+                       k2["mod"] == 0 and k2["params"] == 0 and d.mod_leds() == [],
+                       f"{ {n: hex(v) for n, v in k2.items()} }, LEDs {d.mod_leds()}, levels {lvl}")
         after_events = d.events[swap.get("events_at", len(d.events)):]
         drawn = [e["text"] for w, kind, e in after_events if kind == "main" and 5 <= e["y"] <= 9]
         countdown_after = [t for t in drawn if t in LABELS]
@@ -734,6 +809,10 @@ class Scenario:
             rel = (tick - swap_tick) if swap_tick is not None else tick
             rel_t = (timer - swap["timer"]) / 44100 if "timer" in swap else 0
             log(f"    {rel:+6d} ticks ({rel / BAR_TICKS:+6.2f} bars, {rel_t:+7.3f} s)  {got}")
+        if self.baseline:
+            texts = [e["text"] for w, k, e in d.events if k in ("popupText", "7segPopup", "7seg")]
+            seen = [t for i, t in enumerate(texts) if i == 0 or t != texts[i - 1]]
+            log(f"  1.2.1: popups / 7-segment texts from LOAD on: {seen[:40]}")
         if not self.oled:
             blinks = [(e["text"].strip(), e["blink"]) for w, k, e in d.events if k == "7seg"]
             log(f"  7-segment texts while armed (text, blink): {blinks[-16:]}")
@@ -764,10 +843,11 @@ def main():
     scenarios = {
         "oled": dict(oled=True),
         "7seg": dict(oled=False),
-        "swing": dict(oled=True, swing=(25, 4)),
+        "swing": dict(oled=True, swing=(25, 4), b_affect_entire=0),
         "stop": dict(oled=True, stop=True),
+        "extclock": dict(oled=True, ext_clock=7),
     }
-    names = args.scenario or list(scenarios)
+    names = args.scenario or ["oled", "7seg", "swing", "extclock", "stop"]
     results = {}
     for n in names:
         results[n] = Scenario(n, args, **scenarios[n]).run()

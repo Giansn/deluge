@@ -92,6 +92,11 @@ DMAC = 0xE8200000
 SSI_TX_DMA_CHANNEL = 6
 RSPI0 = 0xE800C800
 SPIBSC = 0x3FEFA000
+L2C = 0x3FFFF000  # PL310, the L2 cache controller
+L2C_REGISTERS = {0x100: "control", 0x104: "aux_control", 0x220: "int_clear", 0x730: "sync", 0x770: "inv_pa",
+                 0x77C: "inv_way", 0x7B0: "clean_pa", 0x7BC: "clean_way", 0x7F0: "clean_inv_pa", 0x7FC: "clean_inv_way",
+                 0x900: "d_lockdown", 0x904: "i_lockdown"}
+OLED_SPI_DMA_CHANNEL = 4
 
 
 def dmac_channel_base(n):
@@ -265,6 +270,18 @@ class Emulator:
             return 0 if command == 0x05 else (1 << (8 * size)) - 1
         r[SPIBSC + 0x38] = flash_data
         r[SPIBSC + 0x3C] = flash_data
+        # The L2 cache controller (PL310; the L2 test versions switch it on): operations by way finish at once (the way
+        # bits read 0), those by address too (bit 0 reads 0). Maintenance and the OLED's DMA starts go to l2_log for
+        # tests/l2: (what, value, instruction count).
+        self.l2_log = []
+        for offset, name in L2C_REGISTERS.items():
+            w[L2C + offset] = lambda size, value, n=name: self.l2_log.append((n, value, self.now()))
+            if name.endswith(("_way", "_pa")):
+                r[L2C + offset] = lambda size: 0
+        oled_dma = dmac_channel_base(OLED_SPI_DMA_CHANNEL)
+        r[oled_dma + 0x28] = lambda size: 0  # CHCTRL: command bits, read as 0
+        w[oled_dma + 0x28] = lambda size, value: value & 1 and self.l2_log.append(
+            ("oled_dma", (self.plain_read(oled_dma, 4), self.plain_read(oled_dma + 8, 4)), self.now()))
 
     def elf_bytes_at(self, address, n):
         for paddr, content in self.segments:
@@ -425,7 +442,7 @@ def setup_sd(emu):
     # ready (diskStatus 0)
     code = disassemble(emu, "mount_volume.lto_priv.0")
     begin = next(code[i + 1][0] for i, (a, m, o) in enumerate(code) if m == "strb" and o.startswith("r3, [r5, #0]"))
-    call = next(i for i, (a, m, o) in enumerate(code) if m == "bl" and "<check_fs>" in o)
+    call = next(i for i, (a, m, o) in enumerate(code) if m == "bl" and ("<check_fs>" in o or "<check_fs." in o))
     if {code[call - 2][1], code[call - 1][1]} != {"movs", "mov"}:
         raise SystemExit(f"mount_volume() doesn't look as expected: {code[call - 3:call + 1]}")
     disk_status = emu.sym["diskStatus"]
@@ -478,7 +495,17 @@ def boot(emu):
             uc.hook_del(stop_hook[0])
         stop_hook.append(e.uc.hook_add(UC_HOOK_CODE, stop_here, begin=back, end=back))
 
-    emu.intercept(emu.sym["_Z13registerTasksv"], at_register_tasks)
+    def at_start_clock(e):
+        # registerTasks() inlined (LTO decides by the size of the whole program, deluge_main() may even end up in
+        # resetprg()): stop where the task manager starts instead, at TaskManager::startClock() not called from
+        # TaskManager::yield()
+        if "TaskManager::yield" not in e.sym.name_at(e.uc.reg_read(UC_ARM_REG_LR)):
+            e.stop()
+
+    try:
+        emu.intercept(emu.sym["_Z13registerTasksv"], at_register_tasks)
+    except KeyError:
+        emu.intercept(emu.sym.find("_ZN11TaskManager10startClockEv"), at_start_clock)
     emu.uc.reg_write(UC_ARM_REG_SP, PROGRAM_STACK_TOP)
     t = time.time()
     emu.run(emu.sym["resetprg"] | 1, STOP, timeout_s=5)
