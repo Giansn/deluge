@@ -34,6 +34,23 @@
 # Recipe for bit-exact song comparisons of a patch: EMU_OPTS="--init-sounds --seed 1" for both ELFs, then compare
 #   the demand runs' measured.wav (sha256sum); the log prints jcong after boot and the Sounds initialised.
 #
+# SAVE=1 ./run.sh <tree | deluge.elf> [out dir]: instead of the three runs, saving the playing song (song_emu.py
+#   --save-while-playing): after the warm-up the SSI's DMA runs in real time (a sample every 1/44100 s of emulated time,
+#   instructions at 400 MHz) and the firmware saves the song (createXMLFile(), Song::writeToFile(),
+#   closeFileAfterWriting(), to SONGS/SAVETEST.XML) while it plays, servicing the audio only itself, as on the Deluge.
+#   Four cases: the song with 3 and with 5 of its 8 synths (make_sd.py --synths; about 50 % and 70 % CPU, the full song
+#   is too heavy for real time without culling), the save starting at bar 2 (the chord change: every synth starts new
+#   notes, the heaviest moment) and at bar 2.5. Reports the save's emulated duration by what runs (AudioEngine::routine(),
+#   cluster loading, UI timers/OLED/PIC, FatFS, the rest = generating the XML), the routine() calls and the windows they
+#   render, and the gaps: how many samples the DMA has read since the output buffer was last full, before every sample
+#   written (128 or more = an underrun, the buzz), so the song's output while saving is checked sample by sample.
+#   Results: <out>/save-<synths>-<bar>/save_result.json (per call too), save.wav (what the firmware wrote to the codec).
+#   The SD card is instant here (on the Deluge its waits yield to the task manager, which then runs the audio itself).
+#   The XML written must be the same for two builds (its sha256 is printed). Needs the ELF's symbols: routine(),
+#   Song::writeToFile(), the createXMLFile() clone without the XMLSerializer (smSerializer). About 2 minutes.
+#   mastertune-v13 base (e13dce3d) against the save-speed branch: 3 synths at bar 2: 344 ms -> 22 ms, worst gap 80 -> 71;
+#   5 synths at bar 2: 716 ms -> 66 ms, worst gap 128 (1 sample underrun) -> 97; at bar 2.5: 80 -> 10 ms and 180 -> 16 ms.
+#
 # Files: make_sd.py (the song and its samples, generated; its docstring describes the song), fat32.py (the card
 # image), song_emu.py (the emulator harness; its docstring says what is real and what is modelled), blockcount.c
 # (instruction counting per translated block).
@@ -55,6 +72,23 @@ mkdir -p "$OUT/device" "$OUT/digital"
 UC=$(python3 -c 'import os, unicorn; print(os.path.dirname(unicorn.__file__))')
 cc -O2 -shared -fPIC -I"$UC/include" "$HERE/blockcount.c" -o "$OUT/blockcount.so" -L"$UC/lib" -l:libunicorn.so.2 \
 	-Wl,-rpath,"$UC/lib"
+
+if [ -n "$SAVE" ]; then
+	for synths in 3 5; do
+		for bar in 1 1.5; do
+			dir="$OUT/save-$synths-$bar"
+			mkdir -p "$dir"
+			echo "== saving while playing: $synths synths, the save starting after $bar bar(s)"
+			python3 "$HERE/make_sd.py" "$dir/sd.img" --synths "$synths" > /dev/null
+			python3 "$HERE/song_emu.py" "$ELF" "$dir/sd.img" "$dir" --tools "$TOOLS" --build "$OUT" --warmup-bars "$bar" \
+				--save-while-playing --init-sounds --seed 1 $EMU_OPTS | sed -n '/^save while playing/,$p'
+			rm -f "$dir/sd.img"
+			echo
+		done
+	done
+	echo "results in $OUT"
+	exit 0
+fi
 
 run() { # out dir, song options, emulator options
 	python3 "$HERE/make_sd.py" "$1/sd.img" $2 > /dev/null

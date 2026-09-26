@@ -2,7 +2,10 @@
 """Runs the real Deluge firmware (deluge.elf) in unicorn and measures what a whole song costs its Cortex-A9.
 
 Usage: song_emu.py <deluge.elf> <sd.img> <out dir> [--warmup-bars N] [--bars N] [--culling] [--write-back song.xml]
-                   [--init-sounds] [--seed N] [--fill WORD]
+                   [--init-sounds] [--seed N] [--fill WORD] [--save-while-playing] [--poke SYMBOL=VALUE]
+
+--save-while-playing: instead of measuring the windows, the firmware saves the song while it plays, with the output DMA
+in real time (see save_while_playing(), RealTimeDma and run.sh's SAVE=1).
 
 Bit-exact comparisons between builds (see run.sh): Sound::Sound() leaves the LFO phases and the skip-rendering
 timestamps uninitialised (SOUND_UNINITIALISED), so what a song renders depends on what the RAM held before, e.g. stale
@@ -44,6 +47,7 @@ effects, reverb, sidechain, drone, the playback handler's ticks).
 import argparse
 import bisect
 import collections
+import hashlib
 import ctypes
 import json
 import math
@@ -986,6 +990,7 @@ def save_while_playing(emu, player, warmup_bars, out_dir, log):
     emu.intercept(sym.find("_ZN4Song11renderAudioEP12StereoSample"),
                   lambda e: renders.append(e.u32(timer)) and None)
     dma = RealTimeDma(emu)
+    emu.uc.ctl_flush_tb()  # Code hooks added now take effect only where the code is translated again
 
     strings = {}
     at = STOP + 0x100
@@ -1026,7 +1031,7 @@ def save_while_playing(emu, player, warmup_bars, out_dir, log):
                 struct.pack("<IHHIIHH", 16, 1, 2, SAMPLE_RATE, SAMPLE_RATE * 4, 4, 16) + b"data" +
                 struct.pack("<I", len(pcm)) + pcm)
     result = dict(
-        file=dict(path=SAVE_PATH, bytes=len(xml), sha256=__import__("hashlib").sha256(xml).hexdigest()),
+        file=dict(path=SAVE_PATH, bytes=len(xml), sha256=hashlib.sha256(xml).hexdigest()),
         duration_ms=ms(total), instructions=total,
         by_what={k: dict(ms=ms(v), share=v / total) for k, v in regions.time.most_common()},
         not_in_elf=regions.missing,
@@ -1108,6 +1113,9 @@ def main():
                          "setupDefault() seeds it from the MTU2's fast timer (TCNT_0), i.e. from the emulated time, "
                          "which depends on the build's code and data layout. With it, measured.wav is bit-exact "
                          "across builds that render the same")
+    ap.add_argument("--poke", action="append", default=[], metavar="SYMBOL=VALUE",
+                    help="write this 32-bit value to the firmware's variable after boot (e.g. to try a setting of a "
+                         "build that keeps it in a variable)")
     args = ap.parse_args()
     tools = args.tools or os.path.join(os.path.dirname(os.path.abspath(args.elf)),
                                        "../../toolchain/v16/linux-x86_64/arm-none-eabi-gcc/bin/arm-none-eabi-")
@@ -1126,6 +1134,10 @@ def main():
         + (f", set to {args.seed:#010x} (--seed)" if args.seed is not None else ""))
     if args.seed is not None:
         emu.w32(jcong, args.seed)
+    for poke in args.poke:
+        name, value = poke.split("=")
+        emu.w32(emu.sym[name], int(value, 0))
+        log(f"--poke: {name} = {int(value, 0)}")
     load_startup_song(emu)
     if args.write_back:
         write_back_song(emu, args.write_back)
