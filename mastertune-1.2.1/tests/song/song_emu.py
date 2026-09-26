@@ -217,8 +217,12 @@ class Emulator:
         # SPIBSC (the SPI flash holding the settings): every transfer has ended at once (CMNSR: TEND, SSL negated),
         # the flash reads as zeros (no settings saved: the firmware's defaults)
         r[0x3FEFA000 + 0x48] = lambda size: 0x1
-        r[0x3FEFA000 + 0x38] = lambda size: (1 << (8 * size)) - 1  # SMRDR0: erased flash
-        r[0x3FEFA000 + 0x3C] = lambda size: (1 << (8 * size)) - 1  # SMRDR1
+        # SMRDR0/1, the data read: erased flash (0xFF), except for the status register (RDSR, 0x05): never busy
+        def flash_data(size):
+            command = (self.plain_read(0x3FEFA000 + 0x24, 4) >> 16) & 0xFF
+            return 0 if command == 0x05 else (1 << (8 * size)) - 1
+        r[0x3FEFA000 + 0x38] = flash_data
+        r[0x3FEFA000 + 0x3C] = flash_data
         r[spi + 3] = spsr
         r[spi + 4] = spdr_read
         w[spi + 4] = spdr_write

@@ -39,6 +39,13 @@ Was nicht bitgleich ist, wird wie bei Reverb und Delay gemessen: Abweichung in d
 - v9: Streaming-Fixes (Priorität der Lade-Warteschlange, mehr Vorauslesen, Pin-Zähler).
 - v11: Delay mit kubischer Interpolation. Moduliert kostet es 3,5 % statt 5,0 % in v10, weil meist nur noch ein Puffer läuft.
 
+**Warum CPU-Einsparung auch Klangqualität ist:** Unter Last setzt die Firmware `AudioEngine::cpuDireness` hoch und spart dann an der Qualität:
+- Oszillatoren nehmen gröbere Wellentabellen (`voice.cpp`, `tableNumber < cpuDireness + 6`).
+- Gepitchte Samples werden linear statt mit Sinc interpoliert (`sample_controls.cpp`).
+- Im Extremfall werden Stimmen abgeschaltet (Culling).
+
+Jede Einsparung senkt deshalb die Wahrscheinlichkeit, dass volle Songs so an Qualität verlieren.
+
 ## 2. Kosten im Überblick
 
 Befehle pro Block von 128 Samples, pro Instanz oder Stimme, im Emulator gezählt.
@@ -253,4 +260,10 @@ Nicht gemessen: `considerUpcomingWindow`/Cluster und `TimeStretcher::hopEnd`.
 - [ ] Volllast-Test: Ergebnisse eintragen (Abschnitt 6), Priorisierung festlegen (Abschnitt 7).
 - [ ] Wavetable-Oszillator, Grain, `hopEnd` und die Stereo-Unison-Pan-Schleife messen, falls der Volllast-Test sie als relevant zeigt.
 - [ ] MIDI/Clock-Fix: Übertragbarkeit am Code bestätigen.
-- [ ] L2-Cache: Nachbesserungen vollständig sammeln, CPU-Anzeige entwerfen.
+- [ ] L2-Cache: Nachbesserungen vollständig sammeln.
+- [ ] **Messversion** (v12 + Messanzeige, läuft, Workflow `diag-build`):
+  - CPU-Last pro Block (Mittel/Spitze), Stimmen, `cpuDireness`, Culling, SD-Latenz pro Cluster.
+  - Anzeige auf dem OLED, per SysEx nur über USB, dazu eine Web-MIDI-Seite `tools/cpu_monitor.html` mit CSV-Export.
+  - Ziele:
+    - Emulator gegen Hardware kalibrieren, mit demselben Test-Song wie im Volllast-Test
+    - echte Ausgangslage für L2-Cache und Optimierungen
