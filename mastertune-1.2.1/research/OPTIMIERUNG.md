@@ -207,11 +207,19 @@ Nicht gemessen: `considerUpcomingWindow`/Cluster und `TimeStretcher::hopEnd`.
 
 **Aus der Community (main seit 1.2.1)**
 - **L2-Cache:**
-  - 1.2.1 nutzt nur L1 (32 KB Code, 32 KB Daten), die 128 KB L2 bleiben aus.
-  - Upstream: `c44d2476` (12/2024, nur Code), `a2f8bc51` (04/2026, auch Daten). Dazu die Cache-Pflege für DMA: `260ac76c` (Flush vor dem Schreiben, OLED), `5d3d093e` (alle Caches leeren), `c0586341` (Chainloader).
-  - **Vermutlich der grösste CPU-Gewinn,** vor allem bei Daten im externen SDRAM (Samples, Delay- und Reverb-Puffer). Upstream nennt keine Zahl, der Emulator kann es nicht messen.
-  - Risiko mittel: DMA-Kohärenz bei SD, OLED, USB und Audio.
-  - Plan: eigene Testversion mit allen Nachbesserungen, dazu eine CPU-Anzeige zum Vergleichen auf dem Gerät.
+  - 1.2.1 nutzt nur L1 (32 KB Code, 32 KB Daten), die 128 KB L2 bleiben aus (`resetprg.c` ruft nur `R_CACHE_L1Init()` auf).
+  - Upstream in zwei Stufen:
+    - `c44d2476` (12/2024): L2 nur für Code. Daten sind per Lockdown ausgesperrt (`REG9_D_LOCKDOWN0 = 0xFFFFFFFF`), DMA ist damit nicht betroffen. 19 Zeilen.
+    - `a2f8bc51` (04/2026): auch Daten, erst am Ende des Boots freigegeben, dazu Prefetch (`REG1_AUX_CONTROL |= 0x30000000`). SD-Lesen leert vor dem DMA L1 und L2, die FatFS-Puffer sind auf 32 Byte ausgerichtet.
+    - `260ac76c` (einen Tag später): vor dem Schreiben auf die Karte und vor dem OLED-DMA auch L2 zurückschreiben.
+    - `c0586341`, `5d3d093e`: Chainloader (Firmware per USB-SysEx laden). Der Fehler steckt schon in 1.2.1 (L1), unabhängig von L2.
+  - DMA-Pfade in v13, am Code geprüft:
+    - SD lesen und schreiben (`sd_read.c`, `sd_write.c`) und OLED (`oled_low_level.c`, `oled.cpp`) brauchen L2-Pflege, genau die Stellen von upstream.
+    - Audio (SSI) und UART (MIDI, PIC) laufen über die ungecachte Spiegeladresse: nicht betroffen.
+    - USB läuft ohne DMA (`USB_CFG_DMA` aus): nicht betroffen. SD über USB (v7) und das schnellere Speichern (v13) schreiben über FatFS, also über `sd_write.c`.
+  - **Vermutlich der grösste CPU-Gewinn,** vor allem bei Daten im SDRAM: Delay- und Mod-FX-Puffer (`allocLowSpeed`), Wellentabellen und Samples (`allocStealable`). Upstream nennt keine Zahl, der Emulator kann es nicht messen.
+  - Risiko: nur Code gering. Mit Daten mittel: Ein vergessener Pfad gibt seltene Fehler, im schlimmsten Fall falsche Bytes in Dateien auf der Karte.
+  - Plan: zuerst eine Testversion nur mit Code-L2, am Gerät messen (CPU-Monitor von v13, Test-Song `diag/loadtest-card.zip`). Daten erst danach, mit allen Nachbesserungen.
 - **MIDI/Clock während `routineForSD()`** (`9cd09fb7`):
   - Mit Task-Manager ruft `routineForSD()` nur `AudioEngine::routine()` auf, nicht `playbackHandler.routine()`. Die externe Clock stockt deshalb, während `routineForSD()` läuft: Song laden (`load_song_ui.cpp`), USB, Flash.
   - Eigene Prüfung: In 1.2.1 ist das gleich aufgebaut (`USE_TASK_MANAGER` gesetzt, `#ifndef USE_TASK_MANAGER` vor `playbackHandler.routine()` in `routine_()`).
@@ -514,7 +522,7 @@ Rohdaten: `raw/pad-dim.json`. Commits `29a22d25`, `9b861a5c` (auf v13). Test: `t
 - [ ] MIDI/Clock-Fix in `routineForSD()` (`9cd09fb7`): Übertragbarkeit am Code bestätigen.
 - [x] MIDI-/Gate-Timer: 2,9 ms zu früh und Zählerrest behoben (7f).
 - [ ] Noten 2,5 ms vor dem Ton (7f): mit dem Nutzer entscheiden.
-- [ ] L2-Cache: Nachbesserungen vollständig sammeln.
+- [x] L2-Cache: Nachbesserungen gesammelt und die DMA-Pfade von v13 geprüft (Abschnitt 5).
 - [x] **Messversion** gebaut (`diag/`, SHA `8c94cf68…`). Der Test-Song für die SD-Karte ist `diag/loadtest-card.zip`.
   - CPU-Last pro Block (Mittel/Spitze), Stimmen, `cpuDireness`, Culling, SD-Latenz pro Cluster.
   - Anzeige auf dem OLED, per SysEx nur über USB, dazu eine Web-MIDI-Seite `tools/cpu_monitor.html` mit CSV-Export.
