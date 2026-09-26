@@ -983,6 +983,7 @@ class Interrupts:
         self.pending = {}  # key -> [emulated time (instructions), handler address, before(emu) or None]
         self.inside = False
         self.masked_delays = 0  # Interrupts that had to wait for the code to unmask them
+        self.after_return = None  # function(emu), called after each handler returns
         emu.uc.mem_write(ISR_RETURN, b"\x00\xbf")  # nop: a handler's tail call returns here (Regions' return hooks)
         emu.interrupts = self
 
@@ -1023,6 +1024,8 @@ class Interrupts:
             if before:
                 before(self.emu)
             self.fire(address)
+            if self.after_return:
+                self.after_return(self.emu)
         self.arm()
 
     def fire(self, address):
@@ -1082,6 +1085,8 @@ class MidiTiming:
         self.emu = emu
         sym = emu.sym
         self.ints = Interrupts(emu)
+        # What sends a byte: back to the code outside interrupts once a handler returns
+        self.ints.after_return = lambda e: setattr(self, "source", "code outside interrupts")
         self.timer_isr = sym["midiAndGateOutputTimerInterrupt"]
         self.tx_end_isr = sym.find("MIDI_TX_INT_TrnEnd")
         self.sample_timer = sym["_ZN11AudioEngine16audioSampleTimerE"]
@@ -1095,6 +1100,7 @@ class MidiTiming:
             raise SystemExit(f"--midi-timing: no offset of PlaybackHandler::timeNextMIDIClockOutTick from gdb:\n{out}")
         self.clock_time_address = sym["playbackHandler"] + int(m.group(1))
         emu.writers[MTU2_TSTR] = self.on_tstr
+        emu.writers[MTU2 + 0x006] = self.on_tcnt  # TCNT_2
         emu.writers[self.dmac + 0x28] = self.on_chctrl
         emu.intercept(sym.find("_ZN11AudioEngine23tickSongFinalizeWindows"), self.on_finalize)
         emu.intercept(sym.find("_ZN15PlaybackHandler18doMIDIClockOutTick"), self.on_clock_tick)
@@ -1123,15 +1129,35 @@ class MidiTiming:
 
     def on_tstr(self, size, value):
         was, now = self.emu.plain_read(MTU2_TSTR, 1) & MTU2_TSTR_CST2, value & MTU2_TSTR_CST2
+        per = MIDI_TIMER_PRESCALER / PERIPHERAL_HZ * CPU_HZ
+        if not hasattr(self, "tcnt"):
+            self.tcnt, self.match_at, self.start_at, self.start_tcnt, self.residuals = 0, None, None, 0, []
         if now and not was:
             tgra = self.emu.plain_read(MTU2_TGRA_2, 2)
-            at = self.emu.now() + tgra * MIDI_TIMER_PRESCALER / PERIPHERAL_HZ * CPU_HZ
+            r = self.tcnt
+            n = tgra - r if tgra > r else 65536 - r + tgra
+            at = self.emu.now() + n * per
+            self.match_at, self.start_at, self.start_tcnt = at, self.emu.now(), r
+            if self.recording:
+                self.residuals.append(r)
             self.ints.schedule("timer", at, self.timer_isr, self.before_timer)
             if self.recording:
                 self.timers.append(dict(set=self.emu.now(), tgra=tgra, due=at, window=len(self.windows) - 1,
                                         fired=None))
         elif was and not now:
             self.ints.cancel("timer")
+            t = self.emu.now()
+            if self.match_at is not None and t >= self.match_at:
+                self.tcnt = int((t - self.match_at) / per) % 65536
+            elif self.start_at is not None:
+                self.tcnt = (self.start_tcnt + int((t - self.start_at) / per)) % 65536
+
+    def on_tcnt(self, size, value):
+        # The firmware writing the counter (only while the timer is stopped, as scheduleMidiGateOutISR() does)
+        if not hasattr(self, "tcnt"):
+            self.tcnt, self.match_at, self.start_at, self.start_tcnt, self.residuals = 0, None, None, 0, []
+        self.tcnt = value & 0xFFFF
+        self.match_at = self.start_at = None
 
     def before_timer(self, emu):
         self.source = "timer interrupt"
@@ -1253,6 +1279,16 @@ class MidiTiming:
                 if number is not None:
                     clocks.append(dict(error=dma.exact_position(byte["start"]) - number, source=byte["source"]))
 
+        notes = []
+        for byte in self.wire:
+            b = byte["byte"]
+            if b is not None and b & 0xE0 == 0x80 and byte["window"] is not None and byte["window"] < len(self.windows):
+                number = played(byte["window"], 0)
+                if number is not None:
+                    notes.append(dict(error=dma.exact_position(byte["start"]) - number, kind=hex(b), source=byte["source"],
+                                      window=byte["window"]))
+        self.notes_dump = notes
+
         def stats(errors):
             e = np.array(errors, dtype=np.float64)
             if not len(e):
@@ -1274,6 +1310,8 @@ class MidiTiming:
                             later_in_window=stats([x["error"] for x in timers if x["t"] > 0]),
                             needing_over_128=sum(1 for x in timers if x["needed"] > 128),
                             asked_minus_needed=stats([x["asked"] - x["needed"] for x in timers])),
+            tcnt_residual_at_start=dict(count=len(getattr(self, "residuals", [])), max=max(getattr(self, "residuals", [0]) or [0]), over_40=sum(1 for x in getattr(self, "residuals", []) if x > 40)),
+            notes_on_wire=dict(all=stats([n["error"] for n in self.notes_dump]), log=[(n["kind"], round(n["error"], 1), n["source"], n["window"]) for n in self.notes_dump]),
             midi_clocks_on_wire=dict(all=stats([c["error"] for c in clocks]),
                                      by_source={s: stats([c["error"] for c in clocks if c["source"] == s])
                                                 for s in sorted({c["source"] for c in clocks})}),
@@ -1311,6 +1349,8 @@ def midi_report(r, log, what):
     log(f"  timer runs whose sample was more than 128 samples ahead: {t['needing_over_128']}; the timer's delay "
         f"(TGRA) minus that time: mean {t['asked_minus_needed'].get('mean', 0):+.1f}")
     log(line("MIDI clocks on the wire", r["midi_clocks_on_wire"]["all"]))
+    log(f"  TCNT residual when the timer was started: {r['tcnt_residual_at_start']}")
+    log(line("NOTE status bytes on the wire (vs their window's sample 0)", r["notes_on_wire"]["all"]))
     for s, v in r["midi_clocks_on_wire"]["by_source"].items():
         log(line(f"  sent by {s}", v))
     log(f"  bytes on the wire: {r['wire_bytes']['count']}, " + ", ".join(
