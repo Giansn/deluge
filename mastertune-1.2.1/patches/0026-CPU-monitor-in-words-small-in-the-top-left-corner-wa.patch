@@ -1,0 +1,335 @@
+From 24a6522d5e8d1f4cb2fec6c97a86a252560ba425 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 22:34:53 +0000
+Subject: [PATCH 26/28] CPU monitor: in words, small in the top left corner;
+ warnings when the quality is lowered or voices are cut; Alerts mode
+
+- No white bar any more: small white text on black just behind the letters, in the top left
+  corner: "CPU 43%  24 voices" (the CPU average and the voices sounding). The SD times and the
+  direness number are gone from the OLED (still in the SysEx for tools/cpu_monitor.html).
+- Under it, only when it happens: "quality lowered" while the direness is above 0 (the Deluge
+  renders more cheaply to keep up), "voices cut!" while voices are culled because the CPU is
+  behind, blinking, and up for 2 s after the last cut. The 7-segment display pops up "CUT".
+- Settings > CPU monitor: Off, On, Alerts (only the warnings). Off after every power-up.
+- cpu_stats.cpp uses the firmware's snprintf (lib/printf.h), not newlib's.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/menu_item/cpu_monitor_mode.h   | 37 +++++++++++
+ src/deluge/gui/ui/menus.cpp                   |  6 +-
+ src/deluge/hid/display/oled.cpp               | 23 ++++---
+ src/deluge/processing/engines/cpu_stats.cpp   | 63 ++++++++++++++++---
+ src/deluge/processing/engines/cpu_stats.h     | 17 ++++-
+ .../processing/engines/cpu_stats_core.cpp     |  9 +++
+ .../processing/engines/cpu_stats_core.h       |  6 ++
+ 7 files changed, 143 insertions(+), 18 deletions(-)
+ create mode 100644 src/deluge/gui/menu_item/cpu_monitor_mode.h
+
+diff --git a/src/deluge/gui/menu_item/cpu_monitor_mode.h b/src/deluge/gui/menu_item/cpu_monitor_mode.h
+new file mode 100644
+index 00000000..711edb42
+--- /dev/null
++++ b/src/deluge/gui/menu_item/cpu_monitor_mode.h
+@@ -0,0 +1,37 @@
++/*
++ * Copyright © 2026 Deluge community contributors
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#pragma once
++#include "gui/l10n/l10n.h"
++#include "gui/menu_item/selection.h"
++#include "processing/engines/cpu_stats.h"
++
++namespace deluge::gui::menu_item {
++/// Settings > CPU monitor (mastertune-v13): Off, On (the line along the top of the OLED, a popup on the 7-segment
++/// display, the SysEx), Alerts (only the warnings, when voices are cut or the quality is lowered). Off after every
++/// power-up
++class CpuMonitorMode final : public Selection {
++public:
++	using Selection::Selection;
++	void readCurrentValue() override { this->setValue(cpu_stats::mode); }
++	void writeCurrentValue() override { cpu_stats::setMode(this->getValue()); }
++	deluge::vector<std::string_view> getOptions() override {
++		using enum l10n::String;
++		return {l10n::getView(STRING_FOR_OFF), l10n::getView(STRING_FOR_ON), "Alerts"};
++	}
++};
++} // namespace deluge::gui::menu_item
+diff --git a/src/deluge/gui/ui/menus.cpp b/src/deluge/gui/ui/menus.cpp
+index 9884ba88..c968ad41 100644
+--- a/src/deluge/gui/ui/menus.cpp
++++ b/src/deluge/gui/ui/menus.cpp
+@@ -36,6 +36,7 @@
+ #include "gui/menu_item/bend_range/main.h"
+ #include "gui/menu_item/bend_range/per_finger.h"
+ #include "gui/menu_item/colour.h"
++#include "gui/menu_item/cpu_monitor_mode.h"
+ #include "gui/menu_item/cv/selection.h"
+ #include "gui/menu_item/cv/submenu.h"
+ #include "gui/menu_item/cv/transpose.h"
+@@ -1492,8 +1493,9 @@ Submenu tuningSubmenu{
+     },
+ };
+ 
+-// CPU monitor (mastertune-diag): OLED line, 7-segment popup and SysEx over USB; off after every power-up
+-ToggleBool cpuMonitorMenu{STRING_FOR_CPU_MONITOR, STRING_FOR_CPU_MONITOR, cpu_stats::enabled};
++// CPU monitor (mastertune-diag): OLED line, 7-segment popup and SysEx over USB; mastertune-v13: or only the warnings
++// (Alerts). Off after every power-up
++CpuMonitorMode cpuMonitorMenu{STRING_FOR_CPU_MONITOR, STRING_FOR_CPU_MONITOR};
+ 
+ // Root Menu
+ Submenu settingsRootMenu{
+diff --git a/src/deluge/hid/display/oled.cpp b/src/deluge/hid/display/oled.cpp
+index b650dc83..d41cbe6e 100644
+--- a/src/deluge/hid/display/oled.cpp
++++ b/src/deluge/hid/display/oled.cpp
+@@ -508,14 +508,23 @@ void OLED::sendMainImage() {
+ 		oledCurrentImage = &popup.hackGetImageStore()[0];
+ 	}
+ 
+-	// mastertune-diag: the CPU monitor line (Settings > CPU monitor) goes on top of the finished image, in a canvas of
+-	// its own, so no screen's image is changed and the line is gone as soon as the monitor is switched off
+-	if (char const* line = cpu_stats::oledLine()) {
+-		constexpr int32_t kLineTop = OLED_MAIN_HEIGHT_PIXELS - 8;
++	// mastertune-diag: the CPU monitor (Settings > CPU monitor) goes on top of the finished image, in a canvas of its
++	// own, so no screen's image is changed and it's gone as soon as the monitor is switched off
++	// mastertune-v13: small, in the top left corner, white on black just behind the letters: the numbers in words, and
++	// under them the warning (blinking while voices are cut)
++	char const* info = cpu_stats::oledInfo();
++	char const* alert = cpu_stats::oledAlert();
++	if (info || alert) {
+ 		memcpy(cpuMonitorImage.hackGetImageStore(), oledCurrentImage, sizeof(ImageStore));
+-		cpuMonitorImage.clearAreaExact(0, kLineTop, OLED_MAIN_WIDTH_PIXELS - 1, OLED_MAIN_HEIGHT_PIXELS - 1);
+-		cpuMonitorImage.drawString(line, 1, kLineTop + 1, kTextSpacingX, 7);
+-		cpuMonitorImage.invertArea(0, OLED_MAIN_WIDTH_PIXELS, kLineTop, OLED_MAIN_HEIGHT_PIXELS - 1);
++		int32_t y = OLED_MAIN_TOPMOST_PIXEL;
++		for (char const* text : {info, alert}) {
++			if (text) {
++				int32_t width = (int32_t)strlen(text) * kTextSpacingX + 2;
++				cpuMonitorImage.clearAreaExact(0, y, std::min<int32_t>(width, OLED_MAIN_WIDTH_PIXELS) - 1, y + 8);
++				cpuMonitorImage.drawString(text, 1, y + 1, kTextSpacingX, 7);
++				y += 9;
++			}
++		}
+ 		oledCurrentImage = &cpuMonitorImage.hackGetImageStore()[0];
+ 	}
+ 
+diff --git a/src/deluge/processing/engines/cpu_stats.cpp b/src/deluge/processing/engines/cpu_stats.cpp
+index aa3b1e5e..ac3ef60e 100644
+--- a/src/deluge/processing/engines/cpu_stats.cpp
++++ b/src/deluge/processing/engines/cpu_stats.cpp
+@@ -21,6 +21,7 @@
+ #include "io/midi/midi_device.h"
+ #include "io/midi/midi_device_manager.h"
+ #include "io/midi/sysex.h"
++#include "lib/printf.h" // Not stdio: the firmware's snprintf, which doesn't allocate
+ #include "processing/engines/audio_engine.h"
+ 
+ extern "C" {
+@@ -31,9 +32,15 @@ namespace cpu_stats {
+ 
+ static_assert(kSysexCommand == SysEx::SysexCommands::CpuStats);
+ 
++uint8_t mode = OFF;
+ bool enabled = false;
+ Collector collector;
+ 
++void setMode(uint8_t newMode) {
++	mode = (newMode <= ALERTS) ? newMode : OFF;
++	enabled = (mode != OFF);
++}
++
+ namespace {
+ 
+ /// Room that must stay free in the USB MIDI send buffer, so the numbers never crowd out notes or clock
+@@ -41,6 +48,11 @@ constexpr int32_t kMinUsbSendSpace = 1024;
+ 
+ bool wasEnabled = false;
+ uint32_t lastHalfSeq = 0;
++/// Warnings: voices cut in the window shown, and how many more half-seconds the warning stays up after the last cut
++int32_t cutHoldHalves = 0;
++bool blinkOff = false;
++char alert[20];                       // Empty if none
++constexpr int32_t kCutHoldHalves = 4; // 2 s
+ uint32_t lastSecondSeq = 0;
+ Window previousHalf;
+ char line[kLineChars + 1]; // Empty until the first window is in
+@@ -97,6 +109,9 @@ void routine() {
+ 			wasEnabled = false;
+ 			collector.stop();
+ 			line[0] = 0;
++			alert[0] = 0;
++			cutHoldHalves = 0;
++			blinkOff = false;
+ 			markOLEDChanged(); // Takes the line away
+ 		}
+ 		return;
+@@ -113,34 +128,68 @@ void routine() {
+ 		return;
+ 	}
+ 
+-	// OLED: the last two half-second windows, so the line is new twice a second
++	// OLED: the last two half-second windows, so the numbers are new twice a second. Under them the warning: voices
++	// cut (blinking, and up 2 s after the last cut) or the quality lowered
+ 	if (collector.readHalf(window, lastHalfSeq)) {
+ 		Window shown = previousHalf;
+ 		merge(shown, window);
+ 		previousHalf = window;
++		Summary summary = summarize(shown);
++		if (window.culled > 0) {
++			cutHoldHalves = kCutHoldHalves;
++		}
++		else if (cutHoldHalves > 0) {
++			cutHoldHalves--;
++		}
++		bool cutting = cutHoldHalves > 0;
++		blinkOff = cutting && !blinkOff;
+ 		if (display->haveOLED()) {
+-			formatLine(summarize(shown), line, sizeof(line));
++			if (mode == ON) {
++				formatInfo(summary, line, sizeof(line));
++			}
++			else {
++				line[0] = 0;
++			}
++			formatAlert(cutting, summary.direMax, alert, sizeof(alert));
+ 			deluge::hid::display::OLED::markChanged();
+ 		}
+ 		else {
+ 			line[0] = 0;
++			alert[0] = 0;
+ 		}
+ 	}
+ 
+-	// SysEx each second; the 7-segment display gets a short popup every other second, unless it shows another one
++	// SysEx each second (mode On); the 7-segment display gets a short popup every other second, unless it shows
++	// another one: "CUT" while voices are cut, else the CPU (mode On)
+ 	if (collector.readSecond(window, lastSecondSeq)) {
+ 		Summary summary = summarize(window);
+-		sendSysex(summary);
++		if (mode == ON) {
++			sendSysex(summary);
++		}
+ 		if (!display->haveOLED() && (secondsSeen++ & 1) == 0 && !display->hasPopup()) {
+ 			char text[8];
+-			formatSevenSegment(summary, text, sizeof(text));
+-			display->displayPopup(text, 1);
++			if (cutHoldHalves > 0) {
++				snprintf(text, sizeof(text), "CUT");
++			}
++			else if (mode == ON) {
++				formatSevenSegment(summary, text, sizeof(text));
++			}
++			else {
++				text[0] = 0;
++			}
++			if (text[0]) {
++				display->displayPopup(text, 1);
++			}
+ 		}
+ 	}
+ }
+ 
+-char const* oledLine() {
++char const* oledInfo() {
+ 	return (enabled && line[0]) ? line : nullptr;
+ }
+ 
++char const* oledAlert() {
++	return (enabled && alert[0] && !blinkOff) ? alert : nullptr;
++}
++
+ } // namespace cpu_stats
+diff --git a/src/deluge/processing/engines/cpu_stats.h b/src/deluge/processing/engines/cpu_stats.h
+index 1923001f..d7fb3be6 100644
+--- a/src/deluge/processing/engines/cpu_stats.h
++++ b/src/deluge/processing/engines/cpu_stats.h
+@@ -28,6 +28,16 @@
+ 
+ namespace cpu_stats {
+ 
++/// Settings > CPU monitor (mastertune-v13: Off, On, Alerts)
++enum Mode : uint8_t {
++	OFF,    ///< Nothing measured
++	ON,     ///< The line on the OLED (a popup on the 7-segment display) and the SysEx
++	ALERTS, ///< Only the warnings, when voices are cut or the quality is lowered
++};
++extern uint8_t mode;
++void setMode(uint8_t newMode);
++
++/// Measuring: On or Alerts
+ extern bool enabled;
+ extern Collector collector;
+ 
+@@ -59,7 +69,10 @@ void clusterLoaded(ReadStart start);
+ /// Task, a few times a second: display and SysEx
+ void routine();
+ 
+-/// The OLED line, drawn on top of every image sent to the OLED, or nullptr
+-char const* oledLine();
++/// What goes in the top left corner of every image sent to the OLED (mastertune-v13), each nullptr if nothing: the
++/// numbers in words (mode On), and under them the warning (both modes; while voices are cut it blinks, nullptr in
++/// its off phase)
++char const* oledInfo();
++char const* oledAlert();
+ 
+ } // namespace cpu_stats
+diff --git a/src/deluge/processing/engines/cpu_stats_core.cpp b/src/deluge/processing/engines/cpu_stats_core.cpp
+index 7debba11..2275139e 100644
+--- a/src/deluge/processing/engines/cpu_stats_core.cpp
++++ b/src/deluge/processing/engines/cpu_stats_core.cpp
+@@ -16,6 +16,7 @@
+  */
+ 
+ #include "processing/engines/cpu_stats_core.h"
++#include <algorithm>
+ #include <atomic>
+ #include <cstring>
+ 
+@@ -316,6 +317,14 @@ void formatLine(const Summary& s, char* buffer, size_t size) {
+ 	snprintf(buffer, size, "%s", line);
+ }
+ 
++void formatInfo(const Summary& s, char* buffer, size_t size) {
++	snprintf(buffer, size, "CPU %u%%  %u voices", percent(s.dspAvgPermille), atMost999(s.voicesNow));
++}
++
++void formatAlert(bool cutActive, uint32_t direMax, char* buffer, size_t size) {
++	snprintf(buffer, size, "%s", cutActive ? "voices cut!" : (direMax > 0) ? "quality lowered" : "");
++}
++
+ void formatSevenSegment(const Summary& s, char* buffer, size_t size) {
+ 	snprintf(buffer, size, "C%3u", (unsigned)percent(s.dspAvgPermille));
+ }
+diff --git a/src/deluge/processing/engines/cpu_stats_core.h b/src/deluge/processing/engines/cpu_stats_core.h
+index 8215e098..cf7f5a0d 100644
+--- a/src/deluge/processing/engines/cpu_stats_core.h
++++ b/src/deluge/processing/engines/cpu_stats_core.h
+@@ -151,4 +151,10 @@ void formatLine(const Summary& s, char* buffer, size_t size);
+ /// "C 43": CPU average for the 7-segment display
+ void formatSevenSegment(const Summary& s, char* buffer, size_t size);
+ 
++/// mastertune-v13, in words: "CPU 43%  24 voices" (CPU average and the voices sounding)
++void formatInfo(const Summary& s, char* buffer, size_t size);
++/// The warning, or "": "voices cut!" while voices are being culled because the CPU is behind (cutActive), else
++/// "quality lowered" while the direness is above 0 (the Deluge renders more cheaply to keep up)
++void formatAlert(bool cutActive, uint32_t direMax, char* buffer, size_t size);
++
+ } // namespace cpu_stats
+-- 
+2.43.0
+

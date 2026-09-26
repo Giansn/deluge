@@ -1,0 +1,1119 @@
+From 6d6d551773a2e982c794bce9b7482985ff12e1cb Mon Sep 17 00:00:00 2001
+From: Claude <gianson@pm.me>
+Date: Sat, 26 Sep 2026 17:30:59 +0000
+Subject: [PATCH 13/28] Filters: state in registers, invariant branches out of
+ the loops (bit-exact)
+
+The ladders and the SVF ran on their members and on jcong directly. The
+output store (a q31_t) may alias all of them as far as the compiler knows,
+so every sample loaded ~20 values and stored 5-7 again. Now each loop works
+on a copy in local variables and writes it back after the block. The
+buffers are render buffers (Voice's spareRenderingBuffer, GlobalEffectable's,
+FilterSet's tempRenderBuffer), never a filter or jcong, and nothing in the
+loops calls out, so this is exactly the same computation.
+
+On top, all exact:
+- Branches that depend on the configuration only are taken once per block:
+  LP ladder scaleInput's saturation (morph > 0 || resonance > 510M), HP
+  ladder's antialiasing / tanh / none, SVF's output mix.
+- Morph 0: LP ladder's morph term 2 * ((input * 0) >> 32) is 0; HP ladder's
+  cutoff smmlar(fc, input << 4, 0) is fc for every sample.
+- SVF: a mix term with coefficient 0 adds exactly 0 (smmlar with a zero
+  product adds (0 + 2^31) >> 32 = 0) and goes.
+- HP ladder without antialiasing: hpfLastWorkingValue is read by nothing in
+  the block, so it's written once, from the last sample.
+- Feedback sums with smmlar (sum + smmulr(a, b) exactly, sum << 32 doesn't
+  touch the rounding), noisy moveability with smmla (m + smmul(m, n)
+  exactly, modulo 2^32 like the add); (a << 2) + (b << 2) as (a + b) << 2.
+- sampleIncrement 1 (all callers) gets its own loops, a free register; any
+  other increment keeps a per-sample branch as before.
+- Stereo: one pass per channel (they are independent). The LP ladder's
+  noise draws alternate between the channels, so each pass steps the
+  generator twice per sample (69069^2, 69070 * 1234567 mod 2^32), the left
+  one starting one step before jcong (inverse of 69069 mod 2^32); the
+  oversampled drive ladder keeps its loop over both.
+- Parallel routing adds the two buffers with NEON (wraps like add).
+
+Filter bench (ARM, instructions per 128-sample block), all hashes identical
+incl. 2048 new randomized cases: LP24 mono 9038 -> 5870, res30 10830 ->
+7414, HP ladder 7748 -> 3427, SVF LPF 7869 -> 5717, stereo LP24 17991 ->
+12162.
+
+Song (tests/song, demand): 1,370,014 -> 1,173,302 instructions per 128
+samples (LpLadderFilter::doFilter 403k -> 271k, HpLadderFilter::doFilter
+121k -> 57k). Its measured.wav differs from the v12 baseline's, but only
+because of the memory layout: v12 with 17,744 bytes of never-run padding
+code (same .data and heap addresses as this build) renders exactly the same
+measured.wav as this build.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter_set.cpp      |  25 +-
+ src/deluge/dsp/filter/hpladder.cpp        | 143 ++++++--
+ src/deluge/dsp/filter/hpladder.h          |  34 +-
+ src/deluge/dsp/filter/ladder_components.h |  12 +
+ src/deluge/dsp/filter/lpladder.cpp        | 395 +++++++++++++---------
+ src/deluge/dsp/filter/lpladder.h          |  68 ++--
+ src/deluge/dsp/filter/svf.cpp             | 110 ++++--
+ src/deluge/dsp/filter/svf.h               |  30 +-
+ 8 files changed, 586 insertions(+), 231 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/filter_set.cpp b/src/deluge/dsp/filter/filter_set.cpp
+index d395c3ec..b8b6d165 100644
+--- a/src/deluge/dsp/filter/filter_set.cpp
++++ b/src/deluge/dsp/filter/filter_set.cpp
+@@ -17,11 +17,28 @@
+ 
+ #include "dsp/filter/filter_set.h"
+ #include "definitions_cxx.hpp"
++#if defined(__ARM_NEON)
++#include <arm_neon.h>
++#endif
+ 
+ namespace deluge::dsp::filter {
+ 
+ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate stereo samples
+ 
++// Parallel routing: startSample[i] += tempRenderBuffer[i], four at a time. vaddq_s32 wraps like the add instruction of
++// the plain loop; the two buffers never overlap (tempRenderBuffer is this file's own)
++[[gnu::always_inline]] static inline void addTempRenderBuffer(q31_t* startSample, int32_t length) {
++	int32_t i = 0;
++#if defined(__ARM_NEON)
++	for (; i + 4 <= length; i += 4) {
++		vst1q_s32(&startSample[i], vaddq_s32(vld1q_s32(&startSample[i]), vld1q_s32(&tempRenderBuffer[i])));
++	}
++#endif
++	for (; i < length; i++) {
++		startSample[i] += tempRenderBuffer[i];
++	}
++}
++
+ [[gnu::hot]] void FilterSet::renderHPFLong(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
+ 	if (HPFOn) {
+ 		if (hpfMode_ == FilterMode::HPLADDER) {
+@@ -91,9 +108,7 @@ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate ster
+ 		renderHPFLong(tempRenderBuffer, tempRenderBuffer + length, sampleIncrememt);
+ 		renderLPFLong(startSample, endSample, sampleIncrememt);
+ 
+-		for (int i = 0; i < length; i++) {
+-			startSample[i] += tempRenderBuffer[i];
+-		}
++		addTempRenderBuffer(startSample, length);
+ 		break;
+ 	}
+ }
+@@ -124,9 +139,7 @@ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate ster
+ 
+ 		renderLPFLongStereo(startSample, endSample);
+ 
+-		for (int i = 0; i < length; i++) {
+-			startSample[i] += tempRenderBuffer[i];
+-		}
++		addTempRenderBuffer(startSample, length);
+ 		break;
+ 	}
+ }
+diff --git a/src/deluge/dsp/filter/hpladder.cpp b/src/deluge/dsp/filter/hpladder.cpp
+index ee0976bf..8ce06d5c 100644
+--- a/src/deluge/dsp/filter/hpladder.cpp
++++ b/src/deluge/dsp/filter/hpladder.cpp
+@@ -66,51 +66,150 @@ q31_t HpLadderFilter::setConfig(q31_t hpfFrequency, q31_t hpfResonance, FilterMo
+ 
+ 	return filterGain;
+ }
++// The ladder runs on a copy of its configuration and its state in local variables, written back after the block. The
++// output store (a q31_t) could alias all of them as far as the compiler knows, so the loops used to load and store
++// them all again on every sample. Nothing else touches them during a block: the buffers are render buffers (Voice's
++// spareRenderingBuffer, GlobalEffectable's, FilterSet's tempRenderBuffer), never the filter, and nothing in the loops
++// calls out. The arithmetic is unchanged.
+ [[gnu::hot]] void HpLadderFilter::doFilter(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
+-	q31_t* currentSample = startSample;
+-	do {
+-		*currentSample = doHPF(*currentSample, l);
+-		currentSample += sampleIncrement;
+-	} while (currentSample < endSample);
++	if (sampleIncrement == 1) {
++		render<Layout::MONO>(startSample, endSample, 1);
++	}
++	else {
++		renderLoop<true, Saturation::PER_SAMPLE, Layout::MONO_STRIDED>(startSample, endSample, sampleIncrement);
++	}
+ }
+ // filter an interleaved stereo buffer
+ [[gnu::hot]] void HpLadderFilter::doFilterStereo(q31_t* startSample, q31_t* endSample) {
++	render<Layout::STEREO>(startSample, endSample, 2);
++}
++
++// The branches that depend on the configuration only are taken once per block
++template <HpLadderFilter::Layout layout>
++void HpLadderFilter::render(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
++	// Only saturate / anti-alias if lots of resonance
++	if (morph_ != 0) {
++		if (hpfProcessedResonance > 900000000) { // 890551738
++			renderLoop<true, Saturation::ANTIALIASED, layout>(startSample, endSample, sampleIncrement);
++		}
++		else if (hpfProcessedResonance > 750000000) { // 400551738
++			renderLoop<true, Saturation::TANH, layout>(startSample, endSample, sampleIncrement);
++		}
++		else {
++			renderLoop<true, Saturation::NONE, layout>(startSample, endSample, sampleIncrement);
++		}
++	}
++	else {
++		if (hpfProcessedResonance > 900000000) {
++			renderLoop<false, Saturation::ANTIALIASED, layout>(startSample, endSample, sampleIncrement);
++		}
++		else if (hpfProcessedResonance > 750000000) {
++			renderLoop<false, Saturation::TANH, layout>(startSample, endSample, sampleIncrement);
++		}
++		else {
++			renderLoop<false, Saturation::NONE, layout>(startSample, endSample, sampleIncrement);
++		}
++	}
++}
++
++template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Layout layout>
++[[gnu::hot]] void HpLadderFilter::renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
++	const Coefficients c{fc,
++	                     morph_,
++	                     hpfHPF3Feedback,
++	                     hpfLPF1Feedback,
++	                     divideByTotalMoveability,
++	                     hpfDivideByProcessedResonance,
++	                     hpfProcessedResonance};
++	// Without morph, doHPF's cutoff is max(multiply_accumulate_32x32_rshift32_rounded(fc, input << 4, 0), lowerLimit)
++	// = max(fc, lowerLimit) for every sample: smmlar adds (0 + 2^31) >> 32 = 0 to fc
++	const q31_t fixedFc = std::max(fc, lowerLimit);
++	renderChannel<morph, saturation, layout, 0>(startSample, endSample, sampleIncrement, l, c, fixedFc);
++	if constexpr (layout == Layout::STEREO) {
++		// The channels don't depend on each other, so each gets its own pass (fewer registers needed)
++		renderChannel<morph, saturation, layout, 1>(startSample, endSample, sampleIncrement, r, c, fixedFc);
++	}
++}
++
++template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Layout layout, int channel>
++[[gnu::always_inline]] inline void HpLadderFilter::renderChannel(q31_t* startSample, q31_t* endSample,
++                                                                 int32_t sampleIncrement, HPLadderState& channelState,
++                                                                 const Coefficients& c, q31_t fixedFc) {
++	HPLadderState state = channelState;
++	q31_t lastA = 0; // the last sample's a before the tanh, for hpfLastWorkingValue
++
++	// For STEREO, currentSample points at the frame, as in the loop over both channels (same number of frames)
+ 	q31_t* currentSample = startSample;
+ 	do {
+-		*currentSample = doHPF(*currentSample, l);
+-		currentSample += 1;
+-		*currentSample = doHPF(*currentSample, r);
+-		currentSample += 1;
++		currentSample[channel] = doHPF<morph, saturation>(currentSample[channel], state, c, fixedFc, lastA);
++		if constexpr (layout == Layout::MONO) {
++			currentSample += 1;
++		}
++		else if constexpr (layout == Layout::STEREO) {
++			currentSample += 2;
++		}
++		else {
++			currentSample += sampleIncrement;
++		}
+ 	} while (currentSample < endSample);
++
++	// Without antialiasing, hpfLastWorkingValue is written on every sample and read by none of this block's (only
++	// the antialiased tanh reads it), so only the last sample's value matters
++	if constexpr (saturation == Saturation::TANH || saturation == Saturation::NONE) {
++		state.hpfLastWorkingValue = (uint32_t)lshiftAndSaturate<2>(lastA) + 2147483648u;
++	}
++	channelState = state;
+ }
+-[[gnu::always_inline]] inline q31_t HpLadderFilter::doHPF(q31_t input, HPLadderState& state) {
+-	// inputs are only 16 bit so this is pretty small
+-	// this limit was found experimentally as about the lowest fc can get without sounding broken
+-	q31_t constexpr lower_limit = -(ONE_Q31 >> 8);
+-	q31_t temp_fc = std::max(multiply_accumulate_32x32_rshift32_rounded(fc, input << 4, morph_), lower_limit);
++
++template <bool morph, HpLadderFilter::Saturation saturation>
++[[gnu::always_inline]] inline q31_t HpLadderFilter::doHPF(q31_t input, HPLadderState& state, const Coefficients& c,
++                                                          q31_t fixedFc, q31_t& lastA) {
++	q31_t temp_fc;
++	if constexpr (morph) {
++		temp_fc = std::max(multiply_accumulate_32x32_rshift32_rounded(c.fc, input << 4, c.morph), lowerLimit);
++	}
++	else {
++		temp_fc = fixedFc;
++	}
+ 
+ 	q31_t firstHPFOutput = input - state.hpfHPF1.doFilter(input, temp_fc);
+ 
+-	q31_t feedbacksValue =
+-	    state.hpfHPF3.getFeedbackOutput(hpfHPF3Feedback) + state.hpfLPF1.getFeedbackOutput(hpfLPF1Feedback);
++	// (a << 2) + (b << 2) as (a + b) << 2, the same modulo 2^32, with smmlar: sum + multiply_32x32_rshift32_rounded
++	// in one instruction, exactly (sum << 32 doesn't change the rounding of the low word)
++	q31_t feedbacksValue = multiply_accumulate_32x32_rshift32_rounded(
++	    multiply_32x32_rshift32_rounded(state.hpfHPF3.memory, c.hpfHPF3Feedback), state.hpfLPF1.memory,
++	    c.hpfLPF1Feedback);
+ 
+-	q31_t a = multiply_32x32_rshift32_rounded(divideByTotalMoveability, firstHPFOutput + feedbacksValue) << (4 + 1);
++	q31_t a = multiply_32x32_rshift32_rounded(c.divideByTotalMoveability, firstHPFOutput + (feedbacksValue << 2))
++	          << (4 + 1);
+ 
+ 	// Only saturate / anti-alias if lots of resonance
+-	if (hpfProcessedResonance > 900000000) { // 890551738
++	if constexpr (saturation == Saturation::ANTIALIASED) {
+ 		a = getTanHAntialiased(a, &state.hpfLastWorkingValue, 1);
+ 	}
++	else if constexpr (saturation == Saturation::TANH) {
++		lastA = a;
++		a = getTanHUnknown(a, 2);
++	}
++	else if constexpr (saturation == Saturation::NONE) {
++		lastA = a;
++	}
+ 	else {
+-		state.hpfLastWorkingValue = (uint32_t)lshiftAndSaturate<2>(a) + 2147483648u;
+-		if (hpfProcessedResonance > 750000000) { // 400551738
+-			a = getTanHUnknown(a, 2);
++		if (c.hpfProcessedResonance > 900000000) { // 890551738
++			a = getTanHAntialiased(a, &state.hpfLastWorkingValue, 1);
++		}
++		else {
++			state.hpfLastWorkingValue = (uint32_t)lshiftAndSaturate<2>(a) + 2147483648u;
++			if (c.hpfProcessedResonance > 750000000) { // 400551738
++				a = getTanHUnknown(a, 2);
++			}
+ 		}
+ 	}
+ 
+ 	state.hpfLPF1.doFilter(a - state.hpfHPF3.doFilter(a, temp_fc), temp_fc);
+ 
+ 	// Normalization
+-	a = multiply_32x32_rshift32_rounded(a, hpfDivideByProcessedResonance) << (8 - 1);
++	a = multiply_32x32_rshift32_rounded(a, c.hpfDivideByProcessedResonance) << (8 - 1);
+ 
+ 	return a;
+ }
+diff --git a/src/deluge/dsp/filter/hpladder.h b/src/deluge/dsp/filter/hpladder.h
+index a8a99a67..b918c66d 100644
+--- a/src/deluge/dsp/filter/hpladder.h
++++ b/src/deluge/dsp/filter/hpladder.h
+@@ -47,7 +47,39 @@ private:
+ 			hpfHPF3.reset();
+ 		}
+ 	};
+-	[[gnu::always_inline]] inline q31_t doHPF(q31_t input, HPLadderState& state);
++	// The loops work on a copy of the configuration and the state in local variables (hpladder.cpp): the output
++	// store could otherwise alias every member, so each sample would load and store them all again
++	struct Coefficients {
++		q31_t fc;
++		q31_t morph;
++		q31_t hpfHPF3Feedback;
++		q31_t hpfLPF1Feedback;
++		q31_t divideByTotalMoveability;
++		q31_t hpfDivideByProcessedResonance;
++		q31_t hpfProcessedResonance;
++	};
++	// The saturation branch, which depends on the configuration only: antialiased tanh, tanh, none, or decided per
++	// sample as before (only for the mono loop with a sampleIncrement other than 1, which nothing uses)
++	enum class Saturation { ANTIALIASED, TANH, NONE, PER_SAMPLE };
++	// MONO: sampleIncrement 1 (all callers), MONO_STRIDED: any sampleIncrement, STEREO: interleaved
++	enum class Layout { MONO, MONO_STRIDED, STEREO };
++	template <bool morph, Saturation saturation, Layout layout>
++	void renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
++	template <Layout layout>
++	void render(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
++	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or the left or right of each frame (STEREO,
++	// channel 0 or 1)
++	template <bool morph, Saturation saturation, Layout layout, int channel>
++	[[gnu::always_inline]] static inline void renderChannel(q31_t* startSample, q31_t* endSample,
++	                                                        int32_t sampleIncrement, HPLadderState& channelState,
++	                                                        const Coefficients& c, q31_t fixedFc);
++	template <bool morph, Saturation saturation>
++	[[gnu::always_inline]] static inline q31_t doHPF(q31_t input, HPLadderState& state, const Coefficients& c,
++	                                                 q31_t fixedFc, q31_t& lastA);
++
++	// Lowest cutoff with morph. Inputs are only 16 bit so this is pretty small. This limit was found experimentally as
++	// about the lowest fc can get without sounding broken
++	static constexpr q31_t lowerLimit = -(ONE_Q31 >> 8);
+ 
+ 	bool hpfDoingAntialiasingNow;
+ 	int32_t hpfDivideByTotalMoveabilityLastTime;
+diff --git a/src/deluge/dsp/filter/ladder_components.h b/src/deluge/dsp/filter/ladder_components.h
+index bdca75b3..9e32c9a8 100644
+--- a/src/deluge/dsp/filter/ladder_components.h
++++ b/src/deluge/dsp/filter/ladder_components.h
+@@ -20,6 +20,18 @@
+ #include "util/fixedpoint.h"
+ #include <cstdint>
+ namespace deluge::dsp::filter {
++// sum + multiply_32x32_rshift32(a, b) in one instruction (smmla). Exactly the same: sum << 32 only adds a multiple of
++// 2^32 to the 64-bit product, so the high word is sum + ((a * b) >> 32), modulo 2^32 like the add it replaces
++[[gnu::always_inline]] inline q31_t multiply_accumulate_32x32_rshift32(q31_t sum, q31_t a, q31_t b) {
++#if defined(__arm__)
++	q31_t out;
++	asm("smmla %0, %1, %2, %3" : "=r"(out) : "r"(a), "r"(b), "r"(sum));
++	return out;
++#else
++	return static_cast<q31_t>(static_cast<uint32_t>(sum) + static_cast<uint32_t>(multiply_32x32_rshift32(a, b)));
++#endif
++}
++
+ class BasicFilterComponent {
+ public:
+ 	// moveability is tan(f)/(1+tan(f))
+diff --git a/src/deluge/dsp/filter/lpladder.cpp b/src/deluge/dsp/filter/lpladder.cpp
+index f0007093..beef2756 100644
+--- a/src/deluge/dsp/filter/lpladder.cpp
++++ b/src/deluge/dsp/filter/lpladder.cpp
+@@ -171,169 +171,261 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ 	return filterGain;
+ }
+ 
++// The ladders run on a copy of their configuration, their state and the noise generator (jcong) in local
++// variables, written back after the block. The output store (a q31_t) could alias all of them as far as the compiler
++// knows, so the loops used to load and store them all again on every sample. Nothing else touches them during a
++// block: the buffers are render buffers (Voice's spareRenderingBuffer, GlobalEffectable's, FilterSet's
++// tempRenderBuffer), never the filter or jcong, and nothing in the loops calls out. The arithmetic is unchanged.
+ [[gnu::hot]] void LpLadderFilter::doFilter(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
+-
+ 	// Half ladder
+ 	if (lpfMode == FilterMode::TRANSISTOR_12DB) {
+-
+-		q31_t* currentSample = startSample;
+-		do {
+-			*currentSample = do12dBLPFOnSample(*currentSample, l);
+-			currentSample += sampleIncrement;
+-		} while (currentSample < endSample);
++		renderMono<FilterMode::TRANSISTOR_12DB, false>(startSample, endSample, sampleIncrement);
+ 	}
+-
+ 	// Full ladder (regular)
+ 	else if (lpfMode == FilterMode::TRANSISTOR_24DB) {
+-
+-		q31_t* currentSample = startSample;
+-		do {
+-			*currentSample = do24dBLPFOnSample(*currentSample, l);
+-
+-			currentSample += sampleIncrement;
+-		} while (currentSample < endSample);
++		renderMono<FilterMode::TRANSISTOR_24DB, false>(startSample, endSample, sampleIncrement);
+ 	}
+-
+ 	// Full ladder (drive)
+ 	else if (lpfMode == FilterMode::TRANSISTOR_24DB_DRIVE) {
+-		constexpr int32_t extraSaturationDrive = 1;
+ 		if (doOversampling) {
+-			q31_t* currentSample = startSample;
+-			do {
+-				// Linear interpolation works surprisingly well here - it doesn't lead to audible aliasing. But its big
+-				// problem is that it kills the highest frequencies, which is especially noticeable when resonance is
+-				// low. This is because it'll turn all your high sine waves into triangles whose fundamental is lower in
+-				// amplitude. Now, if we immediately downsampled that again with no filtering, no problem, because those
+-				// new really high harmonics that make it triangular are still there. But after running it through the
+-				// ladder filter, those get doubly filtered out, leaving just the reduced-amplitude (fundamental) sine
+-				// waves where our old ones were. So instead, we need to do just a little bit more and take one extra,
+-				// previous sample into account in our interpolation. This is enough to make the HF loss inaudible
+-				// - although we can still see it on the spectrum analysis.
+-
+-				// Insanely just doubling up our input values to oversample works better than fancy 3-sample
+-				// interpolation. And even, making our "interpolated" sample just a 0 and doubling the amplitude of the
+-				// actual sample works very nearly as well as this, but gives a little bit more aliasing on high notes
+-				// fed in.
+-
+-				doDriveLPFOnSample(*currentSample, l);
+-
+-				// Crude downsampling - just take every second sample, with no anti-aliasing filter. Works fine cos the
+-				// ladder LPF filter takes care of lots of those high harmonics!
+-				q31_t outputSampleToKeep = doDriveLPFOnSample(*currentSample, l);
+-
+-				// Only perform the final saturation stage on this one sample, which we want to keep
+-				*currentSample = getTanHUnknown(outputSampleToKeep, 4);
+-
+-				currentSample += sampleIncrement;
+-			} while (currentSample < endSample);
++			renderMono<FilterMode::TRANSISTOR_24DB_DRIVE, true>(startSample, endSample, sampleIncrement);
+ 		}
+-
+ 		else {
+-			q31_t* currentSample = startSample;
+-			do {
+-				q31_t outputSampleToKeep = doDriveLPFOnSample(*currentSample, l);
+-				*currentSample = getTanHUnknown(outputSampleToKeep, 4);
+-
+-				currentSample += sampleIncrement;
+-			} while (currentSample < endSample);
++			renderMono<FilterMode::TRANSISTOR_24DB_DRIVE, false>(startSample, endSample, sampleIncrement);
+ 		}
+ 	}
+ }
+-[[gnu::hot]] void LpLadderFilter::doFilterStereo(q31_t* startSample, q31_t* endSample) {
+ 
++[[gnu::hot]] void LpLadderFilter::doFilterStereo(q31_t* startSample, q31_t* endSample) {
+ 	// Half ladder
+ 	if (lpfMode == FilterMode::TRANSISTOR_12DB) {
+-
+-		q31_t* currentSample = startSample;
+-		do {
+-			*currentSample = do12dBLPFOnSample(*currentSample, l);
+-			currentSample += 1;
+-			*currentSample = do12dBLPFOnSample(*currentSample, r);
+-			currentSample += 1;
+-		} while (currentSample < endSample);
++		renderSaturation<FilterMode::TRANSISTOR_12DB, false, Layout::STEREO>(startSample, endSample, 2);
+ 	}
+-
+ 	// Full ladder (regular)
+ 	else if (lpfMode == FilterMode::TRANSISTOR_24DB) {
++		renderSaturation<FilterMode::TRANSISTOR_24DB, false, Layout::STEREO>(startSample, endSample, 2);
++	}
++	// Full ladder (drive)
++	else if (lpfMode == FilterMode::TRANSISTOR_24DB_DRIVE) {
++		if (doOversampling) {
++			renderSaturation<FilterMode::TRANSISTOR_24DB_DRIVE, true, Layout::STEREO>(startSample, endSample, 2);
++		}
++		else {
++			renderSaturation<FilterMode::TRANSISTOR_24DB_DRIVE, false, Layout::STEREO>(startSample, endSample, 2);
++		}
++	}
++}
++
++// A constant sampleIncrement of 1 frees a register in the loop
++template <FilterMode mode, bool oversample>
++void LpLadderFilter::renderMono(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
++	if (sampleIncrement == 1) {
++		renderSaturation<mode, oversample, Layout::MONO>(startSample, endSample, 1);
++	}
++	else {
++		renderLoop<mode, Saturation::PER_SAMPLE, oversample, Layout::MONO_STRIDED>(startSample, endSample,
++		                                                                           sampleIncrement);
++	}
++}
++
++// scaleInput's branch depends on the configuration only, so it's taken once per block
++template <FilterMode mode, bool oversample, LpLadderFilter::Layout layout>
++void LpLadderFilter::renderSaturation(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
++	if (morph > 0 || processedResonance > 510000000) {
++		// With morph at 0 the morph term is 2 * ((input * 0) >> 32) = 0 and can go. The oversampled drive ladder
++		// is rare, so it keeps the general loop for that too (which gives the same result with morph at 0)
++		if (morph == 0 && !oversample) {
++			renderLoop<mode, Saturation::TANH, oversample, layout>(startSample, endSample, sampleIncrement);
++		}
++		else {
++			renderLoop<mode, Saturation::TANH_MORPH, oversample, layout>(startSample, endSample, sampleIncrement);
++		}
++	}
++	else {
++		renderLoop<mode, Saturation::NONE, oversample, layout>(startSample, endSample, sampleIncrement);
++	}
++}
++
++// The noise generator, getNoise(): jcong = kNoiseMul * jcong + kNoiseAdd (mod 2^32). Two steps at once are
++// jcong = kNoiseMul^2 * jcong + (kNoiseMul + 1) * kNoiseAdd, and kNoiseMul (odd) has an inverse mod 2^32, which
++// steps back
++constexpr uint32_t kNoiseMul = 69069;
++constexpr uint32_t kNoiseAdd = 1234567;
++constexpr uint32_t kNoiseMul2 = kNoiseMul * kNoiseMul;
++constexpr uint32_t kNoiseAdd2 = (kNoiseMul + 1) * kNoiseAdd;
++constexpr uint32_t inverseMod2To32(uint32_t a) {
++	uint32_t x = a; // Newton's iteration, each step doubles the correct low bits (a * a = 1 mod 8 to start with)
++	for (int i = 0; i < 5; i++) {
++		x *= 2 - a * x;
++	}
++	return x;
++}
++constexpr uint32_t kNoiseMulInverse = inverseMod2To32(kNoiseMul);
++static_assert(kNoiseMul * kNoiseMulInverse == 1);
++static_assert(kNoiseMul2 * 12345u + kNoiseAdd2 == kNoiseMul * (kNoiseMul * 12345u + kNoiseAdd) + kNoiseAdd);
++
++template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, LpLadderFilter::Layout layout>
++[[gnu::hot]] void LpLadderFilter::renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
++	const Coefficients c{moveability,
++	                     processedResonance,
++	                     divideByTotalMoveabilityAndProcessedResonance,
++	                     morph,
++	                     lpf1Feedback,
++	                     lpf2Feedback,
++	                     lpf3Feedback,
++	                     divideBy1PlusTannedFrequency};
++	if constexpr (layout != Layout::STEREO) {
++		uint32_t noise = jcong;
++		renderChannel<mode, saturation, oversample, layout, 0, false>(startSample, endSample, sampleIncrement, l, c,
++		                                                              noise);
++		jcong = noise;
++	}
++	else if constexpr (!oversample) {
++		// The channels don't depend on each other, so each gets its own pass (a loop over both needs more registers
++		// than there are, for the two states). Frame k takes the noise draws 2k + 1 (left) and 2k + 2 (right) after
++		// jcong, so each pass steps the generator twice per sample: the left one from one step before jcong, the right
++		// one from jcong, which leaves it where the loop over both leaves jcong
++		uint32_t noise = (jcong - kNoiseAdd) * kNoiseMulInverse;
++		renderChannel<mode, saturation, oversample, layout, 0, true>(startSample, endSample, 2, l, c, noise);
++		noise = jcong;
++		renderChannel<mode, saturation, oversample, layout, 1, true>(startSample, endSample, 2, r, c, noise);
++		jcong = noise;
++	}
++	else {
++		// Oversampled, each channel takes two draws per frame in turn: both channels in one loop, as before
++		uint32_t noise = jcong;
++		LpLadderState left = l;
++		LpLadderState right = r;
+ 		q31_t* currentSample = startSample;
+ 		do {
+-			*currentSample = do24dBLPFOnSample(*currentSample, l);
+-
++			*currentSample = filterSample<mode, saturation, oversample, false>(*currentSample, left, c, noise);
+ 			currentSample += 1;
+-			*currentSample = do24dBLPFOnSample(*currentSample, r);
+-
++			*currentSample = filterSample<mode, saturation, oversample, false>(*currentSample, right, c, noise);
+ 			currentSample += 1;
+ 		} while (currentSample < endSample);
++		jcong = noise;
++		l = left;
++		r = right;
+ 	}
++}
+ 
+-	// Full ladder (drive)
+-	else if (lpfMode == FilterMode::TRANSISTOR_24DB_DRIVE) {
+-		if (doOversampling) {
+-			q31_t* currentSample = startSample;
+-			do {
+-				// Linear interpolation works surprisingly well here - it doesn't lead to audible aliasing. But its big
+-				// problem is that it kills the highest frequencies, which is especially noticeable when resonance is
+-				// low. This is because it'll turn all your high sine waves into triangles whose fundamental is lower in
+-				// amplitude. Now, if we immediately downsampled that again with no filtering, no problem, because those
+-				// new really high harmonics that make it triangular are still there. But after running it through the
+-				// ladder filter, those get doubly filtered out, leaving just the reduced-amplitude (fundamental) sine
+-				// waves where our old ones were. So instead, we need to do just a little bit more and take one extra,
+-				// previous sample into account in our interpolation. This is enough to make the HF loss inaudible
+-				// - although we can still see it on the spectrum analysis.
+-
+-				// Insanely just doubling up our input values to oversample works better than fancy 3-sample
+-				// interpolation. And even, making our "interpolated" sample just a 0 and doubling the amplitude of the
+-				// actual sample works very nearly as well as this, but gives a little bit more aliasing on high notes
+-				// fed in.
+-
+-				doDriveLPFOnSample(*currentSample, l);
+-
+-				// Crude downsampling - just take every second sample, with no anti-aliasing filter. Works fine cos the
+-				// ladder LPF filter takes care of lots of those high harmonics!
+-				q31_t outputSampleToKeep = doDriveLPFOnSample(*currentSample, l);
+-
+-				// Only perform the final saturation stage on this one sample, which we want to keep
+-				*currentSample = getTanHUnknown(outputSampleToKeep, 4);
+-
+-				currentSample += 1;
+-				doDriveLPFOnSample(*currentSample, r);
+-
+-				// Crude downsampling - just take every second sample, with no anti-aliasing filter. Works fine cos the
+-				// ladder LPF filter takes care of lots of those high harmonics!
+-				outputSampleToKeep = doDriveLPFOnSample(*currentSample, r);
+-
+-				// Only perform the final saturation stage on this one sample, which we want to keep
+-				*currentSample = getTanHUnknown(outputSampleToKeep, 4);
+-
+-				currentSample += 1;
+-			} while (currentSample < endSample);
++template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, LpLadderFilter::Layout layout,
++          int channel, bool everyOtherDraw>
++[[gnu::always_inline]] inline void LpLadderFilter::renderChannel(q31_t* startSample, q31_t* endSample,
++                                                                 int32_t sampleIncrement, LpLadderState& channelState,
++                                                                 const Coefficients& c, uint32_t& noise) {
++	LpLadderState state = channelState;
++	uint32_t localNoise = noise;
++	// For STEREO, currentSample points at the frame, as in the loop over both channels (same number of frames)
++	q31_t* currentSample = startSample;
++	do {
++		currentSample[channel] =
++		    filterSample<mode, saturation, oversample, everyOtherDraw>(currentSample[channel], state, c, localNoise);
++		if constexpr (layout == Layout::MONO) {
++			currentSample += 1;
++		}
++		else if constexpr (layout == Layout::STEREO) {
++			currentSample += 2;
+ 		}
+-
+ 		else {
+-			q31_t* currentSample = startSample;
+-			do {
+-				q31_t outputSampleToKeep = doDriveLPFOnSample(*currentSample, l);
+-				*currentSample = getTanHUnknown(outputSampleToKeep, 4);
++			currentSample += sampleIncrement;
++		}
++	} while (currentSample < endSample);
++	noise = localNoise;
++	channelState = state;
++}
+ 
+-				currentSample += 1;
+-				outputSampleToKeep = doDriveLPFOnSample(*currentSample, r);
+-				*currentSample = getTanHUnknown(outputSampleToKeep, 4);
++template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, bool everyOtherDraw>
++[[gnu::always_inline]] inline q31_t LpLadderFilter::filterSample(q31_t input, LpLadderState& state,
++                                                                 const Coefficients& c, uint32_t& noise) {
++	if constexpr (mode == FilterMode::TRANSISTOR_12DB) {
++		return do12dBLPFOnSample<saturation, everyOtherDraw>(input, state, c, noise);
++	}
++	else if constexpr (mode == FilterMode::TRANSISTOR_24DB) {
++		return do24dBLPFOnSample<saturation, everyOtherDraw>(input, state, c, noise);
++	}
++	else {
++		if constexpr (oversample) {
++			// Linear interpolation works surprisingly well here - it doesn't lead to audible aliasing. But its big
++			// problem is that it kills the highest frequencies, which is especially noticeable when resonance is
++			// low. This is because it'll turn all your high sine waves into triangles whose fundamental is lower in
++			// amplitude. Now, if we immediately downsampled that again with no filtering, no problem, because those
++			// new really high harmonics that make it triangular are still there. But after running it through the
++			// ladder filter, those get doubly filtered out, leaving just the reduced-amplitude (fundamental) sine
++			// waves where our old ones were. So instead, we need to do just a little bit more and take one extra,
++			// previous sample into account in our interpolation. This is enough to make the HF loss inaudible
++			// - although we can still see it on the spectrum analysis.
++
++			// Insanely just doubling up our input values to oversample works better than fancy 3-sample
++			// interpolation. And even, making our "interpolated" sample just a 0 and doubling the amplitude of the
++			// actual sample works very nearly as well as this, but gives a little bit more aliasing on high notes
++			// fed in.
++
++			doDriveLPFOnSample<saturation, everyOtherDraw>(input, state, c, noise);
++
++			// Crude downsampling - just take every second sample, with no anti-aliasing filter. Works fine cos the
++			// ladder LPF filter takes care of lots of those high harmonics!
++		}
++		q31_t outputSampleToKeep = doDriveLPFOnSample<saturation, everyOtherDraw>(input, state, c, noise);
+ 
+-				currentSample += 1;
+-			} while (currentSample < endSample);
++		// Only perform the final saturation stage on this one sample, which we want to keep
++		return getTanHUnknown(outputSampleToKeep, 4);
++	}
++}
++
++template <LpLadderFilter::Saturation saturation>
++[[gnu::always_inline]] inline q31_t LpLadderFilter::scaleInput(q31_t input, q31_t feedbacksSum, const Coefficients& c) {
++	q31_t temp = multiply_32x32_rshift32_rounded(
++	                 (input - (multiply_32x32_rshift32_rounded(feedbacksSum, c.processedResonance) << 3)),
++	                 c.divideByTotalMoveabilityAndProcessedResonance)
++	             << 2;
++	if constexpr (saturation == Saturation::TANH_MORPH) {
++		q31_t extra = 2 * multiply_32x32_rshift32(input, c.morph);
++		temp = getTanHUnknown(temp + extra, 2);
++	}
++	else if constexpr (saturation == Saturation::TANH) {
++		temp = getTanHUnknown(temp, 2); // morph is 0
++	}
++	else if constexpr (saturation == Saturation::PER_SAMPLE) {
++		if (c.morph > 0 || c.processedResonance > 510000000) {
++			q31_t extra = 2 * multiply_32x32_rshift32(input, c.morph);
++			temp = getTanHUnknown(temp + extra, 2);
+ 		}
+ 	}
++	return temp;
+ }
+-[[gnu::always_inline]] inline q31_t LpLadderFilter::do12dBLPFOnSample(q31_t input, LpLadderState& state) {
++
++template <bool everyOtherDraw>
++[[gnu::always_inline]] inline q31_t LpLadderFilter::noisyMoveability(LpLadderState& state, const Coefficients& c,
++                                                                     uint32_t& noise) {
+ 	// For drive filter, apply some heavily lowpassed noise to the filter frequency, to add analog-ness
+-	q31_t noise = getNoise() >> 2; // storageManager.devVarA;// 2;
+-	q31_t distanceToGo = noise - state.noiseLastValue;
+-	state.noiseLastValue += distanceToGo >> 7; // storageManager.devVarB;
+-	q31_t noisy_m = moveability + multiply_32x32_rshift32(moveability, state.noiseLastValue);
++	// getNoise(), on the local copy of jcong
++	if constexpr (everyOtherDraw) {
++		noise = kNoiseMul2 * noise + kNoiseAdd2;
++	}
++	else {
++		noise = kNoiseMul * noise + kNoiseAdd;
++	}
++	q31_t distanceToGo = (static_cast<int32_t>(noise) >> 2) - state.noiseLastValue;
++	state.noiseLastValue += distanceToGo >> 7;
++	// moveability + multiply_32x32_rshift32(moveability, state.noiseLastValue)
++	return multiply_accumulate_32x32_rshift32(c.moveability, c.moveability, state.noiseLastValue);
++}
+ 
+-	q31_t feedbacksSum = state.lpfLPF1.getFeedbackOutput(lpf1Feedback) + state.lpfLPF2.getFeedbackOutput(lpf2Feedback)
+-	                     + state.lpfLPF3.getFeedbackOutput(divideBy1PlusTannedFrequency);
+-	q31_t x = scaleInput(input, feedbacksSum);
++// The feedback sums add the terms in the same order as before, with smmlar: sum + multiply_32x32_rshift32_rounded(a, b)
++// in one instruction, exactly (sum << 32 doesn't change the rounding of the low word). A common left shift of the sum
++// is the same as shifting each term, modulo 2^32.
++
++template <LpLadderFilter::Saturation saturation, bool everyOtherDraw>
++[[gnu::always_inline]] inline q31_t LpLadderFilter::do12dBLPFOnSample(q31_t input, LpLadderState& state,
++                                                                      const Coefficients& c, uint32_t& noise) {
++	q31_t noisy_m = noisyMoveability<everyOtherDraw>(state, c, noise);
++
++	q31_t feedbacksSum = multiply_32x32_rshift32_rounded(state.lpfLPF1.memory, c.lpf1Feedback);
++	feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF2.memory, c.lpf2Feedback);
++	feedbacksSum =
++	    multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF3.memory, c.divideBy1PlusTannedFrequency);
++	q31_t x = scaleInput<saturation>(input, feedbacksSum << 2, c);
+ 
+ 	// Only saturate if resonance is high enough. Surprisingly, saturation makes no audible difference until very near
+ 	// the point of feedback if (processedResonance > 510000000) { // Re-check this? 	x = getTanHUnknown(x, 1); //
+@@ -342,25 +434,24 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ 
+ 	return state.lpfLPF3.doAPF(state.lpfLPF2.doFilter(state.lpfLPF1.doFilter(x, noisy_m), noisy_m), noisy_m) << 1;
+ }
+-[[gnu::always_inline]] inline q31_t LpLadderFilter::do24dBLPFOnSample(q31_t input, LpLadderState& state) {
+ 
+-	// For drive filter, apply some heavily lowpassed noise to the filter frequency, to add analog-ness
+-	q31_t noise = getNoise() >> 2; // storageManager.devVarA;// 2;
+-	q31_t distanceToGo = noise - state.noiseLastValue;
+-	state.noiseLastValue += distanceToGo >> 7; // storageManager.devVarB;
+-	q31_t noisy_m = moveability + multiply_32x32_rshift32(moveability, state.noiseLastValue);
++template <LpLadderFilter::Saturation saturation, bool everyOtherDraw>
++[[gnu::always_inline]] inline q31_t LpLadderFilter::do24dBLPFOnSample(q31_t input, LpLadderState& state,
++                                                                      const Coefficients& c, uint32_t& noise) {
++	q31_t noisy_m = noisyMoveability<everyOtherDraw>(state, c, noise);
+ 
+-	q31_t feedbacksSum = (state.lpfLPF1.getFeedbackOutputWithoutLshift(lpf1Feedback)
+-	                      + state.lpfLPF2.getFeedbackOutputWithoutLshift(lpf2Feedback)
+-	                      + state.lpfLPF3.getFeedbackOutputWithoutLshift(lpf3Feedback)
+-	                      + state.lpfLPF4.getFeedbackOutputWithoutLshift(divideBy1PlusTannedFrequency))
+-	                     << 2;
++	q31_t feedbacksSum = multiply_32x32_rshift32_rounded(state.lpfLPF1.memory, c.lpf1Feedback);
++	feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF2.memory, c.lpf2Feedback);
++	feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF3.memory, c.lpf3Feedback);
++	feedbacksSum =
++	    multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF4.memory, c.divideBy1PlusTannedFrequency);
++	feedbacksSum <<= 2;
+ 
+ 	// Note: in the line above, we "should" halve filterSetConfig->divideBy1plusg to get it into the 1=1073741824 range.
+ 	// But it doesn't sound as good. Primarily it stops us getting to full resonance. But even if we allow further
+ 	// resonance increase, the sound just doesn't quite compare. Lucky I discovered this by mistake
+ 
+-	q31_t x = scaleInput(input, feedbacksSum);
++	q31_t x = scaleInput<saturation>(input, feedbacksSum, c);
+ 
+ 	// Only saturate if resonance is high enough. Surprisingly, saturation makes no audible difference until very near
+ 	// the point of feedback
+@@ -375,19 +466,17 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ 	       << 1;
+ }
+ 
+-[[gnu::always_inline]] inline q31_t LpLadderFilter::doDriveLPFOnSample(q31_t input, LpLadderState& state) {
+-
+-	// For drive filter, apply some heavily lowpassed noise to the filter frequency, to add analog-ness
+-	q31_t noise = getNoise() >> 2; // storageManager.devVarA;// 2;
+-	q31_t distanceToGo = noise - state.noiseLastValue;
+-	state.noiseLastValue += distanceToGo >> 7; // storageManager.devVarB;
+-	q31_t noisy_m = moveability + multiply_32x32_rshift32(moveability, state.noiseLastValue);
++template <LpLadderFilter::Saturation saturation, bool everyOtherDraw>
++[[gnu::always_inline]] inline q31_t LpLadderFilter::doDriveLPFOnSample(q31_t input, LpLadderState& state,
++                                                                       const Coefficients& c, uint32_t& noise) {
++	q31_t noisy_m = noisyMoveability<everyOtherDraw>(state, c, noise);
+ 
+-	q31_t feedbacksSum = (state.lpfLPF1.getFeedbackOutputWithoutLshift(lpf1Feedback)
+-	                      + state.lpfLPF2.getFeedbackOutputWithoutLshift(lpf2Feedback)
+-	                      + state.lpfLPF3.getFeedbackOutputWithoutLshift(lpf3Feedback)
+-	                      + state.lpfLPF4.getFeedbackOutputWithoutLshift(divideBy1PlusTannedFrequency))
+-	                     << 2;
++	q31_t feedbacksSum = multiply_32x32_rshift32_rounded(state.lpfLPF1.memory, c.lpf1Feedback);
++	feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF2.memory, c.lpf2Feedback);
++	feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF3.memory, c.lpf3Feedback);
++	feedbacksSum =
++	    multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF4.memory, c.divideBy1PlusTannedFrequency);
++	feedbacksSum <<= 2;
+ 
+ 	// Note: in the line above, we "should" halve filterSetConfig->divideBy1plusg to get it into the 1=1073741824 range.
+ 	// But it doesn't sound as good. Primarily it stops us getting to full resonance. But even if we allow further
+@@ -397,15 +486,15 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ 	feedbacksSum = getTanHUnknown(feedbacksSum, 7);
+ 
+ 	// We don't saturate the input anymore, because that's the place where we'd get the most aliasing!
+-	q31_t x = scaleInput(input, feedbacksSum);
++	q31_t x = scaleInput<saturation>(input, feedbacksSum, c);
+ 
+ 	q31_t a = state.lpfLPF1.doFilter(x, noisy_m);
+ 
+ 	q31_t b = state.lpfLPF2.doFilter(a, noisy_m);
+ 
+-	q31_t c = state.lpfLPF3.doFilter(b, noisy_m);
++	q31_t c3 = state.lpfLPF3.doFilter(b, noisy_m);
+ 
+-	q31_t d = state.lpfLPF4.doFilter(c, noisy_m) << 1;
++	q31_t d = state.lpfLPF4.doFilter(c3, noisy_m) << 1;
+ 
+ 	return d;
+ }
+diff --git a/src/deluge/dsp/filter/lpladder.h b/src/deluge/dsp/filter/lpladder.h
+index 9013cd7c..cc2097b4 100644
+--- a/src/deluge/dsp/filter/lpladder.h
++++ b/src/deluge/dsp/filter/lpladder.h
+@@ -49,28 +49,52 @@ private:
+ 			lpfLPF4.reset();
+ 		}
+ 	};
+-	[[gnu::always_inline]] inline q31_t scaleInput(q31_t input, q31_t feedbacksSum) {
+-		q31_t temp;
+-		if (morph > 0 || processedResonance > 510000000) {
+-			temp = multiply_32x32_rshift32_rounded(
+-			           (input - (multiply_32x32_rshift32_rounded(feedbacksSum, processedResonance) << 3)),
+-			           divideByTotalMoveabilityAndProcessedResonance)
+-			       << 2;
+-			q31_t extra = 2 * multiply_32x32_rshift32(input, morph);
+-			temp = getTanHUnknown(temp + extra, 2);
+-		}
+-		else {
+-			temp = multiply_32x32_rshift32_rounded(
+-			           (input - (multiply_32x32_rshift32_rounded(feedbacksSum, processedResonance) << 3)),
+-			           divideByTotalMoveabilityAndProcessedResonance)
+-			       << 2;
+-		}
+-
+-		return temp;
+-	}
+-	[[gnu::always_inline]] inline q31_t do24dBLPFOnSample(q31_t input, LpLadderState& state);
+-	[[gnu::always_inline]] inline q31_t do12dBLPFOnSample(q31_t input, LpLadderState& state);
+-	[[gnu::always_inline]] inline q31_t doDriveLPFOnSample(q31_t input, LpLadderState& state);
++	// The loops work on a copy of the configuration and the state in local variables (lpladder.cpp): the output
++	// store could otherwise alias every member and jcong, so each sample would load and store them all again
++	struct Coefficients {
++		q31_t moveability;
++		q31_t processedResonance;
++		q31_t divideByTotalMoveabilityAndProcessedResonance;
++		q31_t morph;
++		q31_t lpf1Feedback;
++		q31_t lpf2Feedback;
++		q31_t lpf3Feedback;
++		q31_t divideBy1PlusTannedFrequency;
++	};
++	// scaleInput's branch, which is the same for the whole block: no saturation, saturation, saturation plus morph, or
++	// decided per sample as before (only for the mono loop with a sampleIncrement other than 1, which nothing uses)
++	enum class Saturation { NONE, TANH, TANH_MORPH, PER_SAMPLE };
++	// MONO: sampleIncrement 1 (all callers), MONO_STRIDED: any sampleIncrement, STEREO: interleaved
++	enum class Layout { MONO, MONO_STRIDED, STEREO };
++	template <FilterMode mode, Saturation saturation, bool oversample, Layout layout>
++	void renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
++	template <FilterMode mode, bool oversample, Layout layout>
++	void renderSaturation(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
++	template <FilterMode mode, bool oversample>
++	void renderMono(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
++	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or the left or right of each frame (STEREO,
++	// channel 0 or 1). everyOtherDraw: the noise generator skips the other channel's draws (see renderLoop)
++	template <FilterMode mode, Saturation saturation, bool oversample, Layout layout, int channel, bool everyOtherDraw>
++	[[gnu::always_inline]] static inline void renderChannel(q31_t* startSample, q31_t* endSample,
++	                                                        int32_t sampleIncrement, LpLadderState& channelState,
++	                                                        const Coefficients& c, uint32_t& noise);
++	template <FilterMode mode, Saturation saturation, bool oversample, bool everyOtherDraw>
++	[[gnu::always_inline]] static inline q31_t filterSample(q31_t input, LpLadderState& state, const Coefficients& c,
++	                                                        uint32_t& noise);
++	template <Saturation saturation>
++	[[gnu::always_inline]] static inline q31_t scaleInput(q31_t input, q31_t feedbacksSum, const Coefficients& c);
++	template <bool everyOtherDraw>
++	[[gnu::always_inline]] static inline q31_t noisyMoveability(LpLadderState& state, const Coefficients& c,
++	                                                            uint32_t& noise);
++	template <Saturation saturation, bool everyOtherDraw>
++	[[gnu::always_inline]] static inline q31_t do24dBLPFOnSample(q31_t input, LpLadderState& state,
++	                                                             const Coefficients& c, uint32_t& noise);
++	template <Saturation saturation, bool everyOtherDraw>
++	[[gnu::always_inline]] static inline q31_t do12dBLPFOnSample(q31_t input, LpLadderState& state,
++	                                                             const Coefficients& c, uint32_t& noise);
++	template <Saturation saturation, bool everyOtherDraw>
++	[[gnu::always_inline]] static inline q31_t doDriveLPFOnSample(q31_t input, LpLadderState& state,
++	                                                              const Coefficients& c, uint32_t& noise);
+ 	// all ladders are in this class to share the basic components
+ 	// this differentiates between them
+ 	FilterMode lpfMode;
+diff --git a/src/deluge/dsp/filter/svf.cpp b/src/deluge/dsp/filter/svf.cpp
+index 66aa2cd1..55949aad 100644
+--- a/src/deluge/dsp/filter/svf.cpp
++++ b/src/deluge/dsp/filter/svf.cpp
+@@ -17,25 +17,76 @@
+ #include "dsp/filter/svf.h"
+ 
+ namespace deluge::dsp::filter {
++// The filter runs on a copy of its configuration and its state in local variables, written back after the block. The
++// output store (a q31_t) could alias all of them as far as the compiler knows, so the loops used to load and store
++// them all again on every sample. Nothing else touches them during a block: the buffers are render buffers (Voice's
++// spareRenderingBuffer, GlobalEffectable's, FilterSet's tempRenderBuffer), never the filter, and nothing in the loops
++// calls out. The arithmetic is unchanged.
+ [[gnu::hot]] void SVFilter::doFilter(q31_t* startSample, q31_t* endSample, int32_t sampleIncrememt) {
+-	q31_t* currentSample = startSample;
+-	do {
+-		q31_t outs = doSVF(*currentSample, l);
+-		*currentSample = outs;
+-
+-		currentSample += sampleIncrememt;
+-	} while (currentSample < endSample);
++	if (sampleIncrememt == 1) {
++		render<Layout::MONO>(startSample, endSample, 1);
++	}
++	else {
++		renderLoop<Mix::ALL, Layout::MONO_STRIDED>(startSample, endSample, sampleIncrememt);
++	}
+ }
+ [[gnu::hot]] void SVFilter::doFilterStereo(q31_t* startSample, q31_t* endSample) {
++	render<Layout::STEREO>(startSample, endSample, 2);
++}
++
++// The output mix depends on the configuration only, so it's chosen once per block
++template <SVFilter::Layout layout>
++void SVFilter::render(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
++	bool high = c_high != 0;
++	bool band = band_mode && c_band != 0;
++	if (high) {
++		if (band) {
++			renderLoop<Mix::LOW_HIGH_BAND, layout>(startSample, endSample, sampleIncrement);
++		}
++		else {
++			renderLoop<Mix::LOW_HIGH, layout>(startSample, endSample, sampleIncrement);
++		}
++	}
++	else {
++		if (band) {
++			renderLoop<Mix::LOW_BAND, layout>(startSample, endSample, sampleIncrement);
++		}
++		else {
++			renderLoop<Mix::LOW, layout>(startSample, endSample, sampleIncrement);
++		}
++	}
++}
++
++template <SVFilter::Mix mix, SVFilter::Layout layout>
++[[gnu::hot]] void SVFilter::renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
++	const Coefficients c{q, in, fc, c_low, c_band, c_high, band_mode};
++	renderChannel<mix, layout, 0>(startSample, endSample, sampleIncrement, l, c);
++	if constexpr (layout == Layout::STEREO) {
++		// The channels don't depend on each other, so each gets its own pass (fewer registers needed)
++		renderChannel<mix, layout, 1>(startSample, endSample, sampleIncrement, r, c);
++	}
++}
++
++template <SVFilter::Mix mix, SVFilter::Layout layout, int channel>
++[[gnu::always_inline]] inline void SVFilter::renderChannel(q31_t* startSample, q31_t* endSample,
++                                                           int32_t sampleIncrement, SVFState& channelState,
++                                                           const Coefficients& c) {
++	SVFState state = channelState;
++	// For STEREO, currentSample points at the frame, as in the loop over both channels (same number of frames)
+ 	q31_t* currentSample = startSample;
+ 	do {
+-		q31_t outs = doSVF(*currentSample, l);
+-
+-		*currentSample = outs;
+-		q31_t outs2 = doSVF(*(currentSample + 1), r);
+-		*(currentSample + 1) = outs2;
+-		currentSample += 2;
++		currentSample[channel] = doSVF<mix>(currentSample[channel], state, c);
++		if constexpr (layout == Layout::MONO) {
++			currentSample += 1;
++		}
++		else if constexpr (layout == Layout::STEREO) {
++			currentSample += 2;
++		}
++		else {
++			currentSample += sampleIncrement;
++		}
+ 	} while (currentSample < endSample);
++	channelState = state;
+ }
+ 
+ q31_t SVFilter::setConfig(q31_t freq, q31_t res, FilterMode lpfMode, q31_t lpfMorph, q31_t filterGain) {
+@@ -79,21 +130,21 @@ q31_t SVFilter::setConfig(q31_t freq, q31_t res, FilterMode lpfMode, q31_t lpfMo
+ 	return filterGain;
+ }
+ 
+-[[gnu::always_inline]] inline q31_t SVFilter::doSVF(int32_t input, SVFState& state) {
++template <SVFilter::Mix mix>
++[[gnu::always_inline]] inline q31_t SVFilter::doSVF(int32_t input, SVFState& state, const Coefficients& c) {
+ 	q31_t high = 0;
+-	q31_t notch = 0;
+ 	q31_t lowi;
+ 	q31_t highi;
+ 	q31_t bandi;
+ 	q31_t low = state.low;
+ 	q31_t band = state.band;
+ 
+-	input = multiply_32x32_rshift32(in, input);
++	input = multiply_32x32_rshift32(c.in, input);
+ 
+-	low = low + 2 * multiply_32x32_rshift32(band, fc);
++	low = low + 2 * multiply_32x32_rshift32(band, c.fc);
+ 	high = input - low;
+-	high = high - 2 * multiply_32x32_rshift32(band, q);
+-	band = 2 * multiply_32x32_rshift32(high, fc) + band;
++	high = high - 2 * multiply_32x32_rshift32(band, c.q);
++	band = 2 * multiply_32x32_rshift32(high, c.fc) + band;
+ 	// notch = high + low;
+ 
+ 	// saturate band feedback
+@@ -103,20 +154,27 @@ q31_t SVFilter::setConfig(q31_t freq, q31_t res, FilterMode lpfMode, q31_t lpfMo
+ 	highi = high;
+ 	bandi = band;
+ 	// double sample to increase the cutoff frequency
+-	low = low + 2 * multiply_32x32_rshift32(band, fc);
++	low = low + 2 * multiply_32x32_rshift32(band, c.fc);
+ 	high = input - low;
+-	high = high - 2 * multiply_32x32_rshift32(band, q);
+-	band = 2 * multiply_32x32_rshift32(high, fc) + band;
++	high = high - 2 * multiply_32x32_rshift32(band, c.q);
++	band = 2 * multiply_32x32_rshift32(high, c.fc) + band;
+ 
+ 	// notch = high + low;
+ 	lowi = lowi + low;
+ 	highi = highi + high;
+ 	bandi = bandi + band;
+ 
+-	q31_t result = multiply_32x32_rshift32_rounded(lowi, c_low);
+-	result = multiply_accumulate_32x32_rshift32_rounded(result, highi, c_high);
+-	if (band_mode) {
+-		result = multiply_accumulate_32x32_rshift32_rounded(result, bandi, c_band);
++	q31_t result = multiply_32x32_rshift32_rounded(lowi, c.c_low);
++	if constexpr (mix == Mix::LOW_HIGH || mix == Mix::LOW_HIGH_BAND || mix == Mix::ALL) {
++		result = multiply_accumulate_32x32_rshift32_rounded(result, highi, c.c_high);
++	}
++	if constexpr (mix == Mix::LOW_BAND || mix == Mix::LOW_HIGH_BAND) {
++		result = multiply_accumulate_32x32_rshift32_rounded(result, bandi, c.c_band);
++	}
++	else if constexpr (mix == Mix::ALL) {
++		if (c.band_mode) {
++			result = multiply_accumulate_32x32_rshift32_rounded(result, bandi, c.c_band);
++		}
+ 	}
+ 
+ 	// saturate band feedback
+diff --git a/src/deluge/dsp/filter/svf.h b/src/deluge/dsp/filter/svf.h
+index 9f5a5ff7..19cf2437 100644
+--- a/src/deluge/dsp/filter/svf.h
++++ b/src/deluge/dsp/filter/svf.h
+@@ -39,7 +39,35 @@ private:
+ 		q31_t low;
+ 		q31_t band;
+ 	};
+-	[[gnu::always_inline]] inline q31_t doSVF(q31_t input, SVFState& state);
++	// The loops work on a copy of the configuration and the state in local variables (svf.cpp): the output store
++	// could otherwise alias every member, so each sample would load and store them all again
++	struct Coefficients {
++		q31_t q;
++		q31_t in;
++		q31_t fc;
++		q31_t c_low;
++		q31_t c_band;
++		q31_t c_high;
++		bool band_mode;
++	};
++	// MONO: sampleIncrement 1 (all callers), MONO_STRIDED: any sampleIncrement, STEREO: interleaved
++	enum class Layout { MONO, MONO_STRIDED, STEREO };
++	// Which of the high and band terms of the output mix are there. With a coefficient of 0 a term adds exactly 0:
++	// multiply_accumulate_32x32_rshift32_rounded(result, x, 0) = result + ((0 + 2^31) >> 32) = result.
++	// ALL: every term as configured, as before (for MONO_STRIDED, which nothing uses)
++	enum class Mix { LOW, LOW_HIGH, LOW_BAND, LOW_HIGH_BAND, ALL };
++	template <Mix mix, Layout layout>
++	void renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
++	template <Layout layout>
++	void render(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
++	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or the left or right of each frame (STEREO,
++	// channel 0 or 1)
++	template <Mix mix, Layout layout, int channel>
++	[[gnu::always_inline]] static inline void renderChannel(q31_t* startSample, q31_t* endSample,
++	                                                        int32_t sampleIncrement, SVFState& channelState,
++	                                                        const Coefficients& c);
++	template <Mix mix>
++	[[gnu::always_inline]] static inline q31_t doSVF(q31_t input, SVFState& state, const Coefficients& c);
+ 	SVFState l;
+ 	SVFState r;
+ 
+-- 
+2.43.0
+

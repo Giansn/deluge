@@ -26,6 +26,7 @@ Der Vergleich zeigt, wie gut der Emulator die echte Hardware trifft. Er zählt B
 **Settings → CPU monitor → On** (7-Segment: `CPU`). Nach jedem Einschalten des Deluge ist der Monitor wieder aus. Ausgeschaltet kostet er pro Aufruf der Audio-Routine eine einzige Abfrage.
 
 - **OLED:** Die unterste Zeile zeigt invertiert die letzte Sekunde, zweimal pro Sekunde neu, z. B. `C43/71% V24 D0 S2.4/9` (SD ohne Audio, siehe unten). Sie liegt über dem Bild und überdeckt dort, was darunter stünde. Die Bildschirme selbst bleiben unverändert.
+  - **Ab v13 anders:** klein oben links in Worten, ohne Balken: `CPU 43%  24 voices`. Darunter nur bei Bedarf `quality lowered` (Direness über 0) oder blinkend `voices cut!` (Culling). Dazu der Modus **Alerts** mit nur diesen Warnungen. Die SysEx-Werte und `tools/cpu_monitor.html` sind unverändert.
 - **7-Segment:** Alle 2 Sekunden erscheint kurz `C 43` (CPU-Durchschnitt in %), aber nur wenn gerade kein anderes Popup läuft.
 - **USB:** Jede Sekunde geht eine SysEx-Nachricht an den Computer, nur auf USB-MIDI-Port 3. DIN-MIDI bekommt nie etwas, auch die Volca nicht. Ist der USB-Sendepuffer voll, wird die Nachricht ausgelassen, damit Noten und Clock Vorrang haben.
 

@@ -1,0 +1,636 @@
+From 2b9ae2b22bfcdf822441f921d01947b4f6abe949 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 17:36:24 +0000
+Subject: [PATCH 14/28] Oscillators: NEON interpolation weights and table
+ reads, unswitched amplitude, NEON crude saw/square/triangle, exact VFP
+ divisions, clz table number
+
+Bit-exact: the same output, sample for sample, including what the vector loops write past the end.
+
+- renderWave/renderPulseWave and the osc sync loops (vector_rendering_function.h, render_wave.h): the interpolation
+  weights come from a vector of the next 4 phases, shifted left by tableSizeMagnitude (<= 13), instead of 4 scalar
+  shifts and 4 vmov.16 per vector. Shifting left is exact modulo 2^32, so adding the shifted increments gives the same
+  bits 16..31 as (phase >> (16 - tableSizeMagnitude)); vshrn #16 takes them. The table values are read with vld2.16
+  per lane (value and next value into two vectors), the same two int16 the 32-bit lane loads read, which makes the
+  vmovn/vshrn split unneeded; lane 0 with vld2 dup instead of the {0} inits. applyAmplitude is checked once, outside
+  the loop (the same loop body twice).
+- Crude saw and square below ~72 Hz, triangle below ~711 Hz (voice.cpp): 4 samples at a time after the numSamples & 3
+  scalar ones; smmlar exactly as vmull_s32 + vrshrn_n_s64(#32) + vaddq_s32 (bits 32..63 of sum << 32 + a * b + 2^31,
+  modulo 2^32); getTriangleSmall as min(phase, -phase) - 2^30 (unsigned), getSquare as INT32_MAX xor (phase >= pw).
+  Phases and amplitudes step modulo 2^32 like the scalar adds; no new signed arithmetic.
+- Osc sync and PW (render_wave.h, voice.cpp): the 32-bit divisions by vdiv.f64 (asm, correctly rounded; truncated it is
+  the integer quotient for 32-bit operands), the two 64-bit analog square PW divisions by vdiv.f64 plus a remainder
+  correction (the double quotient is q or rounds up to q + 1); the rare cases (resetter phase in the next cycle, zero
+  divisor) keep the 64-bit division.
+- getTableNumber: clz picks the first table of the octave, at most 2 comparisons follow (identical to the old one for
+  all 2^32 inputs).
+
+Bench (ARM, tests/bench/oscillators): 17 fixed cases + 30000 randomized ones identical, 28-64% fewer instructions.
+Song (demand, per 128 samples): 1,370,014 -> 1,292,117 (renderOsc 279,575 -> 201,681); all 650,108 renderOsc calls
+identical by value (song_trace.sh).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/model/voice/voice.cpp              | 243 ++++++++++--------
+ src/deluge/processing/render_wave.h           |  91 +++++--
+ .../processing/vector_rendering_function.h    |  96 ++++---
+ 3 files changed, 272 insertions(+), 158 deletions(-)
+
+diff --git a/src/deluge/model/voice/voice.cpp b/src/deluge/model/voice/voice.cpp
+index 382559c4..29a6577b 100644
+--- a/src/deluge/model/voice/voice.cpp
++++ b/src/deluge/model/voice/voice.cpp
+@@ -49,6 +49,7 @@
+ #include "util/functions.h"
+ #include "util/lookuptables/lookuptables.h"
+ #include "util/misc.h"
++#include <bit>
+ #include <cstring>
+ #include <new>
+ 
+@@ -2558,6 +2559,26 @@ uint32_t phaseIncrementNow, int32_t amplitude, int32_t amplitudeIncrement, int32
+ }
+ */
+ 
++// multiply_accumulate_32x32_rshift32_rounded() (smmlar) on 4 lanes, bit for bit: smmlar gives bits 32 to 63 of
++// (sum << 32) + a * b + 2^31, which is sum + ((a * b + 2^31) >> 32) modulo 2^32. vmull_s32 makes the exact 64-bit
++// products, vrshrn_n_s64(, 32) adds 2^31 and takes bits 32 to 63, and vaddq_s32 adds modulo 2^32.
++[[gnu::always_inline]] static inline int32x4_t multiplyAccumulateRoundedVector(int32x4_t sum, int32x4_t a,
++                                                                               int32x4_t b) {
++	int32x2_t low = vrshrn_n_s64(vmull_s32(vget_low_s32(a), vget_low_s32(b)), 32);
++	int32x2_t high = vrshrn_n_s64(vmull_s32(vget_high_s32(a), vget_high_s32(b)), 32);
++	return vaddq_s32(sum, vcombine_s32(low, high));
++}
++
++// The values of the next 4 samples of something incremented by increment each sample (a phase, or an amplitude),
++// modulo 2^32 like the scalar loops' additions.
++[[gnu::always_inline]] static inline uint32x4_t incrementedVector(uint32_t now, uint32_t increment) {
++	uint32_t lanes[4];
++	for (int32_t lane = 0; lane < 4; lane++) {
++		lanes[lane] = now + increment * (uint32_t)(lane + 1);
++	}
++	return vld1q_u32(lanes);
++}
++
+ uint32_t renderCrudeSawWaveWithAmplitude(int32_t* thisSample, int32_t* bufferEnd, uint32_t phaseNowNow,
+                                          uint32_t phaseIncrementNow, int32_t amplitudeNow, int32_t amplitudeIncrement,
+                                          int32_t numSamples) {
+@@ -2571,26 +2592,23 @@ uint32_t renderCrudeSawWaveWithAmplitude(int32_t* thisSample, int32_t* bufferEnd
+ 		++thisSample;
+ 	}
+ 
+-	while (thisSample != bufferEnd) {
+-		phaseNowNow += phaseIncrementNow;
+-		amplitudeNow += amplitudeIncrement;
+-		*thisSample = multiply_accumulate_32x32_rshift32_rounded(*thisSample, (int32_t)phaseNowNow, amplitudeNow);
+-		++thisSample;
+-
+-		phaseNowNow += phaseIncrementNow;
+-		amplitudeNow += amplitudeIncrement;
+-		*thisSample = multiply_accumulate_32x32_rshift32_rounded(*thisSample, (int32_t)phaseNowNow, amplitudeNow);
+-		++thisSample;
+-
+-		phaseNowNow += phaseIncrementNow;
+-		amplitudeNow += amplitudeIncrement;
+-		*thisSample = multiply_accumulate_32x32_rshift32_rounded(*thisSample, (int32_t)phaseNowNow, amplitudeNow);
+-		++thisSample;
++	// The rest 4 samples at a time, the same as the scalar loop sample by sample
++	if (thisSample != bufferEnd) {
++		uint32x4_t phaseVector = incrementedVector(phaseNowNow, phaseIncrementNow);
++		uint32x4_t const phaseIncrementVector = vdupq_n_u32(phaseIncrementNow * 4);
++		int32x4_t amplitudeVector =
++		    vreinterpretq_s32_u32(incrementedVector((uint32_t)amplitudeNow, (uint32_t)amplitudeIncrement));
++		int32x4_t const amplitudeIncrementVector = vdupq_n_s32((int32_t)((uint32_t)amplitudeIncrement * 4));
++		phaseNowNow += phaseIncrementNow * (uint32_t)(bufferEnd - thisSample);
+ 
+-		phaseNowNow += phaseIncrementNow;
+-		amplitudeNow += amplitudeIncrement;
+-		*thisSample = multiply_accumulate_32x32_rshift32_rounded(*thisSample, (int32_t)phaseNowNow, amplitudeNow);
+-		++thisSample;
++		do {
++			int32x4_t existingDataInBuffer = vld1q_s32(thisSample);
++			vst1q_s32(thisSample, multiplyAccumulateRoundedVector(existingDataInBuffer,
++			                                                      vreinterpretq_s32_u32(phaseVector), amplitudeVector));
++			phaseVector = vaddq_u32(phaseVector, phaseIncrementVector);
++			amplitudeVector = vaddq_s32(amplitudeVector, amplitudeIncrementVector);
++			thisSample += 4;
++		} while (thisSample != bufferEnd);
+ 	}
+ 
+ 	return phaseNowNow;
+@@ -2709,83 +2727,23 @@ void renderPDWave(const int16_t* table, const int16_t* secondTable, int32_t numB
+ 	} while (++thisSample != bufferEnd);
+ }
+ 
+-void getTableNumber(uint32_t phaseIncrementForCalculations, int32_t* tableNumber, int32_t* tableSize) {
++// The highest phase increment of each table number. Above 715827882 it's table 19.
++static constexpr uint32_t maxPhaseIncrementForTable[20] = {
++    1247086,  1764571,  2494173,  3526245,   4982560,   7040929,   9988296,   14035840,  19701684,  28256363,
++    40518559, 55063683, 79536431, 113025455, 165191049, 238609294, 306783378, 429496729, 715827882, 0xFFFFFFFF};
++static constexpr uint8_t tableSizeMagnitudeForTable[20] = {13, 12, 12, 11, 11, 11, 11, 11, 11, 11,
++                                                           11, 11, 11, 11, 10, 10, 10, 10, 9,  9};
++// The table number of the lowest phase increment with each number of leading zeros (2^(31 - zeros), or 0 for 32). The
++// phase increments with the same number of leading zeros span at most 2 more tables.
++static constexpr uint8_t firstTableForLeadingZeros[33] = {19, 19, 18, 16, 14, 12, 10, 8, 6, 4, 2, 0, 0, 0, 0, 0, 0,
++                                                          0,  0,  0,  0,  0,  0,  0,  0, 0, 0, 0, 0, 0, 0, 0, 0};
+ 
+-	if (phaseIncrementForCalculations <= 1247086) {
+-		{
+-			*tableNumber = 0;
+-		}
+-		*tableSize = 13;
+-	}
+-	else if (phaseIncrementForCalculations <= 2494173) {
+-		if (phaseIncrementForCalculations <= 1764571) {
+-			*tableNumber = 1;
+-		}
+-		else {
+-			*tableNumber = 2;
+-		}
+-		*tableSize = 12;
+-	}
+-	else if (phaseIncrementForCalculations <= 113025455) {
+-		if (phaseIncrementForCalculations <= 3526245) {
+-			*tableNumber = 3;
+-		}
+-		else if (phaseIncrementForCalculations <= 4982560) {
+-			*tableNumber = 4;
+-		}
+-		else if (phaseIncrementForCalculations <= 7040929) {
+-			*tableNumber = 5;
+-		}
+-		else if (phaseIncrementForCalculations <= 9988296) {
+-			*tableNumber = 6;
+-		}
+-		else if (phaseIncrementForCalculations <= 14035840) {
+-			*tableNumber = 7;
+-		}
+-		else if (phaseIncrementForCalculations <= 19701684) {
+-			*tableNumber = 8;
+-		}
+-		else if (phaseIncrementForCalculations <= 28256363) {
+-			*tableNumber = 9;
+-		}
+-		else if (phaseIncrementForCalculations <= 40518559) {
+-			*tableNumber = 10;
+-		}
+-		else if (phaseIncrementForCalculations <= 55063683) {
+-			*tableNumber = 11;
+-		}
+-		else if (phaseIncrementForCalculations <= 79536431) {
+-			*tableNumber = 12;
+-		}
+-		else {
+-			*tableNumber = 13;
+-		}
+-		*tableSize = 11;
+-	}
+-	else if (phaseIncrementForCalculations <= 429496729) {
+-		if (phaseIncrementForCalculations <= 165191049) {
+-			*tableNumber = 14;
+-		}
+-		else if (phaseIncrementForCalculations <= 238609294) {
+-			*tableNumber = 15;
+-		}
+-		else if (phaseIncrementForCalculations <= 306783378) {
+-			*tableNumber = 16;
+-		}
+-		else {
+-			*tableNumber = 17;
+-		}
+-		*tableSize = 10;
+-	}
+-	else {
+-		if (phaseIncrementForCalculations <= 715827882) {
+-			*tableNumber = 18;
+-		}
+-		else {
+-			*tableNumber = 19;
+-		}
+-		*tableSize = 9;
+-	}
++void getTableNumber(uint32_t phaseIncrementForCalculations, int32_t* tableNumber, int32_t* tableSize) {
++	int32_t table = firstTableForLeadingZeros[std::countl_zero(phaseIncrementForCalculations)];
++	table += (phaseIncrementForCalculations > maxPhaseIncrementForTable[table]);
++	table += (phaseIncrementForCalculations > maxPhaseIncrementForTable[table]);
++	*tableNumber = table;
++	*tableSize = tableSizeMagnitudeForTable[table];
+ }
+ 
+ const int16_t* sawTables[] = {NULL,       NULL,       NULL,      NULL,      NULL,      NULL,      sawWave215,
+@@ -2881,12 +2839,22 @@ Voice::renderOsc(int32_t s, OscType type, int32_t amplitude, int32_t* bufferStar
+ 
+ 				int64_t resetterPhaseToDivide = (uint64_t)resetterPhase << 30;
+ 
+-				if ((uint32_t)(resetterPhase) >= (uint32_t) - (resetterPhaseIncrement >> 1)) {
++				bool resetterPhaseInNextCycle =
++				    ((uint32_t)(resetterPhase) >= (uint32_t) - (resetterPhaseIncrement >> 1));
++				if (resetterPhaseInNextCycle) {
+ 					resetterPhaseToDivide -= (uint64_t)1 << 62;
+ 				}
+ 
+-				phase = resetterPhaseToDivide / (int32_t)((pulseWidthAbsolute + 2147483648u) >> 1);
+-				phaseIncrement = ((uint64_t)phaseIncrement << 31) / (pulseWidthAbsolute + 2147483648u);
++				uint32_t pulseDivisor = pulseWidthAbsolute + 2147483648u; // At least 2^31, or 0 for the thinnest
++				if (!resetterPhaseInNextCycle && pulseDivisor != 0) [[likely]] {
++					// The same divisions, of non-negative numbers, with divideShiftedExactly()
++					phase = divideShiftedExactly(resetterPhase, 30, pulseDivisor >> 1);
++					phaseIncrement = divideShiftedExactly(phaseIncrement, 31, pulseDivisor);
++				}
++				else {
++					phase = resetterPhaseToDivide / (int32_t)((pulseWidthAbsolute + 2147483648u) >> 1);
++					phaseIncrement = ((uint64_t)phaseIncrement << 31) / (pulseWidthAbsolute + 2147483648u);
++				}
+ 			}
+ 
+ 			else {
+@@ -2921,10 +2889,11 @@ Voice::renderOsc(int32_t s, OscType type, int32_t amplitude, int32_t* bufferStar
+ doOscSyncSetup:
+ 
+ 		resetterDivideByPhaseIncrement = // You should >> 47 if multiplying by this.
+-		    (uint32_t)2147483648u
+-		    / (uint16_t)((resetterPhaseIncrement + 65535)
+-		                 >> 16); // Round resetterPhaseIncrement up first, so resetterDivideByPhaseIncrement gets a tiny
+-		                         // bit smaller, so things multiplied by it don't get a bit too big and overflow.
++		    divideExactly(2147483648u,
++		                  (uint16_t)((resetterPhaseIncrement + 65535)
++		                             >> 16)); // Round resetterPhaseIncrement up first, so
++		                                      // resetterDivideByPhaseIncrement gets a tiny bit smaller, so things
++		                                      // multiplied by it don't get a bit too big and overflow.
+ 	}
+ 
+ skipPastOscSyncStuff:
+@@ -2993,7 +2962,8 @@ doSine:
+ 				uint32_t phaseNow = phase;
+ 				int32_t* thisSample = bufferStart;
+ 				amplitudeIncrement <<= 1;
+-				do {
++				int32_t* remainderSamplesEnd = bufferStart + (numSamples & 3);
++				while (thisSample != remainderSamplesEnd) {
+ 					phaseNow += phaseIncrement;
+ 
+ 					int32_t value = getTriangleSmall(phaseNow);
+@@ -3005,7 +2975,43 @@ doSine:
+ 					else {
+ 						*thisSample = value << 1;
+ 					}
+-				} while (++thisSample != bufferEnd);
++					++thisSample;
++				}
++				if (thisSample == bufferEnd) {
++					return;
++				}
++
++				// The rest 4 samples at a time, the same as above. getTriangleSmall() is min(phase, -phase) - 2^30
++				// (unsigned; -phase is at most 2^31 when phase is at least 2^31, and bigger than phase below that)
++				uint32x4_t phaseVector = incrementedVector(phaseNow, phaseIncrement);
++				uint32x4_t const phaseIncrementVector = vdupq_n_u32(phaseIncrement * 4);
++				uint32x4_t const quarter = vdupq_n_u32(1073741824);
++				if (applyAmplitude) {
++					int32x4_t amplitudeVector =
++					    vreinterpretq_s32_u32(incrementedVector((uint32_t)amplitudeNow, (uint32_t)amplitudeIncrement));
++					int32x4_t const amplitudeIncrementVector = vdupq_n_s32((int32_t)((uint32_t)amplitudeIncrement * 4));
++					do {
++						uint32x4_t negativePhase = vreinterpretq_u32_s32(vnegq_s32(vreinterpretq_s32_u32(phaseVector)));
++						int32x4_t value =
++						    vreinterpretq_s32_u32(vsubq_u32(vminq_u32(phaseVector, negativePhase), quarter));
++						int32x4_t existingDataInBuffer = vld1q_s32(thisSample);
++						vst1q_s32(thisSample,
++						          multiplyAccumulateRoundedVector(existingDataInBuffer, value, amplitudeVector));
++						phaseVector = vaddq_u32(phaseVector, phaseIncrementVector);
++						amplitudeVector = vaddq_s32(amplitudeVector, amplitudeIncrementVector);
++						thisSample += 4;
++					} while (thisSample != bufferEnd);
++				}
++				else {
++					do {
++						uint32x4_t negativePhase = vreinterpretq_u32_s32(vnegq_s32(vreinterpretq_s32_u32(phaseVector)));
++						int32x4_t value =
++						    vreinterpretq_s32_u32(vsubq_u32(vminq_u32(phaseVector, negativePhase), quarter));
++						vst1q_s32(thisSample, vshlq_n_s32(value, 1));
++						phaseVector = vaddq_u32(phaseVector, phaseIncrementVector);
++						thisSample += 4;
++					} while (thisSample != bufferEnd);
++				}
+ 				return;
+ 			}
+ 		}
+@@ -3115,15 +3121,38 @@ doSaw:
+ 				if (!doOscSync) {
+ 
+ 					if (applyAmplitude) {
+-
+-						do {
++						int32_t* remainderSamplesEnd = bufferStart + (numSamples & 3);
++						while (thisSample != remainderSamplesEnd) {
+ 							phaseNow += phaseIncrement;
+ 							amplitudeNow += amplitudeIncrement;
+ 							*thisSample = multiply_accumulate_32x32_rshift32_rounded(
+ 							    *thisSample, getSquare(phaseNow, pulseWidth),
+ 							    amplitudeNow); // Using multiply_accumulate saves like 20% here, WTF!!!!
+ 							++thisSample;
+-						} while (thisSample != bufferEnd);
++						}
++
++						// The rest 4 samples at a time, the same as above. getSquare() is INT32_MAX, or its bits
++						// flipped (INT32_MIN) where phase >= pulseWidth (where vcgeq_u32 gives all bits set)
++						if (thisSample != bufferEnd) {
++							uint32x4_t phaseVector = incrementedVector(phaseNow, phaseIncrement);
++							uint32x4_t const phaseIncrementVector = vdupq_n_u32(phaseIncrement * 4);
++							uint32x4_t const pulseWidthVector = vdupq_n_u32(pulseWidth);
++							int32x4_t const maxValue = vdupq_n_s32(2147483647);
++							int32x4_t amplitudeVector = vreinterpretq_s32_u32(
++							    incrementedVector((uint32_t)amplitudeNow, (uint32_t)amplitudeIncrement));
++							int32x4_t const amplitudeIncrementVector =
++							    vdupq_n_s32((int32_t)((uint32_t)amplitudeIncrement * 4));
++							do {
++								int32x4_t value = veorq_s32(
++								    vreinterpretq_s32_u32(vcgeq_u32(phaseVector, pulseWidthVector)), maxValue);
++								int32x4_t existingDataInBuffer = vld1q_s32(thisSample);
++								vst1q_s32(thisSample, multiplyAccumulateRoundedVector(existingDataInBuffer, value,
++								                                                      amplitudeVector));
++								phaseVector = vaddq_u32(phaseVector, phaseIncrementVector);
++								amplitudeVector = vaddq_s32(amplitudeVector, amplitudeIncrementVector);
++								thisSample += 4;
++							} while (thisSample != bufferEnd);
++						}
+ 					}
+ 
+ 					else {
+diff --git a/src/deluge/processing/render_wave.h b/src/deluge/processing/render_wave.h
+index 0c670393..a0020faf 100644
+--- a/src/deluge/processing/render_wave.h
++++ b/src/deluge/processing/render_wave.h
+@@ -16,6 +16,49 @@
+  */
+ 
+ #include "processing/vector_rendering_function.h"
++#include <cstdint>
++
++// dividend / divisor (unsigned, divisor not 0), exactly, with the VFP's double division instead of the library call
++// (__udivsi3; the Cortex-A9 has no integer division). Both are exact doubles, and the correctly rounded double
++// quotient never reaches the next integer: with dividend = q * divisor + r, 0 < r < divisor, q + 1 is at least
++// 1 / divisor away, more than the spacing of doubles there ((q + 1) * 2^-52 <= (dividend + divisor) / divisor * 2^-52
++// < 2^-19 / divisor); with r = 0 the quotient q is exact. So truncating it gives q. The division is asm so that it
++// stays one correctly rounded division (-funsafe-math-optimizations could otherwise use a rounded reciprocal).
++[[gnu::always_inline]] static inline uint32_t divideExactly(uint32_t dividend, uint32_t divisor) {
++#if defined(__arm__)
++	double quotient;
++	asm("vdiv.f64 %P0, %P1, %P2" : "=w"(quotient) : "w"((double)dividend), "w"((double)divisor));
++	return (uint32_t)quotient;
++#else
++	return dividend / divisor;
++#endif
++}
++
++// (x << shift) / divisor (unsigned, 64-bit dividend), exactly, for a divisor of at least 2^shift (so the quotient is
++// below 2^32; shift at most 31), with the VFP's double division instead of the library's 64-bit one (__udivmoddi4,
++// about 300 instructions). x * 2^shift and the divisor are exact doubles and the quotient is correctly rounded (asm,
++// as above), so it lies between the exact integer quotient q and q + 1: truncated, it is q, or q + 1 where it rounded
++// up to that; the remainder check below takes that back (and would add 1 back to a quotient 1 too small).
++[[gnu::always_inline]] static inline uint32_t divideShiftedExactly(uint32_t x, int32_t shift, uint32_t divisor) {
++	uint64_t dividend = (uint64_t)x << shift;
++#if defined(__arm__)
++	double approximate;
++	asm("vdiv.f64 %P0, %P1, %P2"
++	    : "=w"(approximate)
++	    : "w"((double)x * (double)((uint32_t)1 << shift)), "w"((double)divisor));
++	uint32_t quotient = (approximate < 4294967295.0) ? (uint32_t)approximate : 4294967295u; // q is at most x
++	uint64_t product = (uint64_t)quotient * divisor;
++	if (product > dividend) {
++		quotient--;
++	}
++	else if (dividend - product >= divisor) {
++		quotient++;
++	}
++	return quotient;
++#else
++	return dividend / divisor;
++#endif
++}
+ 
+ #define setupAmplitudeVector(i)                                                                                        \
+ 	{                                                                                                                  \
+@@ -36,7 +79,8 @@
+ 	          the crossover sample. */                                                                                 \
+ startRenderingASyncLabel:                                                                                              \
+ 	uint32_t distanceTilNextCrossoverSample = -resetterPhase - (resetterPhaseIncrement >> 1);                          \
+-	samplesIncludingNextCrossoverSample += (uint32_t)(distanceTilNextCrossoverSample - 1) / resetterPhaseIncrement;    \
++	samplesIncludingNextCrossoverSample +=                                                                             \
++	    divideExactly((uint32_t)(distanceTilNextCrossoverSample - 1), resetterPhaseIncrement);                         \
+ 	bool shouldBeginNextSyncAfter = (numSamplesThisOscSyncSession >= samplesIncludingNextCrossoverSample);             \
+ 	int32_t numSamplesThisSyncRender = shouldBeginNextSyncAfter                                                        \
+ 	                                       ? samplesIncludingNextCrossoverSample                                       \
+@@ -105,6 +149,7 @@ startRenderingASyncLabel:
+ 
+ #define STORE_VECTOR_WAVE_FOR_ONE_SYNC(vectorValueFunctionName)                                                        \
+ 	{                                                                                                                  \
++		vectorValueFunctionName##Setup();                                                                              \
+ 		do {                                                                                                           \
+ 			int32x4_t valueVector;                                                                                     \
+ 			vectorValueFunctionName();                                                                                 \
+@@ -118,6 +163,25 @@ startRenderingASyncLabel:
+ 	setupAmplitudeVector(0) setupAmplitudeVector(1) setupAmplitudeVector(2) setupAmplitudeVector(3)                    \
+ 	    int32x4_t amplitudeIncrementVector = vdupq_n_s32(amplitudeIncrement << 1);
+ 
++// One pass of the loop of the function below. withAmplitude is a constant, so the check is out of the loop.
++#define WAVE_RENDER_FUNCTION_LOOP(vectorValueFunctionName, withAmplitude)                                              \
++	do {                                                                                                               \
++		int32x4_t valueVector;                                                                                         \
++                                                                                                                       \
++		vectorValueFunctionName();                                                                                     \
++                                                                                                                       \
++		if constexpr (withAmplitude) {                                                                                 \
++			int32x4_t existingDataInBuffer = vld1q_s32(outputBufferPos);                                               \
++			valueVector = vqdmulhq_s32(amplitudeVector, valueVector);                                                  \
++			amplitudeVector = vaddq_s32(amplitudeVector, amplitudeIncrementVector);                                    \
++			valueVector = vaddq_s32(valueVector, existingDataInBuffer);                                                \
++		}                                                                                                              \
++                                                                                                                       \
++		vst1q_s32(outputBufferPos, valueVector);                                                                       \
++                                                                                                                       \
++		outputBufferPos += 4;                                                                                          \
++	} while (outputBufferPos < bufferEnd);
++
+ /* Before calling, you must:
+     amplitude <<= 1;
+     amplitudeIncrement <<= 1;
+@@ -133,21 +197,12 @@ startRenderingASyncLabel:
+ 		int32_t* __restrict__ outputBufferPos = outputBuffer;                                                          \
+ 		SETUP_FOR_APPLYING_AMPLITUDE_WITH_VECTORS();                                                                   \
+ 		uint32_t phaseTemp = phase;                                                                                    \
+-                                                                                                                       \
+-		do {                                                                                                           \
+-			int32x4_t valueVector;                                                                                     \
+-                                                                                                                       \
+-			vectorValueFunctionName();                                                                                 \
+-                                                                                                                       \
+-			if (applyAmplitude) {                                                                                      \
+-				int32x4_t existingDataInBuffer = vld1q_s32(outputBufferPos);                                           \
+-				valueVector = vqdmulhq_s32(amplitudeVector, valueVector);                                              \
+-				amplitudeVector = vaddq_s32(amplitudeVector, amplitudeIncrementVector);                                \
+-				valueVector = vaddq_s32(valueVector, existingDataInBuffer);                                            \
+-			}                                                                                                          \
+-                                                                                                                       \
+-			vst1q_s32(outputBufferPos, valueVector);                                                                   \
+-                                                                                                                       \
+-			outputBufferPos += 4;                                                                                      \
+-		} while (outputBufferPos < bufferEnd);                                                                         \
++		vectorValueFunctionName##Setup();                                                                              \
++                                                                                                                       \
++		if (applyAmplitude) {                                                                                          \
++			WAVE_RENDER_FUNCTION_LOOP(vectorValueFunctionName, true)                                                   \
++		}                                                                                                              \
++		else {                                                                                                         \
++			WAVE_RENDER_FUNCTION_LOOP(vectorValueFunctionName, false)                                                  \
++		}                                                                                                              \
+ 	};
+diff --git a/src/deluge/processing/vector_rendering_function.h b/src/deluge/processing/vector_rendering_function.h
+index 420de34d..213060eb 100644
+--- a/src/deluge/processing/vector_rendering_function.h
++++ b/src/deluge/processing/vector_rendering_function.h
+@@ -15,77 +15,107 @@
+  * If not, see <https://www.gnu.org/licenses/>.
+  */
+ 
+-// Hard-coded "for-loop" for the below function.
++// The phases of the next 4 samples as a vector, for the interpolation weights: phaseTemp + 1..4 phaseIncrements,
++// shifted left by tableSizeMagnitude, so that bits 16 to 31 are the bits of the phase just below the table index
++// (what phaseTemp >> (32 - 16 - tableSizeMagnitude) gives in its low 16 bits). Shifting left is exact modulo 2^32, so
++// adding the (shifted) increments to this vector gives the same bits as shifting the incremented phases. Only needs
++// tableSizeMagnitude <= 16, it is at most 13.
++#define SETUP_PHASE_VECTOR_FOR_WAVE_RENDERING()                                                                        \
++	uint32x4_t phaseVector;                                                                                            \
++	{                                                                                                                  \
++		uint32_t phaseVectorStart[4];                                                                                  \
++		for (int32_t lane = 0; lane < 4; lane++) {                                                                     \
++			phaseVectorStart[lane] = (phaseTemp + phaseIncrement * (uint32_t)(lane + 1)) << tableSizeMagnitude;        \
++		}                                                                                                              \
++		phaseVector = vld1q_u32(phaseVectorStart);                                                                     \
++	}                                                                                                                  \
++	uint32x4_t const phaseVectorIncrement = vdupq_n_u32((phaseIncrement * 4) << tableSizeMagnitude);
++
++// Called before a loop of waveRenderingFunctionGeneral(), after phaseTemp is set.
++#define waveRenderingFunctionGeneralSetup() SETUP_PHASE_VECTOR_FOR_WAVE_RENDERING()
++
++// Hard-coded "for-loop" for the below function: lane i's two neighbouring table values, read at the table index of
++// the phase, go into lane i of tableValues.val[0] and .val[1] (the value there and the next one).
+ #define waveRenderingFunctionGeneralForLoop(i)                                                                         \
+ 	{                                                                                                                  \
+ 		phaseTemp += phaseIncrement;                                                                                   \
+-		uint32_t rshifted = phaseTemp >> (32 - 16 - tableSizeMagnitude);                                               \
+-		strength2 = vset_lane_u16(rshifted, strength2, i);                                                             \
+-                                                                                                                       \
+ 		uint32_t whichValue = phaseTemp >> (32 - tableSizeMagnitude);                                                  \
+-		uint32_t* readAddress = (uint32_t*)((uint32_t)table + (whichValue << 1));                                      \
+-                                                                                                                       \
+-		readValue = vld1q_lane_u32(readAddress, readValue, i);                                                         \
++		int16_t const* readAddress = (int16_t const*)((uint32_t)table + (whichValue << 1));                            \
++		tableValues = vld2_lane_s16(readAddress, tableValues, i);                                                      \
+ 	}
+ 
+ // Renders 4 wave values (a "vector") together in one go.
+ #define waveRenderingFunctionGeneral()                                                                                 \
+ 	{                                                                                                                  \
+-		uint32x4_t readValue{0};                                                                                       \
+-		uint16x4_t strength2{0};                                                                                       \
+-                                                                                                                       \
++		int16x4x2_t tableValues;                                                                                       \
++		{ /* Lane 0 (the load fills all lanes, the others are replaced below) */                                       \
++			phaseTemp += phaseIncrement;                                                                               \
++			uint32_t whichValue = phaseTemp >> (32 - tableSizeMagnitude);                                              \
++			tableValues = vld2_dup_s16((int16_t const*)((uint32_t)table + (whichValue << 1)));                         \
++		}                                                                                                              \
+ 		/* Need to use a macro rather than a for loop here, otherwise won't compile with less than O2. */              \
+-		waveRenderingFunctionGeneralForLoop(0) waveRenderingFunctionGeneralForLoop(1)                                  \
+-		    waveRenderingFunctionGeneralForLoop(2) waveRenderingFunctionGeneralForLoop(3)                              \
++		waveRenderingFunctionGeneralForLoop(1) waveRenderingFunctionGeneralForLoop(2)                                  \
++		    waveRenderingFunctionGeneralForLoop(3)                                                                     \
+                                                                                                                        \
+-		        strength2 = vshr_n_u16(strength2, 1);                                                                  \
+-		int16x4_t value1 = vreinterpret_s16_u16(vmovn_u32(readValue));                                                 \
+-		int16x4_t value2 = vreinterpret_s16_u16(vshrn_n_u32(readValue, 16));                                           \
++		        uint16x4_t strength2 = vshr_n_u16(vshrn_n_u32(phaseVector, 16), 1);                                    \
++		phaseVector = vaddq_u32(phaseVector, phaseVectorIncrement);                                                    \
++		int16x4_t value1 = tableValues.val[0];                                                                         \
++		int16x4_t value2 = tableValues.val[1];                                                                         \
+ 		int32x4_t value1Big = vshll_n_s16(value1, 16);                                                                 \
+                                                                                                                        \
+ 		int16x4_t difference = vsub_s16(value2, value1);                                                               \
+ 		valueVector = vqdmlal_s16(value1Big, difference, vreinterpret_s16_u16(strength2));                             \
+ 	}
+ 
++// Called before a loop of waveRenderingFunctionPulse(), after phaseTemp and phaseToAdd are set: the same phase vector,
++// and the offset of the second square's phases in it.
++#define waveRenderingFunctionPulseSetup()                                                                              \
++	SETUP_PHASE_VECTOR_FOR_WAVE_RENDERING()                                                                            \
++	uint32x4_t const phaseToAddVector = vdupq_n_u32(phaseToAdd << tableSizeMagnitude);
++
+ // Hard-coded "for-loop" for the below function.
+ #define waveRenderingFunctionPulseForLoop(i)                                                                           \
+ 	{                                                                                                                  \
+ 		{                                                                                                              \
+ 			phaseTemp += phaseIncrement;                                                                               \
+-			rshiftedA = vset_lane_s16(phaseTemp >> rshiftAmount, rshiftedA, i);                                        \
+-                                                                                                                       \
+ 			uint32_t whichValue = phaseTemp >> (32 - tableSizeMagnitude);                                              \
+-			uint32_t* readAddress = (uint32_t*)((uint32_t)table + (whichValue << 1));                                  \
+-			readValueA = vld1q_lane_u32(readAddress, readValueA, i);                                                   \
++			int16_t const* readAddress = (int16_t const*)((uint32_t)table + (whichValue << 1));                        \
++			tableValuesA = vld2_lane_s16(readAddress, tableValuesA, i);                                                \
+ 		}                                                                                                              \
+                                                                                                                        \
+ 		{                                                                                                              \
+ 			uint32_t phaseLater = phaseTemp + phaseToAdd;                                                              \
+-			rshiftedB = vset_lane_s16(phaseLater >> rshiftAmount, rshiftedB, i);                                       \
+-                                                                                                                       \
+ 			uint32_t whichValue = phaseLater >> (32 - tableSizeMagnitude);                                             \
+-			uint32_t* readAddress = (uint32_t*)((uint32_t)table + (whichValue << 1));                                  \
+-			readValueB = vld1q_lane_u32(readAddress, readValueB, i);                                                   \
++			int16_t const* readAddress = (int16_t const*)((uint32_t)table + (whichValue << 1));                        \
++			tableValuesB = vld2_lane_s16(readAddress, tableValuesB, i);                                                \
+ 		}                                                                                                              \
+ 	}
+ 
+ // Renders 4 wave values (a "vector") together in one go - special case for pulse waves with variable width.
+ #define waveRenderingFunctionPulse()                                                                                   \
+ 	{                                                                                                                  \
+-		int16x4_t rshiftedA{0}, rshiftedB{0};                                                                          \
+-		uint32x4_t readValueA{0}, readValueB{0};                                                                       \
+-                                                                                                                       \
+-		int32_t rshiftAmount = (32 - tableSizeMagnitude - 16);                                                         \
++		int16x4x2_t tableValuesA, tableValuesB;                                                                        \
++		{ /* Lane 0 (the loads fill all lanes, the others are replaced below) */                                       \
++			phaseTemp += phaseIncrement;                                                                               \
++			uint32_t whichValue = phaseTemp >> (32 - tableSizeMagnitude);                                              \
++			tableValuesA = vld2_dup_s16((int16_t const*)((uint32_t)table + (whichValue << 1)));                        \
++			uint32_t phaseLater = phaseTemp + phaseToAdd;                                                              \
++			whichValue = phaseLater >> (32 - tableSizeMagnitude);                                                      \
++			tableValuesB = vld2_dup_s16((int16_t const*)((uint32_t)table + (whichValue << 1)));                        \
++		}                                                                                                              \
+                                                                                                                        \
+ 		/* Need to use a macro rather than a for loop here, otherwise won't compile with less than O2. */              \
+-		waveRenderingFunctionPulseForLoop(0) waveRenderingFunctionPulseForLoop(1) waveRenderingFunctionPulseForLoop(2) \
+-		    waveRenderingFunctionPulseForLoop(3)                                                                       \
++		waveRenderingFunctionPulseForLoop(1) waveRenderingFunctionPulseForLoop(2) waveRenderingFunctionPulseForLoop(3) \
++                                                                                                                       \
++		    int16x4_t rshiftedA = vreinterpret_s16_u16(vshrn_n_u32(phaseVector, 16));                                  \
++		int16x4_t rshiftedB = vreinterpret_s16_u16(vshrn_n_u32(vaddq_u32(phaseVector, phaseToAddVector), 16));         \
++		phaseVector = vaddq_u32(phaseVector, phaseVectorIncrement);                                                    \
+                                                                                                                        \
+-		        int16x4_t valueA1 = vreinterpret_s16_u16(vmovn_u32(readValueA));                                       \
+-		int16x4_t valueA2 = vreinterpret_s16_u16(vshrn_n_u32(readValueA, 16));                                         \
++		int16x4_t valueA1 = tableValuesA.val[0];                                                                       \
++		int16x4_t valueA2 = tableValuesA.val[1];                                                                       \
+                                                                                                                        \
+-		int16x4_t valueB1 = vreinterpret_s16_u16(vmovn_u32(readValueB));                                               \
+-		int16x4_t valueB2 = vreinterpret_s16_u16(vshrn_n_u32(readValueB, 16));                                         \
++		int16x4_t valueB1 = tableValuesB.val[0];                                                                       \
++		int16x4_t valueB2 = tableValuesB.val[1];                                                                       \
+                                                                                                                        \
+ 		/* Sneakily do this backwards to flip the polarity of the output, which we need to do anyway */                \
+ 		int16x4_t const32768 = vdup_n_s16(-32768);                                                                     \
+-- 
+2.43.0
+

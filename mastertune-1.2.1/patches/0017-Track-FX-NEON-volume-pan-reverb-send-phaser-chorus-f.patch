@@ -1,0 +1,770 @@
+From c3dc2a3d187816a00a80230d92287d81de09d306 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 19:32:22 +0000
+Subject: [PATCH 17/28] Track FX: NEON volume/pan/reverb send,
+ phaser/chorus/flanger/EQ/SRR loops with state in registers (bit-exact)
+
+Bit-exact: every call gives the same output for the same input. New track_fx_kernels.h holds the loops.
+
+- processReverbSendAndVolume: 4 samples at a time with NEON (vld2/vst2), one loop per case (reverb send on/off,
+  into the mix or in place). smmul on 4 lanes = 2 x vmull.s32 + vuzp (the high words of the exact 64-bit products,
+  no saturation case; vqdmulh would saturate INT32_MIN * INT32_MIN). The volume ramp is vol + k * inc mod 2^32,
+  the same added 1 or 4 steps at a time; without doAmplitudeIncrement inc = 0 (the old unused pan scaling of an
+  uninitialised increment is gone). All adds wrap as the old ARM add did (NEON adds, scalar in uint32_t). The
+  buffer, the mix and the engine's reverb buffer are separate arrays; in place each sample is read before written.
+  The last 0-3 samples run scalar. The double division for the ramp is unchanged (vdiv.f64).
+- processFX: phaser, chorus, stereo chorus and flanger each in their own loop, with LFO, write index and the
+  phaser/allpass memories in locals, stored back after (the old loop kept them in the object, which every store to
+  the buffer forced out and back; the buffer never lies in the object). Per sample the same operations in the same
+  order. Phaser: the coefficients a1/-a1 come from the LFO alone, so they are worked out for 32 samples first; L and
+  R then run separately (they share nothing but a1), smmulr kept in program order by a volatile asm (same
+  instruction) so the 7 state values fit in registers. -a1 cannot overflow (a1 in 1..2^31-1). Grain keeps the
+  old loop (unchanged body). EQ: doEQ per sample became eq<bass, treble> with the filter states in locals.
+- processSRRAndBitcrushing: SRR loop unchanged but with its state in locals; bitcrush alone ANDs 4 samples at a
+  time with NEON (same mask per int32).
+
+Proof: tests/bench/effects (ARM=1, firmware code in the Cortex-A9 emulator): 18 fixed cases plus 4 x 4000 random
+cases (parameters changing between blocks, 1-128 samples incl. odd, mono/stereo, silence, full scale, extremes,
+random start states), all hashes the same as v12-perf. Song: tests/bench/effects/song_trace.sh with
+EMU_OPTS="--init-sounds --seed 1": all 165,312 calls (55,104 each) identical, measured.wav identical.
+
+Demand (tests/song, per 128 samples): 1,095,537 -> 1,035,101 (-5.5 %): processReverbSendAndVolume 59,412 ->
+13,977, processFX 38,643 -> 24,040, processSRRAndBitcrushing 5,397 -> 5,014. Device run: voices 28.5 -> 31.9.
+Code +2,510 bytes; stack: processFX +320 bytes (phaser coefficients), processReverbSendAndVolume +120,
+processSRRAndBitcrushing +24.
+
+Not changed: the compressor. Its render() float math is compiled with -funsafe-math-optimizations and the
+compiler picks NEON reciprocal estimates or VFP divisions by context; a loop change made the random test differ.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ .../mod_controllable_audio.cpp                | 216 ++++------
+ .../mod_controllable/mod_controllable_audio.h |   1 -
+ .../model/mod_controllable/track_fx_kernels.h | 402 ++++++++++++++++++
+ 3 files changed, 474 insertions(+), 145 deletions(-)
+ create mode 100644 src/deluge/model/mod_controllable/track_fx_kernels.h
+
+diff --git a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+index be334ac1..73a983a4 100644
+--- a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
++++ b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+@@ -31,6 +31,7 @@
+ #include "mem_functions.h"
+ #include "model/clip/audio_clip.h"
+ #include "model/clip/instrument_clip.h"
++#include "model/mod_controllable/track_fx_kernels.h"
+ #include "model/note/note_row.h"
+ #include "model/song/song.h"
+ #include "modulation/params/param_set.h"
+@@ -294,36 +295,35 @@ void ModControllableAudio::processFX(StereoSample* buffer, int32_t numSamples, M
+ 			grainFeedbackVol = grainVol >> 3;
+ 		}
+ 
+-		StereoSample* currentSample = buffer;
+-		do {
+-
+-			int32_t lfoOutput = modFXLFO.render(1, modFXLFOWaveType, modFXRate);
+-
+-			if (modFXType == ModFXType::PHASER) {
+-
+-				// "1" is sorta represented by 1073741824 here
+-				int32_t _a1 =
+-				    1073741824
+-				    - multiply_32x32_rshift32_rounded((((uint32_t)lfoOutput + (uint32_t)2147483648) >> 1), modFXDepth);
+-
+-				phaserMemory.l = currentSample->l + (multiply_32x32_rshift32_rounded(phaserMemory.l, feedback) << 1);
+-				phaserMemory.r = currentSample->r + (multiply_32x32_rshift32_rounded(phaserMemory.r, feedback) << 1);
+-
+-				// Do the allpass filters
+-				for (auto& sample : allpassMemory) {
+-					StereoSample whatWasInput = phaserMemory;
++		// Phaser, chorus and flanger each in their own loop, with their state in registers (track_fx_kernels.h)
++		using namespace deluge::dsp::track_fx;
++		switch (modFXType) {
++		case ModFXType::PHASER:
++			phaser(buffer, numSamples, modFXLFO, modFXRate, modFXDepth, feedback, phaserMemory, allpassMemory);
++			break;
++		case ModFXType::FLANGER:
++			delayLineModFX<ModFXType::FLANGER>(buffer, numSamples, modFXBuffer, modFXBufferWriteIndex, modFXLFO,
++			                                   modFXRate, thisModFXDelayDepth, modFXDelayOffset, feedback);
++			break;
++		case ModFXType::CHORUS:
++			delayLineModFX<ModFXType::CHORUS>(buffer, numSamples, modFXBuffer, modFXBufferWriteIndex, modFXLFO,
++			                                  modFXRate, thisModFXDelayDepth, modFXDelayOffset, 0);
++			break;
++		case ModFXType::CHORUS_STEREO:
++			delayLineModFX<ModFXType::CHORUS_STEREO>(buffer, numSamples, modFXBuffer, modFXBufferWriteIndex, modFXLFO,
++			                                         modFXRate, thisModFXDelayDepth, modFXDelayOffset, 0);
++			break;
++		default:
++			break;
++		}
+ 
+-					phaserMemory.l = (multiply_32x32_rshift32_rounded(phaserMemory.l, -_a1) << 2) + sample.l;
+-					sample.l = (multiply_32x32_rshift32_rounded(phaserMemory.l, _a1) << 2) + whatWasInput.l;
++		// Grain, in the loop all types used to share (the others are done)
++		for (StereoSample* currentSample = buffer; modFXType == ModFXType::GRAIN && currentSample != bufferEnd;
++		     ++currentSample) {
+ 
+-					phaserMemory.r = (multiply_32x32_rshift32_rounded(phaserMemory.r, -_a1) << 2) + sample.r;
+-					sample.r = (multiply_32x32_rshift32_rounded(phaserMemory.r, _a1) << 2) + whatWasInput.r;
+-				}
++			int32_t lfoOutput = modFXLFO.render(1, modFXLFOWaveType, modFXRate);
+ 
+-				currentSample->l += phaserMemory.l;
+-				currentSample->r += phaserMemory.r;
+-			}
+-			else if (modFXType == ModFXType::GRAIN && modFXGrainBuffer) {
++			if (modFXType == ModFXType::GRAIN && modFXGrainBuffer) {
+ 				if (modFXGrainBufferWriteIndex >= kModFXGrainBufferSize) {
+ 					modFXGrainBufferWriteIndex = 0;
+ 					wrapsToShutdown -= 1;
+@@ -516,7 +516,7 @@ void ModControllableAudio::processFX(StereoSample* buffer, int32_t numSamples, M
+ 				currentSample->r += modFXOutputR;
+ 				modFXBufferWriteIndex = (modFXBufferWriteIndex + 1) & kModFXBufferIndexMask;
+ 			}
+-		} while (++currentSample != bufferEnd);
++		}
+ 		if (modFXType == ModFXType::GRAIN) {
+ 			AudioEngine::logAction("grain end");
+ 		}
+@@ -544,10 +544,20 @@ void ModControllableAudio::processFX(StereoSample* buffer, int32_t numSamples, M
+ 			trebleFreq = getExp(700000000, (unpatchedParams->getValue(params::UNPATCHED_TREBLE_FREQ) >> 5) * 6);
+ 		}
+ 
+-		StereoSample* currentSample = buffer;
+-		do {
+-			doEQ(thisDoBass, thisDoTreble, &currentSample->l, &currentSample->r, bassAmount, trebleAmount);
+-		} while (++currentSample != bufferEnd);
++		// Just the bands that are on, with the filter states in registers (track_fx_kernels.h)
++		using namespace deluge::dsp::track_fx;
++		if (thisDoBass && thisDoTreble) {
++			eq<true, true>(buffer, numSamples, withoutTrebleL, withoutTrebleR, bassOnlyL, bassOnlyR, bassFreq,
++			               trebleFreq, bassAmount, trebleAmount);
++		}
++		else if (thisDoBass) {
++			eq<true, false>(buffer, numSamples, withoutTrebleL, withoutTrebleR, bassOnlyL, bassOnlyR, bassFreq,
++			                trebleFreq, bassAmount, trebleAmount);
++		}
++		else {
++			eq<false, true>(buffer, numSamples, withoutTrebleL, withoutTrebleR, bassOnlyL, bassOnlyR, bassFreq,
++			                trebleFreq, bassAmount, trebleAmount);
++		}
+ 	}
+ 
+ 	// Delay ----------------------------------------------------------------------------------
+@@ -559,11 +569,12 @@ void ModControllableAudio::processReverbSendAndVolume(StereoSample* buffer, int3
+                                                       int32_t reverbSendAmount, int32_t pan, bool doAmplitudeIncrement,
+                                                       StereoSample* addToBuffer) {
+ 
+-	StereoSample* bufferEnd = buffer + numSamples;
+-
+ 	int32_t reverbSendAmountAndPostFXVolume = multiply_32x32_rshift32(postFXVolume, reverbSendAmount) << 5;
+ 
+-	int32_t postFXAndReverbVolumeL, postFXAndReverbVolumeR, amplitudeIncrementL, amplitudeIncrementR;
++	int32_t postFXAndReverbVolumeL, postFXAndReverbVolumeR;
++	// Without doAmplitudeIncrement the volume stays, as a ramp by 0
++	int32_t amplitudeIncrementL = 0;
++	int32_t amplitudeIncrementR = 0;
+ 
+ 	// The amplitude increment applies to the post-FX volume. We want to have it just so that we can respond better to
+ 	// sidechain volume ducking, which is done through post-FX volume.
+@@ -594,38 +605,34 @@ void ModControllableAudio::processReverbSendAndVolume(StereoSample* buffer, int3
+ 		amplitudeIncrementR = multiply_32x32_rshift32(amplitudeIncrementR, amplitudeR) << 2;
+ 	}
+ 
+-	StereoSample* inputSample = buffer;
+-
+-	do {
+-		StereoSample processingSample = *inputSample;
+-
+-		// Send to reverb
+-		if (reverbSendAmount != 0) {
+-			*(reverbBuffer++) +=
+-			    multiply_32x32_rshift32(processingSample.l + processingSample.r, reverbSendAmountAndPostFXVolume) << 1;
++	// Send to reverb, apply post-fx and post-reverb-send volume (see track_fx_kernels.h), and either add straight
++	// into the mix (saves the separate addAudio() pass), or write back into the buffer
++	using namespace deluge::dsp::track_fx;
++	StereoSample* out = addToBuffer ? addToBuffer : buffer;
++	if (reverbSendAmount != 0) {
++		if (addToBuffer) {
++			reverbSendAndVolume<true, true>(buffer, out, numSamples, reverbBuffer, reverbSendAmountAndPostFXVolume,
++			                                postFXAndReverbVolumeL, postFXAndReverbVolumeR, amplitudeIncrementL,
++			                                amplitudeIncrementR);
+ 		}
+-
+-		if (doAmplitudeIncrement) {
+-			postFXAndReverbVolumeL += amplitudeIncrementL;
+-			postFXAndReverbVolumeR += amplitudeIncrementR;
++		else {
++			reverbSendAndVolume<true, false>(buffer, out, numSamples, reverbBuffer, reverbSendAmountAndPostFXVolume,
++			                                 postFXAndReverbVolumeL, postFXAndReverbVolumeR, amplitudeIncrementL,
++			                                 amplitudeIncrementR);
+ 		}
+-
+-		// Apply post-fx and post-reverb-send volume
+-		int32_t outputL = multiply_32x32_rshift32(processingSample.l, postFXAndReverbVolumeL) << 5;
+-		int32_t outputR = multiply_32x32_rshift32(processingSample.r, postFXAndReverbVolumeR) << 5;
+-
+-		// Either straight into the mix (saves the separate addAudio() pass), or back into the buffer
++	}
++	else {
+ 		if (addToBuffer) {
+-			addToBuffer->l += outputL;
+-			addToBuffer->r += outputR;
+-			addToBuffer++;
++			reverbSendAndVolume<false, true>(buffer, out, numSamples, reverbBuffer, reverbSendAmountAndPostFXVolume,
++			                                 postFXAndReverbVolumeL, postFXAndReverbVolumeR, amplitudeIncrementL,
++			                                 amplitudeIncrementR);
+ 		}
+ 		else {
+-			inputSample->l = outputL;
+-			inputSample->r = outputR;
++			reverbSendAndVolume<false, false>(buffer, out, numSamples, reverbBuffer, reverbSendAmountAndPostFXVolume,
++			                                  postFXAndReverbVolumeL, postFXAndReverbVolumeR, amplitudeIncrementL,
++			                                  amplitudeIncrementR);
+ 		}
+-
+-	} while (++inputSample != bufferEnd);
++	}
+ 
+ 	// We've generated some sound. If reverb is happening, make note
+ 	if (reverbSendAmount != 0) {
+@@ -646,8 +653,6 @@ bool ModControllableAudio::isSRREnabled(ParamManager* paramManager) {
+ 
+ void ModControllableAudio::processSRRAndBitcrushing(StereoSample* buffer, int32_t numSamples, int32_t* postFXVolume,
+                                                     ParamManager* paramManager) {
+-	StereoSample const* const bufferEnd = buffer + numSamples;
+-
+ 	uint32_t bitCrushMaskForSRR = 0xFFFFFFFF;
+ 
+ 	bool srrEnabled = isSRREnabled(paramManager);
+@@ -663,11 +668,7 @@ void ModControllableAudio::processSRRAndBitcrushing(StereoSample* buffer, int32_
+ 		// If not also doing SRR
+ 		if (!srrEnabled) {
+ 			uint32_t mask = 0xFFFFFFFF << (19 + (positivePreset));
+-			StereoSample* __restrict__ currentSample = buffer;
+-			do {
+-				currentSample->l &= mask;
+-				currentSample->r &= mask;
+-			} while (++currentSample != bufferEnd);
++			deluge::dsp::track_fx::bitcrush(buffer, numSamples, mask);
+ 		}
+ 
+ 		else {
+@@ -695,88 +696,15 @@ void ModControllableAudio::processSRRAndBitcrushing(StereoSample* buffer, int32_
+ 		int32_t highSampleRateIncrement = ((uint32_t)0xFFFFFFFF / (lowSampleRateIncrement >> 6)) << 6;
+ 		// int32_t highSampleRateIncrement = getExp(4194304, -(int32_t)(positivePreset >> 3)); // This would work too
+ 
+-		StereoSample* currentSample = buffer;
+-		do {
+-
+-			// Convert down.
+-			// If time to "grab" another sample for down-conversion...
+-			if (lowSampleRatePos < 4194304) {
+-				int32_t strength2 = lowSampleRatePos;
+-				int32_t strength1 = 4194303 - strength2;
+-
+-				lastGrabbedSample = grabbedSample; // What was current is now last
+-				grabbedSample.l = multiply_32x32_rshift32_rounded(lastSample.l, strength1 << 9)
+-				                  + multiply_32x32_rshift32_rounded(currentSample->l, strength2 << 9);
+-				grabbedSample.r = multiply_32x32_rshift32_rounded(lastSample.r, strength1 << 9)
+-				                  + multiply_32x32_rshift32_rounded(currentSample->r, strength2 << 9);
+-				grabbedSample.l &= bitCrushMaskForSRR;
+-				grabbedSample.r &= bitCrushMaskForSRR;
+-
+-				// Set the "time" at which we want to "grab" our next sample for down-conversion.
+-				lowSampleRatePos += lowSampleRateIncrement;
+-
+-				// "Re-sync" the up-conversion spinner.
+-				// I previously had it using strength2 instead of "lowSampleRatePos & 16777215", but that just works
+-				// better. Ah, writing the massive explanation would take ages.
+-				highSampleRatePos =
+-				    multiply_32x32_rshift32_rounded(lowSampleRatePos & 4194303, highSampleRateIncrement << 8) << 2;
+-			}
+-			lowSampleRatePos -= 4194304; // We're one step closer to grabbing our next sample for down-conversion
+-			lastSample = *currentSample;
+-
+-			// Convert up
+-			int32_t strength2 =
+-			    std::min(highSampleRatePos,
+-			             (uint32_t)4194303); // Would only overshoot if we raised the sample rate during playback
+-			int32_t strength1 = 4194303 - strength2;
+-			currentSample->l = (multiply_32x32_rshift32_rounded(lastGrabbedSample.l, strength1 << 9)
+-			                    + multiply_32x32_rshift32_rounded(grabbedSample.l, strength2 << 9))
+-			                   << 2;
+-			currentSample->r = (multiply_32x32_rshift32_rounded(lastGrabbedSample.r, strength1 << 9)
+-			                    + multiply_32x32_rshift32_rounded(grabbedSample.r, strength2 << 9))
+-			                   << 2;
+-
+-			highSampleRatePos += highSampleRateIncrement;
+-		} while (++currentSample != bufferEnd);
++		deluge::dsp::track_fx::sampleRateReduction(buffer, numSamples, lowSampleRatePos, highSampleRatePos, lastSample,
++		                                           grabbedSample, lastGrabbedSample, lowSampleRateIncrement,
++		                                           highSampleRateIncrement, bitCrushMaskForSRR);
+ 	}
+ 	else {
+ 		sampleRateReductionOnLastTime = false;
+ 	}
+ }
+ 
+-inline void ModControllableAudio::doEQ(bool doBass, bool doTreble, int32_t* inputL, int32_t* inputR, int32_t bassAmount,
+-                                       int32_t trebleAmount) {
+-	int32_t trebleOnlyL;
+-	int32_t trebleOnlyR;
+-
+-	if (doTreble) {
+-		int32_t distanceToGoL = *inputL - withoutTrebleL;
+-		int32_t distanceToGoR = *inputR - withoutTrebleR;
+-		withoutTrebleL += multiply_32x32_rshift32(distanceToGoL, trebleFreq) << 1;
+-		withoutTrebleR += multiply_32x32_rshift32(distanceToGoR, trebleFreq) << 1;
+-		trebleOnlyL = *inputL - withoutTrebleL;
+-		trebleOnlyR = *inputR - withoutTrebleR;
+-		*inputL = withoutTrebleL; // Input now has had the treble removed. Or is this bad?
+-		*inputR = withoutTrebleR; // Input now has had the treble removed. Or is this bad?
+-	}
+-
+-	if (doBass) {
+-		int32_t distanceToGoL = *inputL - bassOnlyL;
+-		int32_t distanceToGoR = *inputR - bassOnlyR;
+-		bassOnlyL += multiply_32x32_rshift32(distanceToGoL, bassFreq); // 33554432
+-		bassOnlyR += multiply_32x32_rshift32(distanceToGoR, bassFreq); // 33554432
+-	}
+-
+-	if (doTreble) {
+-		*inputL += (multiply_32x32_rshift32(trebleOnlyL, trebleAmount) << 3);
+-		*inputR += (multiply_32x32_rshift32(trebleOnlyR, trebleAmount) << 3);
+-	}
+-	if (doBass) {
+-		*inputL += (multiply_32x32_rshift32(bassOnlyL, bassAmount) << 3);
+-		*inputR += (multiply_32x32_rshift32(bassOnlyR, bassAmount) << 3);
+-	}
+-}
+-
+ void ModControllableAudio::writeAttributesToFile(Serializer& writer) {
+ 	writer.writeAttribute("modFXType", (char*)fxTypeToString(modFXType));
+ 	writer.writeAttribute("lpfMode", (char*)lpfTypeToString(lpfMode));
+diff --git a/src/deluge/model/mod_controllable/mod_controllable_audio.h b/src/deluge/model/mod_controllable/mod_controllable_audio.h
+index 83d8d87d..1fb76235 100644
+--- a/src/deluge/model/mod_controllable/mod_controllable_audio.h
++++ b/src/deluge/model/mod_controllable/mod_controllable_audio.h
+@@ -189,7 +189,6 @@ protected:
+ 
+ private:
+ 	void initializeSecondaryDelayBuffer(int32_t newNativeRate, bool makeNativeRatePreciseRelativeToOtherBuffer);
+-	void doEQ(bool doBass, bool doTreble, int32_t* inputL, int32_t* inputR, int32_t bassAmount, int32_t trebleAmount);
+ 	ModelStackWithThreeMainThings* addNoteRowIndexAndStuff(ModelStackWithTimelineCounter* modelStack,
+ 	                                                       int32_t noteRowIndex);
+ 	void switchHPFModeWithOff();
+diff --git a/src/deluge/model/mod_controllable/track_fx_kernels.h b/src/deluge/model/mod_controllable/track_fx_kernels.h
+new file mode 100644
+index 00000000..24b7727a
+--- /dev/null
++++ b/src/deluge/model/mod_controllable/track_fx_kernels.h
+@@ -0,0 +1,402 @@
++/*
++ * Copyright © 2014-2023 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++// Inner loops of ModControllableAudio's per-track effects (mod_controllable_audio.cpp), specialised per case with
++// their state in registers. Each one computes exactly what the per-sample code it replaced computed, with the same
++// operations in the same order per sample; the notes say where something is done differently and why that is exact.
++
++#pragma once
++
++#include "definitions_cxx.hpp"
++#include "dsp/stereo_sample.h"
++#include "modulation/lfo.h"
++#include "util/fixedpoint.h"
++#include <algorithm>
++#include <arm_neon.h>
++#include <cstdint>
++
++namespace deluge::dsp::track_fx {
++
++// Additions and subtractions that wrap around, as the ARM instructions do that the old loops' int32_t arithmetic
++// became (its overflow is undefined in C++, the compiler simply used those instructions)
++[[gnu::always_inline]] inline int32_t addWrap(int32_t a, int32_t b) {
++	return (int32_t)((uint32_t)a + (uint32_t)b);
++}
++[[gnu::always_inline]] inline int32_t subWrap(int32_t a, int32_t b) {
++	return (int32_t)((uint32_t)a - (uint32_t)b);
++}
++
++// multiply_32x32_rshift32() (smmul) on four lanes: the high words of the exact 64-bit products, picked out of the two
++// vmull results by one vuzp. (vqdmulh + shift would be one instruction less but saturates for INT32_MIN * INT32_MIN.)
++[[gnu::always_inline]] inline int32x4_t smmul4(int32x4_t a, int32x4_t b) {
++	int32x4_t low = vreinterpretq_s32_s64(vmull_s32(vget_low_s32(a), vget_low_s32(b)));
++	int32x4_t high = vreinterpretq_s32_s64(vmull_s32(vget_high_s32(a), vget_high_s32(b)));
++	return vuzpq_s32(low, high).val[1]; // little-endian: the odd 32-bit lanes are the high words
++}
++
++// ModControllableAudio::processReverbSendAndVolume()'s loop. Per sample, as before:
++//   reverb[i] += multiply_32x32_rshift32(in[i].l + in[i].r, reverbVolume) << 1   (kReverb)
++//   volume += increment                                                         (per side, before use)
++//   o = multiply_32x32_rshift32(in[i], volume) << 5, then out[i] += o (kAdd) or out[i] = o (in place, out == in)
++// Four samples at a time with NEON. The sums wrap as the ARM add instructions of the old loop did (it had them as
++// int32_t, whose overflow the compiler turned into those same instructions): here the NEON adds wrap, and the scalar
++// ones are done in uint32_t. The volume ramp is volume + k * increment mod 2^32, the same whether added up one step or
++// four at a time. in/out/reverb are the sound's buffer, the output (or null) and the engine's reverb buffer: separate
++// arrays (out == in only in place, where each sample is read before it is written), so doing four at a time reads
++// and writes the same values.
++template <bool kReverb, bool kAdd>
++[[gnu::always_inline]] inline void reverbSendAndVolume(const StereoSample* in, StereoSample* out, int32_t numSamples,
++                                                       int32_t* reverb, int32_t reverbVolume, uint32_t volumeL,
++                                                       uint32_t volumeR, uint32_t incrementL, uint32_t incrementR) {
++	int32_t numBlocks = numSamples >> 2;
++	if (numBlocks) {
++		const uint32x4_t steps = {1, 2, 3, 4};
++		uint32x4_t vL = vmlaq_n_u32(vdupq_n_u32(volumeL), steps, incrementL); // volume after 1, 2, 3, 4 steps
++		uint32x4_t vR = vmlaq_n_u32(vdupq_n_u32(volumeR), steps, incrementR);
++		const uint32x4_t stepL = vdupq_n_u32(incrementL << 2);
++		const uint32x4_t stepR = vdupq_n_u32(incrementR << 2);
++		const int32x4_t reverbV = vdupq_n_s32(reverbVolume);
++		const int32_t* inW = &in->l;
++		int32_t* outW = &out->l;
++		int32_t n = numBlocks;
++		do {
++			int32x4x2_t s = vld2q_s32(inW); // val[0]: 4 x l, val[1]: 4 x r
++			inW += 8;
++			if constexpr (kReverb) {
++				int32x4_t send = vshlq_n_s32(smmul4(vaddq_s32(s.val[0], s.val[1]), reverbV), 1);
++				vst1q_s32(reverb, vaddq_s32(vld1q_s32(reverb), send));
++				reverb += 4;
++			}
++			int32x4_t oL = vshlq_n_s32(smmul4(s.val[0], vreinterpretq_s32_u32(vL)), 5);
++			int32x4_t oR = vshlq_n_s32(smmul4(s.val[1], vreinterpretq_s32_u32(vR)), 5);
++			vL = vaddq_u32(vL, stepL);
++			vR = vaddq_u32(vR, stepR);
++			if constexpr (kAdd) {
++				int32x4x2_t a = vld2q_s32(outW);
++				a.val[0] = vaddq_s32(a.val[0], oL);
++				a.val[1] = vaddq_s32(a.val[1], oR);
++				vst2q_s32(outW, a);
++			}
++			else {
++				int32x4x2_t o = {{oL, oR}};
++				vst2q_s32(outW, o);
++			}
++			outW += 8;
++		} while (--n);
++		volumeL += (uint32_t)numBlocks * (incrementL << 2);
++		volumeR += (uint32_t)numBlocks * (incrementR << 2);
++	}
++
++	// The last 0 to 3 samples, one at a time
++	int32_t done = numBlocks << 2;
++	for (int32_t i = done; i < numSamples; i++) {
++		StereoSample s = in[i];
++		if constexpr (kReverb) {
++			*reverb =
++			    (int32_t)((uint32_t)*reverb
++			              + ((uint32_t)multiply_32x32_rshift32((int32_t)((uint32_t)s.l + (uint32_t)s.r), reverbVolume)
++			                 << 1));
++			reverb++;
++		}
++		volumeL += incrementL;
++		volumeR += incrementR;
++		int32_t oL = multiply_32x32_rshift32(s.l, (int32_t)volumeL) << 5;
++		int32_t oR = multiply_32x32_rshift32(s.r, (int32_t)volumeR) << 5;
++		if constexpr (kAdd) {
++			out[i].l = (int32_t)((uint32_t)out[i].l + (uint32_t)oL);
++			out[i].r = (int32_t)((uint32_t)out[i].r + (uint32_t)oR);
++		}
++		else {
++			out[i].l = oL;
++			out[i].r = oR;
++		}
++	}
++}
++
++// ---- processFX() ---------------------------------------------------------------------------------------------------
++// The old loop ran all mod FX types through one per-sample loop that checked the type each sample and kept the LFO,
++// the write index and the phaser/allpass memories in the object: every store to the buffer (a StereoSample* the
++// compiler had to assume could point into the object) forced them out to memory and back. Here each type has its own
++// loop, with that state in locals, loaded before and stored after. The buffer is the sound's (or clip's) render
++// buffer and the delay line the object's own allocation, neither overlaps the object, so this reads and writes the
++// same values. Per sample, the operations and their order are the old ones.
++
++// Phaser. The coefficient per sample comes from the LFO alone, so it is worked out first for a stretch of samples,
++// then each side runs through the feedback and the six allpass stages with its seven state values in registers (both
++// sides at once would not fit). The sides do not mix, so doing all of L before R changes nothing.
++constexpr int32_t kPhaserStretch = 32;
++
++// multiply_32x32_rshift32_rounded() (the same smmulr), but kept in program order: the compiler would otherwise move the
++// six independent multiplies of the allpass chain ahead and run out of registers
++[[gnu::always_inline]] inline int32_t smmulrInOrder(int32_t a, int32_t b) {
++#if defined(__arm__)
++	int32_t out;
++	asm volatile("smmulr %0, %1, %2" : "=r"(out) : "r"(a), "r"(b));
++	return out;
++#else
++	return multiply_32x32_rshift32_rounded(a, b); // host tests
++#endif
++}
++
++[[gnu::always_inline]] inline void phaserAllpass(int32_t& memory, int32_t& stage, int32_t a1, int32_t minusA1) {
++	int32_t whatWasInput = memory;
++	memory = addWrap(smmulrInOrder(memory, minusA1) << 2, stage);
++	stage = addWrap(smmulrInOrder(memory, a1) << 2, whatWasInput);
++}
++
++template <int32_t StereoSample::*kSide>
++[[gnu::always_inline]] inline void phaserSide(StereoSample* buffer, int32_t numSamples, const int32_t (*a1)[2],
++                                              int32_t feedback, StereoSample& phaserMemory, StereoSample* allpass) {
++	static_assert(kNumAllpassFiltersPhaser == 6);
++	int32_t memory = phaserMemory.*kSide;
++	int32_t s0 = allpass[0].*kSide, s1 = allpass[1].*kSide, s2 = allpass[2].*kSide;
++	int32_t s3 = allpass[3].*kSide, s4 = allpass[4].*kSide, s5 = allpass[5].*kSide;
++	// Counting up to 0 from the end: the loop needs no register for its end (the 14 are just enough without one)
++	StereoSample* bufferEnd = buffer + numSamples;
++	for (int32_t i = -numSamples; i != 0; i++) {
++		int32_t a = (*a1)[0];
++		int32_t minusA = (*a1)[1];
++		a1++;
++		memory = addWrap(bufferEnd[i].*kSide, smmulrInOrder(memory, feedback) << 1);
++		phaserAllpass(memory, s0, a, minusA);
++		phaserAllpass(memory, s1, a, minusA);
++		phaserAllpass(memory, s2, a, minusA);
++		phaserAllpass(memory, s3, a, minusA);
++		phaserAllpass(memory, s4, a, minusA);
++		phaserAllpass(memory, s5, a, minusA);
++		bufferEnd[i].*kSide = addWrap(bufferEnd[i].*kSide, memory);
++	}
++	phaserMemory.*kSide = memory;
++	allpass[0].*kSide = s0;
++	allpass[1].*kSide = s1;
++	allpass[2].*kSide = s2;
++	allpass[3].*kSide = s3;
++	allpass[4].*kSide = s4;
++	allpass[5].*kSide = s5;
++}
++
++inline void phaser(StereoSample* buffer, int32_t numSamples, LFO& modFXLFO, uint32_t rate, int32_t depth,
++                   int32_t feedback, StereoSample& phaserMemory, StereoSample* allpass) {
++	int32_t a1[kPhaserStretch][2]; // a1 and -a1 per sample
++	LFO lfo = modFXLFO;
++	for (int32_t done = 0; done < numSamples; done += kPhaserStretch) {
++		int32_t n = std::min(numSamples - done, kPhaserStretch);
++		for (int32_t i = 0; i < n; i++) {
++			int32_t lfoOutput = lfo.render(1, LFOType::SINE, rate);
++			// "1" is sorta represented by 1073741824 here
++			int32_t a = 1073741824
++			            - multiply_32x32_rshift32_rounded((((uint32_t)lfoOutput + (uint32_t)2147483648) >> 1), depth);
++			int32_t minusA = subWrap(0, a);
++			a1[i][0] = a;
++			a1[i][1] = minusA;
++		}
++		phaserSide<&StereoSample::l>(buffer + done, n, a1, feedback, phaserMemory, allpass);
++		phaserSide<&StereoSample::r>(buffer + done, n, a1, feedback, phaserMemory, allpass);
++	}
++	modFXLFO = lfo;
++}
++
++// Chorus, stereo chorus and flanger: a modulated read from the delay line, then the write into it. The delay line is
++// read (at the two taps) before the sample is written into it, as before.
++template <ModFXType kType>
++[[gnu::always_inline]] inline void delayLineModFX(StereoSample* buffer, int32_t numSamples, StereoSample* delayLine,
++                                                  uint16_t& modFXBufferWriteIndex, LFO& modFXLFO, uint32_t rate,
++                                                  int32_t depth, int32_t delayOffset, int32_t feedback) {
++	constexpr LFOType kWave = kType == ModFXType::FLANGER ? LFOType::TRIANGLE : LFOType::SINE;
++	LFO lfo = modFXLFO;
++	int32_t writeIndex = modFXBufferWriteIndex;
++	int32_t minusDepth = subWrap(0, depth);
++	StereoSample* const bufferEnd = buffer + numSamples;
++	StereoSample* currentSample = buffer;
++	do {
++		int32_t lfoOutput = lfo.render(1, kWave, rate);
++
++		int32_t delayTime = multiply_32x32_rshift32(lfoOutput, depth) + delayOffset;
++		int32_t strength2 = (delayTime & 65535) << 15;
++		int32_t strength1 = (65535 << 15) - strength2;
++		int32_t sample1Pos = writeIndex - ((delayTime) >> 16);
++
++		int32_t scaledValue1L =
++		    multiply_32x32_rshift32_rounded(delayLine[sample1Pos & kModFXBufferIndexMask].l, strength1);
++		int32_t scaledValue2L =
++		    multiply_32x32_rshift32_rounded(delayLine[(sample1Pos - 1) & kModFXBufferIndexMask].l, strength2);
++		int32_t modFXOutputL = scaledValue1L + scaledValue2L;
++
++		if constexpr (kType == ModFXType::CHORUS_STEREO) {
++			delayTime = multiply_32x32_rshift32(lfoOutput, minusDepth) + delayOffset;
++			strength2 = (delayTime & 65535) << 15;
++			strength1 = (65535 << 15) - strength2;
++			sample1Pos = writeIndex - ((delayTime) >> 16);
++		}
++
++		int32_t scaledValue1R =
++		    multiply_32x32_rshift32_rounded(delayLine[sample1Pos & kModFXBufferIndexMask].r, strength1);
++		int32_t scaledValue2R =
++		    multiply_32x32_rshift32_rounded(delayLine[(sample1Pos - 1) & kModFXBufferIndexMask].r, strength2);
++		int32_t modFXOutputR = scaledValue1R + scaledValue2R;
++
++		if constexpr (kType == ModFXType::FLANGER) {
++			modFXOutputL = multiply_32x32_rshift32_rounded(modFXOutputL, feedback) << 2;
++			delayLine[writeIndex].l = addWrap(modFXOutputL, currentSample->l); // Feedback
++			modFXOutputR = multiply_32x32_rshift32_rounded(modFXOutputR, feedback) << 2;
++			delayLine[writeIndex].r = addWrap(modFXOutputR, currentSample->r); // Feedback
++		}
++		else { // Chorus
++			modFXOutputL <<= 1;
++			delayLine[writeIndex].l = currentSample->l; // Feedback
++			modFXOutputR <<= 1;
++			delayLine[writeIndex].r = currentSample->r; // Feedback
++		}
++
++		currentSample->l = addWrap(currentSample->l, modFXOutputL);
++		currentSample->r = addWrap(currentSample->r, modFXOutputR);
++		writeIndex = (writeIndex + 1) & kModFXBufferIndexMask;
++	} while (++currentSample != bufferEnd);
++	modFXBufferWriteIndex = writeIndex;
++	modFXLFO = lfo;
++}
++
++// EQ, as doEQ() was per sample, for just the bands that are on, with the filter states in locals
++template <bool kBass, bool kTreble>
++[[gnu::always_inline]] inline void eqChannel(int32_t& input, int32_t& withoutTreble, int32_t& bassOnly,
++                                             int32_t bassFreq, int32_t trebleFreq, int32_t bassAmount,
++                                             int32_t trebleAmount) {
++	int32_t trebleOnly;
++	if constexpr (kTreble) {
++		int32_t distanceToGo = subWrap(input, withoutTreble);
++		withoutTreble = addWrap(withoutTreble, multiply_32x32_rshift32(distanceToGo, trebleFreq) << 1);
++		trebleOnly = subWrap(input, withoutTreble);
++		input = withoutTreble; // Input now has had the treble removed. Or is this bad?
++	}
++	if constexpr (kBass) {
++		int32_t distanceToGo = subWrap(input, bassOnly);
++		bassOnly = addWrap(bassOnly, multiply_32x32_rshift32(distanceToGo, bassFreq)); // 33554432
++	}
++	if constexpr (kTreble) {
++		input = addWrap(input, multiply_32x32_rshift32(trebleOnly, trebleAmount) << 3);
++	}
++	if constexpr (kBass) {
++		input = addWrap(input, multiply_32x32_rshift32(bassOnly, bassAmount) << 3);
++	}
++}
++
++template <bool kBass, bool kTreble>
++[[gnu::always_inline]] inline void eq(StereoSample* buffer, int32_t numSamples, int32_t& withoutTrebleL,
++                                      int32_t& withoutTrebleR, int32_t& bassOnlyL, int32_t& bassOnlyR, int32_t bassFreq,
++                                      int32_t trebleFreq, int32_t bassAmount, int32_t trebleAmount) {
++	int32_t withoutTrebleLLocal = withoutTrebleL, withoutTrebleRLocal = withoutTrebleR;
++	int32_t bassOnlyLLocal = bassOnlyL, bassOnlyRLocal = bassOnlyR;
++	StereoSample* const bufferEnd = buffer + numSamples;
++	StereoSample* currentSample = buffer;
++	do {
++		int32_t l = currentSample->l;
++		int32_t r = currentSample->r;
++		eqChannel<kBass, kTreble>(l, withoutTrebleLLocal, bassOnlyLLocal, bassFreq, trebleFreq, bassAmount,
++		                          trebleAmount);
++		eqChannel<kBass, kTreble>(r, withoutTrebleRLocal, bassOnlyRLocal, bassFreq, trebleFreq, bassAmount,
++		                          trebleAmount);
++		currentSample->l = l;
++		currentSample->r = r;
++	} while (++currentSample != bufferEnd);
++	withoutTrebleL = withoutTrebleLLocal;
++	withoutTrebleR = withoutTrebleRLocal;
++	bassOnlyL = bassOnlyLLocal;
++	bassOnlyR = bassOnlyRLocal;
++}
++
++// ---- processSRRAndBitcrushing() ------------------------------------------------------------------------------------
++
++// Bitcrushing alone: the mask on four samples at a time
++[[gnu::always_inline]] inline void bitcrush(StereoSample* buffer, int32_t numSamples, uint32_t mask) {
++	const int32x4_t maskV = vreinterpretq_s32_u32(vdupq_n_u32(mask));
++	int32_t i = 0;
++	for (; i + 4 <= numSamples; i += 4) {
++		vst1q_s32(&buffer[i].l, vandq_s32(vld1q_s32(&buffer[i].l), maskV));         // samples i, i + 1
++		vst1q_s32(&buffer[i + 2].l, vandq_s32(vld1q_s32(&buffer[i + 2].l), maskV)); // i + 2, i + 3
++	}
++	for (; i < numSamples; i++) {
++		buffer[i].l &= mask;
++		buffer[i].r &= mask;
++	}
++}
++
++// Sample rate reduction: the old loop unchanged, but with its state in locals (the old one kept it in the object, see
++// processFX() above for why that cost)
++[[gnu::always_inline]] inline void
++sampleRateReduction(StereoSample* buffer, int32_t numSamples, uint32_t& lowSampleRatePosState,
++                    uint32_t& highSampleRatePosState, StereoSample& lastSampleState, StereoSample& grabbedSampleState,
++                    StereoSample& lastGrabbedSampleState, int32_t lowSampleRateIncrement,
++                    int32_t highSampleRateIncrement, uint32_t bitCrushMaskForSRR) {
++	uint32_t lowSampleRatePos = lowSampleRatePosState;
++	uint32_t highSampleRatePos = highSampleRatePosState;
++	StereoSample lastSample = lastSampleState;
++	StereoSample grabbedSample = grabbedSampleState;
++	StereoSample lastGrabbedSample = lastGrabbedSampleState;
++
++	StereoSample* const bufferEnd = buffer + numSamples;
++	StereoSample* currentSample = buffer;
++	do {
++
++		// Convert down.
++		// If time to "grab" another sample for down-conversion...
++		if (lowSampleRatePos < 4194304) {
++			int32_t strength2 = lowSampleRatePos;
++			int32_t strength1 = 4194303 - strength2;
++
++			lastGrabbedSample = grabbedSample; // What was current is now last
++			grabbedSample.l = multiply_32x32_rshift32_rounded(lastSample.l, strength1 << 9)
++			                  + multiply_32x32_rshift32_rounded(currentSample->l, strength2 << 9);
++			grabbedSample.r = multiply_32x32_rshift32_rounded(lastSample.r, strength1 << 9)
++			                  + multiply_32x32_rshift32_rounded(currentSample->r, strength2 << 9);
++			grabbedSample.l &= bitCrushMaskForSRR;
++			grabbedSample.r &= bitCrushMaskForSRR;
++
++			// Set the "time" at which we want to "grab" our next sample for down-conversion.
++			lowSampleRatePos += lowSampleRateIncrement;
++
++			// "Re-sync" the up-conversion spinner.
++			// I previously had it using strength2 instead of "lowSampleRatePos & 16777215", but that just works
++			// better. Ah, writing the massive explanation would take ages.
++			highSampleRatePos =
++			    multiply_32x32_rshift32_rounded(lowSampleRatePos & 4194303, highSampleRateIncrement << 8) << 2;
++		}
++		lowSampleRatePos -= 4194304; // We're one step closer to grabbing our next sample for down-conversion
++		lastSample = *currentSample;
++
++		// Convert up
++		int32_t strength2 =
++		    std::min(highSampleRatePos,
++		             (uint32_t)4194303); // Would only overshoot if we raised the sample rate during playback
++		int32_t strength1 = 4194303 - strength2;
++		currentSample->l = (multiply_32x32_rshift32_rounded(lastGrabbedSample.l, strength1 << 9)
++		                    + multiply_32x32_rshift32_rounded(grabbedSample.l, strength2 << 9))
++		                   << 2;
++		currentSample->r = (multiply_32x32_rshift32_rounded(lastGrabbedSample.r, strength1 << 9)
++		                    + multiply_32x32_rshift32_rounded(grabbedSample.r, strength2 << 9))
++		                   << 2;
++
++		highSampleRatePos += highSampleRateIncrement;
++	} while (++currentSample != bufferEnd);
++
++	lowSampleRatePosState = lowSampleRatePos;
++	highSampleRatePosState = highSampleRatePos;
++	lastSampleState = lastSample;
++	grabbedSampleState = grabbedSample;
++	lastGrabbedSampleState = lastGrabbedSample;
++}
++
++} // namespace deluge::dsp::track_fx
+-- 
+2.43.0
+

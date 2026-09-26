@@ -1,0 +1,64 @@
+From 9b861a5c541808ad2f7242608d3540d1b87a56db Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 22:37:03 +0000
+Subject: [PATCH 28/28] Pad dimming: a change goes dark for a moment rather
+ than bright
+
+When the brightness or the setting changes, the PIC's timing and the scaled colours can't change
+at the same instant. If the PIC gets brighter (e.g. switching flicker-free dimming on at a low
+brightness), the dimmer colours are sent first, at once, then the timing; otherwise the timing
+first and the colours soon after, as before. So the in-between is darker, not up to 8.5 times
+brighter for about 20 ms. (Review finding.)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/hid/led/pad_leds.cpp | 22 +++++++++++++++++++---
+ 1 file changed, 19 insertions(+), 3 deletions(-)
+
+diff --git a/src/deluge/hid/led/pad_leds.cpp b/src/deluge/hid/led/pad_leds.cpp
+index e6401eb9..54db8688 100644
+--- a/src/deluge/hid/led/pad_leds.cpp
++++ b/src/deluge/hid/led/pad_leds.cpp
+@@ -738,6 +738,9 @@ void changeDimmerInterval(int32_t offset) {
+ 	}
+ }
+ 
++/// The PIC's timing as last sent (1.2.1 starts at full brightness)
++static deluge::hid::pad_dimming::PicTiming appliedTiming{deluge::hid::pad_dimming::kScanPeriod, 0};
++
+ // See hid/led/pad_dimming.h: with flicker-free dimming the PIC dims only while its scan keeps its rate, and the pad
+ // colours (and gold knob indicator values) are scaled for the rest; without it, 1.2.1's timing
+ void setDimmerInterval(int32_t newInterval) {
+@@ -750,12 +753,25 @@ void setDimmerInterval(int32_t newInterval) {
+ 	    flickerFree ? dimming::flickerFreeTiming(newInterval) : dimming::legacyTiming(newInterval);
+ 	uint32_t scale = flickerFree ? dimming::colourScale(newInterval) : dimming::kFullScale;
+ 
++	// What's lit now was sent with the old scale, so it's sent again. A change goes dark for a moment rather than
++	// bright: if the PIC gets brighter, the (dimmer) colours go out first, otherwise the timing does
++	bool scaleChanges = (scale != PIC::getColourScale());
++	bool picBrighter = (int64_t)timing.refreshTime * (appliedTiming.refreshTime + appliedTiming.dimmerInterval)
++	                   > (int64_t)appliedTiming.refreshTime * (timing.refreshTime + timing.dimmerInterval);
++	if (scaleChanges) {
++		PIC::setColourScale(scale);
++		if (picBrighter) {
++			sendOutMainPadColours();
++			sendOutSidebarColours();
++			indicator_leds::resendKnobIndicatorLevels();
++		}
++	}
++
+ 	setRefreshTime(timing.refreshTime);
+ 	PIC::setDimmerInterval(timing.dimmerInterval);
++	appliedTiming = timing;
+ 
+-	if (scale != PIC::getColourScale()) {
+-		// What's lit now was sent with the old scale
+-		PIC::setColourScale(scale);
++	if (scaleChanges && !picBrighter) {
+ 		sendOutMainPadColoursSoon();
+ 		sendOutSidebarColoursSoon();
+ 		indicator_leds::resendKnobIndicatorLevels();
+-- 
+2.43.0
+

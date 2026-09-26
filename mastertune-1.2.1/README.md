@@ -1,6 +1,6 @@
 # Deluge 1.2.1 mit Master Tune
 
-Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern, v12 einen Frequenz-Drone mit bis zu 16 Tönen.
+Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern, v12 einen Frequenz-Drone mit bis zu 16 Tönen, v13 mehr Leistung, einen Ping-Pong-Arp, flimmerfreies Dimmen der Pads, genaueres MIDI und einen überarbeiteten Drone.
 
 | Datei | Version (Settings → Firmware version) | Inhalt |
 |---|---|---|
@@ -15,10 +15,11 @@ Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit
 | `deluge-1.2.1-mastertune-v10-7f9ad5c1.bin` | `1.2.1-mastertune-v10-7f9ad5c1` | v9 + Reverb: neues Modell Digital, Mutable und Freeverb repariert, HPF und LPF |
 | `deluge-1.2.1-mastertune-v11-dc37f26a.bin` | `1.2.1-mastertune-v11-dc37f26a` | v10 + Delay: saubere Wiederholungen, kein Knacken bei Zeitänderungen, LPF und HPF im Feedback; kein Knacksen beim Speichern |
 | `deluge-1.2.1-mastertune-v12-f89b478c.bin` | `1.2.1-mastertune-v12-f89b478c` | v11 + Frequenz-Drone: 16 Töne, binaural, monaural, isochron, Tempo-Sync, Sidechain, eigene Ansicht |
+| `deluge-1.2.1-mastertune-v13-9b861a5c.bin` | `1.2.1-mastertune-v13-9b861a5c` | v12-perf + Drone-Feinschliff, Ping-Pong-Arp, flimmerfreies Dimmen, schnelleres Speichern, genaueres MIDI, CPU-Monitor in Worten |
 
-SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac` (vollständig: `sha256sum *.bin`).
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7` (vollständig: `sha256sum *.bin`).
 Nachgeprüft am 26.09.2026: Jede Version v2–v12 wurde aus ihrem Commit in einer eigenen Arbeitskopie komplett neu gebaut, mit 441–448 neu übersetzten Dateien. Jede SHA-256 stimmt mit der ausgelieferten Datei überein.
-Quellcode: `patches/0001` bis `0012` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012.
+Quellcode: `patches/0001` bis `0028` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 sind die Leistungsversion v12-perf, gleich wie `perf/0001`–`0003`).
 
 ## v3 und v4: Unterschiede
 
@@ -340,6 +341,66 @@ Das OLED zeigt Ton, Modus, Tonhöhe und den Beat mit seinem Bereich (Delta, Thet
   - Zeigt CPU-Last, Stimmen, Qualitätsabsenkung und SD-Zeiten auf dem OLED und per USB-MIDI.
   - Dazu `tools/cpu_monitor.html` und ein Test-Song. Details: `diag/README.md`.
 - **`research/OPTIMIERUNG.md`:** alle Messungen und Erkenntnisse zur Optimierung.
+
+## v13: mehr Leistung, Ping-Pong-Arp, flimmerfreies Dimmen, genaueres MIDI, Drone-Feinschliff
+
+v13 enthält v12 und die Leistungsversion v12-perf, dazu die folgenden Neuerungen. **Auf dem Gerät ist nichts davon getestet**; geprüft ist alles im Emulator mit dem Maschinencode der Firmware und von unabhängigen Gegenprüfern.
+
+**Drone** (Handbuch `docs/Drone-Handbuch.pdf`, auf v13 nachgeführt):
+- **Select drehen stellt die Tonhöhe** in spürbaren Rasten: 1 Hz pro Klick, mit Shift 0,1 Hz; als Note ein Halbton, mit Shift ein Cent. Die Goldknöpfe bleiben für schnelles Stimmen.
+- **SYNTH / KIT / MIDI / CV wählen den Modus** des gewählten Tons: Ton / Binaural / Monaural / Isochron. Die LED der Taste zeigt den aktuellen Modus.
+- Die Pads leuchten ruhig, nichts pulsiert mehr.
+- Isochrone Pulse haben **Attack und Release** (0–50, angezeigt 0–100 %, je 2 % der halben Zykluslänge, nie kürzer als 1 ms).
+- **Triolen** beim Tempo-Sync: 1/1T bis 1/64T.
+- **Goldknöpfe nach Mod-Sektion:** Cutoff/Resonance = Tonhöhe/Beat, Attack/Release = Puls des gewählten Tons, Sidechain/Reverb = Ducking und Reverb-Send des ganzen Drones. Die LED-Ringe zeigen die Werte.
+- **Sidechain linear:** Stärke 30 duckt um 8 dB statt 16 dB.
+- **Reverb-Send:** Der Drone kann ins Song-Reverb senden (0–50).
+
+**Arpeggiator: Ping-Pong-Bounce** (Presets zum Anpassen in `presets/`):
+- **Ratchet notes → Roll:** Die Schläge werden immer schneller wie ein Ping-Pong-Ball zwischen zwei Platten, die sich schliessen. Schlag j liegt bei S·(1 − rʲ) der Ratchet-Länge S, mit r = 0,95 bei Bounce +1 bis 0,5 bei +10. Unter 16 ms Abstand geht es als Wirbel weiter, bis zum nächsten Schlag im Raster. Negativer Bounce spielt dasselbe rückwärts.
+- **Bounce length 1–16:** Ein Ratchet dauert mehrere Arp-Schritte. Die Note bleibt stehen, danach geht der Arp mit der nächsten Note weiter. Rhythmus und Sequenzlänge bleiben im Takt.
+- **Bounce velocity** (früher «Bounce fade»): Even, Fade (wie bisher) oder Rise (lauter, je schneller).
+- Mit Bounce length 1 und ohne Roll spielt alles exakt wie in v12.
+
+**Pads flimmerfrei gedimmt** (Settings → Community Features → Flicker-free dimming, standardmässig On):
+- **Warum es flimmerte:** 1.2.1 dimmt die Pads über den LED-Controller (PIC) mit Dunkelpausen. Unter 40 % werden die Pausen so lang, dass der ganze Bildaufbau langsamer wird, bei 0 % 6,8-mal.
+- **Neu:** Der PIC frischt immer im vollen Tempo auf und dimmt nur bis 43,5 %. Den Rest dimmt die Firmware über die Farbwerte der Pads, der Sidebar und der Goldknopf-LEDs. Jede Stufe gibt gleich viel Licht wie vorher (im Emulator auf ±1 % geprüft).
+- **Kompromiss:** Die Tasten-LEDs, die 7-Segment-Anzeige und Pads, die der PIC selbst blinken lässt (schneller Play-Cursor, blinkende Shortcuts in Menüs), dimmen nur bis 43,5 %. Sie sind bei ganz tiefer Helligkeit also heller als bisher.
+- **Off** sendet Byte für Byte dasselbe wie 1.2.1, zum Vergleichen.
+
+**CPU-Monitor in Worten** (Settings → CPU monitor: Off, On, Alerts):
+- Klein oben links, ohne Balken: «CPU 43%  24 voices», also Rechenlast und klingende Stimmen.
+- Darunter, nur wenn es passiert:
+  - «quality lowered»: Der Deluge rechnet einfacher, um mitzukommen.
+  - «voices cut!»: Er schneidet Stimmen ab. Die Meldung blinkt und steht noch 2 s über den letzten Schnitt hinaus.
+- **Alerts:** nur diese Warnungen, sonst nichts.
+- Die SysEx-Werte für `tools/cpu_monitor.html` bleiben gleich (Modus On).
+
+**Schneller speichern:** Speichern während des Abspielens dauert im Emulator 22 statt 344 ms (Song mit 3 Synths) bzw. 66 statt 716 ms (5 Synths), weiterhin ohne Knacksen.
+
+**Kein Lade-Fenster mehr beim Durchblättern:** Beim Laden und Speichern läuft eine kleine Animation oben rechts im OLED (aus der Community-Firmware 1.3). Der Presetname bleibt sichtbar.
+
+**MIDI- und Gate-Ausgänge genauer:**
+- Ereignisse spät im Audio-Block gingen einen ganzen Block (2,9 ms) zu früh hinaus, vor allem beim Speichern.
+- Ein Fehler aus 1.2.1: Der Zähler des MIDI/Gate-Timers wurde vor dem Start nie auf 0 gesetzt. Ein Lauf konnte darum bis 38 Samples zu früh oder, nach einem Überlauf, rund 127 ms zu spät kommen.
+- Jetzt liegt jeder Timer-Lauf auf ±1,4 Samples genau.
+
+**Leistung:** v12-perf (Filter und Oszillatoren) plus schnellere Spur-Effekte (NEON für Lautstärke, Pan und Reverb-Send, eigene Schleifen für Phaser, Chorus, Flanger, EQ und SRR), alles bitgleich. Im Volllast-Test: Bedarf 89 % statt 118 % (v12); mit Culling wie auf dem Gerät klingen im Mittel 32 statt 21 Stimmen.
+
+**Fehler aus 1.2.1 behoben:** LFOs, Mod-FX und Arp starteten nach dem Laden an einer zufälligen Stelle (nicht initialisierter Speicher). Jetzt beginnen sie immer gleich.
+
+**Geprüft:**
+- **Gegenprüfer:** Jede grössere Neuerung wurde von einem unabhängigen Gegenprüfer mit eigenen Angriffsfällen geprüft. Alle Befunde sind behoben und nachgetestet:
+  - Drone: doppelte Song-Lautstärke im Reverb-Send, Grenzfälle bei extremen Beats, 7-Segment-Anzeige, Automation überschrieb die Knopf-LEDs
+  - MIDI: Zählerrest des Timers
+  - Ping-Pong-Arp: hängende Note ohne Sync bei Latch-Wechsel, stille Spannen bei ausgelassener Note, Doppelschläge mit Swing, Sequenzlänge
+  - Pads: ungedimmte Blinkfarben (dokumentiert), kurzer Hell-Blitz beim Umschalten (behoben)
+- **Arp im Emulator mit der echten Firmware:**
+  - jeder Anschlag gegen die Formel, in 7 Fällen (≤ 3 ms Abweichung durch die Audio-Blöcke)
+  - 11 Grenzfälle mit Note-ons und Note-offs (`tests/arp`)
+- **Pads:** was an den PIC geht, auf allen 26 Helligkeitsstufen, On und Off (`tests/pads`).
+- **Song:** Der Volllast-Song klingt bit-gleich, soweit nichts Hörbares geändert wurde.
+- **Build:** ohne neue Warnungen. Zwei komplette Neubauten ergeben dieselbe SHA-256 (je 465 neu übersetzte Dateien, `9ff41174…7c4c50e7`). Die Patches ergeben mit `git am` auf `release_1_2_1` genau diesen Stand.
 
 ## Bedienung
 

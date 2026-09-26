@@ -1,0 +1,170 @@
+From c6201e472402d00e97f0ed895ae646753bfdaf1d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 20:27:24 +0000
+Subject: [PATCH 19/28] Saving and loading while playing: audio serviced in
+ windows of 64, not every sample
+
+Since v11, XMLSerializer::write() called AudioEngine::routineWithClusterLoading() (and the UI timers, OLED, PIC) every
+256 characters, which the XML generation reaches every sample or two. That stopped the buzz of 1.2.1, but routine()
+then rendered windows of about 24 samples, each paying its fixed cost (about what 20 samples of a busy song cost), so
+the audio took nearly all the CPU and a save took many times longer than writing the XML. XMLDeserializer::xmlReadDone()
+(every 64 reads, a few samples apart) had the same pattern for loading.
+
+Both now call routineWhileAccessingFile(): it services only once 8 samples are due (AudioEngine::
+getNumSamplesSinceOutputFilled(), one read of the DMA's position), and then routine() renders at least 64 samples
+(AudioEngine::minNumSamplesToRender, applied after the usual doubling), ahead of what is due; the calls after that only
+output them. The output buffer is refilled at the latest after the samples due plus the time one window of 64 takes.
+Normal playback is unchanged (minNumSamplesToRender is 0 outside file access).
+
+Emulator (tests/song, SAVE=1 run.sh: the firmware saves the playing song with the DMA in real time), v13 base -> this:
+- 3 of 8 synths (about 50 % CPU), save at bar 2 (chord change): 344 ms -> 22 ms, worst gap 80 -> 71 samples
+- 5 synths (about 70 % CPU), bar 2: 716 ms -> 66 ms, worst gap 128 (1 sample underrun) -> 97, no underrun
+- mid-bar: 3 synths 80 -> 10 ms (gap 50 -> 56), 5 synths 180 -> 16 ms (gap 53 -> 66)
+The XML written is identical; normal playback renders bit-exactly the same (demand run, --init-sounds --seed 1).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ .../processing/engines/audio_engine.cpp       | 11 ++++
+ src/deluge/processing/engines/audio_engine.h  |  7 +++
+ src/deluge/storage/storage_manager.cpp        | 54 ++++++++++++-------
+ 3 files changed, 53 insertions(+), 19 deletions(-)
+
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index 535b0457..ac6b05b8 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -177,6 +177,7 @@ uint32_t nextVoiceState = 1;
+ bool renderInStereo = true;
+ bool bypassCulling = false;
+ bool audioRoutineLocked = false;
++size_t minNumSamplesToRender = 0;
+ uint32_t audioSampleTimer = 0;
+ uint32_t i2sTXBufferPos;
+ uint32_t i2sRXBufferPos;
+@@ -614,6 +615,11 @@ void renderAudioForStemExport(size_t numSamples);
+ 		}
+ 	}
+ 
++	// mastertune-v13: ahead of what is due while a file is saved or loaded (see routineWhileAccessingFile())
++	if (numSamples < minNumSamplesToRender) {
++		numSamples = minNumSamplesToRender;
++	}
++
+ 	// Want to round to be doing a multiple of 4 samples, so the NEON functions can be utilized most efficiently.
+ 	// Note - this can take numSamples up as high as SSI_TX_BUFFER_NUM_SAMPLES (currently 128).
+ 	if (numSamples >= 3) {
+@@ -1222,6 +1228,11 @@ int32_t getNumSamplesLeftToOutputFromPreviousRender() {
+ 	return ((uint32_t)renderingBufferOutputEnd - (uint32_t)renderingBufferOutputPos) >> 3;
+ }
+ 
++int32_t getNumSamplesSinceOutputFilled() {
++	return ((uint32_t)getTxBufferCurrentPlace() - i2sTXBufferPos) >> (2 + NUM_MONO_OUTPUT_CHANNELS_MAGNITUDE)
++	       & (SSI_TX_BUFFER_NUM_SAMPLES - 1);
++}
++
+ // Returns whether we got to the end
+ bool doSomeOutputting() {
+ 
+diff --git a/src/deluge/processing/engines/audio_engine.h b/src/deluge/processing/engines/audio_engine.h
+index 2780f3f4..0e1c8e29 100644
+--- a/src/deluge/processing/engines/audio_engine.h
++++ b/src/deluge/processing/engines/audio_engine.h
+@@ -163,6 +163,13 @@ void slowRoutine();
+ void doRecorderCardRoutines();
+ 
+ int32_t getNumSamplesLeftToOutputFromPreviousRender();
++/// How many samples the output DMA has played since the output buffer was last filled up to where it reads, i.e. how
++/// long the audio has gone without routine() (at SSI_TX_BUFFER_NUM_SAMPLES it plays the old buffer again). Cheap: one
++/// read of the DMA's position.
++int32_t getNumSamplesSinceOutputFilled();
++/// routine() renders at least this many samples per window (at most SSI_TX_BUFFER_NUM_SAMPLES), ahead of what is due
++/// (mastertune-v13: set while a file is saved or loaded, see routineWhileAccessingFile() in storage_manager.cpp)
++extern size_t minNumSamplesToRender;
+ 
+ void registerSideChainHit(int32_t strength);
+ 
+diff --git a/src/deluge/storage/storage_manager.cpp b/src/deluge/storage/storage_manager.cpp
+index 3cd19a6e..41450305 100644
+--- a/src/deluge/storage/storage_manager.cpp
++++ b/src/deluge/storage/storage_manager.cpp
+@@ -583,6 +583,36 @@ Drum* StorageManager::createNewDrum(DrumType drumType) {
+ 
+ ********************************************************************************/
+ 
++// mastertune-v13: XMLSerializer::write() calls this every 256 characters and XMLDeserializer::xmlReadDone() every 64
++// reads, while a song, kit or synth is saved or loaded, maybe with the song playing: it keeps the audio going, loads
++// the sample clusters that needs and services the UI (the OLED, the PIC's LEDs). v11 and v12 did all that each time,
++// i.e. every sample or two (the XML goes that fast), so AudioEngine::routine() rendered windows of about 24 samples and
++// spent most of the time on its fixed cost per window (with a busy song about what 20 samples cost). In the emulator,
++// with a song using half the CPU, the audio took 98 % of a save and saving took 65 times as long as writing the XML.
++// Now it waits until kFileRoutineMinSamplesDue samples are due (one read of the DMA's position), and routine() then
++// renders at least kFileRoutineMinWindow samples, ahead of what is due; the next calls only output those until they are
++// used up. The output buffer (128 samples) is refilled at the latest after the samples due plus the time one window of
++// 64 takes, less than 64 samples for a song that plays in windows of 64 in real time (a heavier one gets bigger
++// windows, as before), so the audio doesn't get near a gap: in the emulator the worst gap is smaller than before.
++constexpr int32_t kFileRoutineMinSamplesDue = 8;
++constexpr size_t kFileRoutineMinWindow = 64;
++
++static void routineWhileAccessingFile() {
++	if (AudioEngine::getNumSamplesSinceOutputFilled() < kFileRoutineMinSamplesDue) {
++		return;
++	}
++	AudioEngine::minNumSamplesToRender = kFileRoutineMinWindow;
++	AudioEngine::routineWithClusterLoading();
++	AudioEngine::minNumSamplesToRender = 0;
++
++	uiTimerManager.routine();
++
++	if (display->haveOLED()) {
++		oledRoutine();
++	}
++	PIC::flush();
++}
++
+ void Serializer::writeAbsoluteSyncLevelToFile(Song* song, char const* name, SyncLevel internalValue, bool onNewLine) {
+ 	writeAttribute(name, song->convertSyncLevelFromInternalValueToFileValue(internalValue), onNewLine);
+ }
+@@ -626,18 +656,11 @@ void XMLSerializer::write(char const* output) {
+ 		// Ensure we do some of the audio routine once in a while. (mastertune-v11: the audio itself too, and loading
+ 		// the sample clusters it needs next, the same as while reading a file. 1.2.1 had that commented out here and
+ 		// only kept the display going, so the sound stalled while a song or preset was being put together for saving,
+-		// a short buzz or crackle each time.)
++		// a short buzz or crackle each time. mastertune-v13: only once enough samples are due, see
++		// routineWhileAccessingFile().)
+ 		if (!(fileWriteBufferCurrentPos & 0b11111111)) {
+ 			AudioEngine::logAction("writeCharXML");
+-
+-			AudioEngine::routineWithClusterLoading();
+-
+-			uiTimerManager.routine();
+-
+-			if (display->haveOLED()) {
+-				oledRoutine();
+-			}
+-			PIC::flush();
++			routineWhileAccessingFile();
+ 		}
+ 	}
+ }
+@@ -1182,15 +1205,8 @@ Error XMLDeserializer::readAttributeValueString(String* string) {
+ void XMLDeserializer::xmlReadDone() {
+ 	xmlReadCount++; // Increment first, cos we don't want to call SD routine immediately when it's 0
+ 
+-	if (!(xmlReadCount & 63)) { // 511 bad. 255 almost fine. 127 almost always fine
+-		AudioEngine::routineWithClusterLoading();
+-
+-		uiTimerManager.routine();
+-
+-		if (display->haveOLED()) {
+-			oledRoutine();
+-		}
+-		PIC::flush();
++	if (!(xmlReadCount & 63)) {      // 511 bad. 255 almost fine. 127 almost always fine
++		routineWhileAccessingFile(); // mastertune-v13: only once enough samples are due
+ 	}
+ }
+ 
+-- 
+2.43.0
+

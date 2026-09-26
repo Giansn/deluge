@@ -1,0 +1,491 @@
+From 29a22d25c2e4c27732cb5558864fa69f98818586 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 22:21:24 +0000
+Subject: [PATCH 27/28] Pads: flicker-free dimming at low brightness
+
+The PIC dims the LEDs by time: each step of its LED scan is lit for the
+refresh time and dark for the dimmer interval. 1.2.1 keeps their sum at 23
+down to 40 % (refresh 8); below that the refresh time stays at 8 and the
+dark time grows 1.2x per step, so the whole scan slows down: at 4 % (the
+menu's lowest) 8 + 112 = 120, 5.2 times the period at full brightness, at
+0 % (SHIFT + LEARN + vertical encoder) 8 + 148 = 156, 6.8 times. That is
+the flicker. Refresh times of 9 and below also give wrong colours on some
+pads (upstream discussion #1869).
+
+Flicker-free dimming (community feature, on by default): the PIC dims only
+as far as its scan keeps the period of 23 with a refresh time of 10 or more
+(43.5 % light; from 48 % up the timing is 1.2.1's), and the rest is done by
+scaling the values sent to the PIC, in PIC::send() for every pad and sidebar
+colour (all views, blinks, scrolls, greyout) and for the gold knob
+indicators: scale = 1.2.1's light / the PIC's, so each level gives the light
+it gave (the PIC's PWM being linear in the value). Values are rounded, a lit
+channel stays at least 1. A change of brightness or of the setting sends the
+pads and knob indicators again. Button LEDs and the 7-segment display are on
+or off, and the PIC's own flash colours (fast play cursor) aren't values:
+those are only dimmed down to 43.5 %. Off sends exactly what 1.2.1 sends.
+See hid/led/pad_dimming.h. The setting is in CommunityFeatures.XML
+(flickerFreeDimming); no new flash bytes.
+
+Also: with settings never saved in flash (firmware type unknown) the pad
+brightness stayed 0, i.e. 0 %; resetSettings() now sets it to full.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/drivers/pic/pic.h                  | 30 ++++++-
+ src/deluge/gui/l10n/english.json              |  3 +-
+ src/deluge/gui/l10n/g_english.cpp             |  1 +
+ src/deluge/gui/l10n/g_seven_segment.cpp       |  1 +
+ src/deluge/gui/l10n/seven_segment.json        |  3 +-
+ src/deluge/gui/l10n/strings.h                 |  1 +
+ .../gui/menu_item/runtime_feature/setting.cpp |  6 ++
+ .../gui/menu_item/runtime_feature/setting.h   |  7 ++
+ .../menu_item/runtime_feature/settings.cpp    |  4 +-
+ src/deluge/hid/led/indicator_leds.cpp         | 11 +++
+ src/deluge/hid/led/indicator_leds.h           |  1 +
+ src/deluge/hid/led/pad_dimming.h              | 88 +++++++++++++++++++
+ src/deluge/hid/led/pad_leds.cpp               | 35 +++++---
+ src/deluge/hid/led/pad_leds.h                 |  1 +
+ .../settings/runtime_feature_settings.cpp     |  6 ++
+ .../model/settings/runtime_feature_settings.h |  1 +
+ src/deluge/storage/flash_storage.cpp          |  2 +
+ 17 files changed, 183 insertions(+), 18 deletions(-)
+ create mode 100644 src/deluge/hid/led/pad_dimming.h
+
+diff --git a/src/deluge/drivers/pic/pic.h b/src/deluge/drivers/pic/pic.h
+index c232140b..82d7c266 100644
+--- a/src/deluge/drivers/pic/pic.h
++++ b/src/deluge/drivers/pic/pic.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ #include "definitions_cxx.hpp"
+ #include "gui/colour/colour.h"
++#include "hid/led/pad_dimming.h"
+ #include "util/misc.h"
+ #include <array>
+ #include <cstddef>
+@@ -128,7 +129,10 @@ public:
+ 	 */
+ 	static void setGoldKnobIndicator(bool which, const std::array<uint8_t, kNumGoldKnobIndicatorLEDs>& indicator) {
+ 		Message knob = which ? Message::SET_GOLD_KNOB_1_INDICATORS : Message::SET_GOLD_KNOB_0_INDICATORS;
+-		send(knob, indicator);
++		send(knob);
++		for (uint8_t value : indicator) {
++			send(deluge::hid::pad_dimming::scaleChannel(value, colourScale));
++		}
+ 	}
+ 
+ 	static void setLEDOff(size_t idx) { send(util::to_underlying(Message::SET_LED_OFF) + idx); }
+@@ -177,6 +181,15 @@ public:
+ 	static void setRefreshTime(uint8_t time_ms) { send(Message::SET_REFRESH_TIME, time_ms); }
+ 	static void setDimmerInterval(uint8_t interval) { send(Message::SET_DIMMER_INTERVAL, interval); }
+ 
++	/**
++	 * @brief Scale every pad colour and gold knob indicator value sent from now on: the part of the dimming the PIC
++	 * doesn't do with flicker-free dimming (see hid/led/pad_dimming.h). pad_dimming::kFullScale sends them unchanged.
++	 *
++	 * @param scale 16.16 fixed point, up to 1
++	 */
++	static void setColourScale(uint32_t scale) { colourScale = scale; }
++	static uint32_t getColourScale() { return colourScale; }
++
+ 	/**
+ 	 * @brief This is used to make smooth scrolling on the horizontal axis, by filling up an 8-pixel framebuffer on the
+ 	 * PIC that it can then provide an animation to smear across the axis to give a sensation of motion See (scrolling
+@@ -258,6 +271,9 @@ public:
+ 	}
+ 
+ private:
++	/// See setColourScale()
++	inline static uint32_t colourScale = deluge::hid::pad_dimming::kFullScale;
++
+ 	/**
+ 	 * @brief Send a message and a variable number of following bytes
+ 	 */
+@@ -289,9 +305,15 @@ private:
+ 	 * @brief Send a single colour
+ 	 */
+ 	inline static void send(const RGB& colour) {
+-		send(colour.r);
+-		send(colour.g);
+-		send(colour.b);
++		if (colourScale == deluge::hid::pad_dimming::kFullScale) {
++			send(colour.r);
++			send(colour.g);
++			send(colour.b);
++			return;
++		}
++		send(deluge::hid::pad_dimming::scaleChannel(colour.r, colourScale));
++		send(deluge::hid::pad_dimming::scaleChannel(colour.g, colourScale));
++		send(deluge::hid::pad_dimming::scaleChannel(colour.b, colourScale));
+ 	}
+ 
+ 	/**
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index 4f495151..1e11aa8a 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -946,6 +946,7 @@
+         "STRING_FOR_ORGAN": "Organ",
+         "STRING_FOR_RICH": "Rich",
+         "STRING_FOR_LEVEL": "Level",
+-        "STRING_FOR_CPU_MONITOR": "CPU monitor"
++        "STRING_FOR_CPU_MONITOR": "CPU monitor",
++        "STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING": "Flicker-free dimming"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index c0031edb..bb29c514 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -875,6 +875,7 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_RICH, "Rich"},
+         {STRING_FOR_LEVEL, "Level"},
+         {STRING_FOR_CPU_MONITOR, "CPU monitor"},
++        {STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING, "Flicker-free dimming"},
+     },
+ };
+ } // namespace deluge::l10n::built_in
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index 59918b65..dd9ed8b4 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -516,6 +516,7 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_RICH, "RICH"},
+         {STRING_FOR_LEVEL, "LEVL"},
+         {STRING_FOR_CPU_MONITOR, "CPU"},
++        {STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING, "DIMM"},
+     },
+     &built_in::english,
+ };
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index b613108a..61c4723d 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -550,6 +550,7 @@
+         "STRING_FOR_ORGAN": "ORGN",
+         "STRING_FOR_RICH": "RICH",
+         "STRING_FOR_LEVEL": "LEVL",
+-        "STRING_FOR_CPU_MONITOR": "CPU"
++        "STRING_FOR_CPU_MONITOR": "CPU",
++        "STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING": "DIMM"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index 6f0fdaed..410c3aca 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -973,6 +973,7 @@ enum class String : size_t {
+ 	STRING_FOR_RESTART_TO_APPLY,
+ 	STRING_FOR_USB_AUDIO_GAP,
+ 	STRING_FOR_COMMUNITY_FEATURE_KIT_RAM_SAVER,
++	STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING,
+ 
+ 	// drone (mastertune-v12)
+ 	STRING_FOR_DRONE,
+diff --git a/src/deluge/gui/menu_item/runtime_feature/setting.cpp b/src/deluge/gui/menu_item/runtime_feature/setting.cpp
+index 3abed210..61be1745 100644
+--- a/src/deluge/gui/menu_item/runtime_feature/setting.cpp
++++ b/src/deluge/gui/menu_item/runtime_feature/setting.cpp
+@@ -19,6 +19,7 @@
+ #include "gui/l10n/l10n.h"
+ #include "gui/menu_item/runtime_feature/setting.h"
+ #include "hid/display/display.h"
++#include "hid/led/pad_leds.h"
+ #include "model/settings/runtime_feature_settings.h"
+ 
+ namespace deluge::gui::menu_item::runtime_feature {
+@@ -48,6 +49,11 @@ void UsbAudioSetting::writeCurrentValue() {
+ 	display->displayPopup(l10n::get(l10n::String::STRING_FOR_RESTART_TO_APPLY));
+ }
+ 
++void FlickerFreeDimmingSetting::writeCurrentValue() {
++	Setting::writeCurrentValue();
++	PadLEDs::reapplyBrightness();
++}
++
+ deluge::vector<std::string_view> Setting::getOptions() {
+ 	deluge::vector<std::string_view> options;
+ 	for (const RuntimeFeatureSettingOption& option : runtimeFeatureSettings.settings[currentSettingIndex].options) {
+diff --git a/src/deluge/gui/menu_item/runtime_feature/setting.h b/src/deluge/gui/menu_item/runtime_feature/setting.h
+index e75c0310..ffc22841 100644
+--- a/src/deluge/gui/menu_item/runtime_feature/setting.h
++++ b/src/deluge/gui/menu_item/runtime_feature/setting.h
+@@ -54,4 +54,11 @@ public:
+ 	using SettingToggle::SettingToggle;
+ 	void writeCurrentValue() override;
+ };
++
++// Flicker-free dimming takes effect at once, so the pads can be compared both ways
++class FlickerFreeDimmingSetting : public SettingToggle {
++public:
++	using SettingToggle::SettingToggle;
++	void writeCurrentValue() override;
++};
+ } // namespace deluge::gui::menu_item::runtime_feature
+diff --git a/src/deluge/gui/menu_item/runtime_feature/settings.cpp b/src/deluge/gui/menu_item/runtime_feature/settings.cpp
+index 559ae086..b92d83b1 100644
+--- a/src/deluge/gui/menu_item/runtime_feature/settings.cpp
++++ b/src/deluge/gui/menu_item/runtime_feature/settings.cpp
+@@ -52,6 +52,7 @@ SettingToggle menuAccessibilityShortcuts(RuntimeFeatureSettingType::Accessibilit
+ SettingToggle menuEnableGridViewLoopPads(RuntimeFeatureSettingType::EnableGridViewLoopPads);
+ UsbAudioSetting menuUsbAudio(RuntimeFeatureSettingType::UsbAudio);
+ SettingToggle menuKitRamSaver(RuntimeFeatureSettingType::KitRamSaver);
++FlickerFreeDimmingSetting menuFlickerFreeDimming(RuntimeFeatureSettingType::FlickerFreeDimming);
+ 
+ std::array<MenuItem*, RuntimeFeatureSettingType::MaxElement - kNonTopLevelSettings> subMenuEntries{
+     &menuDrumRandomizer,
+@@ -78,7 +79,8 @@ std::array<MenuItem*, RuntimeFeatureSettingType::MaxElement - kNonTopLevelSettin
+     &menuAccessibilityShortcuts,
+     &menuEnableGridViewLoopPads,
+     &menuUsbAudio,
+-    &menuKitRamSaver};
++    &menuKitRamSaver,
++    &menuFlickerFreeDimming};
+ 
+ Settings::Settings(l10n::String name, l10n::String title) : menu_item::Submenu(name, title, subMenuEntries) {
+ }
+diff --git a/src/deluge/hid/led/indicator_leds.cpp b/src/deluge/hid/led/indicator_leds.cpp
+index c08db867..6e053981 100644
+--- a/src/deluge/hid/led/indicator_leds.cpp
++++ b/src/deluge/hid/led/indicator_leds.cpp
+@@ -330,4 +330,15 @@ void clearKnobIndicatorLevels() {
+ 	}
+ }
+ 
++void resendKnobIndicatorLevels() {
++	for (int32_t i = 0; i < NUM_LEVEL_INDICATORS; i++) {
++		if (isKnobIndicatorBlinking(i)) {
++			continue; // The blinking sends it again soon
++		}
++		uint8_t level = knobIndicatorLevels[i];
++		knobIndicatorLevels[i] = 255; // No level: actuallySetKnobIndicatorLevel() sends it even though it's the same
++		actuallySetKnobIndicatorLevel(i, level, knobIndicatorBipolar[i]);
++	}
++}
++
+ } // namespace indicator_leds
+diff --git a/src/deluge/hid/led/indicator_leds.h b/src/deluge/hid/led/indicator_leds.h
+index 3ebca895..85157468 100644
+--- a/src/deluge/hid/led/indicator_leds.h
++++ b/src/deluge/hid/led/indicator_leds.h
+@@ -86,6 +86,7 @@ void setMeterLevel(uint8_t whichKnob, uint8_t level);
+ void setKnobIndicatorLevel(uint8_t whichKnob, uint8_t level, bool isBipolar = false);
+ void actuallySetKnobIndicatorLevel(uint8_t whichKnob, uint8_t level, bool isBipolar = false);
+ void clearKnobIndicatorLevels();
++void resendKnobIndicatorLevels(); // The same levels again, e.g. with another colour scale (PIC::setColourScale())
+ void blinkKnobIndicator(int32_t whichKnob, bool isBipolar);
+ void stopBlinkingKnobIndicator(int32_t whichKnob);
+ void blinkKnobIndicatorLevelTimeout();
+diff --git a/src/deluge/hid/led/pad_dimming.h b/src/deluge/hid/led/pad_dimming.h
+new file mode 100644
+index 00000000..c9d9406b
+--- /dev/null
++++ b/src/deluge/hid/led/pad_dimming.h
+@@ -0,0 +1,88 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include <algorithm>
++#include <cstdint>
++
++/// Pad brightness (Settings > Defaults > Pad brightness 4..100 %, or SHIFT + LEARN + vertical encoder 0..100 %), as a
++/// dimmer interval: 0 = full brightness .. 25 = 0 %.
++///
++/// The PIC dims its LEDs by time: each step of its LED scan is lit for the "refresh time" and then dark for the "dimmer
++/// interval" (both in the same unit: 1.2.1 keeps their sum at 23, so the scan runs at the same rate at any brightness
++/// down to 40 %). Below that the refresh time stays at 8 and the dark time grows by 1.2x per step instead, so the whole
++/// scan slows down: at the menu's lowest level (4 %) 8 + 112 = 120, 5.2 times the period at full brightness, at 0 %
++/// 8 + 148 = 156, 6.8 times. That is the flicker at low brightness. Refresh times of 9 and below also give wrong
++/// colours on some pads (upstream discussion #1869; Synthstrom had raised the minimum from 6 to 8 for it).
++///
++/// Flicker-free dimming (community feature, on by default) lets the PIC dim only as far as the scan period stays 23 and
++/// the refresh time 10 or more (43.5 % light), and does the rest by scaling the pad colours and gold knob indicator
++/// values sent to the PIC (PIC::send()), so the light at each level stays what 1.2.1 gave (the PIC's PWM being linear
++/// in the value: the firmware squares the knob indicators' values itself). The button LEDs and the 7-segment display
++/// are on or off, and the PIC's own flash colours (the fast play cursor) aren't sent as values: those are only dimmed
++/// down to the 43.5 %.
++namespace deluge::hid::pad_dimming {
++
++constexpr int32_t kMaxDimmerInterval = 25;         ///< 0 %
++constexpr int32_t kScanPeriod = 23;                ///< Refresh time + dimmer interval while the scan keeps its rate
++constexpr int32_t kLegacyMinRefreshTime = 8;       ///< 1.2.1 stretches the dark time rather than going below this
++constexpr int32_t kMinRefreshTime = 10;            ///< Flicker-free: the PIC dims no further than this
++constexpr uint32_t kFullScale = uint32_t{1} << 16; ///< Colour scale that sends the values unchanged
++
++struct PicTiming {
++	int32_t refreshTime;
++	int32_t dimmerInterval;
++};
++
++/// What 1.2.1 sends to the PIC for a dimmer interval
++constexpr PicTiming legacyTiming(int32_t interval) {
++	int32_t refreshTime = kScanPeriod - interval;
++	while (refreshTime < kLegacyMinRefreshTime) {
++		refreshTime++;
++		// (From Roha, Nov 2023) Hmm, not sure why this was necessary...
++		interval = static_cast<int32_t>(interval * 1.2);
++	}
++	return {refreshTime, interval};
++}
++
++/// What flicker-free dimming sends to the PIC: the scan period always kScanPeriod
++constexpr PicTiming flickerFreeTiming(int32_t interval) {
++	interval = std::min(interval, kScanPeriod - kMinRefreshTime);
++	return {kScanPeriod - interval, interval};
++}
++
++/// Light of a PIC timing (lit share of each scan step) relative to another, in 16.16 fixed point, rounded
++constexpr uint32_t lightRatio(PicTiming timing, PicTiming reference) {
++	uint32_t numerator = (uint32_t)timing.refreshTime * (reference.refreshTime + reference.dimmerInterval) << 16;
++	uint32_t denominator = (uint32_t)(timing.refreshTime + timing.dimmerInterval) * reference.refreshTime;
++	return (numerator + denominator / 2) / denominator;
++}
++
++/// Colour scale with flicker-free dimming: the part of 1.2.1's dimming the PIC doesn't do (kFullScale down to 48 %)
++constexpr uint32_t colourScale(int32_t interval) {
++	return lightRatio(legacyTiming(interval), flickerFreeTiming(interval));
++}
++
++/// A channel (or gold knob indicator) value scaled, rounded; one that was lit stays lit (at least 1), so the darkest
++/// colours don't disappear
++constexpr uint8_t scaleChannel(uint8_t value, uint32_t scale) {
++	uint32_t scaled = (value * scale + (kFullScale >> 1)) >> 16;
++	return (scaled == 0 && value != 0) ? 1 : scaled;
++}
++
++} // namespace deluge::hid::pad_dimming
+diff --git a/src/deluge/hid/led/pad_leds.cpp b/src/deluge/hid/led/pad_leds.cpp
+index 8cd83b4d..e6401eb9 100644
+--- a/src/deluge/hid/led/pad_leds.cpp
++++ b/src/deluge/hid/led/pad_leds.cpp
+@@ -32,9 +32,12 @@
+ #include "gui/waveform/waveform_renderer.h"
+ #include "hid/display/display.h"
+ #include "hid/display/oled.h"
++#include "hid/led/indicator_leds.h"
++#include "hid/led/pad_dimming.h"
+ #include "model/clip/audio_clip.h"
+ #include "model/clip/instrument_clip.h"
+ #include "model/sample/sample.h"
++#include "model/settings/runtime_feature_settings.h"
+ #include "model/song/song.h"
+ #include "processing/engines/audio_engine.h"
+ 
+@@ -735,22 +738,32 @@ void changeDimmerInterval(int32_t offset) {
+ 	}
+ }
+ 
++// See hid/led/pad_dimming.h: with flicker-free dimming the PIC dims only while its scan keeps its rate, and the pad
++// colours (and gold knob indicator values) are scaled for the rest; without it, 1.2.1's timing
+ void setDimmerInterval(int32_t newInterval) {
+-	// Uart::print("dimmerInterval: ");
+-	// Uart::println(newInterval);
++	namespace dimming = deluge::hid::pad_dimming;
++	newInterval = std::clamp<int32_t>(newInterval, 0, dimming::kMaxDimmerInterval);
+ 	dimmerInterval = newInterval;
+ 
+-	int32_t newRefreshTime = 23 - newInterval;
+-	while (newRefreshTime < 8) {
+-		newRefreshTime++;
+-		newInterval *= 1.2; // (From Roha, Nov 2023) Hmm, not sure why this was necessary...
+-	}
++	bool flickerFree = runtimeFeatureSettings.isOn(RuntimeFeatureSettingType::FlickerFreeDimming);
++	dimming::PicTiming timing =
++	    flickerFree ? dimming::flickerFreeTiming(newInterval) : dimming::legacyTiming(newInterval);
++	uint32_t scale = flickerFree ? dimming::colourScale(newInterval) : dimming::kFullScale;
++
++	setRefreshTime(timing.refreshTime);
++	PIC::setDimmerInterval(timing.dimmerInterval);
+ 
+-	// Uart::print("newInterval: ");
+-	// Uart::println(newInterval);
++	if (scale != PIC::getColourScale()) {
++		// What's lit now was sent with the old scale
++		PIC::setColourScale(scale);
++		sendOutMainPadColoursSoon();
++		sendOutSidebarColoursSoon();
++		indicator_leds::resendKnobIndicatorLevels();
++	}
++}
+ 
+-	setRefreshTime(newRefreshTime);
+-	PIC::setDimmerInterval(newInterval);
++void reapplyBrightness() {
++	setDimmerInterval(dimmerInterval);
+ }
+ 
+ void timerRoutine() {
+diff --git a/src/deluge/hid/led/pad_leds.h b/src/deluge/hid/led/pad_leds.h
+index a7200c97..335c3d4a 100644
+--- a/src/deluge/hid/led/pad_leds.h
++++ b/src/deluge/hid/led/pad_leds.h
+@@ -81,6 +81,7 @@ void changeRefreshTime(int32_t offset);
+ void changeDimmerInterval(int32_t offset);
+ void setDimmerInterval(int32_t newInterval);
+ void setBrightnessLevel(uint8_t level);
++void reapplyBrightness(); // After the flicker-free dimming setting changed
+ void renderZoom();
+ void renderZoomWithProgress(int32_t inImageTimesBiggerThanNative, uint32_t inImageFadeAmount, uint8_t* innerImage,
+                             uint8_t* outerImage, int32_t innerImageLeftEdge, int32_t outerImageLeftEdge,
+diff --git a/src/deluge/model/settings/runtime_feature_settings.cpp b/src/deluge/model/settings/runtime_feature_settings.cpp
+index 3458ec03..73293fa9 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.cpp
++++ b/src/deluge/model/settings/runtime_feature_settings.cpp
+@@ -205,6 +205,12 @@ void RuntimeFeatureSettings::init() {
+ 	// model/instrument/kit_ram_saver.h
+ 	SetupOnOffSetting(settings[RuntimeFeatureSettingType::KitRamSaver], STRING_FOR_COMMUNITY_FEATURE_KIT_RAM_SAVER,
+ 	                  "kitRamSaver", RuntimeFeatureStateToggle::On);
++
++	// FlickerFreeDimming: the PIC dims the pads only as far as its LED scan keeps its rate, the pad
++	// colours are scaled for the rest (hid/led/pad_dimming.h); off: 1.2.1's dimming, which slows the scan down
++	SetupOnOffSetting(settings[RuntimeFeatureSettingType::FlickerFreeDimming],
++	                  STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING, "flickerFreeDimming",
++	                  RuntimeFeatureStateToggle::On);
+ }
+ 
+ void RuntimeFeatureSettings::readSettingsFromFile(StorageManager& bdsm) {
+diff --git a/src/deluge/model/settings/runtime_feature_settings.h b/src/deluge/model/settings/runtime_feature_settings.h
+index fceb4712..a329d818 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.h
++++ b/src/deluge/model/settings/runtime_feature_settings.h
+@@ -68,6 +68,7 @@ enum RuntimeFeatureSettingType : uint32_t {
+ 	EnableGridViewLoopPads,
+ 	UsbAudio,
+ 	KitRamSaver,
++	FlickerFreeDimming,
+ 	MaxElement // Keep as boundary
+ };
+ 
+diff --git a/src/deluge/storage/flash_storage.cpp b/src/deluge/storage/flash_storage.cpp
+index 9c56cbbd..33a879f9 100644
+--- a/src/deluge/storage/flash_storage.cpp
++++ b/src/deluge/storage/flash_storage.cpp
+@@ -266,6 +266,8 @@ void resetSettings() {
+ 	playbackHandler.tempoMagnitudeMatchingEnabled = false;
+ 
+ 	PadLEDs::flashCursor = FLASH_CURSOR_SLOW;
++	// Full brightness, as a 0 in saved settings gives (without this, settings never saved gave 0 %)
++	defaultPadBrightness = kMaxLedBrightness;
+ 
+ 	midiEngine.midiThru = false;
+ 	midiEngine.midiTakeover = MIDITakeoverMode::JUMP;
+-- 
+2.43.0
+

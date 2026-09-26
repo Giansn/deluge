@@ -1,0 +1,67 @@
+{
+ "summary": "Flicker-free pad dimming: dim the pads by colour at full PIC refresh instead of long PIC dark intervals; implement on a branch, verify once",
+ "agentCount": 2,
+ "logs": [],
+ "result": {
+  "impl": "Das Flackern bei tiefer Helligkeit lässt sich beheben. Der Fix ist auf dem Branch `pad-dim` als Commit **534f4d83** umgesetzt, und die Tests im Emulator laufen durch. Am Gerät ist er noch ungetestet.\n\n**Ursache (aus dem Code belegt):** Der PIC dimmt über die Zeit. Pro Scan-Schritt ist eine LED während der «refresh time» an und während des «dimmer interval» dunkel, beide in derselben Einheit. 1.2.1 hält die Summe bis 40 % bei 23, das Tempo bleibt also gleich. Darunter bleibt die refresh time bei 8, und die dunkle Zeit wächst pro Stufe um den Faktor 1,2. Der ganze Scan wird dadurch langsamer:\n- **4 % (Menü-Minimum):** 8 + 112 = 120, also 5,2-mal langsamer als bei voller Helligkeit.\n- **0 % (nur über SHIFT + LEARN + ▲▼):** 8 + 148 = 156, also 6,8-mal langsamer.\n\nRefresh-Werte von 9 und tiefer geben zudem falsche Farben (Discussion #1869). Synthstrom hatte das Minimum deshalb 2023 von 6 auf 8 angehoben (e624052f).\n\n**Vorarbeit anderer:** Upstream gibt es keinen Fix. Auf `main` (25.9.2026) steckt dieselbe Logik noch drin.\n\n**Umsetzung:** Neuer Schalter «Flicker-free dimming» unter Community Features, standardmässig On. Er liegt auf der SD-Karte, im Flash kommen keine neuen Bytes dazu.\n- Der PIC dimmt nur noch so weit, dass der Scan sein Tempo behält (refresh time mindestens 10, also bis 43,5 %). Ab 48 % ist alles wie in 1.2.1.\n- Den Rest macht die Firmware, indem sie in `PIC::send()` alle Pad- und Sidebar-Farben und die Goldknopf-LEDs herunterskaliert. Damit gibt jede Stufe gleich viel Licht wie vorher. Ein leuchtender Kanal bleibt mindestens bei 1.\n- Off sendet byteweise genau dasselbe wie 1.2.1.\n- Nebenbei behoben: Nie gespeicherte Flash-Einstellungen starteten mit 0 % Helligkeit, jetzt mit 100 %.\n\n**Tests** (in `/home/user/deluge/mastertune-1.2.1/tests/pads/`, nicht committed):\n- **Emulator mit der echten Firmware:** Mitgeschnitten wurde, was über den UART an den PIC geht, für alle 26 Stufen. Off ist identisch mit 1.2.1. Bei On bleibt die Periode immer bei 23, der Faktor liegt zwischen 0,118 (0 %) und 0,9 (44 %). Das Licht entspricht dem von 1.2.1 bis auf 1 %.\n- **Host-Test des Skalierungs-Headers:** Alle Kanalwerte auf allen Stufen durchgeprüft. Der Farbton der Palette weicht bei 0 % höchstens 6,6° ab.\n- **CPU:** Ein kompletter Pad-Redraw braucht rund 43 µs statt 27 µs, das fällt nicht ins Gewicht.\n\n**Offene Risiken am Gerät:**\n1. Zwei Annahmen lassen sich ohne Hardware nicht prüfen, weil die PIC-Firmware nicht offen ist: dass refresh + dimmer die Scan-Periode ergibt und dass die PWM linear ist. Flackert es mit On noch, kann `kMinRefreshTime` auf 23 gesetzt werden; dann dimmt der PIC gar nicht mehr.\n2. Ob Wert 1 sichtbar und gleichmässig leuchtet, ist offen. Sehr dunkle Farben werden grau, zum Beispiel (10,5,2) zu (1,1,1).\n3. Tasten-LEDs, 7-Segment-Anzeige und der schnelle Play-Cursor werden nur bis 43,5 % gedimmt, sind also heller als bisher. Die Goldknopf-LEDs folgen neu der Einstellung.\n\nDateien:\n- `/home/user/work/pad-dim/src/deluge/hid/led/pad_dimming.h`\n- `/home/user/deluge/mastertune-1.2.1/tests/pads/run.sh`\n- `/home/user/deluge/mastertune-1.2.1/tests/pads/pad_dim_emu.py`\n- `/home/user/deluge/mastertune-1.2.1/tests/pads/pad_dimming_test.cpp`",
+  "ver": "**Verdikt: ok = true.** Keine Blocker, aber zwei Lücken bei Doku und Kosmetik.\n\n**Bestätigt:**\n- Alle Farbwerte an den PIC laufen über `PIC::send(const RGB&)`, also werden alle skaliert. Das gilt für `setColourForTwoColumns` (Pads und Sidebar, alle Views inkl. Drone und Performance, Greyout, langsamer Cursor), `sendScrollRow`, `doVerticalScroll`, `sendColour` und den Hardware-Test. Ungedimmt bleibt nur die Crash-Anzeige im Fault-Handler, das ist unerheblich.\n- Harness neu gegen das drone-v13-ELF laufen lassen: Off ist auf allen 26 Stufen byteweise gleich wie 1.2.1. Bei On bleibt die Periode immer 23, Refresh ≥ 10, das Licht liegt innerhalb ±1 % von 1.2.1.\n- Der PIC ist in jedem Weg flackerfrei eingestellt. Die XML wird beim Booten vor der Helligkeit gelesen (`deluge.cpp:861` vor `:882`). Menü, SHIFT+LEARN+▲▼, Factory-Reset und leerer Flash gehen alle durch `setDimmerInterval`.\n- Kein Überlauf (255·65536 < 2³²), Skala höchstens 1. Keine Warnungen in den geänderten Dateien, keine neuen Flash-Bytes. Fehlt der Key in der XML, gilt On.\n- Discussion #1869 bestätigt: Refresh ≤ 9 gibt falsche Farben, ab 10 ist es in Ordnung. Einen Upstream-Fix gibt es nicht.\n\n**Befunde:**\n1. **PIC-Blitze bleiben ungedimmt, nur teilweise dokumentiert.** PIC-eigene Blitzfarben nutzt nicht nur der schnelle Cursor, sondern auch `SoundEditor::blinkShortcut` (`sound_editor.cpp:740/751`, blinkt in jedem Menü) und die Automation-Shortcuts (`automation_view.cpp:5756/5768`). Bei 0 % leuchten diese Blitze mit 43,5 % statt 5,1 %, also 8,5-mal heller als in 1.2.1. Fix: Bei Skala < 1 über das Image blinken lassen (wie `FLASH_CURSOR_SLOW`), mindestens aber dokumentieren.\n2. **Kurzer Sprung beim Umschalten.** Das neue Timing geht sofort an den PIC, die Pads kommen erst nach 20 ms (`setTimerForSoon`). Off→On bei 0 % gibt einen kurzen, 8,5-fach hellen Blitz, On→Off kurz fast Dunkel. Fix: Wird der PIC heller, zuerst `sendOutMainPadColours()` sofort senden, dann das Timing.\n3. **CPU unkritisch.** Ein ganzer Redraw braucht bei Off 12'329 statt 10'826 Instruktionen (+14 %, eine Abfrage pro Farbe), bei On und 0 % 17'081 (rund 43 µs). Die Abfrage liesse sich pro Nachricht statt pro Farbe machen.\n4. **Nur am Gerät prüfbar (dokumentiert).** Offen sind das Modell refresh/(refresh+dimmer), die lineare PWM und ob die Werte 1 bis 3 sichtbar und ruhig leuchten. Verteilt der PIC tiefe Bits über mehrere Scans, könnten gerade diese kleinen Werte flackern. Bei 0 % bleiben nur 31 Stufen pro Kanal, sehr dunkle Farben werden zu (1,1,1).\n5. **Tasten und 7-Segment bei 0 % 8,5-mal heller als bisher.** Das ist ein bewusster Kompromiss. Vorschlag: eine leicht längere PIC-Periode (etwa 1,2×) als Testkonstante anbieten.\n\nNebenbei ein Widerspruch in der Doku: Laut Bericht folgen die Goldknopf-LEDs «neu» der Einstellung, laut Commit geben sie das gleiche Licht wie vorher.\n\nDateien:\n- `/home/user/work/pad-dim/src/deluge/hid/led/pad_leds.cpp`\n- `/home/user/work/pad-dim/src/deluge/drivers/pic/pic.h`"
+ },
+ "workflowProgress": [
+  {
+   "type": "workflow_phase",
+   "index": 1,
+   "title": "Implement"
+  },
+  {
+   "type": "workflow_phase",
+   "index": 2,
+   "title": "Verify"
+  },
+  {
+   "type": "workflow_agent",
+   "index": 1,
+   "label": "implement pad dimming",
+   "phaseIndex": 1,
+   "phaseTitle": "Implement",
+   "agentId": "ac15776c8a41c3cd4",
+   "model": "claude-opus-5-5",
+   "state": "done",
+   "startedAt": 1790459805082,
+   "queuedAt": 1790459805074,
+   "attempt": 1,
+   "lastToolName": "Bash",
+   "lastToolSummary": "cd /home/user/work/pad-dim && for f in $(git show --name-on…",
+   "promptPreview": "User report (Deluge firmware 1.2.1 fork \"mastertune\", branch mastertune-v13 at a8e8af32, main firmware repo /home/user/work/DelugeFirmware-121): at 0 % pad brightness (Settings > Defaults > Pad brightness) the pads flicker unbearably; they want the flicker gone.\n\nWhat 1.2.1 does (src/deluge/hid/led/pad_leds.cpp setBrightnessLevel/setDimmerInterval/setRefreshTime, gui/menu_item/defaults/pad_brightn…",
+   "promptFramed": true,
+   "lastProgressAt": 1790461332213,
+   "tokens": 315329,
+   "toolCalls": 115,
+   "durationMs": 1527130,
+   "resultPreview": "Das Flackern bei tiefer Helligkeit lässt sich beheben. Der Fix ist auf dem Branch `pad-dim` als Commit **534f4d83** umgesetzt, und die Tests im Emulator laufen durch. Am Gerät ist er noch ungetestet.\n\n**Ursache (aus dem Code belegt):** Der PIC dimmt über die Zeit. Pro Scan-Schritt ist eine LED während der «refresh time» an und während des «dimmer interval» dunkel, beide in derselben Einheit. 1.2.1…"
+  },
+  {
+   "type": "workflow_agent",
+   "index": 2,
+   "label": "verify pad dimming",
+   "phaseIndex": 2,
+   "phaseTitle": "Verify",
+   "agentId": "a9122fa290705d4f7",
+   "model": "claude-opus-5-5",
+   "state": "done",
+   "startedAt": 1790461335621,
+   "queuedAt": 1790461335614,
+   "attempt": 1,
+   "lastToolName": "Bash",
+   "lastToolSummary": "cd /home/user/work/pad-dim/src && sed -n 984,992p deluge/hi…",
+   "promptPreview": "Adversarially verify a firmware change (at most ~300 words result). Context:\nUser report (Deluge firmware 1.2.1 fork \"mastertune\", branch mastertune-v13 at a8e8af32, main firmware repo /home/user/work/DelugeFirmware-121): at 0 % pad brightness (Settings > Defaults > Pad brightness) the pads flicker unbearably; they want the flicker gone.\n\nWhat 1.2.1 does (src/deluge/hid/led/pad_leds.cpp setBrightn…",
+   "promptFramed": true,
+   "lastProgressAt": 1790461898553,
+   "tokens": 154077,
+   "toolCalls": 37,
+   "durationMs": 562932,
+   "resultPreview": "**Verdikt: ok = true.** Keine Blocker, aber zwei Lücken bei Doku und Kosmetik.\n\n**Bestätigt:**\n- Alle Farbwerte an den PIC laufen über `PIC::send(const RGB&)`, also werden alle skaliert. Das gilt für `setColourForTwoColumns` (Pads und Sidebar, alle Views inkl. Drone und Performance, Greyout, langsamer Cursor), `sendScrollRow`, `doVerticalScroll`, `sendColour` und den Hardware-Test. Ungedimmt bleib…"
+  }
+ ],
+ "totalTokens": 469406,
+ "totalToolCalls": 152
+}

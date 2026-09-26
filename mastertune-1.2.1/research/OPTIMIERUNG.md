@@ -489,6 +489,21 @@ Rohdaten: `raw/delay-v14.json`. Commits `cd7f09ef`, `9ec940a2` (Branch `delay-v1
 - **Ping-Pong** funktioniert, wirkt aber nur bei Stereo-Ausgabe (Kopfhörer oder R-Ausgang), über den Lautsprecher ist der Deluge mono.
 - CPU: +0,8 % im Ruhezustand, während eines Wechsels +1,1 % pro Delay.
 
+## 7h. Flackern der Pads bei tiefer Helligkeit (v13)
+
+Rohdaten: `raw/pad-dim.json`. Commits `29a22d25`, `9b861a5c` (auf v13). Test: `tests/pads/run.sh`.
+- **Ursache:** Der PIC dimmt über die Zeit: Jeder Scan-Schritt ist die «refresh time» an und das «dimmer interval» dunkel. 1.2.1 hält die Summe bis 40 % bei 23. Darunter bleibt die refresh time bei 8, und das Dunkle wächst pro Stufe um 1,2. Der Scan wird langsamer: bei 4 % 5,2-mal, bei 0 % 6,8-mal. Refresh-Werte unter 10 geben zudem falsche Farben (upstream Discussion #1869). Upstream gibt es keinen Fix.
+- **Lösung (Community Features → Flicker-free dimming, Standard On):** Der PIC dimmt nur bis 43,5 % (refresh 10, Periode 23), den Rest skaliert `PIC::send()` bei allen Pad-, Sidebar- und Goldknopf-Werten. Licht je Stufe wie 1.2.1 (±1 %). Off sendet Byte für Byte dasselbe wie 1.2.1.
+- **Kompromiss:** Tasten-LEDs, 7-Segment und PIC-eigene Blinkfarben (schneller Cursor, Menü-Shortcuts) dimmen nur bis 43,5 %.
+- **Am Gerät zu prüfen:** das Modell refresh/(refresh + dimmer), die lineare PWM und ob die Werte 1–3 ruhig leuchten.
+
+## 7i. Übertakten
+
+- Der Deluge läuft mit 13,33 MHz × 30 (PLL) = **400 MHz**, der Nennfrequenz des RZ/A1L (`peripheral_init_basic.c`: `FRQCR = 0x1035`). Bus 133 MHz, Peripherie 66,7 / 33,3 MHz.
+- Per Software geht es nicht höher: Der PLL-Faktor ist fest, `FRQCR` wählt nur Teiler.
+- Nur ein anderer Quarz würde alles beschleunigen, ausserhalb der Spezifikation und mit Folgen für SDRAM-Timing, MIDI-Baudrate, SD, Timer und Wärme. Gewinn höchstens etwa 10 %.
+- Mehr bringt Software: die Optimierungen (−25 % Bedarf von v12 zu v13) und der ungenutzte L2-Cache (128 KB, upstream eingeschaltet).
+
 ## 8. Offen
 
 - [x] Volllast-Test Lauf 1 eingetragen, Priorisierung angepasst.

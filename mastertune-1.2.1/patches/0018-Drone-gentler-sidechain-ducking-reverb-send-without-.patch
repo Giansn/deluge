@@ -1,0 +1,134 @@
+From db9f9d9d738732d10c97194d50214bdf00a4414c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 19:54:13 +0000
+Subject: [PATCH 18/28] Drone: gentler sidechain ducking, reverb send without
+ double song volume; review fixes; grain LFO init
+
+- Drone ducking is linear instead of squared (user feedback: 30 lost too much): 30 dips to -8 dB at the bottom of a
+  full hit instead of -16 dB, 50 still ducks fully; the knob popup shows the dip in dB.
+- The drone's reverb send takes the song volume out once, since the reverb output gets it again in renderSongFX().
+- Pulse edges: the 1 ms minimum can't exceed half a cycle at extreme beats (clamp with lo > hi).
+- Attack/Release show as percent on the 7-segment display too.
+- Song automation no longer overwrites the drone view's knob indicators.
+- 1.2.1 fix: the mod FX LFO wave type was uninitialised for GRAIN.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/drone/drone.cpp                       |  2 +-
+ src/deluge/gui/menu_item/drone/items.h               |  3 ++-
+ src/deluge/gui/views/drone_view.cpp                  | 12 +++++++++++-
+ src/deluge/gui/views/view.cpp                        |  4 +++-
+ .../mod_controllable/mod_controllable_audio.cpp      |  2 +-
+ src/deluge/processing/engines/audio_engine.cpp       |  8 ++++++--
+ 6 files changed, 24 insertions(+), 7 deletions(-)
+
+diff --git a/src/deluge/dsp/drone/drone.cpp b/src/deluge/dsp/drone/drone.cpp
+index 2c9408ab..6b228cf2 100644
+--- a/src/deluge/dsp/drone/drone.cpp
++++ b/src/deluge/dsp/drone/drone.cpp
+@@ -193,7 +193,7 @@ float Drone::syncedBeatHz(int32_t sync, bool triplet, float quarterNotesPerSecon
+ 
+ void Drone::pulseEdges(const Tone& tone, float beatHz, float* attack, float* release) {
+ 	// Each step is 2 % of the half cycle the pulse is on for, so 1 % of the cycle
+-	float shortest = kMinEdgeSeconds * beatHz;
++	float shortest = std::min(kMinEdgeSeconds * beatHz, 0.5f); // A very fast beat is all edge
+ 	*attack = std::clamp((float)std::clamp(tone.pulseAttack, (int32_t)0, S::kMaxPulseEdge) * 0.01f, shortest, 0.5f);
+ 	*release = std::clamp((float)std::clamp(tone.pulseRelease, (int32_t)0, S::kMaxPulseEdge) * 0.01f, shortest, 0.5f);
+ }
+diff --git a/src/deluge/gui/menu_item/drone/items.h b/src/deluge/gui/menu_item/drone/items.h
+index 0281919f..fcd1af20 100644
+--- a/src/deluge/gui/menu_item/drone/items.h
++++ b/src/deluge/gui/menu_item/drone/items.h
+@@ -219,11 +219,12 @@ public:
+ 	void readCurrentValue() override { this->setValue(release_ ? tone().pulseRelease : tone().pulseAttack); }
+ 	void writeCurrentValue() override { (release_ ? tone().pulseRelease : tone().pulseAttack) = this->getValue(); }
+ 	bool isRelevant(ModControllableAudio*, int32_t) override { return tone().mode == Settings::Mode::ISOCHRONIC; }
++	int32_t getDisplayValue() override { return this->getValue() * 2; } // Percent, also on the 7-segment display
+ 
+ protected:
+ 	void drawInteger(int32_t textWidth, int32_t textHeight, int32_t yPixel) override {
+ 		char buffer[12];
+-		snprintf(buffer, sizeof(buffer), "%d%%", (int)(this->getValue() * 2));
++		snprintf(buffer, sizeof(buffer), "%d%%", (int)getDisplayValue());
+ 		deluge::hid::display::OLED::main.drawStringCentred(buffer, yPixel + OLED_MAIN_TOPMOST_PIXEL, textWidth,
+ 		                                                   textHeight);
+ 	}
+diff --git a/src/deluge/gui/views/drone_view.cpp b/src/deluge/gui/views/drone_view.cpp
+index 789e834a..9434be95 100644
+--- a/src/deluge/gui/views/drone_view.cpp
++++ b/src/deluge/gui/views/drone_view.cpp
+@@ -476,7 +476,17 @@ void DroneView::modEncoderAction(int32_t whichModEncoder, int32_t offset) {
+ 			if (upper) {
+ 				currentSong->drone.sidechain =
+ 				    std::clamp(currentSong->drone.sidechain + offset, (int32_t)0, Settings::kMaxLevel);
+-				knobPopup("Sidechain", currentSong->drone.sidechain);
++				// With the dip at the bottom of a full hit, as the ducking is linear (see AudioEngine::renderDrone())
++				int32_t amount = currentSong->drone.sidechain;
++				if (display->haveOLED() && amount > 0 && amount < Settings::kMaxLevel) {
++					char buffer[24];
++					float dip = 20.f * std::log10(1.f - (float)amount / (float)Settings::kMaxLevel);
++					snprintf(buffer, sizeof(buffer), "Sidechain %d  %ddB", (int)amount, (int)std::lround(dip));
++					display->displayPopup(buffer);
++				}
++				else {
++					knobPopup("Sidechain", amount);
++				}
+ 			}
+ 			else {
+ 				currentSong->drone.reverb =
+diff --git a/src/deluge/gui/views/view.cpp b/src/deluge/gui/views/view.cpp
+index e681b20c..781384aa 100644
+--- a/src/deluge/gui/views/view.cpp
++++ b/src/deluge/gui/views/view.cpp
+@@ -1599,7 +1599,9 @@ bool View::isClipContext() {
+ }
+ 
+ void View::displayAutomation() {
+-	if (pendingParamAutomationUpdatesModLevels) {
++	// mastertune-v13: not in the drone view, whose knob indicators show the drone's values
++	bool droneView = getRootUI() && getRootUI()->getUIType() == UIType::DRONE;
++	if (pendingParamAutomationUpdatesModLevels && !droneView) {
+ 		setKnobIndicatorLevels();
+ 	}
+ 	if (getCurrentUI() == &soundEditor) {
+diff --git a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+index 73a983a4..682cce8b 100644
+--- a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
++++ b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+@@ -198,7 +198,7 @@ void ModControllableAudio::processFX(StereoSample* buffer, int32_t numSamples, M
+ 	// Mod FX -----------------------------------------------------------------------------------
+ 	if (modFXType != ModFXType::NONE) {
+ 
+-		LFOType modFXLFOWaveType;
++		LFOType modFXLFOWaveType = LFOType::SINE; // mastertune-v13: was left uninitialised for GRAIN
+ 		int32_t modFXDelayOffset;
+ 		int32_t thisModFXDelayDepth;
+ 		int32_t feedback;
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index 086fcddc..535b0457 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -961,13 +961,17 @@ void renderDrone(size_t numSamples) {
+ 		float gain = 1.f
+ 		             + (float)settings.sidechain * (1.f / deluge::dsp::DroneSettings::kMaxLevel)
+ 		                   * ((float)envelope * (1.f / 2147483648.f));
+-		gain = std::max(gain, 0.f);
+-		context.duck = gain * gain; // A volume curve, as the reverb's ducking
++		// mastertune-v13: linear, gentler than the reverb's squared curve, since a steady tone pumps much more audibly
++		// than a hit: 30 dips to -8 dB at the bottom of a full hit (v12: -16 dB), 50 still ducks all the way
++		context.duck = std::max(gain, 0.f);
+ 	}
+ 
+ 	// Without a send, it's rendered straight into the mix after the song's effects, as in v12
+ 	float send = (float)settings.reverb * (1.f / deluge::dsp::DroneSettings::kMaxLevel);
+ 	send = send * send * kDroneReverbSendMax;
++	// The rendered drone already has the song's volume in it (context.volume), and the reverb gets it again in
++	// renderSongFX(), as every sound's reverb does: so the send takes it out once
++	send = (context.volume > 0.f) ? send / context.volume : 0.f;
+ 	if (send <= 0.f && droneReverbSendLast <= 0.f) {
+ 		droneThisBlock = DroneThisBlock::DIRECT;
+ 		return;
+-- 
+2.43.0
+

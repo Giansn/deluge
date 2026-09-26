@@ -1,0 +1,136 @@
+From 768990841b47db72cd12eddba540548094dba7d8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 22:06:37 +0000
+Subject: [PATCH 24/28] Arp roll / bounce length: review fixes (hung note,
+ silent spans, swing, sequence length)
+
+- Unsynced (or synced with the transport stopped), a ratchet lasting several steps always moves
+  on into its next step, and a step that is over always ends its note and starts the next one,
+  whatever the gate. Before, replacing latched notes or a forced arp restart mid-ratchet could
+  stop the arp with its note hanging (1 note-on and no note-off in 4 bars, in the emulator).
+- A ratchet only lasts several steps if the step's note plays: a note left out by the note
+  probability is a one-step rest, as before, not a rest over the whole bounce length.
+- A ratchet never lasts past the end of the sequence length, so the arp starts over on time.
+- Synced, inside a ratchet lasting several steps, its position doesn't run into the next step
+  before the clock's tick (swing, an external clock), and hits of the last step that the tick
+  left unplayed are dropped (as a new step drops what's left of its ratchet), except one due just
+  before the tick that doesn't run into the next: no more double hits 128 samples apart with swing.
+- Menu: isRelevant back in the public part of RatchetNotes.
+
+In the emulator (real firmware): the 11 edge cases of the review pass (latch unsynced with length
+1/4 and a roll, synced latch, sequence length, note probability, swing, release and press again);
+the 7 roll/bounce cases give exactly the same hits as before; the full-load song renders
+bit-identical.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ .../gui/menu_item/arpeggiator/ratchet_notes.h |  6 +--
+ src/deluge/modulation/arpeggiator.cpp         | 46 ++++++++++++++++---
+ 2 files changed, 43 insertions(+), 9 deletions(-)
+
+diff --git a/src/deluge/gui/menu_item/arpeggiator/ratchet_notes.h b/src/deluge/gui/menu_item/arpeggiator/ratchet_notes.h
+index b4781df8..e570dee8 100644
+--- a/src/deluge/gui/menu_item/arpeggiator/ratchet_notes.h
++++ b/src/deluge/gui/menu_item/arpeggiator/ratchet_notes.h
+@@ -52,11 +52,11 @@ public:
+ 		return {l10n::getView(l10n::String::STRING_FOR_AUTO), "2", "3", "4", "5", "6", "7", "8",
+ 		        l10n::getView(l10n::String::STRING_FOR_ROLL)};
+ 	}
+-
+-private:
+-	static constexpr int32_t kRollOption = 8;
+ 	bool isRelevant(ModControllableAudio* modControllable, int32_t whichThing) override {
+ 		return soundEditor.currentArpSettings != nullptr && soundEditor.currentArpSettings->mode != ArpMode::OFF;
+ 	}
++
++private:
++	static constexpr int32_t kRollOption = 8;
+ };
+ } // namespace deluge::gui::menu_item::arpeggiator
+diff --git a/src/deluge/modulation/arpeggiator.cpp b/src/deluge/modulation/arpeggiator.cpp
+index 8f19e390..2eae24f6 100644
+--- a/src/deluge/modulation/arpeggiator.cpp
++++ b/src/deluge/modulation/arpeggiator.cpp
+@@ -610,8 +610,16 @@ void ArpeggiatorBase::maybeSetupNewRatchet(ArpeggiatorSettings* settings) {
+ 	               && (settings->ratchetAmount > 0 || fixedNumberOfNotes)
+ 	               // For the highest sync we can't divide the time any more, so not possible to ratchet
+ 	               && !(settings->syncType == SYNC_TYPE_EVEN && settings->syncLevel == SyncLevel::SYNC_LEVEL_256TH);
+-	// How many steps the ratchet lasts
+-	ratchetSpanSteps = isRatcheting ? std::clamp<uint32_t>(settings->ratchetBounceLength, 1, kMaxBounceLength) : 1;
++	// How many steps the ratchet lasts: only more than one if the step's note plays (a note left out by the note
++	// probability stays a one-step rest), and never past the end of the sequence length, where the arp starts over
++	ratchetSpanSteps = 1;
++	if (isRatcheting && isPlayNoteForCurrentStep) {
++		ratchetSpanSteps = std::clamp<uint32_t>(settings->ratchetBounceLength, 1, kMaxBounceLength);
++		uint32_t maxSequenceLength = computeCurrentValueForUnsignedMenuItem(settings->sequenceLength);
++		if (maxSequenceLength > 0 && notesPlayedFromSequence < maxSequenceLength) {
++			ratchetSpanSteps = std::min<uint32_t>(ratchetSpanSteps, maxSequenceLength - notesPlayedFromSequence);
++		}
++	}
+ 	ratchetSpanStep = 0;
+ 	if (isRatcheting && roll) {
+ 		ratchetNotesMultiplier = 0;
+@@ -1746,14 +1754,23 @@ void ArpeggiatorBase::render(ArpeggiatorSettings* settings, ArpReturnInstruction
+ 
+ 	// A ratchet lasting several steps goes on into its next step here when not synced (synced, the clock's tick does
+ 	// it)
+-	if (!syncedNow && isRatcheting && playedFirstArpeggiatedNoteYet) {
++	if (!syncedNow && isRatcheting) {
+ 		while (gatePos >= maxGate && ratchetSpanStep + 1 < ratchetSpanSteps) {
+ 			gatePos -= maxGate;
+ 			advanceRatchetSpanStep(settings);
+ 		}
+ 	}
+-	// Where we are in the ratchet (or the step)
+-	uint32_t position = (ratchetSpanStep << 24) + gatePos;
++	// Where we are in the ratchet (or the step). Synced, inside a ratchet lasting several steps, not past the step
++	// until the clock's tick moves it on (with swing or an external clock the tick can come later than the arp's own
++	// count), so no hit of the next step comes early
++	uint32_t positionInStep = gatePos;
++	if (syncedNow && isRatcheting && ratchetSpanStep + 1 < ratchetSpanSteps) {
++		positionInStep = std::min(gatePos, maxGate - 1);
++	}
++	uint32_t position = (ratchetSpanStep << 24) + positionInStep;
++	// Unsynced, the step is over: whatever the gate, the note ends and the next step starts (so a ratchet whose note
++	// is still on over the step's end can't hold the arp)
++	bool stepOver = !syncedNow && gatePos >= maxGate;
+ 
+ 	uint32_t gateThresholdSmall = gateThreshold >> 8;
+ 
+@@ -1791,7 +1808,7 @@ void ArpeggiatorBase::render(ArpeggiatorSettings* settings, ArpReturnInstruction
+ 	uint32_t gateOffPos = noteStart + (uint32_t)(((uint64_t)noteLength * gateThresholdSmall) >> 24);
+ 
+ 	// If gatePos is far enough along that we at least want to switch off any note...
+-	if (position >= gateOffPos) {
++	if (position >= gateOffPos || stepOver) {
+ 		switchAnyNoteOff(instruction);
+ 
+ 		// If not syncing and the step is over, the next normal note is due. Ratchet notes of this step that haven't
+@@ -1849,6 +1866,23 @@ int32_t ArpeggiatorBase::doTickForward(ArpeggiatorSettings* settings, ArpReturnI
+ 				// A step inside a ratchet that lasts several: it goes on, back in time with the clock
+ 				gatePos = 0;
+ 				advanceRatchetSpanStep(settings);
++				// If the tick came earlier than the arp's own count (swing, an external clock), hits of the last step
++				// can be left unplayed: dropped, as a new step drops what's left of its ratchet, so they don't come
++				// late on top of the ones due now. Except one due just before the tick (at most about two audio
++				// blocks), if it doesn't run into the next hit: it plays now, so a fast roll has no gap here
++				uint32_t stepStart = ratchetSpanStep << 24;
++				uint32_t nearTick = lastGateIncrement * 256;
++				while (ratchetNotesIndex + 1 < ratchetNotesCount) {
++					uint32_t missed = getRatchetNoteStart(ratchetNotesIndex + 1);
++					if (missed >= stepStart) {
++						break;
++					}
++					uint32_t next = getRatchetNoteStart(ratchetNotesIndex + 2);
++					if (next >= stepStart && stepStart - missed <= nearTick && next - missed > nearTick) {
++						break;
++					}
++					ratchetNotesIndex++;
++				}
+ 			}
+ 			else {
+ 				switchAnyNoteOff(instruction);
+-- 
+2.43.0
+

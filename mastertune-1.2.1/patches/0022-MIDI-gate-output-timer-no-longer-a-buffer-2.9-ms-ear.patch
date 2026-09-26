@@ -1,0 +1,90 @@
+From c89b7b356401ca9cbafca357d3bc81d2058ff674 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 21:18:10 +0000
+Subject: [PATCH 22/28] MIDI/gate output timer: no longer a buffer (2.9 ms)
+ early for events late in the window
+
+scheduleMidiGateOutISR() set the timer to
+(t - movement - due) & 127, t = timeWithinWindowAtWhichMIDIOrGateOccurs,
+due = unadjustedNumSamplesBeforeLappingPlayHead, movement = the DMA's movement
+while rendering. routine_() only renders once doSomeOutputting() has output
+all of the last window, so the TX buffer then holds 128 - due unplayed samples
+and the window's sample at t plays 128 - due + t - movement samples after the
+timer is set. Whenever that is 128 or more (t >= due + movement), the & 127
+wrapped and the MIDI (clock, notes) or gate went out 128 samples early. Rare
+with the usual windows (about twice what is due), frequent while a file is
+saved or loaded, when routine() renders at least 64 samples ahead
+(minNumSamplesToRender).
+
+Now s = 128 + t - due - (movement & 127). s <= 0 means the DMA overtook the
+output during rendering (an underrun): the samples play a buffer later, so
+s + 128, as the old formula had it; for t < 0 (a tick due before the window)
+that sample has played already: 1, as soon as possible. The gate's minimum
+off time is handled as before, and s is clamped to 5605 samples so the 16-bit
+TGRA (and the 32-bit product) can't overflow.
+
+In the emulator (tests/song run.sh MIDI=1: 3 synths and a MIDI track, the
+DMA in real time, the timer and the DIN MIDI UART modelled), the timer as
+scheduled against the DMA reaching the window's sample: normal playback 192
+runs, -1.2..+0.2 samples before and after; while saving 97 runs, 25 MIDI
+clocks at -128 before, all within -1.4..+0.2 now. The rendering buffer was
+empty at every one of 11,000 windows (each started where the last ended).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ .../processing/engines/audio_engine.cpp       | 31 +++++++++++++++----
+ 1 file changed, 25 insertions(+), 6 deletions(-)
+
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index ac6b05b8..63b023ad 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -1119,12 +1119,26 @@ void scheduleMidiGateOutISR(uint32_t saddrPosAtStart, int32_t unadjustedNumSampl
+ 		uint32_t saddrMovementSinceStart =
+ 		    saddrPosAtEnd - saddrPosAtStart; // You'll need to &(SSI_TX_BUFFER_NUM_SAMPLES - 1) this anytime it's used
+ 
+-		int32_t samplesTilMIDIOrGate = (timeWithinWindowAtWhichMIDIOrGateOccurs - saddrMovementSinceStart
+-		                                - unadjustedNumSamplesBeforeLappingPlayHead)
+-		                               & (SSI_TX_BUFFER_NUM_SAMPLES - 1);
+-
+-		if (!samplesTilMIDIOrGate) {
+-			samplesTilMIDIOrGate = SSI_TX_BUFFER_NUM_SAMPLES;
++		// When this window was rendered, the rendering buffer was empty (routine_() only runs once doSomeOutputting()
++		// has output all of the last window) and the TX buffer held SSI_TX_BUFFER_NUM_SAMPLES -
++		// unadjustedNumSamplesBeforeLappingPlayHead samples not yet played, so the window's sample at
++		// timeWithinWindowAtWhichMIDIOrGateOccurs plays that much plus its position after the DMA's position at the
++		// start, i.e. this long from now. mastertune-v13: without the "& (SSI_TX_BUFFER_NUM_SAMPLES - 1)" of before,
++		// which sent the MIDI or gate a whole buffer (128 samples, 2.9 ms) early whenever the position was at or past
++		// what was due plus the DMA's movement: rare with the usual windows (about twice what's due), but frequent
++		// while a file is saved or loaded, when windows of at least 64 samples are rendered ahead
++		// (minNumSamplesToRender).
++		int32_t samplesTilMIDIOrGate = SSI_TX_BUFFER_NUM_SAMPLES + timeWithinWindowAtWhichMIDIOrGateOccurs
++		                               - unadjustedNumSamplesBeforeLappingPlayHead
++		                               - (int32_t)(saddrMovementSinceStart & (SSI_TX_BUFFER_NUM_SAMPLES - 1));
++
++		// 0 or less: for a position in this window, the DMA overtook the output during rendering (an underrun, or
++		// exactly at it, where doSomeOutputting() waits for the DMA to move on), so the window's samples get written
++		// behind it and play when it comes round again, a buffer later (as the old formula had it). For a position
++		// before the window (a clock tick that was due earlier), that sample has played already: as soon as possible.
++		if (samplesTilMIDIOrGate <= 0) {
++			samplesTilMIDIOrGate =
++			    (timeWithinWindowAtWhichMIDIOrGateOccurs >= 0) ? samplesTilMIDIOrGate + SSI_TX_BUFFER_NUM_SAMPLES : 1;
+ 		}
+ 
+ 		// samplesTilMIDI += 10; This gets the start of stuff perfectly lined up. About 10 for MIDI, 12 for gate
+@@ -1148,6 +1162,11 @@ void scheduleMidiGateOutISR(uint32_t saddrPosAtStart, int32_t unadjustedNumSampl
+ 			}
+ 		}
+ 
++		// At most 2 * SSI_TX_BUFFER_NUM_SAMPLES - 2 here, or the gate's minimum off time (at most 25.5 ms, 1124
++		// samples); the 16-bit timer register (and the 32-bit product below) takes up to 5605 samples
++		constexpr int32_t kMaxSamplesTilMIDIOrGate = (65535u << 16) / 766245;
++		samplesTilMIDIOrGate = std::min(samplesTilMIDIOrGate, kMaxSamplesTilMIDIOrGate);
++
+ 		R_INTC_Enable(INTC_ID_TGIA[TIMER_MIDI_GATE_OUTPUT]);
+ 
+ 		// Set delay time. This is samplesTilMIDIOrGate * 515616 / kSampleRate.
+-- 
+2.43.0
+

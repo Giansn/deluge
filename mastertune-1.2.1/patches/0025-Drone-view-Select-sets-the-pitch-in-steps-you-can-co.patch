@@ -1,0 +1,117 @@
+From d6f8244f776ea50855ebd7fd6a3ea6065c42d205 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 22:24:23 +0000
+Subject: [PATCH 25/28] Drone view: Select sets the pitch in steps you can
+ count, Synth/Kit/MIDI/CV set the mode
+
+- Select turns the selected tone's pitch by its clicks (the gold knobs turn smoothly, so it was
+  hard to tell how far): 1 Hz a click, with Shift 0.1 Hz; as a note a semitone, with Shift a cent.
+- The Synth, Kit, MIDI and CV buttons set its mode: tone, binaural, monaural, isochronic, in that
+  order. Their LEDs show the selected tone's mode (off again when leaving the view).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/views/drone_view.cpp | 48 +++++++++++++++++++++++++----
+ src/deluge/gui/views/drone_view.h   |  1 +
+ 2 files changed, 43 insertions(+), 6 deletions(-)
+
+diff --git a/src/deluge/gui/views/drone_view.cpp b/src/deluge/gui/views/drone_view.cpp
+index 9434be95..b1a127e9 100644
+--- a/src/deluge/gui/views/drone_view.cpp
++++ b/src/deluge/gui/views/drone_view.cpp
+@@ -178,14 +178,26 @@ void DroneView::focusRegained() {
+ 
+ void DroneView::exitToSongView() {
+ 	indicator_leds::setLedState(IndicatorLED::SCALE_MODE, false);
++	showModeLeds(false);
+ 	changeRootUI(&sessionView);
+ }
+ 
++/// The Synth, Kit, MIDI and CV buttons pick the selected tone's mode (tone, binaural, monaural, isochronic, in that
++/// order), and their LEDs show it
++void DroneView::showModeLeds(bool on) {
++	Settings::Mode mode = toneAt(selected_).mode;
++	indicator_leds::setLedState(IndicatorLED::SYNTH, on && mode == Settings::Mode::TONE);
++	indicator_leds::setLedState(IndicatorLED::KIT, on && mode == Settings::Mode::BINAURAL);
++	indicator_leds::setLedState(IndicatorLED::MIDI, on && mode == Settings::Mode::MONAURAL);
++	indicator_leds::setLedState(IndicatorLED::CV, on && mode == Settings::Mode::ISOCHRONIC);
++}
++
+ void DroneView::changed(bool padsToo) {
+ 	if (padsToo) {
+ 		uiNeedsRendering(this);
+ 	}
+ 	showKnobSection(); // The selected tone's values on the knobs' indicators
++	showModeLeds(true);
+ 	if (display->haveOLED()) {
+ 		renderUIsForOled();
+ 	}
+@@ -336,6 +348,20 @@ ActionResult DroneView::buttonAction(deluge::hid::Button b, bool on, bool inCard
+ 		return ActionResult::DEALT_WITH;
+ 	}
+ 
++	// The selected tone's mode, one button each
++	if (b == SYNTH || b == KIT || b == MIDI || b == CV) {
++		if (on && currentUIMode == UI_MODE_NONE) {
++			Settings::Tone& tone = toneAt(selected_);
++			tone.mode = (b == SYNTH)  ? Settings::Mode::TONE
++			            : (b == KIT)  ? Settings::Mode::BINAURAL
++			            : (b == MIDI) ? Settings::Mode::MONAURAL
++			                          : Settings::Mode::ISOCHRONIC;
++			display->displayPopup(deluge::l10n::get(modeName(tone.mode)));
++			changed();
++		}
++		return ActionResult::DEALT_WITH;
++	}
++
+ 	// Play, record, tempo, save, load, settings...
+ 	return view.buttonAction(b, on, inCardRoutine);
+ }
+@@ -384,15 +410,25 @@ ActionResult DroneView::verticalEncoderAction(int32_t offset, bool inCardRoutine
+ 	return ActionResult::DEALT_WITH;
+ }
+ 
++/// Select: the pitch in steps you can count by the clicks (the gold knobs turn smoothly). A frequency in 1 Hz steps,
++/// with Shift in tenths; a note in semitones, with Shift in cents. (The mode is on the Synth, Kit, MIDI and CV
++/// buttons.)
+ void DroneView::selectEncoderAction(int8_t offset) {
+ 	Settings::Tone& tone = toneAt(selected_);
+-	int32_t mode = ((int32_t)tone.mode + offset) % Settings::kNumModes;
+-	if (mode < 0) {
+-		mode += Settings::kNumModes;
++	bool shift = Buttons::isShiftButtonPressed();
++	if (tone.byNote) {
++		if (shift) {
++			tone.cents = std::clamp(tone.cents + (int32_t)offset, -Settings::kMaxCents, Settings::kMaxCents);
++		}
++		else {
++			tone.note = std::clamp(tone.note + (int32_t)offset, (int32_t)0, (int32_t)127);
++		}
+ 	}
+-	tone.mode = (Settings::Mode)mode;
+-	display->displayPopup(deluge::l10n::get(modeName(tone.mode)));
+-	changed();
++	else {
++		tone.frequency = std::clamp(tone.frequency + (int32_t)offset * (shift ? 10 : 100), Settings::kMinFrequency,
++		                            Settings::kMaxFrequency);
++	}
++	changed(false);
+ }
+ 
+ void DroneView::modButtonAction(uint8_t whichButton, bool on) {
+diff --git a/src/deluge/gui/views/drone_view.h b/src/deluge/gui/views/drone_view.h
+index 236b6af1..02b32048 100644
+--- a/src/deluge/gui/views/drone_view.h
++++ b/src/deluge/gui/views/drone_view.h
+@@ -51,6 +51,7 @@ public:
+ 
+ private:
+ 	void exitToSongView();
++	void showModeLeds(bool on);
+ 	void changed(bool padsToo = true);
+ 	void showOnSevenSegment();
+ 	void showKnobSection();
+-- 
+2.43.0
+

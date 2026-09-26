@@ -1,0 +1,43 @@
+From a8e8af32514277b6aa5623c64fbbc532e592da31 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 21:33:19 +0000
+Subject: [PATCH 23/28] MIDI/gate output timer: count from 0 at every start
+
+The compare match clears TCNT_2, but it keeps counting until the interrupt
+stops the timer, which can be hundreds of counts later while
+Song::renderAudio() masks interrupts (up to 451 in the emulator). The next
+start counted on from there: that run fired as much early (up to 38 samples),
+or, with a TGRA below the leftover, only after the 16-bit counter wrapped,
+about 127 ms late (seen while saving: timer runs up to 5408 samples late in
+the base). Now TCNT is set to 0 before the timer is started.
+
+In the emulator with the counter modelled (tests/song MIDI=1), the timer as
+scheduled against the DMA reaching the window's sample: normal playback 192
+runs, saving 97 runs, all within -1.4 ... +0.2 samples, leftover 0 at every
+start.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/processing/engines/audio_engine.cpp | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index 63b023ad..f354d09f 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -1171,6 +1171,11 @@ void scheduleMidiGateOutISR(uint32_t saddrPosAtStart, int32_t unadjustedNumSampl
+ 
+ 		// Set delay time. This is samplesTilMIDIOrGate * 515616 / kSampleRate.
+ 		*TGRA[TIMER_MIDI_GATE_OUTPUT] = ((uint32_t)samplesTilMIDIOrGate * 766245) >> 16;
++		// mastertune-v13: count from 0. The compare match clears the counter, but it goes on counting until the
++		// interrupt stops the timer, which can be hundreds of counts later while Song::renderAudio() has interrupts
++		// masked. Left there, the next run fired that much early, or, with a delay shorter than the leftover, only
++		// after the 16-bit counter wrapped round (about 127 ms late)
++		*TCNT[TIMER_MIDI_GATE_OUTPUT] = 0;
+ 		enableTimer(TIMER_MIDI_GATE_OUTPUT);
+ 	}
+ }
+-- 
+2.43.0
+
