@@ -1,4 +1,4 @@
-From ff31b04d2bcc2306a9fa5d53ba4469cea12b82a0 Mon Sep 17 00:00:00 2001
+From dc37f26a5d6f9e9c0e9ee829247d8a0a3be26335 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 26 Sep 2026 12:39:28 +0000
 Subject: [PATCH] Delay: clean repeats after time changes, cubic resampling,
@@ -26,6 +26,12 @@ Subject: [PATCH] Delay: clean repeats after time changes, cubic resampling,
   within the headroom; a low cut switched off releases its state.
 - Filter and saturation states reset when the delay restarts; a copied
   delay keeps its sync type (1.2.1 dropped triplet and dotted).
+- Reverb (from v10): the darkest damping of the Mutable and Digital models
+  is saved as the darkest again on the Deluge. The firmware's
+  -funsafe-math-optimizations turned max(1 - damping, 2^-31) into a
+  comparison with 1 - 2^-31, which rounds to 1, so it was saved as 0 (no
+  damping). Found by running the reverb test on the Cortex-A9 in an
+  emulator.
 - Saving no longer stalls the audio: while a song or preset is put
   together for the card, the audio routine runs with cluster loading, as
   it does while reading. 1.2.1 had that call commented out, a short buzz
@@ -38,11 +44,12 @@ Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
  src/deluge/dsp/delay/delay.h                  |  23 +-
  src/deluge/dsp/delay/delay_buffer.cpp         | 124 ++++-------
  src/deluge/dsp/delay/delay_buffer.h           | 202 +++++++-----------
+ src/deluge/dsp/reverb/reverb.hpp              |  10 +-
  src/deluge/gui/menu_item/delay/filter.h       |  43 ++++
  src/deluge/gui/ui/menus.cpp                   |   7 +
  .../mod_controllable_audio.cpp                |  17 ++
  src/deluge/storage/storage_manager.cpp        |   7 +-
- 8 files changed, 332 insertions(+), 233 deletions(-)
+ 9 files changed, 341 insertions(+), 234 deletions(-)
  create mode 100644 src/deluge/gui/menu_item/delay/filter.h
 
 diff --git a/src/deluge/dsp/delay/delay.cpp b/src/deluge/dsp/delay/delay.cpp
@@ -762,6 +769,28 @@ index 1a1cd00d..205e963f 100644
  	StereoSample* start_ = nullptr;
  	StereoSample* end_;
  	StereoSample* current_;
+diff --git a/src/deluge/dsp/reverb/reverb.hpp b/src/deluge/dsp/reverb/reverb.hpp
+index b35b40c9..598d2e28 100644
+--- a/src/deluge/dsp/reverb/reverb.hpp
++++ b/src/deluge/dsp/reverb/reverb.hpp
+@@ -138,8 +138,16 @@ inline float dampingFromFile(float value) {
+ }
+ 
+ /// The other way. The darkest setting becomes the smallest value above 0, since 0 means no damping in the file.
++/// (Tested on the input: the firmware's -funsafe-math-optimizations turned max(1 - damping, 2^-31) into a comparison
++/// of damping with 1 - 2^-31, which rounds to 1, and the darkest setting was saved as 0, as no damping.)
+ inline float dampingToFile(float damping) {
+-	return (damping <= 0.f) ? 0.f : std::max(1.f - damping, 1.f / 2147483648.f);
++	if (damping <= 0.f) {
++		return 0.f;
++	}
++	if (damping >= 1.f) {
++		return 1.f / 2147483648.f;
++	}
++	return 1.f - damping; // At least 2^-24 below 1
+ }
+ 
+ /// Cutoff where dsp::OnePole() with 1.2.1's coefficient f / (1 + f) actually puts its pole
 diff --git a/src/deluge/gui/menu_item/delay/filter.h b/src/deluge/gui/menu_item/delay/filter.h
 new file mode 100644
 index 00000000..079486d0

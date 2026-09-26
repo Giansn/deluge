@@ -13,9 +13,9 @@ Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit
 | `deluge-1.2.1-mastertune-v8-76c5a9b8.bin` | `1.2.1-mastertune-v8-76c5a9b8` | v7 + USB-Audio: Ausgang des Deluge als Aufnahme-Eingang am Computer |
 | `deluge-1.2.1-mastertune-v9-c0212731.bin` | `1.2.1-mastertune-v9-c0212731` | v8 + klügeres Sample-Streaming, Kit RAM saver |
 | `deluge-1.2.1-mastertune-v10-7f9ad5c1.bin` | `1.2.1-mastertune-v10-7f9ad5c1` | v9 + Reverb: neues Modell Digital, Mutable und Freeverb repariert, HPF und LPF |
-| `deluge-1.2.1-mastertune-v11-ff31b04d.bin` | `1.2.1-mastertune-v11-ff31b04d` | v10 + Delay: saubere Wiederholungen, kein Knacken bei Zeitänderungen, LPF und HPF im Feedback; kein Knacksen beim Speichern |
+| `deluge-1.2.1-mastertune-v11-dc37f26a.bin` | `1.2.1-mastertune-v11-dc37f26a` | v10 + Delay: saubere Wiederholungen, kein Knacken bei Zeitänderungen, LPF und HPF im Feedback; kein Knacksen beim Speichern |
 
-SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `bacc4b56…90fddbb0` (vollständig: `sha256sum *.bin`).
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad` (vollständig: `sha256sum *.bin`).
 Quellcode: `patches/0001` bis `0011` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011.
 
 ## v3 und v4: Unterschiede
@@ -198,7 +198,7 @@ v10 enthält v9 unverändert und überarbeitet das Song-Reverb: ein neues Modell
 
 ## v11: Delay in besserer Qualität, kein Knacksen beim Speichern
 
-v11 enthält v10 unverändert, überarbeitet das Delay (Sounds, Kits, Audio-Spuren und Song) und behebt das Knacksen beim Speichern. Die Messungen stammen aus einem Test mit dem Delay-Code der Firmware auf dem PC.
+v11 enthält v10, überarbeitet das Delay (Sounds, Kits, Audio-Spuren und Song), behebt das Knacksen beim Speichern und einen Speicherfehler des Reverbs aus v10. Die Messungen stammen aus einem Test mit dem Delay-Code der Firmware auf dem PC.
 
 1. **Saubere Wiederholungen nach jeder Zeitänderung (Fehler aus 1.2.1 behoben).** Das Delay des Deluge dreht seinen Puffer schneller oder langsamer, wenn sich die Zeit ändert. Danach sollte es einen neuen Puffer anlegen und wieder verlustfrei laufen. Ist der neue Puffer aber gleich gross wie der alte, lehnte 1.2.1 ihn ab. Das Delay blieb dann für immer im Umrechnungsmodus, schon wenn der Regler kurz bewegt und zurückgedreht wurde.
    - **Folge in 1.2.1:** Jede Wiederholung verlor 9 dB bei 10 kHz und 24 dB bei 15 kHz, darum wurden die Echos so schnell dumpf.
@@ -230,6 +230,8 @@ v11 enthält v10 unverändert, überarbeitet das Delay (Sounds, Kits, Audio-Spur
 6. **Zwei kleine Fehler aus 1.2.1 behoben:** Ein kopierter Sound behält beim Delay-Sync Triole oder Punktierung, und ein neu startendes Delay beginnt ohne Reste im Filter.
 7. **Kein Knacksen mehr beim Speichern (Fehler aus 1.2.1 behoben).** Während der Deluge einen Song oder ein Preset für die Karte zusammenbaut, lief in 1.2.1 nur die Anzeige weiter. Der Aufruf der Audio-Engine war an dieser Stelle auskommentiert. Die Ausgabe wiederholte deshalb ihren letzten Puffer, das gab bei jedem Speichern ein kurzes Furzen oder Knacksen. Jetzt läuft die Audio-Engine auch dabei weiter und lädt die Samples nach, die gerade spielen, genau wie beim Laden eines Songs. Das gilt für Songs, Synth- und Kit-Presets und Einstellungen.
 
+8. **Reverb-Damping richtig gespeichert (Fehler aus v10 behoben).** Das dunkelste Damping (50) von Mutable und Digital wurde auf dem Deluge als 0 gespeichert, also als «kein Damping», und kam nach dem Laden hell zurück. Die Firmware wird mit `-funsafe-math-optimizations` gebaut, und damit machte der Compiler aus der Rechnung einen Vergleich, der genau diesen Wert falsch rundete. Auf dem PC trat das nicht auf. Gefunden hat es der Reverb-Test im Cortex-A9-Emulator (siehe «Tests im Emulator»).
+
 **Grenzen:**
 - Nicht auf dem Gerät getestet, auch der Fix fürs Speichern nicht.
 - Delays über 2 s laufen wie bisher im Umrechnungsmodus, weil ihr Puffer nicht grösser werden kann.
@@ -240,6 +242,7 @@ v11 enthält v10 unverändert, überarbeitet das Delay (Sounds, Kits, Audio-Spur
 **Geprüft:**
 - **Host-Test** mit dem Delay-Code der Firmware (24 Prüfpunkte, UndefinedBehaviorSanitizer bricht beim ersten Fehler ab): Wiederholungen nach Zeitänderungen bitgenau, Höhen und Rauschen bei Modulation, Blocktreppen, Sprünge bei sieben Arten von Zeitänderungen, keine neuen Puffer bei langen Delays, Filterkurven, Aussteuerung mit HPF bei vollem Feedback, Filter abschalten ohne Sprung.
 - **Build:** ohne Warnungen, zwei Builds mit identischer SHA-256.
+- **Emulator:** Alle Tests laufen zusätzlich auf dem Maschinencode des Cortex-A9 (siehe «Tests im Emulator»). Dort fiel der Damping-Fehler aus v10 auf.
 - **Code-Prüfungen:** drei, mit einer Gegenprüfung jedes Befunds. Sie fanden sechs Fehler in meinen Änderungen, alle behoben:
   - Ein neuer Puffer knackte beim Übernehmen.
   - Der HPF übersteuerte bei vollem Feedback bis auf das 1,84-Fache der Begrenzung.
@@ -360,4 +363,26 @@ python3 /pfad/zu/tests/run_neon_shift_test.py .
 
 # Delay (v11): Wiederholungen, Zeitänderungen und Filter auf dem PC gemessen, mit UndefinedBehaviorSanitizer
 /pfad/zu/tests/delay/run.sh .
+```
+
+## Tests im Emulator (Cortex-A9)
+
+Alle Tests laufen zusätzlich zum PC auch auf dem Maschinencode des Deluge-Prozessors, einem Cortex-A9, in einem Emulator (unicorn 2.1.4, die neuste Version).
+
+- **Gleicher Code wie auf dem Deluge:** Gebaut wird mit der Toolchain der Firmware und ihren Code-Flags: Thumb-2, NEON mit Hard-Float, `-O2` und `-funsafe-math-optimizations`. Nur die Link-Zeit-Optimierung über Dateien hinweg fehlt.
+- **Wozu:** So fallen Unterschiede zwischen PC und Deluge auf, bevor die Firmware aufs Gerät kommt:
+  - 32 Bit statt 64 Bit
+  - NEON-Gleitkomma ohne Denormals
+  - Umformungen des Compilers durch die Fast-Math-Flags
+
+  Genau so fand der Emulator den Damping-Fehler aus v10.
+- **Ablauf:** Der Test läuft als normales Programm mit Ausgabe, Heap, Dateien und Exit-Code (Semihosting der newlib). Speicherfehler und ungültige Befehle meldet der Emulator mit der Stelle im Quellcode.
+- **Rechenzeit:** Der Emulator zählt die ausgeführten Befehle der DSP-Teile pro Block von 128 Samples (2,9 ms), `run_all.sh` gibt sie am Ende aus. Die Prozentangaben rechnen mit 1 Befehl pro Takt bei 400 MHz. Das ist eine grobe Schätzung, denn Caches, Pipeline und Doppel-Ausführung des A9 bildet der Emulator nicht nach. Für Vergleiche zwischen Versionen taugt sie gut.
+- **Was nicht emuliert wird:** Die Hardware (SD-Karte, USB, Display) ersetzen die Tests wie auf dem PC durch eigene Nachbildungen. Der WAV-Test ist reines Python und läuft nur auf dem PC.
+
+```sh
+# Alle Tests auf PC und Emulator (braucht python3 mit unicorn: pip install unicorn)
+/pfad/zu/tests/run_all.sh .            # oder: ... . pc / ... . arm
+# Ein einzelner Test im Emulator
+ARM=1 /pfad/zu/tests/delay/run.sh .
 ```

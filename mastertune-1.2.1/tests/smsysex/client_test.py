@@ -2,7 +2,8 @@
 """Drives the host build of the SysEx file access (harness) the way DEx does and checks the results."""
 import json, os, random, subprocess, sys
 
-H = subprocess.Popen(["./harness"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="latin-1", bufsize=1)
+# RUN: how to start the harness (empty on the PC; the emulator for the Cortex-A9 build, see ../arm)
+H = subprocess.Popen(os.environ.get("RUN", "").split() + ["./harness"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="latin-1", bufsize=1)
 fails = []
 
 def cmd(line):

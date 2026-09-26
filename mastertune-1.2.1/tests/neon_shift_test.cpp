@@ -43,6 +43,22 @@ extern "C" [[gnu::used]] int32_t runTest() {
 	return mismatches;
 }
 
+#if __STDC_HOSTED__
+// Built with the C library for the emulator (tests/arm, run_all.sh)
+#include <cstdio>
+int main() {
+	int32_t mismatches = runTest();
+	if (mismatches) {
+		printf("%d mismatches\n", (int)mismatches);
+	}
+	else {
+		printf("all checks passed (2000 rounds, shift 0-17)\n");
+	}
+	return mismatches != 0;
+}
+#else
+// Freestanding, for run_neon_shift_test.py
 extern "C" [[gnu::used, gnu::naked]] void _start() {
 	asm volatile("bl runTest\n bkpt #0");
 }
+#endif

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Checks the USB audio configuration descriptor against USB 2.0 ch. 9, UAC 1.0 and USB MIDI 1.0 rules."""
-import subprocess, sys
-out = subprocess.run(["./dump"], capture_output=True, text=True).stdout.split("\n")
+import os, subprocess, sys
+# RUN: how to start the program (empty on the PC; the emulator for the Cortex-A9 build, see ../arm)
+out = subprocess.run(os.environ.get("RUN", "").split() + ["./dump"], capture_output=True, text=True).stdout.split("\n")
 get = lambda name: bytes.fromhex(next(l for l in out if l.startswith(name + " "))[len(name) + 1:].replace(" ", ""))
 dev, midi, cfg = get("device"), get("midiconfig"), get("config")
 pipes = [int(x, 16) for x in next(l for l in out if l.startswith("pipes ")).split()[1:]]

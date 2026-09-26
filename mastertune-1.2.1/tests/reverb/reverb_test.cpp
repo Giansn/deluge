@@ -12,6 +12,7 @@
 #include <complex>
 #include <cstdio>
 #include <cstring>
+#include "emu_count.h"
 #include <memory>
 #include <random>
 #include <vector>
@@ -469,6 +470,27 @@ int main(int argc, char** argv) {
 			printf("calibrate room %.1f: Digital level %.2f dB relative to Mutable\n", room,
 			       db(std::hypot(rms(od.l, from, to), rms(od.r, from, to))
 			          / std::hypot(rms(om.l, from, to), rms(om.r, from, to))));
+		}
+	}
+
+	// Cost of each model per block of 128 samples, on the Deluge's Cortex-A9 when this runs in the emulator
+	// (tests/arm; on the PC nothing is counted)
+	for (Model m : {Model::FREEVERB, Model::MUTABLE, Model::DIGITAL}) {
+		Settings s;
+		s.model = m;
+		auto reverb = make(s);
+		std::vector<int32_t> in = noise(kBlock, 0.1);
+		std::vector<StereoSample> buf(kBlock);
+		static char label[64];
+		snprintf(label, sizeof(label), "reverb %s, 128 samples", name(m));
+		for (int b = 0; b < 20; b++) {
+			if (b >= 10) {
+				EMU_COUNT_BEGIN(label);
+			}
+			reverb->process(std::span<int32_t>(in.data(), kBlock), std::span<StereoSample>(buf.data(), kBlock));
+			if (b >= 10) {
+				EMU_COUNT_END();
+			}
 		}
 	}
 

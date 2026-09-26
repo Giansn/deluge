@@ -1,6 +1,7 @@
 // Host test for the delay: runs the firmware's delay code (dsp/delay) on the PC and measures what happens to the
 // repeats, before (1.2.1 / v10) and after the v11 changes.
 #include "dsp/delay/delay.h"
+#include "emu_count.h"
 #include <cmath>
 #include <complex>
 #include <cstdio>
@@ -42,6 +43,7 @@ static double delaySamples(int32_t rate) {
 struct Runner {
 	Delay delay;
 	int32_t feedback = 1 << 29; // Feedback amount as the patcher delivers it
+	const char* countLabel = nullptr; // Instructions of process() counted in the emulator (tests/arm) under this
 	Runner() {
 		delay.pingPong = false;
 		delay.analog = false;
@@ -61,7 +63,13 @@ struct Runner {
 		state.userDelayRate = rate;
 		state.delayFeedbackAmount = feedback;
 		delay.setupWorkingState(state, 0, true);
+		if (countLabel) {
+			EMU_COUNT_BEGIN(countLabel);
+		}
 		delay.process(std::span<StereoSample>(buf.data(), n), state);
+		if (countLabel) {
+			EMU_COUNT_END();
+		}
 		return buf;
 	}
 	// Runs n samples, returns the left output
@@ -464,6 +472,35 @@ int main() {
 		CHECK(std::abs(r.delay.lowCutStateL) < 1.f, "the low cut's state has gone");
 	}
 #endif
+
+	// Cost of the delay per block of 128 samples, on the Deluge's Cortex-A9 when this runs in the emulator (tests/arm;
+	// on the PC nothing is counted): steady (native), with the time modulated (resampling), with the filters on, and
+	// the analog mode
+	{
+		auto measure = [&](const char* label, bool modulated, bool filters, bool analog) {
+			Runner r;
+			r.delay.analog = analog;
+#ifndef NO_DELAY_FILTERS
+			if (filters) {
+				r.delay.highCut = 25;
+				r.delay.lowCut = 25;
+			}
+#endif
+			std::vector<int32_t> in(kBlock);
+			for (int i = 0; i < kBlock; i++) {
+				in[i] = (int32_t)(std::sin(2 * M_PI * 440 * i / kFs) * (1 << 27));
+			}
+			for (int b = 0; b < 400; b++) {
+				int32_t rt = modulated ? (int32_t)(rate * (1.0 + 0.03 * std::sin(b * 0.05))) : rate;
+				r.countLabel = (b >= 380) ? label : nullptr;
+				r.block(in.data(), kBlock, rt);
+			}
+		};
+		measure("delay steady, 128 samples", false, false, false);
+		measure("delay modulated (resampling), 128 samples", true, false, false);
+		measure("delay modulated, filters on, 128 samples", true, true, false);
+		measure("delay modulated, analog, filters on, 128 samples", true, true, true);
+	}
 
 	printf("%d checks, %d failed\n", checks, failures);
 	if (failures == 0) {
