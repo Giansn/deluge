@@ -1,0 +1,1169 @@
+From 76c5a9b8f715256e3c2cf212faad847de15f2913 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 10:12:43 +0000
+Subject: [PATCH] USB audio: the Deluge's output as a USB audio input on the
+ computer
+
+Community feature "USB audio" (off by default, read at boot). When on
+and the Deluge starts as a USB peripheral, it enumerates as a USB Audio
+Class 1.0 device next to its usual MIDI interface: stereo, 24 bits,
+44.1 kHz, isochronous IN endpoint 3 on PIPE1, asynchronous, so the
+computer records exactly what goes to the Deluge's outputs (the same
+signal the Deluge records when resampling).
+
+- io/usb/usb_audio_descriptor.c: device descriptor with release 2.01,
+  configuration AudioControl (input terminal -> USB streaming, no
+  feature unit, so no class requests) + the MIDI interface byte for
+  byte + AudioStreaming (alt 0 / alt 1). Pipe table: the MIDI pipes as
+  always, then PIPE1 (double buffered, FIFO blocks 24-33). Without the
+  feature, the MIDI-only descriptors and pipe table are used unchanged.
+- io/usb/usb_audio_stream.h: ring buffer between the audio engine and
+  the USB interrupt, 24-bit packing, packet sizes 44/45 frames nudged
+  by the smoothed fill level (asynchronous endpoint, no feedback
+  endpoint needed), resync after the computer stopped reading, silence
+  instead of clicks after the engine stalled.
+- io/usb/usb_audio.cpp, usb_audio_pipe.c: priming both halves of the
+  pipe, then refilling every free half on each "buffer free" interrupt
+  through D0FIFO, which nothing else uses (MIDI uses CFIFO from the main
+  loop). Tracks are rendered with interrupts off, so after a long one
+  both halves may need refilling at once. Empty packets the computer
+  got (NRDY on PIPE1) are counted and shown as "USB audio gap", at most
+  every 10 seconds.
+- USB driver: the interrupt handles PIPE1 itself and never queues its
+  events (the queue handler takes every BRDY/BEMP for MIDI). With audio
+  on, only BRDY bits of pipes whose interrupt is enabled go on to the
+  queue, since stale bits of the MIDI send pipe or the DCP would now
+  arrive every millisecond and stop MIDI reception. SET_INTERFACE only
+  touches the interface that changes (the Renesas code forgot the other
+  interfaces' endpoints and re-initialised every pipe); the MIDI
+  interface still gets its pipes reset as before. SET_CONFIGURATION,
+  bus reset and detach stop the stream.
+- deluge.cpp: community features are read before USB starts.
+- audio_engine.cpp: the frames sent to the codec also go to the ring,
+  except during an offline stem export.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/RZA1/usb/USBConnection.c                  |   4 +
+ .../r_usb_basic/src/driver/r_usb_pdriver.c    |   4 +-
+ .../src/driver/r_usb_pstdrequest.c            |  49 +++++
+ .../usb/r_usb_basic/src/hw/r_usb_preg_abs.c   |  30 +++
+ src/deluge/deluge.cpp                         |  10 +-
+ src/deluge/gui/l10n/english.json              |   5 +-
+ src/deluge/gui/l10n/g_english.cpp             |   3 +
+ src/deluge/gui/l10n/g_seven_segment.cpp       |   3 +
+ src/deluge/gui/l10n/seven_segment.json        |   5 +-
+ src/deluge/gui/l10n/strings.h                 |   3 +
+ .../gui/menu_item/runtime_feature/setting.cpp |   7 +
+ .../gui/menu_item/runtime_feature/setting.h   |   7 +
+ .../menu_item/runtime_feature/settings.cpp    |   4 +-
+ src/deluge/io/usb/usb_audio.cpp               | 118 ++++++++++++
+ src/deluge/io/usb/usb_audio.h                 |  68 +++++++
+ src/deluge/io/usb/usb_audio_descriptor.c      | 161 ++++++++++++++++
+ src/deluge/io/usb/usb_audio_pipe.c            |  81 ++++++++
+ src/deluge/io/usb/usb_audio_pipe.h            |  41 +++++
+ src/deluge/io/usb/usb_audio_stream.h          | 174 ++++++++++++++++++
+ .../settings/runtime_feature_settings.cpp     |   4 +
+ .../model/settings/runtime_feature_settings.h |   1 +
+ .../processing/engines/audio_engine.cpp       |   7 +
+ 22 files changed, 784 insertions(+), 5 deletions(-)
+ create mode 100644 src/deluge/io/usb/usb_audio.cpp
+ create mode 100644 src/deluge/io/usb/usb_audio.h
+ create mode 100644 src/deluge/io/usb/usb_audio_descriptor.c
+ create mode 100644 src/deluge/io/usb/usb_audio_pipe.c
+ create mode 100644 src/deluge/io/usb/usb_audio_pipe.h
+ create mode 100644 src/deluge/io/usb/usb_audio_stream.h
+
+diff --git a/src/RZA1/usb/USBConnection.c b/src/RZA1/usb/USBConnection.c
+index ec9635ac..ca258daf 100644
+--- a/src/RZA1/usb/USBConnection.c
++++ b/src/RZA1/usb/USBConnection.c
+@@ -34,6 +34,7 @@ Includes   <System Includes> , "Project Includes"
+ #include "RZA1/usb/r_usb_basic/r_usb_basic_if.h"
+ 
+ #include "deluge/drivers/uart/uart.h"
++#include "deluge/io/usb/usb_audio.h"
+ 
+ #define WHICH_USB_MODULE USB_IP0
+ 
+@@ -95,6 +96,9 @@ void openUSBPeripheral(void)
+     ctrl.type          = USB_PMSC;
+     cfg.usb_speed      = USB_FS;
+     cfg.usb_mode       = USB_PERI;
++    // mastertune-v8: MIDI only, or MIDI plus USB audio (see io/usb/usb_audio.h)
++    usb_descriptor.p_device   = usbAudioDeviceDescriptor();
++    usb_descriptor.p_config_f = usbAudioConfigurationDescriptor();
+     cfg.p_usb_reg      = &usb_descriptor;
+     usb_err_t ret_code = R_USB_Open(&ctrl, &cfg); /* Initializes the USB module */
+ 
+diff --git a/src/RZA1/usb/r_usb_basic/src/driver/r_usb_pdriver.c b/src/RZA1/usb/r_usb_basic/src/driver/r_usb_pdriver.c
+index b1c8e241..0300da9f 100644
+--- a/src/RZA1/usb/r_usb_basic/src/driver/r_usb_pdriver.c
++++ b/src/RZA1/usb/r_usb_basic/src/driver/r_usb_pdriver.c
+@@ -34,6 +34,7 @@
+ #include "RZA1/usb/r_usb_basic/src/hw/inc/r_usb_bitdefine.h"
+ #include "RZA1/usb/r_usb_basic/src/hw/inc/r_usb_reg_access.h"
+ 
++#include "deluge/io/usb/usb_audio.h"
+ #if ((USB_CFG_DTC == USB_CFG_ENABLE) || (USB_CFG_DMA == USB_CFG_ENABLE))
+ #include "RZA1/usb/r_usb_basic/src/hw/inc/r_usb_dmac.h"
+ #endif /* ((USB_CFG_DTC == USB_CFG_ENABLE) || (USB_CFG_DMA == USB_CFG_ENABLE)) */
+@@ -1268,7 +1269,7 @@ void usb_peri_registration(usb_ctrl_t* ctrl, usb_cfg_t* cfg)
+     usb_pcdreg_t pdriver;
+ 
+     /* pdriver registration */
+-    pdriver.p_pipetbl   = (uint16_t*)&g_usb_pstd_eptbl; /* Pipe Define Table address */
++    pdriver.p_pipetbl = usbAudioPipeTable(); /* Pipe Define Table address (mastertune-v8: with PIPE1 for USB audio) */
+     pdriver.p_devicetbl = cfg->p_usb_reg->p_device;     /* Device descriptor Table address */
+     pdriver.p_qualitbl  = cfg->p_usb_reg->p_qualifier;  /* Qualifier descriptor Table address */
+     pdriver.p_configtbl = cfg->p_usb_reg->p_config_f;   /* Configuration descriptor Table address */
+@@ -1419,6 +1420,7 @@ void usb_peri_detach(usb_utr_t* ptr, uint16_t data1, uint16_t data2)
+ #endif /* defined(USB_CFG_PCDC_USE) | defined(USB_CFG_PHID_USE) */
+ 
+     g_usb_peri_connected = USB_FALSE;
++    usbAudioStop(); /* mastertune-v8. Also runs on bus reset, via usb_peri_devdefault() */
+     detachedAsPeripheral(USB_CFG_USE_USBIP);
+ 
+ #if defined(USB_CFG_PCDC_USE) | defined(USB_CFG_PHID_USE)
+diff --git a/src/RZA1/usb/r_usb_basic/src/driver/r_usb_pstdrequest.c b/src/RZA1/usb/r_usb_basic/src/driver/r_usb_pstdrequest.c
+index 5f8a4efa..8d23b480 100644
+--- a/src/RZA1/usb/r_usb_basic/src/driver/r_usb_pstdrequest.c
++++ b/src/RZA1/usb/r_usb_basic/src/driver/r_usb_pstdrequest.c
+@@ -30,6 +30,8 @@
+  ***********************************************************************************************************************/
+ #include "RZA1/usb/r_usb_basic/r_usb_basic_if.h"
+ #include "RZA1/usb/r_usb_basic/src/driver/inc/r_usb_extern.h"
++#include "deluge/drivers/usb/userdef/r_usb_pmidi_config.h"
++#include "deluge/io/usb/usb_audio.h"
+ #include "RZA1/usb/r_usb_basic/src/driver/inc/r_usb_typedef.h"
+ #include "RZA1/usb/r_usb_basic/src/hw/inc/r_usb_bitdefine.h"
+ #include "RZA1/usb/r_usb_basic/src/hw/inc/r_usb_reg_access.h"
+@@ -1129,6 +1131,13 @@ static void usb_pstd_set_configuration3(void)
+             usb_cstd_set_buf(USB_NULL, (uint16_t)USB_PIPE0);
+             cfgok = USB_OK;
+ 
++            // mastertune-v8: a configuration change ends the audio stream and puts its interface back to setting 0
++            if (usbAudioEnabled)
++            {
++                usbAudioStop();
++                g_usb_pstd_alt_num[USB_AUDIO_STREAMING_INTERFACE] = 0;
++            }
++
+             if ((g_usb_pstd_req_value > 0) && (g_usb_pstd_req_value != g_usb_pstd_config_num))
+             {
+                 usb_pstd_clr_eptbl_index();
+@@ -1188,6 +1197,46 @@ static void usb_pstd_set_interface3(void)
+ {
+     uint16_t* p_table;
+ 
++    // mastertune-v8: with USB audio there's more than one interface. The Renesas code below forgets the endpoints of
++    // all other interfaces and (re)initialises every pipe it still knows, which would cut into MIDI transfers. Here only
++    // the interface that changes is touched: for the audio stream, PIPE1 gets configured and started, or stopped.
++    if (usbAudioEnabled)
++    {
++        uint16_t interface_num = g_usb_pstd_req_index;
++        uint16_t alt           = (uint16_t)(g_usb_pstd_req_value & USB_ALT_SET);
++        if ((USB_TRUE == usb_pstd_chk_configured()) && (USB_INTERFACE == (g_usb_pstd_req_type & USB_BMREQUESTTYPERECIP))
++            && (interface_num < usb_pstd_get_interface_num(g_usb_pstd_config_num)) && (0 == g_usb_pstd_req_length)
++            && (alt <= usb_pstd_get_alternate_num(g_usb_pstd_config_num, interface_num)))
++        {
++            g_usb_pstd_alt_num[interface_num] = alt;
++            usb_cstd_set_buf(USB_NULL, (uint16_t)USB_PIPE0);
++            if (USB_AUDIO_STREAMING_INTERFACE == interface_num)
++            {
++                usbAudioStop();
++                /* Endpoint 3 IN exists only in setting 1 */
++                g_usb_pstd_eptbl_index[1][USB_EP3] = USB_ERROR;
++                usb_pstd_set_eptbl_index(g_usb_pstd_config_num, interface_num, alt);
++                if (USB_ERROR != g_usb_pstd_eptbl_index[1][USB_EP3])
++                {
++                    usb_pstd_set_pipe_register((uint16_t)USB_PIPE1, g_usb_pstd_driver.p_pipetbl);
++                    usbAudioStart();
++                }
++            }
++            else if (USB_AUDIO_MIDI_INTERFACE == interface_num)
++            {
++                /* As in MIDI-only mode: the interface's pipes start over, with their data toggles reset */
++                usb_pstd_set_pipe_register((uint16_t)USB_CFG_PMIDI_BULK_IN, g_usb_pstd_driver.p_pipetbl);
++                usb_pstd_set_pipe_register((uint16_t)USB_CFG_PMIDI_BULK_OUT, g_usb_pstd_driver.p_pipetbl);
++            }
++        }
++        else
++        {
++            /* Request error */
++            usb_pstd_set_stall_pipe0();
++        }
++        return;
++    }
++
+     /* Configured ? */
+     if ((USB_TRUE == usb_pstd_chk_configured()) && ((USB_INTERFACE == g_usb_pstd_req_type & USB_BMREQUESTTYPERECIP)))
+     {
+diff --git a/src/RZA1/usb/r_usb_basic/src/hw/r_usb_preg_abs.c b/src/RZA1/usb/r_usb_basic/src/hw/r_usb_preg_abs.c
+index ad857565..fcdc25ec 100644
+--- a/src/RZA1/usb/r_usb_basic/src/hw/r_usb_preg_abs.c
++++ b/src/RZA1/usb/r_usb_basic/src/hw/r_usb_preg_abs.c
+@@ -34,6 +34,7 @@
+ #include "RZA1/usb/r_usb_basic/src/driver/inc/r_usb_typedef.h"
+ #include "RZA1/usb/r_usb_basic/src/hw/inc/r_usb_bitdefine.h"
+ #include "RZA1/usb/r_usb_basic/src/hw/inc/r_usb_reg_access.h"
++#include "deluge/io/usb/usb_audio.h"
+ 
+ /***********************************************************************************************************************
+  Exported global variables (to be accessed by other files)
+@@ -149,6 +150,30 @@ int usb_pstd_interrupt_handler(uint16_t* type, uint16_t* status)
+         // uint16_t bsts  = (uint16_t)(brdysts & brdyenb);
+         uint16_t bsts = brdysts;
+ 
++        // mastertune-v8: PIPE1 carries the USB audio stream. A free buffer gets its next packet right here, and the
++        // event must never reach the queue, whose handler takes every BRDY for MIDI.
++        if (usbAudioEnabled && (bsts & USB_BRDY1))
++        {
++#if USB_CFG_USE_USBIP == USB_CFG_IP0
++            USB200.BRDYSTS = (uint16_t)~USB_BRDY1;
++#else  /* USB_CFG_USE_USBIP == USB_CFG_IP1 */
++            USB201.BRDYSTS = (uint16_t)~USB_BRDY1;
++#endif /* USB_CFG_USE_USBIP == USB_CFG_IP1 */
++            usbAudioInBufferReady();
++            // Only pipes whose BRDY interrupt is on may go on to the queue: the MIDI send pipe and the DCP leave stale
++            // BRDY bits behind, which used to come along only with a real MIDI receive, but would now arrive with
++            // every PIPE1 interrupt and make the MIDI handler read an empty pipe (and stop receiving for good)
++#if USB_CFG_USE_USBIP == USB_CFG_IP0
++            bsts &= (uint16_t)(~USB_BRDY1) & USB200.BRDYENB;
++#else  /* USB_CFG_USE_USBIP == USB_CFG_IP1 */
++            bsts &= (uint16_t)(~USB_BRDY1) & USB201.BRDYENB;
++#endif /* USB_CFG_USE_USBIP == USB_CFG_IP1 */
++            if (bsts == 0u)
++            {
++                return 1; // All dealt with
++            }
++        }
++
+         // Pipe 0
+         if (bsts & USB_BRDY0)
+         {
+@@ -194,6 +219,11 @@ int usb_pstd_interrupt_handler(uint16_t* type, uint16_t* status)
+ #endif
+         // uint16_t nsts  = (uint16_t)(nrdysts & nrdyenb);
+         uint16_t nsts = nrdysts;
++        // mastertune-v8: leave PIPE1's bit for the USB audio code, which counts it as a gap in the stream
++        if (usbAudioEnabled)
++        {
++            nsts &= (uint16_t)~USB_NRDY1;
++        }
+ 
+         // Ok, disregard everything else below - NRDY interrupts never actually need dealing with - unless we have ISO
+         // endpoints, which MIDI never does. We'll just clear the interrupt and get out. I've actually disabled NRDY
+diff --git a/src/deluge/deluge.cpp b/src/deluge/deluge.cpp
+index 39bfca8e..9421756d 100644
+--- a/src/deluge/deluge.cpp
++++ b/src/deluge/deluge.cpp
+@@ -48,6 +48,7 @@
+ #include "io/midi/midi_device_manager.h"
+ #include "io/midi/midi_engine.h"
+ #include "io/midi/midi_follow.h"
++#include "io/usb/usb_audio.h"
+ #include "lib/printf.h" // IWYU pragma: keep this over rides printf with a non allocating version
+ #include "memory/general_memory_allocator.h"
+ #include "model/clip/instrument_clip.h"
+@@ -595,6 +596,9 @@ void registerTasks() {
+ 	addRepeatingTask(&doAnyPendingUIRendering, p++, 0.01, 0.01, 0.015, "pending UI");
+ 	// SD card file access over USB MIDI SysEx (storage/smsysex.cpp), same place and timing as in 1.3
+ 	addRepeatingTask([]() { smSysex::handleNextSysEx(); }, p++, 0.0002, 0.0002, 0.01, "sysex file access");
++	if (usbAudioEnabled) {
++		addRepeatingTask([]() { usbAudioReportGaps(); }, p++, 0.5, 0.5, 1, "usb audio gaps");
++	}
+ 	// this one actually actions them
+ 	addRepeatingTask([]() { encoders::interpretEncoders(false); }, p++, 0.005, 0.005, 0.01, "interpret encoders slow");
+ 
+@@ -847,6 +851,11 @@ extern "C" int32_t deluge_main(void) {
+ 		deluge::hid::display::swapDisplayType();
+ 	}
+ 
++	// mastertune-v8: the community features come from the SD card before USB starts, because USB audio decides which
++	// descriptors the Deluge shows as a USB peripheral
++	runtimeFeatureSettings.readSettingsFromFile(storageManager);
++	usbAudioSetEnabled(runtimeFeatureSettings.isOn(RuntimeFeatureSettingType::UsbAudio));
++
+ 	usbLock = 1;
+ 	openUSBHost();
+ 
+@@ -863,7 +872,6 @@ extern "C" int32_t deluge_main(void) {
+ 	usbLock = 0;
+ 
+ 	// Hopefully we can read these files now
+-	runtimeFeatureSettings.readSettingsFromFile(storageManager);
+ 	MIDIDeviceManager::readDevicesFromFile(storageManager);
+ 	midiFollow.readDefaultsFromFile(storageManager);
+ 	PadLEDs::setBrightnessLevel(FlashStorage::defaultPadBrightness);
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index 99426532..9b022ac8 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -919,6 +919,9 @@
+         "STRING_FOR_RATCHET_NOTES": "Ratchet notes",
+         "STRING_FOR_ARP_RATCHET_NOTES_MENU_TITLE": "Ratchet notes",
+         "STRING_FOR_BOUNCE_FADE": "Bounce fade",
+-        "STRING_FOR_ARP_BOUNCE_FADE_MENU_TITLE": "Bounce fade"
++        "STRING_FOR_ARP_BOUNCE_FADE_MENU_TITLE": "Bounce fade",
++        "STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO": "USB audio",
++        "STRING_FOR_RESTART_TO_APPLY": "Restart to apply",
++        "STRING_FOR_USB_AUDIO_GAP": "USB audio gap"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index ce7d721a..31b3992d 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -848,6 +848,9 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_ARP_RATCHET_NOTES_MENU_TITLE, "Ratchet notes"},
+         {STRING_FOR_BOUNCE_FADE, "Bounce fade"},
+         {STRING_FOR_ARP_BOUNCE_FADE_MENU_TITLE, "Bounce fade"},
++        {STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO, "USB audio"},
++        {STRING_FOR_RESTART_TO_APPLY, "Restart to apply"},
++        {STRING_FOR_USB_AUDIO_GAP, "USB audio gap"},
+     },
+ };
+ } // namespace deluge::l10n::built_in
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index f7006e2f..5a11bc68 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -490,6 +490,9 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_RATCHET_BOUNCE, "BNCE"},
+         {STRING_FOR_RATCHET_NOTES, "RNUM"},
+         {STRING_FOR_BOUNCE_FADE, "BFAD"},
++        {STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO, "UAUD"},
++        {STRING_FOR_RESTART_TO_APPLY, "RSTR"},
++        {STRING_FOR_USB_AUDIO_GAP, "UGAP"},
+     },
+     &built_in::english,
+ };
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index ff0066ee..ab50c8aa 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -524,6 +524,9 @@
+         "STRING_FOR_ARP_LATCH": "LATC",
+         "STRING_FOR_RATCHET_BOUNCE": "BNCE",
+         "STRING_FOR_RATCHET_NOTES": "RNUM",
+-        "STRING_FOR_BOUNCE_FADE": "BFAD"
++        "STRING_FOR_BOUNCE_FADE": "BFAD",
++        "STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO": "UAUD",
++        "STRING_FOR_RESTART_TO_APPLY": "RSTR",
++        "STRING_FOR_USB_AUDIO_GAP": "UGAP"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index e36a8e6c..38612435 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -963,6 +963,9 @@ enum class String : size_t {
+ 	STRING_FOR_ARP_RATCHET_NOTES_MENU_TITLE,
+ 	STRING_FOR_BOUNCE_FADE,
+ 	STRING_FOR_ARP_BOUNCE_FADE_MENU_TITLE,
++	STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO,
++	STRING_FOR_RESTART_TO_APPLY,
++	STRING_FOR_USB_AUDIO_GAP,
+ 
+ 	STRING_LAST
+ };
+diff --git a/src/deluge/gui/menu_item/runtime_feature/setting.cpp b/src/deluge/gui/menu_item/runtime_feature/setting.cpp
+index 73838c02..3abed210 100644
+--- a/src/deluge/gui/menu_item/runtime_feature/setting.cpp
++++ b/src/deluge/gui/menu_item/runtime_feature/setting.cpp
+@@ -16,7 +16,9 @@
+  */
+ 
+ #include "setting.h"
++#include "gui/l10n/l10n.h"
+ #include "gui/menu_item/runtime_feature/setting.h"
++#include "hid/display/display.h"
+ #include "model/settings/runtime_feature_settings.h"
+ 
+ namespace deluge::gui::menu_item::runtime_feature {
+@@ -41,6 +43,11 @@ void Setting::writeCurrentValue() {
+ 	    runtimeFeatureSettings.settings[currentSettingIndex].options[this->getValue()].value;
+ }
+ 
++void UsbAudioSetting::writeCurrentValue() {
++	Setting::writeCurrentValue();
++	display->displayPopup(l10n::get(l10n::String::STRING_FOR_RESTART_TO_APPLY));
++}
++
+ deluge::vector<std::string_view> Setting::getOptions() {
+ 	deluge::vector<std::string_view> options;
+ 	for (const RuntimeFeatureSettingOption& option : runtimeFeatureSettings.settings[currentSettingIndex].options) {
+diff --git a/src/deluge/gui/menu_item/runtime_feature/setting.h b/src/deluge/gui/menu_item/runtime_feature/setting.h
+index 95ac37bb..e75c0310 100644
+--- a/src/deluge/gui/menu_item/runtime_feature/setting.h
++++ b/src/deluge/gui/menu_item/runtime_feature/setting.h
+@@ -47,4 +47,11 @@ public:
+ 	// don't enter menu on select button press
+ 	bool shouldEnterSubmenu() override { return false; }
+ };
++
++// mastertune-v8: USB audio only takes effect when the Deluge starts, so say so when it changes
++class UsbAudioSetting : public SettingToggle {
++public:
++	using SettingToggle::SettingToggle;
++	void writeCurrentValue() override;
++};
+ } // namespace deluge::gui::menu_item::runtime_feature
+diff --git a/src/deluge/gui/menu_item/runtime_feature/settings.cpp b/src/deluge/gui/menu_item/runtime_feature/settings.cpp
+index 8caf528d..e3a29a64 100644
+--- a/src/deluge/gui/menu_item/runtime_feature/settings.cpp
++++ b/src/deluge/gui/menu_item/runtime_feature/settings.cpp
+@@ -50,6 +50,7 @@ SettingToggle menuDisplayChordLayout(RuntimeFeatureSettingType::DisplayChordKeyb
+ SettingToggle menuAlternativePlaybackStartBehaviour(RuntimeFeatureSettingType::AlternativePlaybackStartBehaviour);
+ SettingToggle menuAccessibilityShortcuts(RuntimeFeatureSettingType::AccessibilityShortcuts);
+ SettingToggle menuEnableGridViewLoopPads(RuntimeFeatureSettingType::EnableGridViewLoopPads);
++UsbAudioSetting menuUsbAudio(RuntimeFeatureSettingType::UsbAudio);
+ 
+ std::array<MenuItem*, RuntimeFeatureSettingType::MaxElement - kNonTopLevelSettings> subMenuEntries{
+     &menuDrumRandomizer,
+@@ -74,7 +75,8 @@ std::array<MenuItem*, RuntimeFeatureSettingType::MaxElement - kNonTopLevelSettin
+     &menuDisplayChordLayout,
+     &menuAlternativePlaybackStartBehaviour,
+     &menuAccessibilityShortcuts,
+-    &menuEnableGridViewLoopPads};
++    &menuEnableGridViewLoopPads,
++    &menuUsbAudio};
+ 
+ Settings::Settings(l10n::String name, l10n::String title) : menu_item::Submenu(name, title, subMenuEntries) {
+ }
+diff --git a/src/deluge/io/usb/usb_audio.cpp b/src/deluge/io/usb/usb_audio.cpp
+new file mode 100644
+index 00000000..9335a471
+--- /dev/null
++++ b/src/deluge/io/usb/usb_audio.cpp
+@@ -0,0 +1,118 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "io/usb/usb_audio.h"
++#include "gui/l10n/l10n.h"
++#include "hid/display/display.h"
++#include "io/usb/usb_audio_pipe.h"
++#include "io/usb/usb_audio_stream.h"
++
++namespace AudioEngine {
++extern uint32_t audioSampleTimer;
++}
++
++namespace {
++
++UsbAudioStream stream;
++
++// Set by the main loop once the pipe is primed, cleared before it gets stopped. While set, the USB interrupt writes
++// a packet each time a buffer of the pipe is free.
++volatile bool pipeRunning = false;
++
++uint32_t packetBuffer[(UsbAudioStream::kMaxPacketBytes + 3) / 4];
++
++volatile uint32_t underruns = 0;
++
++void writeOnePacket() {
++	uint32_t numBytes = stream.takePacket(reinterpret_cast<uint8_t*>(packetBuffer));
++	usbAudioPipeWrite(reinterpret_cast<uint8_t*>(packetBuffer), (uint16_t)numBytes);
++}
++
++// Fills whatever halves of the double buffer are free. Usually that's one per interrupt, but the Deluge renders each
++// track with interrupts off, and if that took over a millisecond, both halves have gone out and their interrupts
++// arrive as one.
++void writePackets() {
++	if (!usbAudioPipeReady()) {
++		return; // Both halves still wait to be sent; the frames stay in the ring for the next packet
++	}
++	writeOnePacket();
++	if (usbAudioPipeHasRoom()) {
++		writeOnePacket();
++	}
++}
++
++} // namespace
++
++extern "C" {
++
++void usbAudioStart(void) {
++	usbAudioStop();
++	stream.start();
++	// Fill both halves of the double buffer before the pipe answers IN tokens, so the interrupt always has a packet
++	// in reserve. The pipe still NAKs here, so nothing gets sent and no buffer frees up in between.
++	writePackets();
++	usbAudioPipeTakeUnderrun(); // Forget anything left over from before
++	pipeRunning = true;
++	usbAudioPipeRun();
++}
++
++void usbAudioStop(void) {
++	if (!pipeRunning && !stream.isRunning()) {
++		return;
++	}
++	pipeRunning = false;
++	stream.stop();
++	usbAudioPipeHalt();
++}
++
++void usbAudioInBufferReady(void) {
++	if (pipeRunning) {
++		if (usbAudioPipeTakeUnderrun()) {
++			underruns = underruns + 1;
++		}
++		writePackets();
++	}
++}
++
++uint32_t usbAudioGetUnderruns(void) {
++	return underruns;
++}
++
++void usbAudioReportGaps(void) {
++	static uint32_t reported = 0;
++	static uint32_t lastPopupTime = 0;
++	static bool anyPopupYet = false;
++	uint32_t now = AudioEngine::audioSampleTimer;
++	uint32_t count = underruns;
++	if (count == reported) {
++		return;
++	}
++	// At most one notice every 10 seconds
++	if (anyPopupYet && now - lastPopupTime < 10 * 44100) {
++		return;
++	}
++	reported = count;
++	lastPopupTime = now;
++	anyPopupYet = true;
++	display->displayPopup(deluge::l10n::get(deluge::l10n::String::STRING_FOR_USB_AUDIO_GAP));
++}
++
++void usbAudioPushFrames(const int32_t* frames, int32_t numFrames) {
++	stream.push(frames, numFrames);
++}
++
++} // extern "C"
+diff --git a/src/deluge/io/usb/usb_audio.h b/src/deluge/io/usb/usb_audio.h
+new file mode 100644
+index 00000000..8c710c6e
+--- /dev/null
++++ b/src/deluge/io/usb/usb_audio.h
+@@ -0,0 +1,68 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include <stdint.h>
++
++// The Deluge as a USB audio device (USB Audio Class 1.0, full speed): its output goes to the computer as a stereo,
++// 24-bit, 44.1 kHz recording input, next to the usual USB MIDI. Off unless switched on in the community features,
++// and then only when the Deluge is a USB peripheral at boot.
++//
++// Data path: the audio engine hands every block it sends to the codec to usbAudioPushFrames() (main loop). The frames
++// wait in a ring buffer, and the USB interrupt takes a packet out of it each millisecond, when the isochronous IN pipe
++// (PIPE1, endpoint 3) has room again. The packet size follows the Deluge's own sample clock (asynchronous endpoint):
++// 44 or 45 frames, nudged by the fill level of the ring, so the computer needs no feedback endpoint.
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++// Interface numbers in the configuration with audio
++#define USB_AUDIO_CONTROL_INTERFACE 0
++#define USB_AUDIO_MIDI_INTERFACE 1
++#define USB_AUDIO_STREAMING_INTERFACE 2
++
++// Whether this boot enumerates with the audio interface. Set before openUSBPeripheral(), then fixed.
++extern uint8_t usbAudioEnabled;
++
++// Called before openUSBPeripheral() to choose the descriptors
++void usbAudioSetEnabled(uint8_t enabled);
++uint8_t* usbAudioDeviceDescriptor(void);
++uint8_t* usbAudioConfigurationDescriptor(void);
++uint16_t* usbAudioPipeTable(void);
++
++// USB driver hooks (main loop, from the standard request and state handling). Start once the driver has configured
++// PIPE1 for alternate setting 1 of the streaming interface; stop on alternate setting 0, reset, detach and any
++// configuration change.
++void usbAudioStart(void);
++void usbAudioStop(void);
++
++// USB interrupt: a buffer of the isochronous IN pipe is free again
++void usbAudioInBufferReady(void);
++
++// How often the computer got an empty packet because none was ready (a gap in its recording)
++uint32_t usbAudioGetUnderruns(void);
++// Main loop, twice a second: shows a short notice when there were new gaps
++void usbAudioReportGaps(void);
++
++// Audio engine (main loop): the frames just sent to the codec, interleaved left/right, 24 bits in the top of 32
++void usbAudioPushFrames(const int32_t* frames, int32_t numFrames);
++
++#ifdef __cplusplus
++}
++#endif
+diff --git a/src/deluge/io/usb/usb_audio_descriptor.c b/src/deluge/io/usb/usb_audio_descriptor.c
+new file mode 100644
+index 00000000..b0407bee
+--- /dev/null
++++ b/src/deluge/io/usb/usb_audio_descriptor.c
+@@ -0,0 +1,161 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++// Descriptors and pipe table for the configuration with USB audio (see usb_audio.h). Without USB audio, the Deluge
++// keeps its MIDI-only descriptors in io/midi/r_usb_pmidi_descriptor.c unchanged.
++//
++// One audio function, USB Audio Class 1.0, no interface association descriptor (UAC1 groups its interfaces through
++// the AudioControl header, which Windows, macOS and Linux all follow):
++//   interface 0: AudioControl. Input terminal (the Deluge's output, a line connector) -> output terminal (USB
++//                streaming). No feature unit, so the computer has no volume or mute to set and sends no class requests.
++//   interface 1: MIDIStreaming, byte for byte the Deluge's usual MIDI interface.
++//   interface 2: AudioStreaming. Alternate setting 0 without endpoint, 1 with the isochronous IN endpoint 3:
++//                asynchronous, stereo, 24 bits in 3 bytes, 44.1 kHz only.
++// The MIDI interface comes before the audio stream, so the MIDI endpoints keep the first two entries of the pipe table
++// (PIPE2 and PIPE3, as always) and the audio endpoint takes the third (PIPE1).
++
++#include "RZA1/usb/r_usb_basic/r_usb_basic_if.h"
++#include "RZA1/usb/r_usb_basic/src/driver/inc/r_usb_basic_define.h"
++#include "RZA1/usb/r_usb_basic/src/driver/inc/r_usb_typedef.h"
++#include "io/usb/usb_audio.h"
++#include <string.h>
++
++extern uint8_t g_midi_device[];
++extern uint8_t g_midi_configuration[];
++extern uint16_t g_usb_pstd_eptbl[];
++
++// A different device release with audio, so a computer that keeps settings per device revision sets the device up
++// afresh when USB audio is switched on or off
++#define USB_AUDIO_BCD_DEVICE 0x0201
++
++#define USB_AUDIO_SAMPLE_RATE 44100
++#define USB_AUDIO_MAX_PACKET_SIZE (46 * 6) // 46 frames of 2 x 3 bytes; the Deluge sends 44 or 45
++
++#define CS_INTERFACE 0x24
++#define CS_ENDPOINT 0x25
++
++static const uint8_t audioControlInterface[] = {
++    // Standard AudioControl interface
++    9, USB_DT_INTERFACE, USB_AUDIO_CONTROL_INTERFACE, 0, 0, 0x01 /* AUDIO */, 0x01 /* AUDIOCONTROL */, 0, 0,
++    // Class-specific AC interface header: ADC 1.00, total length 10 + 12 + 9, two streaming interfaces
++    10, CS_INTERFACE, 0x01 /* HEADER */, 0x00, 0x01, 31, 0, 2, USB_AUDIO_MIDI_INTERFACE, USB_AUDIO_STREAMING_INTERFACE,
++    // Input terminal 1: line connector, two channels, left front and right front
++    12, CS_INTERFACE, 0x02 /* INPUT_TERMINAL */, 1, 0x03, 0x06, 0, 2, 0x03, 0x00, 0, 0,
++    // Output terminal 2: USB streaming, fed by terminal 1
++    9, CS_INTERFACE, 0x03 /* OUTPUT_TERMINAL */, 2, 0x01, 0x01, 0, 1, 0};
++
++static const uint8_t audioStreamingInterface[] = {
++    // Alternate setting 0: no bandwidth
++    9, USB_DT_INTERFACE, USB_AUDIO_STREAMING_INTERFACE, 0, 0, 0x01 /* AUDIO */, 0x02 /* AUDIOSTREAMING */, 0, 0,
++    // Alternate setting 1: streaming
++    9, USB_DT_INTERFACE, USB_AUDIO_STREAMING_INTERFACE, 1, 1, 0x01 /* AUDIO */, 0x02 /* AUDIOSTREAMING */, 0, 0,
++    // Class-specific AS general: linked to terminal 2, 1 frame delay, PCM
++    7, CS_INTERFACE, 0x01 /* AS_GENERAL */, 2, 1, 0x01, 0x00,
++    // Type I format: 2 channels, 3-byte subframes, 24 bits, one sample rate
++    11, CS_INTERFACE, 0x02 /* FORMAT_TYPE */, 0x01 /* FORMAT_TYPE_I */, 2, 3, 24, 1, (uint8_t)(USB_AUDIO_SAMPLE_RATE),
++    (uint8_t)(USB_AUDIO_SAMPLE_RATE >> 8), (uint8_t)(USB_AUDIO_SAMPLE_RATE >> 16),
++    // Standard endpoint (audio class form with bRefresh and bSynchAddress): endpoint 3 IN, isochronous, asynchronous,
++    // every frame
++    9, USB_DT_ENDPOINT, (uint8_t)(USB_EP_IN | USB_EP3), 0x05, (uint8_t)(USB_AUDIO_MAX_PACKET_SIZE),
++    (uint8_t)(USB_AUDIO_MAX_PACKET_SIZE >> 8), 1, 0, 0,
++    // Class-specific endpoint: no sampling frequency or pitch control, no lock delay
++    7, CS_ENDPOINT, 0x01 /* EP_GENERAL */, 0x00, 0, 0, 0};
++
++static uint8_t audioDevice[USB_DD_BLENGTH + (USB_DD_BLENGTH % 2)] __attribute__((aligned(4)));
++static uint8_t audioConfiguration[256] __attribute__((aligned(4)));
++
++// The MIDI pipes as usual, then PIPE1 for the audio stream. Type, direction, endpoint and packet size come from the
++// endpoint descriptor when the driver reads the configuration, as for the MIDI pipes.
++static uint16_t audioPipeTable[3 * USB_EPL + 1];
++static const uint16_t audioPipe[USB_EPL] = {
++    USB_PIPE1,
++    USB_BFREOFF | USB_CFG_DBLBON | USB_CFG_CNTMDOFF,  /* PIPECFG: double buffered */
++    (uint16_t)USB_BUF_SIZE(320u) | USB_BUF_NUMB(24u), /* PIPEBUF: blocks 24 to 33, between the two MIDI pipes' */
++    USB_NULL,                                         /* PIPEMAXP */
++    USB_IFISOFF,                                      /* PIPEPERI */
++    USB_NULL,                                         /* reserve */
++};
++
++uint8_t usbAudioEnabled = 0;
++
++// Returns 0 if the MIDI descriptors don't look as expected, in which case USB audio stays off
++static int buildDescriptors(void) {
++	// Device: the MIDI one with its own release number
++	memcpy(audioDevice, g_midi_device, USB_DD_BLENGTH);
++	audioDevice[12] = (uint8_t)(USB_AUDIO_BCD_DEVICE & 0xFF);
++	audioDevice[13] = (uint8_t)(USB_AUDIO_BCD_DEVICE >> 8);
++
++	// Configuration: header, AudioControl, the MIDI interface, AudioStreaming
++	uint16_t midiTotal = (uint16_t)(g_midi_configuration[2] | (g_midi_configuration[3] << 8));
++	uint8_t configLength = g_midi_configuration[0];
++	uint8_t* midiInterface = g_midi_configuration + configLength;
++	if (configLength != 9 || midiTotal <= configLength || midiInterface[1] != USB_DT_INTERFACE
++	    || g_midi_configuration[4] != 1) {
++		return 0;
++	}
++	uint16_t midiLength = (uint16_t)(midiTotal - configLength);
++	uint16_t total =
++	    (uint16_t)(configLength + sizeof(audioControlInterface) + midiLength + sizeof(audioStreamingInterface));
++	if (total > sizeof(audioConfiguration)) {
++		return 0;
++	}
++
++	uint8_t* p = audioConfiguration;
++	memcpy(p, g_midi_configuration, configLength);
++	p[2] = (uint8_t)(total & 0xFF);
++	p[3] = (uint8_t)(total >> 8);
++	p[4] = 3; // bNumInterfaces
++	p += configLength;
++	memcpy(p, audioControlInterface, sizeof(audioControlInterface));
++	p += sizeof(audioControlInterface);
++	memcpy(p, midiInterface, midiLength);
++	p[2] = USB_AUDIO_MIDI_INTERFACE; // bInterfaceNumber
++	p += midiLength;
++	memcpy(p, audioStreamingInterface, sizeof(audioStreamingInterface));
++
++	// Pipe table: the MIDI entries (exactly two, in the order of their endpoint descriptors), then the audio pipe
++	int numEntries = 0;
++	while (g_usb_pstd_eptbl[numEntries * USB_EPL] != USB_PDTBLEND) {
++		numEntries++;
++		if (numEntries > 2) {
++			return 0;
++		}
++	}
++	if (numEntries != 2) {
++		return 0;
++	}
++	memcpy(audioPipeTable, g_usb_pstd_eptbl, 2 * USB_EPL * sizeof(uint16_t));
++	memcpy(audioPipeTable + 2 * USB_EPL, audioPipe, sizeof(audioPipe));
++	audioPipeTable[3 * USB_EPL] = USB_PDTBLEND;
++	return 1;
++}
++
++void usbAudioSetEnabled(uint8_t enabled) {
++	usbAudioEnabled = (enabled && buildDescriptors()) ? 1 : 0;
++}
++
++uint8_t* usbAudioDeviceDescriptor(void) {
++	return usbAudioEnabled ? audioDevice : g_midi_device;
++}
++
++uint8_t* usbAudioConfigurationDescriptor(void) {
++	return usbAudioEnabled ? audioConfiguration : g_midi_configuration;
++}
++
++uint16_t* usbAudioPipeTable(void) {
++	return usbAudioEnabled ? audioPipeTable : g_usb_pstd_eptbl;
++}
+diff --git a/src/deluge/io/usb/usb_audio_pipe.c b/src/deluge/io/usb/usb_audio_pipe.c
+new file mode 100644
+index 00000000..8fbb064f
+--- /dev/null
++++ b/src/deluge/io/usb/usb_audio_pipe.c
+@@ -0,0 +1,81 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++// Register access for the USB audio pipe (PIPE1, isochronous IN, endpoint 3), in C so it can use the Renesas driver's
++// headers and helpers. The pipe goes through the D0FIFO port with CPU access: USB DMA is off in this firmware, and
++// MIDI uses CFIFO from the main loop, so the USB interrupt can fill D0FIFO at any time without getting in its way.
++
++#include "io/usb/usb_audio_pipe.h"
++#include "RZA1/system/iodefine.h"
++#include "RZA1/usb/r_usb_basic/r_usb_basic_if.h"
++#include "RZA1/usb/r_usb_basic/src/driver/inc/r_usb_extern.h"
++#include "RZA1/usb/r_usb_basic/src/driver/inc/r_usb_typedef.h"
++#include "RZA1/usb/r_usb_basic/src/hw/inc/r_usb_bitdefine.h"
++#include "RZA1/usb/r_usb_basic/src/hw/inc/r_usb_reg_access.h"
++
++int usbAudioPipeReady(void) {
++	// PIPE1 on D0FIFO, 32-bit access, no DMA request, little endian
++	USB200.D0FIFOSEL = (uint16_t)(USB_MBW_32 | USB_PIPE1);
++	int i;
++	for (i = 0; (USB200.D0FIFOSEL & USB_CURPIPE) != USB_PIPE1; i++) {
++		if (i >= 100) {
++			return 0;
++		}
++	}
++	// FRDY: a buffer of the pipe is free for the CPU (not the case while both halves are still waiting to be sent)
++	for (i = 0; !(USB200.D0FIFOCTR & USB_FRDY); i++) {
++		if (i >= 100) {
++			return 0;
++		}
++	}
++	return 1;
++}
++
++int usbAudioPipeHasRoom(void) {
++	return (USB200.D0FIFOCTR & USB_FRDY) ? 1 : 0;
++}
++
++int usbAudioPipeTakeUnderrun(void) {
++	// NRDY: an IN token found both halves empty, so the computer got an empty packet. The status bit gets set whether
++	// or not the NRDY interrupt is on (it's off for this pipe).
++	if (USB200.NRDYSTS & USB_NRDY1) {
++		USB200.NRDYSTS = (uint16_t)~USB_NRDY1;
++		return 1;
++	}
++	return 0;
++}
++
++void usbAudioPipeWrite(uint8_t* data, uint16_t numBytes) {
++	usb_pstd_write_fifo(numBytes, USB_D0USE, data);
++	// Every packet is shorter than the endpoint's maximum packet size, so it has to be marked as complete
++	hw_usb_set_bval(USB_NULL, USB_D0USE);
++}
++
++void usbAudioPipeRun(void) {
++	hw_usb_set_brdyenb(USB_NULL, USB_PIPE1);
++	hw_usb_set_pid(USB_NULL, USB_PIPE1, USB_PID_BUF);
++}
++
++void usbAudioPipeHalt(void) {
++	hw_usb_clear_brdyenb(USB_NULL, USB_PIPE1);
++	hw_usb_set_pid(USB_NULL, USB_PIPE1, USB_PID_NAK);
++	// Release PIPE1 from D0FIFO so the driver can reconfigure it, and drop what's still in its buffers
++	USB200.D0FIFOSEL = 0;
++	hw_usb_set_aclrm(USB_NULL, USB_PIPE1);
++	hw_usb_clear_aclrm(USB_NULL, USB_PIPE1);
++	USB200.BRDYSTS = (uint16_t)~USB_BRDY1;
++}
+diff --git a/src/deluge/io/usb/usb_audio_pipe.h b/src/deluge/io/usb/usb_audio_pipe.h
+new file mode 100644
+index 00000000..b3d4b801
+--- /dev/null
++++ b/src/deluge/io/usb/usb_audio_pipe.h
+@@ -0,0 +1,41 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++// Selects the USB audio pipe on D0FIFO. Returns whether a buffer of the pipe is free for a packet.
++int usbAudioPipeReady(void);
++// After a write: whether the other half is free too (the pipe stays selected)
++int usbAudioPipeHasRoom(void);
++// Writes one packet into that free buffer and marks it ready to send
++void usbAudioPipeWrite(uint8_t* data, uint16_t numBytes);
++// Whether the computer asked for a packet while none was ready, since the last call
++int usbAudioPipeTakeUnderrun(void);
++// Enables the "buffer free" interrupt and lets the pipe answer IN tokens
++void usbAudioPipeRun(void);
++// The opposite, and drops whatever the pipe still holds
++void usbAudioPipeHalt(void);
++
++#ifdef __cplusplus
++}
++#endif
+diff --git a/src/deluge/io/usb/usb_audio_stream.h b/src/deluge/io/usb/usb_audio_stream.h
+new file mode 100644
+index 00000000..74db7ead
+--- /dev/null
++++ b/src/deluge/io/usb/usb_audio_stream.h
+@@ -0,0 +1,174 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include <atomic>
++#include <cstdint>
++#include <cstring>
++
++// The ring buffer between the audio engine (producer, main loop) and the USB interrupt (consumer), and the packet
++// sizes of the asynchronous isochronous IN endpoint. No hardware access, so the host test runs the same code.
++//
++// Packet sizes: nominally 44.1 frames per 1 ms USB frame, so nine packets of 44 and one of 45. The Deluge's sample
++// clock and the computer's USB clock drift apart by up to a few hundred ppm, which shows up as a slowly rising or
++// falling fill level of the ring. Every 8 packets at most, one packet takes a frame more or less (45 instead of 44,
++// or 44 instead of 45) while the smoothed level is off target. Packets stay at 44 or 45 frames, which every
++// operating system accepts from an asynchronous endpoint.
++class UsbAudioStream {
++public:
++	static constexpr uint32_t kRingFrames = 2048; // 46 ms; a power of two
++	static constexpr uint32_t kRingMask = kRingFrames - 1;
++	static constexpr int32_t kTargetFrames = 256; // fill level to steer towards: 5.8 ms
++	static constexpr int32_t kHysteresisFrames = 32;
++	static constexpr int32_t kResyncAboveFrames = 1024;  // far above any level in normal running
++	static constexpr uint32_t kNudgeIntervalPackets = 8; // up to ~2000 ppm of clock difference
++
++	static constexpr uint32_t kBytesPerFrame = 6; // two channels of 3 bytes
++	static constexpr uint32_t kMaxPacketFrames = 45;
++	static constexpr uint32_t kMaxPacketBytes = kMaxPacketFrames * kBytesPerFrame;
++
++	// Main loop, while the consumer is idle: starts over with kTargetFrames of silence in the ring
++	void start() {
++		uint32_t w = writeIndex.load(std::memory_order_relaxed);
++		for (int32_t i = 0; i < kTargetFrames; i++) {
++			uint32_t slot = (w + i) & kRingMask;
++			ring[slot * 2] = 0;
++			ring[slot * 2 + 1] = 0;
++		}
++		readIndex.store(w, std::memory_order_relaxed);
++		writeIndex.store(w + kTargetFrames, std::memory_order_release);
++		tenths = 0;
++		levelAverage = kTargetFrames << 8;
++		packetsSinceNudge = 0;
++		rebuffering = false;
++		running = true;
++	}
++
++	void stop() { running = false; }
++	bool isRunning() const { return running; }
++
++	// Producer: frames interleaved left/right, 24 bits in the top of 32, as sent to the codec. Frames that don't fit
++	// are dropped; that only happens when the computer has stopped reading.
++	void push(const int32_t* frames, int32_t numFrames) {
++		if (!running || numFrames <= 0) {
++			return;
++		}
++		uint32_t w = writeIndex.load(std::memory_order_relaxed);
++		uint32_t r = readIndex.load(std::memory_order_acquire);
++		uint32_t space = kRingFrames - (w - r);
++		uint32_t n = (uint32_t)numFrames;
++		if (n > space) {
++			droppedFrames += n - space;
++			n = space;
++		}
++		for (uint32_t i = 0; i < n; i++) {
++			uint32_t slot = (w + i) & kRingMask;
++			ring[slot * 2] = frames[i * 2];
++			ring[slot * 2 + 1] = frames[i * 2 + 1];
++		}
++		writeIndex.store(w + n, std::memory_order_release);
++	}
++
++	// Consumer: writes the next packet, 3 bytes per sample, little endian, and returns its length in bytes
++	uint32_t takePacket(uint8_t* out) {
++		uint32_t w = writeIndex.load(std::memory_order_acquire);
++		uint32_t r = readIndex.load(std::memory_order_relaxed);
++		int32_t level = (int32_t)(w - r);
++
++		// The computer stopped reading for a while (the ring filled up and the newest frames got dropped): everything
++		// in the ring is stale. Throw it away and start over with the usual reserve of new frames.
++		if (level > kResyncAboveFrames) {
++			r = w;
++			level = 0;
++			levelAverage = kTargetFrames << 8;
++			rebuffering = true;
++			resyncs++;
++		}
++
++		tenths += 441;
++		uint32_t n = tenths / 10;
++		tenths -= n * 10;
++
++		levelAverage += ((level << 8) - levelAverage) >> 4; // smoothed over about 16 ms
++		if (++packetsSinceNudge >= kNudgeIntervalPackets) {
++			int32_t average = levelAverage >> 8;
++			if (average > kTargetFrames + kHysteresisFrames && n == 44) {
++				n = 45;
++				packetsSinceNudge = 0;
++			}
++			else if (average < kTargetFrames - kHysteresisFrames && n == 45) {
++				n = 44;
++				packetsSinceNudge = 0;
++			}
++		}
++
++		// After running dry, send silence until the usual reserve has built up again, rather than a click with every
++		// packet
++		if (level < (int32_t)n) {
++			rebuffering = true;
++		}
++		else if (rebuffering && level >= kTargetFrames) {
++			rebuffering = false;
++			levelAverage = level << 8;
++		}
++		if (rebuffering) {
++			std::memset(out, 0, n * kBytesPerFrame);
++			silentFrames += n;
++			readIndex.store(r, std::memory_order_release);
++			return n * kBytesPerFrame;
++		}
++
++		uint8_t* p = out;
++		for (uint32_t i = 0; i < n; i++) {
++			uint32_t slot = (r + i) & kRingMask;
++			put24(p, ring[slot * 2]);
++			put24(p + 3, ring[slot * 2 + 1]);
++			p += kBytesPerFrame;
++		}
++		readIndex.store(r + n, std::memory_order_release);
++		return n * kBytesPerFrame;
++	}
++
++	int32_t level() const {
++		return (int32_t)(writeIndex.load(std::memory_order_acquire) - readIndex.load(std::memory_order_acquire));
++	}
++
++	// Statistics, for tests
++	uint32_t droppedFrames = 0;
++	uint32_t silentFrames = 0;
++	uint32_t resyncs = 0;
++
++private:
++	static void put24(uint8_t* p, int32_t sample) {
++		int32_t s = sample >> 8;
++		p[0] = (uint8_t)s;
++		p[1] = (uint8_t)(s >> 8);
++		p[2] = (uint8_t)(s >> 16);
++	}
++
++	int32_t ring[kRingFrames * 2] = {};
++	std::atomic<uint32_t> writeIndex{0};
++	std::atomic<uint32_t> readIndex{0};
++	volatile bool running = false;
++
++	// Consumer state
++	uint32_t tenths = 0;
++	int32_t levelAverage = 0; // in 1/256 frames
++	uint32_t packetsSinceNudge = 0;
++	bool rebuffering = false;
++};
+diff --git a/src/deluge/model/settings/runtime_feature_settings.cpp b/src/deluge/model/settings/runtime_feature_settings.cpp
+index 02f1064f..7ef2ab28 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.cpp
++++ b/src/deluge/model/settings/runtime_feature_settings.cpp
+@@ -196,6 +196,10 @@ void RuntimeFeatureSettings::init() {
+ 	SetupOnOffSetting(settings[RuntimeFeatureSettingType::EnableGridViewLoopPads],
+ 	                  STRING_FOR_COMMUNITY_FEATURE_GRID_VIEW_LOOP_PADS, "enableGridViewLoopPads",
+ 	                  RuntimeFeatureStateToggle::Off);
++
++	// UsbAudio (mastertune-v8): the Deluge's output as a USB audio input on the computer. Read at boot only.
++	SetupOnOffSetting(settings[RuntimeFeatureSettingType::UsbAudio], STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO, "usbAudio",
++	                  RuntimeFeatureStateToggle::Off);
+ }
+ 
+ void RuntimeFeatureSettings::readSettingsFromFile(StorageManager& bdsm) {
+diff --git a/src/deluge/model/settings/runtime_feature_settings.h b/src/deluge/model/settings/runtime_feature_settings.h
+index 614ebee6..40cbdcee 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.h
++++ b/src/deluge/model/settings/runtime_feature_settings.h
+@@ -66,6 +66,7 @@ enum RuntimeFeatureSettingType : uint32_t {
+ 	AlternativePlaybackStartBehaviour,
+ 	AccessibilityShortcuts,
+ 	EnableGridViewLoopPads,
++	UsbAudio,
+ 	MaxElement // Keep as boundary
+ };
+ 
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index b204f171..b1d1a66d 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -33,6 +33,7 @@
+ #include "hid/led/indicator_leds.h"
+ #include "io/debug/log.h"
+ #include "io/midi/midi_engine.h"
++#include "io/usb/usb_audio.h"
+ #include "memory/general_memory_allocator.h"
+ #include "model/instrument/kit.h"
+ #include "model/mod_controllable/mod_controllable_audio.h"
+@@ -1159,6 +1160,12 @@ bool doSomeOutputting() {
+ 
+ 	if (numSamplesOutputted) {
+ 
++		// mastertune-v8: the same frames go to the computer when USB audio streams (not during an offline stem
++		// export, which renders faster than real time)
++		if (!(stemExport.processStarted && stemExport.renderOffline)) {
++			usbAudioPushFrames((const int32_t*)outputBufferForResampling, numSamplesOutputted);
++		}
++
+ 		i2sRXBufferPos += (numSamplesOutputted << (NUM_MONO_INPUT_CHANNELS_MAGNITUDE + 2));
+ 		if (i2sRXBufferPos >= (uint32_t)getRxBufferEnd()) {
+ 			i2sRXBufferPos -= (SSI_RX_BUFFER_NUM_SAMPLES << (NUM_MONO_INPUT_CHANNELS_MAGNITUDE + 2));
+-- 
+2.43.0
+

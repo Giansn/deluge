@@ -1,6 +1,6 @@
 # Deluge 1.2.1 mit Master Tune
 
-Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB.
+Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer.
 
 | Datei | Version (Settings → Firmware version) | Inhalt |
 |---|---|---|
@@ -10,9 +10,10 @@ Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit
 | `deluge-1.2.1-mastertune-v5-5daddd9f.bin` | `1.2.1-mastertune-v5-5daddd9f` | v4 + Arpeggiator aus 1.3, Latch, Ratchet Bounce |
 | `deluge-1.2.1-mastertune-v6-1e1af07a.bin` | `1.2.1-mastertune-v6-1e1af07a` | v5 + zweite Bounce-Version: feste Ratchet-Anzahl, Bounce ohne Leiserwerden |
 | `deluge-1.2.1-mastertune-v7-ca0b5bd7.bin` | `1.2.1-mastertune-v7-ca0b5bd7` | v6 + SD-Karte über USB für DEx und deluge-editor |
+| `deluge-1.2.1-mastertune-v8-76c5a9b8.bin` | `1.2.1-mastertune-v8-76c5a9b8` | v7 + USB-Audio: Ausgang des Deluge als Aufnahme-Eingang am Computer |
 
-SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21` (vollständig: `sha256sum *.bin`).
-Quellcode: `patches/0001` bis `0007` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007.
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298` (vollständig: `sha256sum *.bin`).
+Quellcode: `patches/0001` bis `0008` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008.
 
 ## v3 und v4: Unterschiede
 
@@ -126,6 +127,35 @@ v7 enthält v6 unverändert und dazu den Dateizugriff über USB-MIDI aus Communi
 
 **Geprüft:** Host-Test (der Firmware-Code auf dem PC mit AddressSanitizer, auf einer FAT32-RAM-Disk, 40 Prüfpunkte im Ablauf von DEx und deluge-editor), Build ohne Warnungen, zwei Builds mit identischer SHA-256, eine Code-Prüfung. Sie fand drei Fehler, alle behoben: verkürzte Ordnerlisten in deluge-editor, zu knapp bemessenes Warten auf Platz im Sendepuffer, fehlende Absicherung beim Schreiben ohne Puffer. **Auf dem Gerät nicht getestet.**
 
+## v8: USB-Audio, Stufe 1 (Deluge → Computer)
+
+v8 enthält v7 unverändert. Neu kann der Deluge sein Ausgangssignal über USB an den Computer schicken. Er erscheint dort als Audio-Eingang (Stereo, 24 Bit, 44,1 kHz) neben dem gewohnten MIDI. Am Computer kommt genau das an, was an den Ausgängen des Deluge anliegt: dasselbe Signal, das der Deluge beim Resampling aufnimmt, mit Master-Lautstärke und Eingangs-Monitoring.
+
+**Einschalten:** Settings → Community features → **USB audio** (7-Segment: `UAUD`) auf an und den Deluge neu starten. Die Einstellung wirkt nur beim Start und nur, wenn der Deluge als USB-Gerät am Computer hängt, nicht als USB-Host. Ist sie aus (Grundeinstellung), verhält sich der Deluge exakt wie v7.
+
+**Am Computer** (ohne Treiber, USB Audio Class 1.0):
+- macOS: Audio-MIDI-Setup zeigt «Deluge» mit 2 Eingängen.
+- Windows: Einstellungen → System → Sound → Eingabe: «Deluge».
+- Linux: `arecord -l` zeigt «Deluge».
+- In der DAW «Deluge» als Eingang wählen und das Projekt auf 44,1 kHz stellen.
+
+**Technik:**
+- Der Deluge gibt den Takt vor (asynchroner Endpunkt): Jedes USB-Paket enthält 44 oder 45 Frames, je nach Füllstand seines Puffers. Weicht sein Quarz vom Takt des Computers ab, gleicht er das mit einem Frame mehr oder weniger aus, ohne Rückkanal und ohne Umrechnung. Die Samples kommen bitgenau an.
+- Latenz: etwa 6 ms Puffer plus 1–2 ms USB.
+- Liest der Computer eine Weile nicht, verwirft der Deluge den veralteten Puffer und beginnt nach 6 ms Stille neu. Stockt die Audio-Engine, kommt eine kurze Stille statt Knacksern.
+- Der Datenstrom läuft im USB-Interrupt über einen eigenen FIFO-Port. MIDI bleibt davon unberührt.
+
+**Grenzen:**
+- **Nicht auf dem Gerät getestet.** Es ist die erste Version auf dieser Hardware, ich brauche deine Rückmeldung.
+- Nur 44,1 kHz. Läuft die DAW mit einer anderen Rate, rechnet das Betriebssystem um. Im exklusiven Modus oder mit ASIO muss das Projekt auf 44,1 kHz stehen.
+- Mit USB audio an sieht der Computer den Deluge als neues Gerät. Die MIDI-Ports in der DAW müssen eventuell neu zugewiesen werden.
+- Die Lautstärke regelt der Deluge. Der Computer hat dafür keinen Regler.
+- Wird der Deluge mit USB audio nicht erkannt oder hängt er: USB-Kabel abziehen, starten, Einstellung ausschalten.
+- **«USB audio gap»** (7-Segment: `UGAP`): Der Computer hat ein leeres Paket bekommen, also eine Lücke von 1 ms in der Aufnahme. Das kann bei sehr hoher Last vorkommen, weil der Deluge beim Berechnen jeder Spur alle Interrupts sperrt (so auch in der aktuellen Community-Firmware). Die Meldung erscheint höchstens alle 10 Sekunden. Bitte melden, wann sie kommt.
+- Stufe 2 (Computer → Deluge) folgt, sobald Stufe 1 auf dem Gerät läuft.
+
+**Geprüft:** Deskriptoren gegen die Regeln von USB 2.0, USB Audio 1.0 und USB MIDI (64 Prüfpunkte). Puffer und Paketsteuerung in einer Simulation über 10 Minuten mit Taktabweichungen bis 1400 ppm, einem Computer, der 200 ms nicht liest, und 20 ms Stillstand der Engine (39 Prüfpunkte, mit Sanitizern). Build ohne Warnungen, zwei Builds mit identischer SHA-256, eine Code-Prüfung. Sie fand zwei Fehler, beide behoben: MIDI-Empfang über USB wäre während des Streamings ausgefallen, und nach langem Sperren der Interrupts wäre nur eine Hälfte des Doppelpuffers nachgefüllt worden.
+
 ## Bedienung
 
 Das Menü liegt unter **Settings → Tuning → Master tune (Hz)**. Die 7-Segment-Anzeige zeigt `TUNE` → `MTUN`.
@@ -211,8 +241,8 @@ Version 1 liegt weiterhin in der Git-Historie dieses Ordners.
 ```sh
 git clone https://github.com/SynthstromAudible/DelugeFirmware && cd DelugeFirmware
 git checkout release_1_2_1
-git am /pfad/zu/patches/*.patch        # alle = v7; nur 0001 = v2, 0001-0003 = v3, 0001-0004 = v4, 0001-0005 = v5, 0001-0006 = v6
-./dbt configure -DRELEASE_TYPE:STRING=mastertune-v7   # Name in der Versionsanzeige, z. B. mastertune-v6 für v6
+git am /pfad/zu/patches/*.patch        # alle = v8; nur 0001 = v2, 0001-0003 = v3, 0001-0004 = v4, 0001-0005 = v5, 0001-0006 = v6, 0001-0007 = v7
+./dbt configure -DRELEASE_TYPE:STRING=mastertune-v8   # Name in der Versionsanzeige, z. B. mastertune-v7 für v7
 ./dbt build release                      # Ergebnis: build/Release/deluge.bin
 
 # Rechentest (Host-Compiler)
@@ -226,4 +256,7 @@ python3 /pfad/zu/tests/run_neon_shift_test.py .
 
 # SD-Zugriff über USB (v7) auf dem PC, mit AddressSanitizer
 /pfad/zu/tests/smsysex/run.sh .
+
+# USB-Audio (v8): Deskriptoren und Puffer-Simulation auf dem PC
+/pfad/zu/tests/usbaudio/run.sh .
 ```
