@@ -6,7 +6,7 @@ set -e
 FW=$(cd "$1" && pwd)
 HERE=$(cd "$(dirname "$0")" && pwd)
 T=$(cd "$HERE/../.." && pwd)
-HERE=$T/delay . "$T/arm/select.sh" # select.sh finds tests/arm as $HERE/../arm
+H=$HERE; HERE=$T/delay; . "$T/arm/select.sh"; HERE=$H # select.sh finds tests/arm as $HERE/../arm
 B=$(mktemp -d)
 trap 'rm -rf "$B"' EXIT
 D="$FW/src"
@@ -17,7 +17,7 @@ CXX="g++ -std=gnu++23 -O2 -g -fsanitize=undefined -fno-sanitize-recover=undefine
 RUN=""
 [ -n "$ARM" ] && CXX="$ARM_CXX" && RUN="$ARM_RUN"
 F="$D/deluge/dsp/filter"
-$CXX -I "$HERE/stubs" -I "$T/delay/stubs" -I "$T/arm" -I "$D/deluge" -I "$D" -include host_shim.h \
+$CXX -I "$HERE/stubs" -I "$T/delay/stubs" -I "$T/arm" -I "$D/deluge" -I "$D" -include host_shim.h -include definitions_cxx.hpp \
     -o "$B/filter_bench" "$HERE/bench.cpp" "$F/filter_set.cpp" "$F/lpladder.cpp" "$F/hpladder.cpp" "$F/svf.cpp" \
     "$F/filter.cpp" "$D/deluge/util/waves.cpp" "$D/deluge/util/lookuptables/lookuptables.cpp" "$B/fw_functions.cpp"
 $RUN "$B/filter_bench"

@@ -5,8 +5,9 @@
 # instruction counts per block; ARM_PROFILE=1 in addition shows the top functions)
 set -e
 FW=$(cd "$1" && pwd)
-HERE=$(cd "$(dirname "$0")" && pwd)
-. "$HERE/../../arm/select.sh"
+HERE=$(cd "$(dirname "$0")/.." && pwd) # select.sh finds the emulator at $HERE/../arm
+. "$HERE/../arm/select.sh"
+HERE=$HERE/oscillators
 B=$(mktemp -d)
 trap 'rm -rf "$B"' EXIT
 D="$FW/src"
