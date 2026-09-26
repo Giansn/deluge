@@ -55,7 +55,7 @@ if [ "$WHAT" = pc ] || [ "$WHAT" = both ]; then
 	run "cluster loading queue (v9)" sh "$HERE/streaming/run.sh" "$FW"
 	run "reverb (v10)" sh "$HERE/reverb/run.sh" "$FW"
 	run "delay (v11)" sh "$HERE/delay/run.sh" "$FW"
-	[ -d "$HERE/drone" ] && run "drone (v12)" sh "$HERE/drone/run.sh" "$FW"
+	[ -f "$FW/src/deluge/dsp/drone/drone.cpp" ] && run "drone (v12)" sh "$HERE/drone/run.sh" "$FW"
 fi
 if [ "$WHAT" = arm ] || [ "$WHAT" = both ]; then
 	echo "On the Deluge's Cortex-A9, in the emulator:"
@@ -66,7 +66,7 @@ if [ "$WHAT" = arm ] || [ "$WHAT" = both ]; then
 	run "cluster loading queue (v9)" env ARM=1 sh "$HERE/streaming/run.sh" "$FW"
 	run "reverb (v10)" env ARM=1 sh "$HERE/reverb/run.sh" "$FW"
 	run "delay (v11)" env ARM=1 sh "$HERE/delay/run.sh" "$FW"
-	[ -d "$HERE/drone" ] && run "drone (v12)" env ARM=1 sh "$HERE/drone/run.sh" "$FW"
+	[ -f "$FW/src/deluge/dsp/drone/drone.cpp" ] && run "drone (v12)" env ARM=1 sh "$HERE/drone/run.sh" "$FW"
 fi
 
 if [ -s "$LOG/costs" ]; then
