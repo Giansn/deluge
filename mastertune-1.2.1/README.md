@@ -377,7 +377,19 @@ Alle Tests laufen zusätzlich zum PC auch auf dem Maschinencode des Deluge-Proze
 
   Genau so fand der Emulator den Damping-Fehler aus v10.
 - **Ablauf:** Der Test läuft als normales Programm mit Ausgabe, Heap, Dateien und Exit-Code (Semihosting der newlib). Speicherfehler und ungültige Befehle meldet der Emulator mit der Stelle im Quellcode.
-- **Rechenzeit:** Der Emulator zählt die ausgeführten Befehle der DSP-Teile pro Block von 128 Samples (2,9 ms), `run_all.sh` gibt sie am Ende aus. Die Prozentangaben rechnen mit 1 Befehl pro Takt bei 400 MHz. Das ist eine grobe Schätzung, denn Caches, Pipeline und Doppel-Ausführung des A9 bildet der Emulator nicht nach. Für Vergleiche zwischen Versionen taugt sie gut.
+- **Rechenzeit:** Der Emulator zählt die ausgeführten Befehle der DSP-Teile pro Block von 128 Samples (2,9 ms), `run_all.sh` gibt sie am Ende aus. Stand v11:
+
+  | Teil | Befehle pro Block | ≈ CPU | 1.2.1 (v10) |
+  |---|---|---|---|
+  | Reverb Freeverb | 70 200 | 6,0 % | |
+  | Reverb Mutable | 39 100 | 3,4 % | |
+  | Reverb Digital | 53 600 | 4,6 % | |
+  | Delay, Zeit ruhig | 9 200 | 0,8 % | 0,7 % |
+  | Delay, Zeit moduliert | 40 100 | 3,5 % | 5,0 %: meist liefen zwei Puffer |
+  | Delay, moduliert mit LPF/HPF | 44 400 | 3,8 % | |
+  | Delay, moduliert, Analog-Modus mit LPF/HPF | 97 000 | 8,4 % | 9,1 % ohne Filter |
+
+  Die Prozentangaben rechnen mit 1 Befehl pro Takt bei 400 MHz. Das ist eine grobe Schätzung, denn Caches, Pipeline und Doppel-Ausführung des A9 bildet der Emulator nicht nach. Für Vergleiche zwischen Versionen taugt sie gut.
 - **Was nicht emuliert wird:** Die Hardware (SD-Karte, USB, Display) ersetzen die Tests wie auf dem PC durch eigene Nachbildungen. Der WAV-Test ist reines Python und läuft nur auf dem PC.
 
 ```sh

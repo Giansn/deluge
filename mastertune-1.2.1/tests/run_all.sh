@@ -13,7 +13,6 @@ LOG=$(mktemp -d)
 trap 'rm -rf "$LOG"' EXIT
 PASSED=""
 FAILED=""
-COSTS=""
 
 run() {
 	name=$1
@@ -28,7 +27,7 @@ run() {
 		printf 'FAILED  (%ss)\n' $(($(date +%s) - start))
 		tail -n 15 "$LOG/out" | sed 's/^/    /'
 	fi
-	COSTS="$COSTS$(grep '^\[arm\]' "$LOG/out" | sed 's/^\[arm\] /\\n  /')"
+	grep '^\[arm\]' "$LOG/out" | sed 's/^\[arm\] /  /' >> "$LOG/costs"
 }
 
 master_tune_pc() {
@@ -70,7 +69,11 @@ if [ "$WHAT" = arm ] || [ "$WHAT" = both ]; then
 	[ -d "$HERE/drone" ] && run "drone (v12)" env ARM=1 sh "$HERE/drone/run.sh" "$FW"
 fi
 
-[ -n "$COSTS" ] && printf "\nCost on the Cortex-A9 (instructions counted in the emulator; %% at 1 instruction per cycle, 400 MHz):$COSTS\n"
+if [ -s "$LOG/costs" ]; then
+	echo
+	echo "Cost on the Cortex-A9 (instructions counted in the emulator; % at 1 instruction per cycle, 400 MHz):"
+	cat "$LOG/costs"
+fi
 if [ -n "$FAILED" ]; then
 	printf "\nFailed:$FAILED\n"
 	exit 1
