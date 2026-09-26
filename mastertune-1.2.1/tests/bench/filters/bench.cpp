@@ -1,11 +1,14 @@
 // Filter benchmark: the firmware's FilterSet (dsp/filter: lpladder, hpladder, svf, filter_set) as a voice runs it,
 // setConfig then renderLong (mono, 128 samples) or renderLongStereo (128 interleaved frames) per block.
 // In the emulator (ARM=1) it counts instructions per 128-sample block; on the PC it prints a hash of the output per
-// case, so an optimisation can be checked for bit-exactness (same hash before and after).
+// case, so an optimisation can be checked for bit-exactness (same hash before and after). Randomized cases on top
+// (2048, see randomCases) cover far more of the parameter space, block sizes and mode changes; compare hashes ARM
+// against ARM (ARM=1) or PC against PC, as the PC fallbacks of the *_rounded helpers don't round.
 #include "dsp/filter/filter_set.h"
 #include "dsp/filter/lpladder.h"
 #include "emu_count.h"
 #include "util/functions.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -77,6 +80,175 @@ static const Case cases[] = {
 
 static char labels[2 * std::size(cases) + 2][64];
 
+// Randomized cases, for the bit-exactness check: random modes (switching between blocks too, OFF included, so the
+// resets and the dry/wet fades run), routing, parameters (changing every block), cpuDireness (the drive ladder's
+// oversampling), input (noise, saw, silence, some at full scale) and block sizes of 1-128 frames, odd ones included,
+// mono (sometimes with a sampleIncrement of 2 or 3, which no caller uses) and stereo. The hash covers the output, jcong
+// and the FilterSet's bytes (the filters' state) after every block.
+constexpr int kRandomCases = 2048;
+constexpr int kRandomBlocks = 64;
+constexpr int kRandomGroup = 256; // cases per printed hash
+
+struct Rng {
+	uint64_t s;
+	uint32_t next() { // splitmix64
+		uint64_t z = (s += 0x9e3779b97f4a7c15ull);
+		z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+		z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+		return (uint32_t)((z ^ (z >> 31)) >> 32);
+	}
+	int32_t range(int32_t lo, int32_t hi) { return lo + (int32_t)(next() % (uint32_t)(hi - lo + 1)); } // [lo, hi]
+	bool chance(int percent) { return (int)(next() % 100) < percent; }
+};
+
+struct RandomSetting {
+	FilterMode lpf, hpf;
+	FilterRoute route;
+	int32_t lpfFreq, lpfRes, lpfMorph, hpfFreq, hpfRes, hpfMorph, gain;
+};
+
+static bool isSvf(FilterMode m) {
+	return m == FilterMode::SVF_BAND || m == FilterMode::SVF_NOTCH;
+}
+
+static void randomModes(Rng& rng, RandomSetting& p) {
+	static const FilterMode lpfModes[] = {
+	    FilterMode::TRANSISTOR_12DB, FilterMode::TRANSISTOR_24DB, FilterMode::TRANSISTOR_24DB_DRIVE,
+	    FilterMode::SVF_BAND,        FilterMode::SVF_NOTCH,       FilterMode::OFF};
+	static const FilterMode hpfModes[] = {FilterMode::HPLADDER, FilterMode::SVF_BAND, FilterMode::SVF_NOTCH,
+	                                      FilterMode::OFF};
+	p.lpf = lpfModes[rng.next() % std::size(lpfModes)];
+	p.hpf = hpfModes[rng.next() % std::size(hpfModes)];
+	p.route = (FilterRoute)(rng.next() % 3);
+}
+
+// Parameters in the ranges the voice passes (cutoff > 0, resonance 0 to full scale, morph up to full scale, negative
+// too for the ladders), often exactly 0 or full scale, where the loops take other branches
+static int32_t randomFreq(Rng& rng) {
+	return std::max((int32_t)(rng.next() >> rng.range(1, 8)), (int32_t)65536);
+}
+static int32_t randomRes(Rng& rng) {
+	int k = rng.range(0, 9);
+	return k == 0 ? 0 : k == 1 ? kRes : rng.range(0, kRes);
+}
+static int32_t randomMorph(Rng& rng, FilterMode m) {
+	if (rng.chance(40)) {
+		return 0;
+	}
+	int32_t full = (1 << 29) - 1;
+	return isSvf(m) ? rng.range(0, full) : rng.range(-full, full);
+}
+
+static void randomParams(Rng& rng, RandomSetting& p) {
+	p.lpfFreq = randomFreq(rng);
+	p.lpfRes = randomRes(rng);
+	p.lpfMorph = randomMorph(rng, p.lpf);
+	p.hpfFreq = randomFreq(rng);
+	p.hpfRes = randomRes(rng);
+	p.hpfMorph = randomMorph(rng, p.hpf);
+	p.gain = rng.range(0, 1 << 30);
+}
+
+// Parameters drift a little from block to block, as they do when modulated, and sometimes jump
+static void driftParam(Rng& rng, int32_t& v, int32_t lo, int32_t hi) {
+	int64_t n = (int64_t)v + rng.range(-(1 << 22), 1 << 22);
+	v = (int32_t)std::clamp(n, (int64_t)lo, (int64_t)hi);
+}
+
+static void randomInput(Rng& rng, int32_t* buf, int n, uint32_t* phase, uint32_t increment, int shift, int kind) {
+	for (int i = 0; i < n; i++) {
+		int32_t v;
+		switch (kind) {
+		case 0: // noise
+			v = (int32_t)rng.next() >> shift;
+			break;
+		case 1: // saw
+			*phase += increment;
+			v = (int32_t)*phase >> shift;
+			break;
+		case 2: // saw plus noise
+			*phase += increment;
+			v = ((int32_t)*phase >> (shift + 1)) + ((int32_t)rng.next() >> (shift + 1));
+			break;
+		default: // silence
+			v = 0;
+		}
+		buf[i] = v;
+	}
+}
+
+static uint64_t hashWords(uint64_t hash, const void* data, size_t bytes) {
+	const unsigned char* b = (const unsigned char*)data;
+	for (size_t i = 0; i < bytes; i++) {
+		hash = (hash ^ b[i]) * 1099511628211ull;
+	}
+	return hash;
+}
+
+static void randomCases() {
+	uint64_t total = 1469598103934665603ull;
+	uint64_t group = total;
+	static FilterSet fs; // zeroed below, so the state is defined from the start
+	for (int n = 0; n < kRandomCases; n++) {
+		Rng rng{0x5eed0000ull + (uint64_t)n};
+		std::memset((void*)&fs, 0, sizeof(fs));
+		jcong = 380116160 + (uint32_t)n;
+		bool stereo = rng.chance(40);
+		int channels = stereo ? 2 : 1;
+		RandomSetting p;
+		randomModes(rng, p);
+		randomParams(rng, p);
+		uint32_t phase = 0;
+		uint32_t increment = rng.range(1 << 20, 1 << 26);
+		int shift = rng.chance(5) ? 0 : rng.range(1, 8);
+		int kind = rng.range(0, 2);
+		for (int b = 0; b < kRandomBlocks; b++) {
+			if (rng.chance(12)) {
+				randomModes(rng, p);
+				randomParams(rng, p);
+			}
+			else if (rng.chance(15)) {
+				randomParams(rng, p);
+			}
+			else {
+				driftParam(rng, p.lpfFreq, 65536, INT32_MAX);
+				driftParam(rng, p.lpfRes, 0, kRes);
+				driftParam(rng, p.hpfFreq, 65536, INT32_MAX);
+				driftParam(rng, p.hpfRes, 0, kRes);
+			}
+			if (rng.chance(10)) {
+				kind = rng.range(0, 3);
+				shift = rng.chance(5) ? 0 : rng.range(1, 8);
+			}
+			AudioEngine::cpuDireness = rng.range(0, 20);
+			int frames = rng.chance(25) ? rng.range(1, 8) : rng.range(1, kBlock);
+			int32_t buf[kBlock * 2];
+			randomInput(rng, buf, frames * channels, &phase, increment, shift, kind);
+			fs.setConfig(p.lpfFreq, p.lpfRes, p.lpf, p.lpfMorph, p.hpfFreq, p.hpfRes, p.hpf, p.hpfMorph, p.gain,
+			             p.route, false, nullptr);
+			int sampleIncrement = (!stereo && rng.chance(10)) ? rng.range(2, 3) : 1;
+			// (not counted: the emulator counts through a hook on every instruction, which is slow)
+			if (stereo) {
+				fs.renderLongStereo(buf, buf + 2 * frames);
+			}
+			else {
+				fs.renderLong(buf, buf + frames, frames, sampleIncrement);
+			}
+			group = hashWords(group, buf, frames * channels * sizeof(int32_t));
+			group = hashWords(group, &jcong, sizeof(jcong));
+			group = hashWords(group, &fs, sizeof(fs));
+		}
+		if ((n + 1) % kRandomGroup == 0) {
+			char label[64];
+			snprintf(label, sizeof(label), "random cases %03d-%03d", n + 1 - kRandomGroup, n);
+			printf("%-45s hash %016llx\n", label, (unsigned long long)group);
+			total = hashWords(total, &group, sizeof(group));
+			group = 1469598103934665603ull;
+		}
+	}
+	printf("%-45s hash %016llx\n", "random cases, all", (unsigned long long)total);
+}
+
 // A saw (110 Hz, slightly detuned on the right) at roughly a voice's level before the filter
 static void input(int32_t* buf, int frames, int channels, uint32_t* phase) {
 	for (int i = 0; i < frames; i++) {
@@ -127,6 +299,7 @@ int main() {
 			printf("%-45s hash %016llx\n", label, (unsigned long long)hash);
 		}
 	}
+	randomCases();
 	// setConfig alone (runs once per voice per block too; the double divisions are one slow instruction each), for a ladder pair and an SVF pair
 	{
 		FilterSet fs;

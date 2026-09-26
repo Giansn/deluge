@@ -8,6 +8,7 @@
 #include "util/lookuptables/lookuptables.h"
 #include "util/waves.h"
 #include "processing/render_wave.h"
+#include <bit>
 
 namespace AudioEngine {
 extern int32_t cpuDireness;

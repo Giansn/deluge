@@ -8,6 +8,9 @@ struct int32x4_t { int32_t v[4]; };
 struct uint32x4_t { uint32_t v[4]; };
 struct int16x4_t { int16_t v[4]; };
 struct uint16x4_t { uint16_t v[4]; };
+struct int16x4x2_t { int16x4_t val[2]; };
+struct int32x2_t { int32_t v[2]; };
+struct int64x2_t { int64_t v[2]; };
 
 static inline int32_t neonSat32(int64_t x) { return x > INT32_MAX ? INT32_MAX : x < INT32_MIN ? INT32_MIN : (int32_t)x; }
 
@@ -61,4 +64,41 @@ static inline int32x4_t vqdmlal_s16(int32x4_t acc, int16x4_t a, int16x4_t b) {
 	int32x4_t p = vqdmull_s16(a, b);
 	for (int i = 0; i < 4; i++) acc.v[i] = neonSat32((int64_t)acc.v[i] + p.v[i]);
 	return acc;
+}
+
+// Used by the optimised oscillators (v12 perf): NEON interpolation weights, vld2 table reads, smmlar on 4 lanes.
+static inline uint32x4_t vdupq_n_u32(uint32_t x) { return {{x, x, x, x}}; }
+static inline uint32x4_t vld1q_u32(const uint32_t* p) { uint32x4_t r; memcpy(r.v, p, 16); return r; }
+static inline uint32x4_t vaddq_u32(uint32x4_t a, uint32x4_t b) { for (int i = 0; i < 4; i++) a.v[i] += b.v[i]; return a; }
+static inline uint32x4_t vsubq_u32(uint32x4_t a, uint32x4_t b) { for (int i = 0; i < 4; i++) a.v[i] -= b.v[i]; return a; }
+static inline uint32x4_t vminq_u32(uint32x4_t a, uint32x4_t b) {
+	for (int i = 0; i < 4; i++) a.v[i] = a.v[i] < b.v[i] ? a.v[i] : b.v[i];
+	return a;
+}
+static inline uint32x4_t vcgeq_u32(uint32x4_t a, uint32x4_t b) {
+	for (int i = 0; i < 4; i++) a.v[i] = a.v[i] >= b.v[i] ? 0xFFFFFFFFu : 0;
+	return a;
+}
+static inline int32x4_t vreinterpretq_s32_u32(uint32x4_t a) { int32x4_t r; memcpy(r.v, a.v, 16); return r; }
+static inline uint32x4_t vreinterpretq_u32_s32(int32x4_t a) { uint32x4_t r; memcpy(r.v, a.v, 16); return r; }
+static inline int32x4_t vnegq_s32(int32x4_t a) { for (int i = 0; i < 4; i++) a.v[i] = (int32_t)(0u - (uint32_t)a.v[i]); return a; }
+static inline int32x4_t veorq_s32(int32x4_t a, int32x4_t b) { for (int i = 0; i < 4; i++) a.v[i] ^= b.v[i]; return a; }
+static inline int32x2_t vget_low_s32(int32x4_t a) { return {{a.v[0], a.v[1]}}; }
+static inline int32x2_t vget_high_s32(int32x4_t a) { return {{a.v[2], a.v[3]}}; }
+static inline int32x4_t vcombine_s32(int32x2_t a, int32x2_t b) { return {{a.v[0], a.v[1], b.v[0], b.v[1]}}; }
+static inline int64x2_t vmull_s32(int32x2_t a, int32x2_t b) { return {{(int64_t)a.v[0] * b.v[0], (int64_t)a.v[1] * b.v[1]}}; }
+static inline int32x2_t vrshrn_n_s64(int64x2_t a, int n) { // Bits n.. of a + 2^(n-1), modulo 2^64 as the NEON adder
+	int32x2_t r;
+	for (int i = 0; i < 2; i++) r.v[i] = (int32_t)(uint32_t)(((uint64_t)a.v[i] + ((uint64_t)1 << (n - 1))) >> n);
+	return r;
+}
+static inline int16x4x2_t vld2_dup_s16(const int16_t* p) {
+	int16x4x2_t r;
+	for (int i = 0; i < 4; i++) { memcpy(&r.val[0].v[i], p, 2); memcpy(&r.val[1].v[i], p + 1, 2); }
+	return r;
+}
+static inline int16x4x2_t vld2_lane_s16(const int16_t* p, int16x4x2_t a, int i) {
+	memcpy(&a.val[0].v[i], p, 2);
+	memcpy(&a.val[1].v[i], p + 1, 2);
+	return a;
 }
