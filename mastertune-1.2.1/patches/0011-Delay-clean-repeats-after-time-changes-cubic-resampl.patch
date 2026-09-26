@@ -1,0 +1,918 @@
+From ff31b04d2bcc2306a9fa5d53ba4469cea12b82a0 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 12:39:28 +0000
+Subject: [PATCH] Delay: clean repeats after time changes, cubic resampling,
+ feedback filters; no crackle when saving
+
+- After the delay time changes, the delay goes back to native (bit-exact)
+  repeats. 1.2.1 refused a new buffer of the same size as the old one,
+  which left it resampling for good after most changes, even the knob
+  moved and back: every repeat lost 9 dB at 10 kHz.
+- Resampled writing spreads each sample with a Catmull-Rom kernel at all
+  speeds instead of triangles twice as wide as needed, and reading
+  interpolates cubically. A modulated delay keeps its treble (0.6 dB at
+  10 kHz per repeat instead of 9) and its grain drops from -59 to -80 dB;
+  a 5 s delay keeps 5 kHz at -3 dB instead of -7.
+- Speed and feedback glide within a block instead of stepping once per
+  block (a buzz at 344 Hz). A new buffer glides along with the one it
+  replaces, so a large jump of the delay time doesn't step when it takes
+  over. All writing sits the same distance behind the read position
+  (1.2.1 was one sample off in one path). The half-rate buffer is made
+  only below 0.8x, so a modulated time doesn't keep changing buffers.
+- Analog mode saturates with the antialiased tanh.
+- New LPF and HPF in the feedback, each repeat darker or thinner than the
+  last (Delay menu; off by default, saved only when on). In the digital
+  mode the clipping comes after them, so the low cut's overshoot stays
+  within the headroom; a low cut switched off releases its state.
+- Filter and saturation states reset when the delay restarts; a copied
+  delay keeps its sync type (1.2.1 dropped triplet and dotted).
+- Saving no longer stalls the audio: while a song or preset is put
+  together for the card, the audio routine runs with cluster loading, as
+  it does while reading. 1.2.1 had that call commented out, a short buzz
+  or crackle on every save.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/delay/delay.cpp                | 142 +++++++++---
+ src/deluge/dsp/delay/delay.h                  |  23 +-
+ src/deluge/dsp/delay/delay_buffer.cpp         | 124 ++++-------
+ src/deluge/dsp/delay/delay_buffer.h           | 202 +++++++-----------
+ src/deluge/gui/menu_item/delay/filter.h       |  43 ++++
+ src/deluge/gui/ui/menus.cpp                   |   7 +
+ .../mod_controllable_audio.cpp                |  17 ++
+ src/deluge/storage/storage_manager.cpp        |   7 +-
+ 8 files changed, 332 insertions(+), 233 deletions(-)
+ create mode 100644 src/deluge/gui/menu_item/delay/filter.h
+
+diff --git a/src/deluge/dsp/delay/delay.cpp b/src/deluge/dsp/delay/delay.cpp
+index 2e68c2d7..2d8d8fc9 100644
+--- a/src/deluge/dsp/delay/delay.cpp
++++ b/src/deluge/dsp/delay/delay.cpp
+@@ -23,6 +23,7 @@
+ #include "memory/general_memory_allocator.h"
+ #include "model/sync.h"
+ #include "processing/engines/audio_engine.h"
++#include <cmath>
+ #include <cstdlib>
+ #include <ranges>
+ 
+@@ -46,6 +47,10 @@ setupSecondaryBuffer:
+ 		prepareToBeginWriting();
+ 		postLPFL = 0;
+ 		postLPFR = 0;
++		// mastertune-v11: and what the feedback filters and saturation were left with, so the first repeats don't
++		// start with a step
++		highCutStateL = highCutStateR = lowCutStateL = lowCutStateR = 0.f;
++		saturationLastL = saturationLastR = 2147483648u;
+ 		return;
+ 	}
+ 
+@@ -199,10 +204,12 @@ void Delay::discardBuffers() {
+ 	secondaryBuffer.discard();
+ 	prevFeedback = 0;
+ 	repeatsUntilAbandon = 0;
++	feedbackLastTime = -1;
+ }
+ 
+-void Delay::initializeSecondaryBuffer(int32_t newNativeRate, bool makeNativeRatePreciseRelativeToOtherBuffer) {
+-	Error result = secondaryBuffer.init(newNativeRate, primaryBuffer.size());
++void Delay::initializeSecondaryBuffer(int32_t newNativeRate, bool makeNativeRatePreciseRelativeToOtherBuffer,
++                                      bool allowSameSize) {
++	Error result = secondaryBuffer.init(newNativeRate, allowSameSize ? 0 : primaryBuffer.size());
+ 	if (result != Error::NONE) {
+ 		return;
+ 	}
+@@ -226,6 +233,7 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 		return;
+ 	}
+ 
++	int32_t ratePrevious = userRateLastTime;
+ 	if (delayWorkingState.userDelayRate != userRateLastTime) {
+ 		userRateLastTime = delayWorkingState.userDelayRate;
+ 		countCyclesWithoutChange = 0;
+@@ -243,7 +251,13 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 			// If delay speed has settled for a split second...
+ 			if (countCyclesWithoutChange >= (kSampleRate >> 5)) {
+ 				// D_PRINTLN("settling");
+-				initializeSecondaryBuffer(delayWorkingState.userDelayRate, true);
++				// mastertune-v11: also when the new buffer comes out the same size as this one. 1.2.1 refused that,
++				// which left the delay resampling for good after most changes of the delay time, even the knob moved
++				// and back, and then every repeat lost treble (9 dB at 10 kHz). Only a delay longer than the largest
++				// buffer has to go on resampling, and must not keep making new buffers.
++				bool newBufferCanBeNative =
++				    !DelayBuffer::getIdealBufferSizeFromRate(delayWorkingState.userDelayRate).second;
++				initializeSecondaryBuffer(delayWorkingState.userDelayRate, true, newBufferCanBeNative);
+ 			}
+ 
+ 			// If spinning at double native rate, there's no real need to be using such a big buffer, so make a new
+@@ -253,19 +267,23 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 			}
+ 
+ 			// If spinning below native rate, the quality's going to be suffering, so make a new buffer whose native
+-			// rate is half our current rate (double the quality)
+-			else if (delayWorkingState.userDelayRate < primaryBuffer.nativeRate()) {
++			// rate is half our current rate (double the quality). (mastertune-v11: from 0.8x down. The cubic kernel
++			// is fine above that, and a delay time wobbling around its setting no longer makes a new buffer each
++			// time it goes a little longer, and a small step each time the buffers change over.)
++			else if ((int64_t)delayWorkingState.userDelayRate * 5 < (int64_t)primaryBuffer.nativeRate() * 4) {
+ 				initializeSecondaryBuffer(delayWorkingState.userDelayRate >> 1, false);
+ 			}
+ 		}
+ 	}
+ 
+ 	// Figure some stuff out for the primary buffer
+-	primaryBuffer.setupForRender(delayWorkingState.userDelayRate);
++	primaryBuffer.setupForRender(delayWorkingState.userDelayRate, buffer.size());
+ 
+-	// Figure some stuff out for the secondary buffer - only if it's active
++	// Figure some stuff out for the secondary buffer - only if it's active. (mastertune-v11: a new one glides along
++	// with the primary buffer, see setupForRender())
+ 	if (secondaryBuffer.isActive()) {
+-		secondaryBuffer.setupForRender(delayWorkingState.userDelayRate);
++		secondaryBuffer.setupForRender(delayWorkingState.userDelayRate, buffer.size(),
++		                               primaryBuffer.isActive() ? ratePrevious : 0);
+ 	}
+ 
+ 	bool wrapped = false;
+@@ -307,25 +325,63 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 					wrapped = primaryBuffer.clearAndMoveOn() || wrapped; //<
+ 				});
+ 
+-				int32_t primaryStrength1 = 65536 - primaryStrength2;
+-
+ 				StereoSample* nextPos = &primaryBuffer.current() + 1;
+ 				if (nextPos == primaryBuffer.end()) {
+ 					nextPos = primaryBuffer.begin();
+ 				}
+-				StereoSample fromDelay1 = primaryBuffer.current();
+-				StereoSample fromDelay2 = *nextPos;
+-
+-				sample.l = (multiply_32x32_rshift32(fromDelay1.l, primaryStrength1 << 14)
+-				            + multiply_32x32_rshift32(fromDelay2.l, primaryStrength2 << 14))
+-				           << 2;
+-				sample.r = (multiply_32x32_rshift32(fromDelay1.r, primaryStrength1 << 14)
+-				            + multiply_32x32_rshift32(fromDelay2.r, primaryStrength2 << 14))
+-				           << 2;
++				StereoSample* afterNextPos = nextPos + 1;
++				if (afterNextPos == primaryBuffer.end()) {
++					afterNextPos = primaryBuffer.begin();
++				}
++				float t = primaryStrength2 * (1.f / 65536.f);
++				auto hermite = [t](float xm1, float x0, float x1, float x2) {
++					float c1 = 0.5f * (x1 - xm1);
++					float c2 = xm1 - 2.5f * x0 + 2.f * x1 - 0.5f * x2;
++					float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
++					return ((c3 * t + c2) * t + c1) * t + x0;
++				};
++				const StereoSample& previous = primaryBuffer.history;
++				sample.l = (int32_t)hermite(previous.l, primaryBuffer.current().l, nextPos->l, afterNextPos->l);
++				sample.r = (int32_t)hermite(previous.r, primaryBuffer.current().r, nextPos->r, afterNextPos->r);
+ 			}
+ 		}
+ 	}
+ 
++	// mastertune-v11: the feedback glides from the last block's value instead of jumping, which zippered when it
++	// was turned or modulated
++	int32_t feedback = (feedbackLastTime >= 0) ? feedbackLastTime : delayWorkingState.delayFeedbackAmount;
++	int32_t feedbackIncrement = (delayWorkingState.delayFeedbackAmount - feedback) / (int32_t)buffer.size();
++	feedbackLastTime = delayWorkingState.delayFeedbackAmount;
++
++	// mastertune-v11: the tone filters, in the feedback, so each repeat gets darker (high cut) or thinner (low cut)
++	// than the one before, as on a tape or bucket brigade delay. One-pole each, the same curves as the reverb's.
++	// A low cut switched off lets go of what it was holding back over about 50 ms, rather than never (while the high
++	// cut stays on) or all at once. The filters keep running until it has.
++	constexpr float kLowCutRelease = 0.9995f;
++	float lowCutDecay = (lowCut > kLowCutOff) ? 1.f : kLowCutRelease;
++	bool filtering = (highCut < kHighCutOff || lowCut > kLowCutOff || std::abs(lowCutStateL) >= 1.f
++	                  || std::abs(lowCutStateR) >= 1.f);
++	constexpr float twoPiOverSampleRate = 2.f * 3.14159265f / (float)kSampleRate;
++	// Coefficient of a one-pole filter with its pole where an analog one of that cutoff has it
++	float highCutCoefficient =
++	    (highCut < kHighCutOff)
++	        ? 1.f - std::exp(-twoPiOverSampleRate * 500.f * std::pow(40.f, (float)highCut / kHighCutOff))
++	        : 1.f;
++	float lowCutCoefficient =
++	    (lowCut > kLowCutOff) ? 1.f
++	                                - std::exp(-twoPiOverSampleRate
++	                                           * (20.f + (std::exp(1.5f * (float)lowCut / kHighCutOff) - 1.f) * 150.f))
++	                          : 0.f;
++	auto filter = [&](float x, float& highCutState, float& lowCutState) {
++		highCutState += highCutCoefficient * (x - highCutState);
++		lowCutState += lowCutCoefficient * (highCutState - lowCutState);
++		lowCutState *= lowCutDecay;
++		return highCutState - lowCutState;
++	};
++	if (!filtering) {
++		highCutStateL = highCutStateR = lowCutStateL = lowCutStateR = 0.f;
++	}
++
+ 	if (analog) {
+ 
+ 		for (StereoSample& sample : working_buffer) {
+@@ -334,24 +390,46 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 
+ 		for (StereoSample& sample : working_buffer) {
+ 			// impulseResponseProcessor.process(sample, sample);
++			feedback += feedbackIncrement;
+ 
+-			// Reduce headroom, since this sounds ok with analog sim
+-			sample.l = getTanHUnknown(multiply_32x32_rshift32(sample.l, delayWorkingState.delayFeedbackAmount),
+-			                          delayWorkingState.analog_saturation)
++			// Reduce headroom, since this sounds ok with analog sim. (mastertune-v11: antialiased, like the
++			// compressor's saturation, so driving the repeats doesn't fold harmonics back down)
++			sample.l = getTanHAntialiased(multiply_32x32_rshift32(sample.l, feedback), &saturationLastL,
++			                              delayWorkingState.analog_saturation)
+ 			           << 2;
+-			sample.r = getTanHUnknown(multiply_32x32_rshift32(sample.r, delayWorkingState.delayFeedbackAmount),
+-			                          delayWorkingState.analog_saturation)
++			sample.r = getTanHAntialiased(multiply_32x32_rshift32(sample.r, feedback), &saturationLastR,
++			                              delayWorkingState.analog_saturation)
+ 			           << 2;
+ 		}
++
++		// After the saturation, as the playback side of a tape delay. The saturation stays far enough below full scale
++		// for the low cut's overshoot.
++		if (filtering) {
++			for (StereoSample& sample : working_buffer) {
++				sample.l = (int32_t)filter((float)sample.l, highCutStateL, lowCutStateL);
++				sample.r = (int32_t)filter((float)sample.r, highCutStateR, lowCutStateR);
++			}
++		}
+ 	}
+ 
+-	else {
++	else if (!filtering) {
+ 		for (StereoSample& sample : working_buffer) {
++			feedback += feedbackIncrement;
+ 			// Leave more headroom, because making it clip sounds bad with pure digital
+-			sample.l = signed_saturate<32 - 3>(multiply_32x32_rshift32(sample.l, delayWorkingState.delayFeedbackAmount))
+-			           << 2;
+-			sample.r = signed_saturate<32 - 3>(multiply_32x32_rshift32(sample.r, delayWorkingState.delayFeedbackAmount))
+-			           << 2;
++			sample.l = signed_saturate<32 - 3>(multiply_32x32_rshift32(sample.l, feedback)) << 2;
++			sample.r = signed_saturate<32 - 3>(multiply_32x32_rshift32(sample.r, feedback)) << 2;
++		}
++	}
++
++	else {
++		// The same, with the filters before the clipping, which catches the low cut's overshoot too
++		constexpr float kLimit = 268435456.f; // What signed_saturate<32 - 3>() lets through
++		for (StereoSample& sample : working_buffer) {
++			feedback += feedbackIncrement;
++			float l = filter((float)multiply_32x32_rshift32(sample.l, feedback), highCutStateL, lowCutStateL);
++			float r = filter((float)multiply_32x32_rshift32(sample.r, feedback), highCutStateR, lowCutStateR);
++			sample.l = (int32_t)std::clamp(l, -kLimit, kLimit) << 2;
++			sample.r = (int32_t)std::clamp(r, -kLimit, kLimit) << 2;
+ 		}
+ 	}
+ 
+@@ -390,7 +468,10 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 
+ 		// Native
+ 		if (primaryBuffer.isNative()) {
+-			StereoSample* writePos = primaryBufferOldPos - delaySpaceBetweenReadAndWrite;
++			// mastertune-v11: delaySpaceBetweenReadAndWrite behind where the read pass put each sample, like all other
++			// writing to delay buffers (1.2.1 started one step further back here, a delay one sample shorter than the
++			// secondary buffer's and resampled writing's, so the time jumped by a sample going from one to the other)
++			StereoSample* writePos = primaryBufferOldPos - delaySpaceBetweenReadAndWrite + 1;
+ 			if (writePos < primaryBuffer.begin()) {
+ 				writePos += primaryBuffer.sizeIncludingExtra;
+ 			}
+@@ -405,6 +486,7 @@ void Delay::process(std::span<StereoSample> buffer, const State& delayWorkingSta
+ 			primaryBuffer.setCurrent(primaryBufferOldPos);
+ 			primaryBuffer.longPos = primaryBufferOldLongPos;
+ 			primaryBuffer.lastShortPos = primaryBufferOldLastShortPos;
++			primaryBuffer.restartBlock();
+ 
+ 			for (StereoSample sample : working_buffer) {
+ 				// Move forward
+diff --git a/src/deluge/dsp/delay/delay.h b/src/deluge/dsp/delay/delay.h
+index a284d896..5afb38e2 100644
+--- a/src/deluge/dsp/delay/delay.h
++++ b/src/deluge/dsp/delay/delay.h
+@@ -42,6 +42,9 @@ public:
+ 		pingPong = rhs.pingPong;
+ 		analog = rhs.analog;
+ 		syncLevel = rhs.syncLevel;
++		syncType = rhs.syncType; // mastertune-v11: 1.2.1 left it out, a copied sound lost its triplet or dotted delay
++		highCut = rhs.highCut;
++		lowCut = rhs.lowCut;
+ 		return *this;
+ 	}
+ 
+@@ -50,7 +53,8 @@ public:
+ 	void informWhetherActive(bool newActive, int32_t userDelayRate = 0);
+ 	void copySecondaryToPrimary();
+ 	void copyPrimaryToSecondary();
+-	void initializeSecondaryBuffer(int32_t newNativeRate, bool makeNativeRatePreciseRelativeToOtherBuffer);
++	void initializeSecondaryBuffer(int32_t newNativeRate, bool makeNativeRatePreciseRelativeToOtherBuffer,
++	                               bool allowSameSize = false);
+ 	void setupWorkingState(State& workingState, uint32_t timePerInternalTickInverse, bool anySoundComingIn = true);
+ 	void discardBuffers();
+ 	void setTimeToAbandon(const State& workingState);
+@@ -65,6 +69,13 @@ public:
+ 	bool pingPong = true;
+ 	bool analog = false;
+ 
++	// mastertune-v11: tone filters in the feedback, 0 to 50 as in the menu. High cut: 500 Hz at 0 to 18.6 kHz at 49,
++	// off at 50. Low cut: off at 0, 25 Hz at 1 to 540 Hz at 50.
++	static constexpr int32_t kHighCutOff = 50;
++	static constexpr int32_t kLowCutOff = 0;
++	int32_t highCut = kHighCutOff;
++	int32_t lowCut = kLowCutOff;
++
+ 	SyncType syncType = SYNC_TYPE_EVEN;
+ 
+ 	// Basically, 0 is off, max value is 9. Higher numbers are shorter intervals (higher speed).
+@@ -79,6 +90,16 @@ public:
+ 
+ 	uint8_t repeatsUntilAbandon = 0; // 0 means never abandon
+ 
++	// mastertune-v11: feedback of the last block, to glide to the new one (-1: none yet), and the state of the
++	// antialiased saturation in analog mode
++	int32_t feedbackLastTime = -1;
++	float highCutStateL = 0.f;
++	float highCutStateR = 0.f;
++	float lowCutStateL = 0.f;
++	float lowCutStateR = 0.f;
++	uint32_t saturationLastL = 2147483648u;
++	uint32_t saturationLastR = 2147483648u;
++
+ 	void process(std::span<StereoSample> buffer, const State& delayWorkingState);
+ 
+ private:
+diff --git a/src/deluge/dsp/delay/delay_buffer.cpp b/src/deluge/dsp/delay/delay_buffer.cpp
+index ceaff716..2e351c52 100644
+--- a/src/deluge/dsp/delay/delay_buffer.cpp
++++ b/src/deluge/dsp/delay/delay_buffer.cpp
+@@ -57,8 +57,15 @@ Error DelayBuffer::init(uint32_t rate, uint32_t failIfThisSize, bool includeExtr
+ 
+ void DelayBuffer::clear() {
+ 	memset(start_, 0, sizeof(StereoSample) * (delaySpaceBetweenReadAndWrite + 2));
++	// mastertune-v11: resampled writing reaches up to 16 steps behind the write position, which at first is the end of
++	// the buffer, not cleared by the read position yet. It gets cleared before it's read, but adding to whatever
++	// memory held before could overflow, so clear that much there too.
++	size_t tail = std::min(sizeIncludingExtra, (size_t)40);
++	memset(end_ - tail, 0, sizeof(StereoSample) * tail);
+ 	current_ = start_ + delaySpaceBetweenReadAndWrite;
+ 	resample_config_ = std::nullopt;
++	history = {0, 0};
++	fresh_ = true;
+ }
+ 
+ std::pair<int32_t, bool> DelayBuffer::getIdealBufferSizeFromRate(uint32_t newRate) {
+@@ -96,96 +103,51 @@ void DelayBuffer::discard() {
+ 	}
+ }
+ 
+-void DelayBuffer::setupResample() {
+-	// Prep for resample
+-	longPos = 0;
+-	lastShortPos = 0;
+-
+-	// Because we're switching from direct writing to writing in "triangles", we need to adjust the data we last
+-	// wrote directly so that it meshes with the upcoming triangles. Assuming that the delay rate has only
+-	// changed slightly at this stage, this is as simple as removing a quarter of the last written value, and
+-	// putting that removed quarter where the "next" write-pos is. That's because the triangles are 4 samples
+-	// wide total (2 samples either side)
+-	StereoSample* writePos = current_ - delaySpaceBetweenReadAndWrite;
+-	while (writePos < start_) {
+-		writePos += sizeIncludingExtra;
+-	}
+-
+-	StereoSample* writePosPlusOne = writePos + 1;
+-	while (writePosPlusOne >= end_) {
+-		writePosPlusOne -= sizeIncludingExtra;
++void DelayBuffer::setupForRender(int32_t rate, int32_t numSamples, int32_t ratePrevious) {
++	bool fresh = fresh_;
++	fresh_ = false;
++	if (start_ == nullptr) {
++		return; // Discarded
+ 	}
+ 
+-	writePosPlusOne->l = writePos->l >> 2;
+-	writePosPlusOne->r = writePos->r >> 2;
++	auto spinRateFor = [&](int32_t r) {
++		return (uint32_t)(uint64_t)((double)((uint64_t)r << 24) / (double)native_rate_); // 1 is represented as 16777216
++	};
+ 
+-	writePos->l -= writePosPlusOne->l;
+-	writePos->r -= writePosPlusOne->r;
+-}
++	// Speed at the end of the last block: native if we're only starting to resample now. A new buffer takes the speed
++	// the delay time had there, so the sound it gets during this block lands where the buffer it replaces puts it,
++	// which is what that one reads until this one takes over. Without one, a new buffer starts at its speed.
++	uint32_t spinRateBefore;
++	if (resampling()) {
++		spinRateBefore = resample_config_->actualSpinRate;
++	}
++	else if (fresh && ratePrevious > 0 && ratePrevious != rate) {
++		spinRateBefore = spinRateFor(ratePrevious);
++	}
++	else if (rate == native_rate_) {
++		return; // Native
++	}
++	else {
++		spinRateBefore = fresh ? spinRateFor(rate) : kMaxSampleValue;
++	}
+ 
+-void DelayBuffer::setupForRender(int32_t rate) {
+ 	if (!resampling()) {
+-		if (rate == native_rate_ || start_ == nullptr) {
+-			// Can't/won't resample if the rate is native or the buffer is discarded
+-			return;
+-		}
+-
+-		// Resample _only_ if rate is not native and we have a valid buffer
+-		setupResample();
++		// Prep for resample. (mastertune-v11: 1.2.1 also moved a quarter of the last sample written directly one step
++		// on here, so it meshed with the triangles written below 1x; the kernel needs none of that.)
++		longPos = 0;
++		lastShortPos = 0;
+ 	}
+ 
+-	uint32_t actualSpinRate;
+-	uint32_t spinRateForSpedUpWriting;
+-	uint32_t divideByRate;
+-	uint32_t rateMultiple;
+-	uint32_t writeSizeAdjustment;
++	uint32_t actualSpinRate = spinRateFor(rate);
++	resample_config_ = DelayBuffer::ResampleConfig{.actualSpinRate = actualSpinRate};
+ 
+-	actualSpinRate = (uint64_t)((double)((uint64_t)rate << 24) / (double)native_rate_); // 1 is represented as 16777216
+-	divideByRate = (uint32_t)((double)0xFFFFFFFF / (double)(actualSpinRate >> 8));      // 1 is represented as 65536
+-
+-	// If buffer spinning slow
+-	if (actualSpinRate < kMaxSampleValue) {
+-
+-		uint32_t timesSlowerRead = divideByRate >> 16;
+-
+-		// This seems to be the best option. speedMultiple is set to the smallest multiple of delay.speed which is
+-		// greater than 65536. Means the "triangles" link up, and are at least as wide as a frame of the write
+-		// buffer. Does that make sense?
+-		rateMultiple = (actualSpinRate >> 8) * (timesSlowerRead + 1);
+-
+-		// This was tricky to work out. Needs to go up with delay.speed because this means less "density". And
+-		// squarely down with writeRateMultiple because more of that means more "triangle area", or more stuff
+-		// written each time.
+-		// uint32_t delayWriteSizeAdjustment2 = (((uint32_t)delay.speed << 16) / (((uint32_t)(speedMultiple >> 2) *
+-		// (uint32_t)(speedMultiple >> 2)) >> 11));
+-
+-		// Equivalent to one order of magnitude bigger than the above line
+-		writeSizeAdjustment = (uint32_t)((double)0xFFFFFFFF / (double)(rateMultiple * (timesSlowerRead + 1)));
++	if (numSamples > 0) {
++		spinRateBlockStart_ = spinRateBefore;
++		spinRateIncrement_ = (int32_t)(((int64_t)actualSpinRate - (int64_t)spinRateBefore) / numSamples);
+ 	}
+-
+-	// If buffer spinning fast
+ 	else {
+-
+-		// First, let's limit sped up writing to only work perfectly up to 8x speed, for safety (writing faster
+-		// takes longer). No need to adjust divideByRate to compensate - it's going to sound shoddy anyway
+-		spinRateForSpedUpWriting = std::min(actualSpinRate, (uint32_t)kMaxSampleValue * 8);
+-
+-		// We want to squirt the most juice right at the "main" write pos - but we want to spread it wider too.
+-		// A basic version of this would involve the triangle's base being as wide as 2 samples if we were writing
+-		// at the native sample rate. However I've stretched the triangle twice as wide so that at the native sample
+-		// rate it's the same width as the slowed-down algorithm below, so there's no click when switching between
+-		// the two. This does mean we lose half the bandwidth. That's done with the following 2 lines of code, and
+-		// the fact that the actual writes below are <<3 instead of <<4.
+-
+-		spinRateForSpedUpWriting <<= 1;
+-		// We may change this because sped up writing is the only thing it'll be used for
+-		divideByRate >>= 1;
++		spinRateBlockStart_ = actualSpinRate;
++		spinRateIncrement_ = 0;
+ 	}
+-	resample_config_ = DelayBuffer::ResampleConfig{
+-	    .actualSpinRate = actualSpinRate,
+-	    .spinRateForSpedUpWriting = spinRateForSpedUpWriting,
+-	    .divideByRate = divideByRate,
+-	    .rateMultiple = rateMultiple,
+-	    .writeSizeAdjustment = writeSizeAdjustment,
+-	};
++	spinRateNow_ = spinRateBlockStart_;
+ }
+diff --git a/src/deluge/dsp/delay/delay_buffer.h b/src/deluge/dsp/delay/delay_buffer.h
+index 1a1cd00d..205e963f 100644
+--- a/src/deluge/dsp/delay/delay_buffer.h
++++ b/src/deluge/dsp/delay/delay_buffer.h
+@@ -19,6 +19,9 @@
+ 
+ #include "definitions_cxx.hpp"
+ #include "dsp/stereo_sample.h"
++#include "util/fixedpoint.h"
++#include <algorithm>
++#include <cmath>
+ #include <cstdint>
+ #include <expected>
+ #include <optional>
+@@ -48,7 +51,8 @@ public:
+ 
+ 	template <typename C>
+ 	[[gnu::always_inline]] constexpr int32_t advance(C callback) {
+-		longPos += resample_config_.value().actualSpinRate;
++		longPos += spinRateNow_;
++		spinRateNow_ += spinRateIncrement_;
+ 		uint8_t newShortPos = longPos >> 24;
+ 		uint8_t shortPosDiff = newShortPos - lastShortPos;
+ 		lastShortPos = newShortPos;
+@@ -60,18 +64,29 @@ public:
+ 		return (longPos >> 8) & 65535;
+ 	}
+ 
+-	void setupForRender(int32_t rate);
++	/// With numSamples, the speed glides over that many samples from where the last block ended, instead of jumping
++	/// (mastertune-v11: a modulated delay time used to change in steps of a block, a buzz at 344 Hz and its multiples).
++	/// A new buffer glides from the speed for ratePrevious, if there is one, as the one it replaces does.
++	void setupForRender(int32_t rate, int32_t numSamples = 0, int32_t ratePrevious = 0);
++	/// Back to the speed at the start of the block, for another pass over it
++	constexpr void restartBlock() { spinRateNow_ = spinRateBlockStart_; }
+ 
+ 	static std::pair<int32_t, bool> getIdealBufferSizeFromRate(uint32_t rate);
+ 
+ 	[[nodiscard]] constexpr bool isActive() const { return (start_ != nullptr); }
+ 
+ 	inline bool clearAndMoveOn() {
++		history = *current_;
+ 		current_->l = 0;
+ 		current_->r = 0;
+ 		return moveOn();
+ 	}
+ 
++	/// The last sample the read position moved past, which clearing has wiped from the buffer already: the first of
++	/// the four that resampled reading interpolates between (mastertune-v11). Kept with the buffer, so it's right
++	/// when a secondary buffer takes over.
++	StereoSample history{0, 0};
++
+ 	inline bool moveOn() {
+ 		++current_;
+ 		bool wrapped = (current_ == end_);
+@@ -115,127 +130,74 @@ public:
+ 		writeResampled(toDelay, strength1, strength2);
+ 	}
+ 
++	/// mastertune-v11: spreads each sample over the buffer with a Catmull-Rom kernel. Up to 1x speed at the buffer's
++	/// grid, with the weights scaled down by the speed, as the samples land closer together than the grid (their sums
++	/// stay within 0.13 dB of 1 at any speed, within 0.02 dB below half speed), and above, stretched by the speed
++	/// (upsampling the input to the buffer's grid). 1.2.1 used triangles, twice as wide as needed above 1x so they
++	/// matched the ones below at the native speed, where their corners had to meet. That cost half the bandwidth (a
++	/// repeat lost 9 dB at 10 kHz, the grain of a modulated delay sat 60 dB below the signal), and the triangles below
++	/// needed the last sample written directly adjusted when resampling started, which only worked for small changes.
++	/// Up to 8x speed, as before; the kernel then reaches 16 steps either side, within the 20 between the write and the
++	/// read position.
+ 	[[gnu::always_inline]] void writeResampled(StereoSample toDelay, int32_t strength1, int32_t strength2) {
+ 		if (!resample_config_) {
+ 			return;
+ 		}
+-		// If delay buffer spinning above sample rate...
+-		if (resample_config_->actualSpinRate >= kMaxSampleValue) {
+-
+-			// An improvement on that could be to only do the triangle-widening when we're down near the native rate -
+-			// i.e. set a minimum width of double the native rate rather than always doubling the width. The difficulty
+-			// would be ensuring that we compensate perfectly the strength of each write so that the volume remains the
+-			// same. It could totally be done. The only real advantage would be that the number of memory writes would
+-			// be halved at high speeds.
+-
+-			// For efficiency, we start far-right, then traverse to far-left.
+-
+-			// I rearranged some algebra to get this from the strengthThisWrite equation
+-			int32_t howFarRightToStart = (strength2 + (resample_config_->spinRateForSpedUpWriting >> 8)) >> 16;
+-
+-			// This variable represents one "step" of the delay buffer as 65536.
+-			// Always positive - absolute distance
+-			int32_t distanceFromMainWrite = (int32_t)howFarRightToStart << 16;
+-
+-			// Initially is the far-right right pos, not the central "main" one
+-			StereoSample* writePos = current_ - delaySpaceBetweenReadAndWrite + howFarRightToStart;
+-			while (writePos < start_) {
++		uint32_t spinRate = std::min(spinRateNow_, (uint32_t)kMaxSampleValue * 8);
++		float fraction = strength2 * (1.f / 65536.f); // Where this sample lands, past the main write position
++
++		// Up to 1x: the four taps around it, with the kernel's weights written out
++		if (spinRate <= kMaxSampleValue) {
++			float scale = (float)spinRate * (1073741824.f / (float)kMaxSampleValue); // The speed, in Q30
++			float f = fraction;
++			float weights[4] = {
++			    ((-0.5f * f + 1.f) * f - 0.5f) * f,
++			    (1.5f * f - 2.5f) * f * f + 1.f,
++			    ((-1.5f * f + 2.f) * f + 0.5f) * f,
++			    (0.5f * f - 0.5f) * f * f,
++			};
++
++			// Centred where native writing puts a sample, so the delay time doesn't jump when resampling starts
++			StereoSample* writePos = current_ - delaySpaceBetweenReadAndWrite - 1;
++			if (writePos < start_) {
+ 				writePos += sizeIncludingExtra;
+ 			}
+-			while (writePos >= end_) {
+-				writePos -= sizeIncludingExtra;
+-			}
+-
+-			// Do all writes to the right of the main write pos
+-			while (distanceFromMainWrite != 0) { // For as long as we haven't reached the "main" pos...
+-				// Check my notebook for a rudimentary diagram
+-				int32_t strengthThisWrite =
+-				    (0xFFFFFFFF >> 4) - (((distanceFromMainWrite - strength2) >> 4) * resample_config_->divideByRate);
+-
+-				writePos->l += multiply_32x32_rshift32(toDelay.l, strengthThisWrite) << 3;
+-				writePos->r += multiply_32x32_rshift32(toDelay.r, strengthThisWrite) << 3;
+-
+-				if (--writePos < start_) {
+-					writePos = end_ - 1;
+-				}
+-				// writePos = (writePos == start_) ? end_ - 1 : writePos - 1;
+-				distanceFromMainWrite -= 65536;
+-			}
+-
+-			// Do all writes to the left of (and including) the main write pos
+-			while (true) {
+-				int32_t strengthThisWrite =
+-				    (0xFFFFFFFF >> 4) - (((distanceFromMainWrite + strength2) >> 4) * resample_config_->divideByRate);
+-				if (strengthThisWrite <= 0) {
+-					break; // And stop when we've got far enough left that we shouldn't be squirting any more juice here
+-				}
+-
+-				writePos->l += multiply_32x32_rshift32(toDelay.l, strengthThisWrite) << 3;
+-				writePos->r += multiply_32x32_rshift32(toDelay.r, strengthThisWrite) << 3;
+-
+-				--writePos;
+-
+-				// loop around
+-				if (writePos < start_) {
+-					writePos = end_ - 1;
++			for (float weight : weights) {
++				int32_t weightQ30 = (int32_t)(weight * scale);
++				// Saturating: the kernel's negative lobes can take a sum a little past the input's peak
++				writePos->l = add_saturate(writePos->l, multiply_32x32_rshift32(toDelay.l, weightQ30) << 2);
++				writePos->r = add_saturate(writePos->r, multiply_32x32_rshift32(toDelay.r, weightQ30) << 2);
++				if (++writePos == end_) {
++					writePos = start_;
+ 				}
+-				distanceFromMainWrite += 65536;
+ 			}
++			return;
+ 		}
+ 
+-		// Or if delay buffer spinning below sample rate...
+-		else {
+-			// The most basic version of this would be to write to the "main" pos with strength1 and the "main + 1" pos
+-			// with strength 2. But this isn't immune to aliasing, so we instead "squirt" things a little bit wider -
+-			// wide enough that our "triangle" is always at least as wide as 1 step / sample in the delay buffer. This
+-			// means we potentially need a further 1 write in each direction.
+-
+-			// And because we're "arbitrarily" increasing the width and height (height is more a side-effect of the
+-			// simple algorithm) of our squirt, and also how spaced out the squirts are, the value written at each step
+-			// needs to be resized. See delayWriteSizeAdjustment, which is calculated above.
++		// Above: the taps from 2 widths before where it lands to 2 after, not including either end, where the weight is
++		// 0 already
++		int32_t widthQ16 = (int32_t)(spinRate >> 8);
++		float inverseWidth = 65536.f / (float)widthQ16;
++		int32_t first = ((strength2 - 2 * widthQ16) >> 16) + 1;
++		int32_t last = ((strength2 + 2 * widthQ16 + 65535) >> 16) - 1;
+ 
+-			// We've also had to make sure that the "triangles"' corners exactly meet up. Unfortunately this means even
+-			// a tiny slow-down causes half the bandwidth to be lost
+-
+-			// The furthest right we need to write is 2 steps right from the "main" write
+-			StereoSample* writePos = current_ - delaySpaceBetweenReadAndWrite + 2;
+-
+-			while (writePos < start_) {
+-				writePos += sizeIncludingExtra;
+-			}
+-
+-			// Not needed - but be careful! Leave this here as a reminder
+-			// while (writePos >= end_) writePos -= sizeIncludingExtra;
+-
+-			int32_t strength[4];
+-
+-			strength[1] = strength1 + resample_config_->rateMultiple - 65536; // For the "main" pos
+-			strength[2] = strength2 + resample_config_->rateMultiple - 65536; // For the "main + 1" pos
+-
+-			// Strengths for the further 1 write in each direction
+-			strength[0] = strength[1] - 65536;
+-			strength[3] = strength[2] - 65536;
+-
+-			int8_t i = 3;
+-			while (true) {
+-				if (strength[i] > 0) {
+-					writePos->l +=
+-					    multiply_32x32_rshift32(toDelay.l, (strength[i] >> 2) * resample_config_->writeSizeAdjustment)
+-					    << 2;
+-					writePos->r +=
+-					    multiply_32x32_rshift32(toDelay.r, (strength[i] >> 2) * resample_config_->writeSizeAdjustment)
+-					    << 2;
+-				}
+-				if (--i < 0) {
+-					break;
+-				}
+-
+-				--writePos;
+-
+-				// loop around
+-				if (writePos < start_) {
+-					writePos = end_ - 1;
+-				}
++		StereoSample* writePos = current_ - delaySpaceBetweenReadAndWrite + first;
++		while (writePos < start_) {
++			writePos += sizeIncludingExtra;
++		}
++		while (writePos >= end_) {
++			writePos -= sizeIncludingExtra;
++		}
++		float u = ((float)first - fraction) * inverseWidth; // Distance from where it lands, in widths
++		for (int32_t k = first; k <= last; k++, u += inverseWidth) {
++			float a = std::abs(u);
++			float weight = (a < 1.f) ? ((1.5f * a - 2.5f) * a * a + 1.f)
++			                         : (a < 2.f ? (((-0.5f * a + 2.5f) * a - 4.f) * a + 2.f) : 0.f);
++			int32_t weightQ30 = (int32_t)(weight * 1073741824.f);
++			writePos->l = add_saturate(writePos->l, multiply_32x32_rshift32(toDelay.l, weightQ30) << 2);
++			writePos->r = add_saturate(writePos->r, multiply_32x32_rshift32(toDelay.r, weightQ30) << 2);
++			if (++writePos == end_) {
++				writePos = start_;
+ 			}
+ 		}
+ 	}
+@@ -263,17 +225,19 @@ public:
+ 
+ private:
+ 	struct ResampleConfig {
+-		uint32_t actualSpinRate;           // 1 is represented as 16777216
+-		uint32_t spinRateForSpedUpWriting; // Normally the same as actualSpinRate, but subject to some limits for safety
+-		uint32_t divideByRate;             // 1 is represented as 65536
+-		uint32_t rateMultiple;
+-		uint32_t writeSizeAdjustment;
++		uint32_t actualSpinRate; // 1 is represented as 16777216
+ 	};
+ 
+-	void setupResample();
+-
+ 	uint32_t native_rate_ = 0;
+ 
++	// Nothing's been written since clear(), so the speed starts where it is instead of gliding there from 1x
++	bool fresh_ = true;
++
++	// Speed while resampling (1 is 16777216): at the start of the block, now, and per sample
++	uint32_t spinRateBlockStart_ = 0;
++	uint32_t spinRateNow_ = 0;
++	int32_t spinRateIncrement_ = 0;
++
+ 	StereoSample* start_ = nullptr;
+ 	StereoSample* end_;
+ 	StereoSample* current_;
+diff --git a/src/deluge/gui/menu_item/delay/filter.h b/src/deluge/gui/menu_item/delay/filter.h
+new file mode 100644
+index 00000000..079486d0
+--- /dev/null
++++ b/src/deluge/gui/menu_item/delay/filter.h
+@@ -0,0 +1,43 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include "definitions_cxx.hpp"
++#include "gui/menu_item/integer.h"
++#include "gui/ui/sound_editor.h"
++#include "model/mod_controllable/mod_controllable_audio.h"
++
++namespace deluge::gui::menu_item::delay {
++
++/// High cut in the delay's feedback: 0 = 500 Hz, 25 = 3.2 kHz, 49 = 18.6 kHz, 50 = off
++class HighCut final : public Integer {
++public:
++	using Integer::Integer;
++	void readCurrentValue() override { this->setValue(soundEditor.currentModControllable->delay.highCut); }
++	void writeCurrentValue() override { soundEditor.currentModControllable->delay.highCut = this->getValue(); }
++	[[nodiscard]] int32_t getMaxValue() const override { return Delay::kHighCutOff; }
++};
++
++/// Low cut in the delay's feedback: 0 = off, 1 = 25 Hz, 25 = 190 Hz, 50 = 540 Hz
++class LowCut final : public Integer {
++public:
++	using Integer::Integer;
++	void readCurrentValue() override { this->setValue(soundEditor.currentModControllable->delay.lowCut); }
++	void writeCurrentValue() override { soundEditor.currentModControllable->delay.lowCut = this->getValue(); }
++	[[nodiscard]] int32_t getMaxValue() const override { return Delay::kHighCutOff; }
++};
++
++} // namespace deluge::gui::menu_item::delay
+diff --git a/src/deluge/gui/ui/menus.cpp b/src/deluge/gui/ui/menus.cpp
+index d7518264..6d87e7cb 100644
+--- a/src/deluge/gui/ui/menus.cpp
++++ b/src/deluge/gui/ui/menus.cpp
+@@ -54,6 +54,7 @@
+ #include "gui/menu_item/defaults/ui/clip_type/default_new_clip_type.h"
+ #include "gui/menu_item/defaults/velocity.h"
+ #include "gui/menu_item/delay/analog.h"
++#include "gui/menu_item/delay/filter.h"
+ #include "gui/menu_item/delay/ping_pong.h"
+ #include "gui/menu_item/delay/sync.h"
+ #include "gui/menu_item/drum_name.h"
+@@ -461,6 +462,8 @@ patched_param::Integer delayRateMenu{STRING_FOR_RATE, STRING_FOR_DELAY_RATE, par
+ delay::PingPong delayPingPongMenu{STRING_FOR_PINGPONG, STRING_FOR_DELAY_PINGPONG};
+ delay::Analog delayAnalogMenu{STRING_FOR_TYPE, STRING_FOR_DELAY_TYPE};
+ delay::Sync delaySyncMenu{STRING_FOR_SYNC, STRING_FOR_DELAY_SYNC};
++delay::HighCut delayHighCutMenu{STRING_FOR_LPF};
++delay::LowCut delayLowCutMenu{STRING_FOR_HPF};
+ 
+ Submenu delayMenu{
+     STRING_FOR_DELAY,
+@@ -470,6 +473,8 @@ Submenu delayMenu{
+         &delayPingPongMenu,
+         &delayAnalogMenu,
+         &delaySyncMenu,
++        &delayHighCutMenu,
++        &delayLowCutMenu,
+     },
+ };
+ 
+@@ -672,6 +677,8 @@ Submenu globalDelayMenu{
+         &delayPingPongMenu,
+         &delayAnalogMenu,
+         &delaySyncMenu,
++        &delayHighCutMenu,
++        &delayLowCutMenu,
+     },
+ };
+ 
+diff --git a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+index 48a2c7fd..be334ac1 100644
+--- a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
++++ b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+@@ -796,6 +796,13 @@ void ModControllableAudio::writeTagsToFile(Serializer& writer) {
+ 	writer.writeAbsoluteSyncLevelToFile(currentSong, "syncLevel", delay.syncLevel, true);
+ 	// Community Firmware parameters (always write them after the official ones, just before closing the parent tag)
+ 	writer.writeSyncTypeToFile(currentSong, "syncType", delay.syncType, true);
++	// mastertune-v11: the tone filters, only when on
++	if (delay.highCut != Delay::kHighCutOff) {
++		writer.writeAttribute("highCut", delay.highCut);
++	}
++	if (delay.lowCut != Delay::kLowCutOff) {
++		writer.writeAttribute("lowCut", delay.lowCut);
++	}
+ 	writer.closeTag();
+ 
+ 	// MIDI knobs
+@@ -1107,6 +1114,8 @@ Error ModControllableAudio::readTagFromFile(Deserializer& reader, char const* ta
+ 		// Set default values in case they are not configured
+ 		delay.syncType = SYNC_TYPE_EVEN;
+ 		delay.syncLevel = SYNC_LEVEL_NONE;
++		delay.highCut = Delay::kHighCutOff;
++		delay.lowCut = Delay::kLowCutOff;
+ 
+ 		while (*(tagName = reader.readNextTagOrAttributeName())) {
+ 
+@@ -1147,6 +1156,14 @@ doReadPatchedParam:
+ 				delay.syncType = (SyncType)reader.readTagOrAttributeValueInt();
+ 				reader.exitTag("syncType");
+ 			}
++			else if (!strcmp(tagName, "highCut")) {
++				delay.highCut = std::clamp(reader.readTagOrAttributeValueInt(), 0_i32, Delay::kHighCutOff);
++				reader.exitTag("highCut");
++			}
++			else if (!strcmp(tagName, "lowCut")) {
++				delay.lowCut = std::clamp(reader.readTagOrAttributeValueInt(), 0_i32, Delay::kHighCutOff);
++				reader.exitTag("lowCut");
++			}
+ 			else if (!strcmp(tagName, "syncLevel")) {
+ 				delay.syncLevel =
+ 				    (SyncLevel)song->convertSyncLevelFromFileValueToInternalValue(reader.readTagOrAttributeValueInt());
+diff --git a/src/deluge/storage/storage_manager.cpp b/src/deluge/storage/storage_manager.cpp
+index 59a4509e..3cd19a6e 100644
+--- a/src/deluge/storage/storage_manager.cpp
++++ b/src/deluge/storage/storage_manager.cpp
+@@ -623,11 +623,14 @@ void XMLSerializer::write(char const* output) {
+ 		output++;
+ 		fileWriteBufferCurrentPos++;
+ 
+-		// Ensure we do some of the audio routine once in a while
++		// Ensure we do some of the audio routine once in a while. (mastertune-v11: the audio itself too, and loading
++		// the sample clusters it needs next, the same as while reading a file. 1.2.1 had that commented out here and
++		// only kept the display going, so the sound stalled while a song or preset was being put together for saving,
++		// a short buzz or crackle each time.)
+ 		if (!(fileWriteBufferCurrentPos & 0b11111111)) {
+ 			AudioEngine::logAction("writeCharXML");
+ 
+-			// AudioEngine::routineWithClusterLoading();
++			AudioEngine::routineWithClusterLoading();
+ 
+ 			uiTimerManager.routine();
+ 
+-- 
+2.43.0
+

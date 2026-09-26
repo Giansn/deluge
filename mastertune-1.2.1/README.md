@@ -1,6 +1,6 @@
 # Deluge 1.2.1 mit Master Tune
 
-Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb.
+Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern.
 
 | Datei | Version (Settings → Firmware version) | Inhalt |
 |---|---|---|
@@ -13,9 +13,10 @@ Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit
 | `deluge-1.2.1-mastertune-v8-76c5a9b8.bin` | `1.2.1-mastertune-v8-76c5a9b8` | v7 + USB-Audio: Ausgang des Deluge als Aufnahme-Eingang am Computer |
 | `deluge-1.2.1-mastertune-v9-c0212731.bin` | `1.2.1-mastertune-v9-c0212731` | v8 + klügeres Sample-Streaming, Kit RAM saver |
 | `deluge-1.2.1-mastertune-v10-7f9ad5c1.bin` | `1.2.1-mastertune-v10-7f9ad5c1` | v9 + Reverb: neues Modell Digital, Mutable und Freeverb repariert, HPF und LPF |
+| `deluge-1.2.1-mastertune-v11-ff31b04d.bin` | `1.2.1-mastertune-v11-ff31b04d` | v10 + Delay: saubere Wiederholungen, kein Knacken bei Zeitänderungen, LPF und HPF im Feedback; kein Knacksen beim Speichern |
 
-SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62` (vollständig: `sha256sum *.bin`).
-Quellcode: `patches/0001` bis `0010` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010.
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `bacc4b56…90fddbb0` (vollständig: `sha256sum *.bin`).
+Quellcode: `patches/0001` bis `0011` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011.
 
 ## v3 und v4: Unterschiede
 
@@ -195,6 +196,58 @@ v10 enthält v9 unverändert und überarbeitet das Song-Reverb: ein neues Modell
 
 **Geprüft:** Host-Test mit dem Reverb-Code der Firmware (47 Prüfpunkte, mit UndefinedBehaviorSanitizer): alle Modelle stabil bei maximaler Room Size, Nachhallzeiten und Pegel von Digital gegen Mutable, Stereo-Balance und -Breite, LFO-Raten, Grenzfrequenzen von HPF und LPF, Umrechnung aller alten Damping- und HPF-Werte (identischer Klang). Build ohne Warnungen, zwei Builds mit identischer SHA-256, eine Code-Prüfung. Sie fand zwei Fehler, beide behoben: Die Presets auf der Reverb-Taste (Small, Medium, Large) wären mit der neuen Damping-Richtung beim Mutable-Modell viel dunkler geworden, und Songs aus der Community-Firmware 1.3 wären mit umgekehrtem Damping geladen worden.
 
+## v11: Delay in besserer Qualität, kein Knacksen beim Speichern
+
+v11 enthält v10 unverändert, überarbeitet das Delay (Sounds, Kits, Audio-Spuren und Song) und behebt das Knacksen beim Speichern. Die Messungen stammen aus einem Test mit dem Delay-Code der Firmware auf dem PC.
+
+1. **Saubere Wiederholungen nach jeder Zeitänderung (Fehler aus 1.2.1 behoben).** Das Delay des Deluge dreht seinen Puffer schneller oder langsamer, wenn sich die Zeit ändert. Danach sollte es einen neuen Puffer anlegen und wieder verlustfrei laufen. Ist der neue Puffer aber gleich gross wie der alte, lehnte 1.2.1 ihn ab. Das Delay blieb dann für immer im Umrechnungsmodus, schon wenn der Regler kurz bewegt und zurückgedreht wurde.
+   - **Folge in 1.2.1:** Jede Wiederholung verlor 9 dB bei 10 kHz und 24 dB bei 15 kHz, darum wurden die Echos so schnell dumpf.
+   - **Jetzt:** Nach einer Zeitänderung sind die Wiederholungen wieder bitgenau.
+2. **Umrechnung mit kubischem Kern.** Solange die Zeit sich ändert oder moduliert wird (LFO, Hüllkurve, Automation), schreibt und liest das Delay mit einem kubischen Kern (Catmull-Rom), bei jeder Geschwindigkeit. 1.2.1 nahm dafür Dreiecke, die doppelt so breit waren wie nötig.
+   - Eine Wiederholung verliert bei 10 kHz 0,6 dB statt 6,9 dB.
+   - Das Rauschen der Umrechnung sinkt von −59 auf −80 dB.
+   - Sehr lange Delays (ab etwa 4 s) behalten bei 5 kHz −3,1 dB statt −6,9 dB.
+   - Geschwindigkeit und Feedback gleiten innerhalb eines Audio-Blocks, statt alle 2,9 ms zu springen. Das Summen bei 344 Hz sinkt von −78 auf −103 dB.
+3. **Kein Knacken beim Ändern der Zeit.**
+   - Ein Teil der Schreibwege lag in 1.2.1 ein Sample daneben, beim Wechsel zwischen ihnen sprang die Zeit. Jetzt schreiben alle an dieselbe Stelle. Das Delay ist dadurch 1 Sample (0,02 ms) länger.
+   - 1.2.1 legte bei jeder noch so kleinen Verlängerung einen neuen, doppelt so grossen Puffer an. Ein LFO auf der Delay-Zeit wechselte dadurch laufend die Puffer, jedes Mal mit einem kleinen Sprung. Jetzt passiert das erst ab 25 % Verlängerung.
+   - Bei einem grossen Sprung der Zeit legt das Delay sofort einen neuen Puffer an. Dieser gleitet jetzt genau wie der alte, den er ersetzt, sonst springt die Zeit, wenn er übernimmt.
+
+   Grösster Sprung im Test gegenüber einem ruhigen Ton:
+   - 5 % kürzer: 0,1× statt 3,8×
+   - 5 % länger: 0,1× statt 1,9×
+   - 40 % länger: 0,1× statt 1,7×
+   - 70 % länger: 0,1× statt 2,5×
+   - weniger als halb so lang: 0,1× statt 4,1×
+   - über die Grundgeschwindigkeit fahren: 0,1× statt 1,7×
+   - LFO ±3 % auf der Zeit: 0,1× statt 1,7×
+4. **Analog-Modus:** Die Sättigung arbeitet mit weniger Aliasing (−18 statt −14 dB Störanteil bei stark angetriebenem Feedback), wie bereits beim Kompressor.
+5. **Neu: LPF und HPF im Feedback** (Delay-Menü, nach Sync). Jede Wiederholung wird dunkler bzw. dünner als die vorige, wie bei Band- und Eimerketten-Delays.
+   - **LPF:** 0 = 500 Hz, 25 = 3,2 kHz, 49 = 18,6 kHz, 50 = aus (Standard).
+   - **HPF:** 0 = aus (Standard), 1 = 25 Hz, 25 = 190 Hz, 50 = 540 Hz.
+   - Im Digital-Modus begrenzt das Delay erst nach den Filtern. So bleibt der HPF auch bei vollem Feedback innerhalb der Aussteuerung.
+   - Gespeichert werden sie mit dem Sound, Kit oder Song, aber nur, wenn sie eingeschaltet sind.
+6. **Zwei kleine Fehler aus 1.2.1 behoben:** Ein kopierter Sound behält beim Delay-Sync Triole oder Punktierung, und ein neu startendes Delay beginnt ohne Reste im Filter.
+7. **Kein Knacksen mehr beim Speichern (Fehler aus 1.2.1 behoben).** Während der Deluge einen Song oder ein Preset für die Karte zusammenbaut, lief in 1.2.1 nur die Anzeige weiter. Der Aufruf der Audio-Engine war an dieser Stelle auskommentiert. Die Ausgabe wiederholte deshalb ihren letzten Puffer, das gab bei jedem Speichern ein kurzes Furzen oder Knacksen. Jetzt läuft die Audio-Engine auch dabei weiter und lädt die Samples nach, die gerade spielen, genau wie beim Laden eines Songs. Das gilt für Songs, Synth- und Kit-Presets und Einstellungen.
+
+**Grenzen:**
+- Nicht auf dem Gerät getestet, auch der Fix fürs Speichern nicht.
+- Delays über 2 s laufen wie bisher im Umrechnungsmodus, weil ihr Puffer nicht grösser werden kann.
+- Wird die Zeit auf einen Schlag stark verändert, gleitet die Tonhöhe der Wiederholungen während eines Durchlaufs, wie bei einem Band, das bremst. Das ist wie in 1.2.1, nur ohne den Sprung beim Pufferwechsel.
+- Das Umrechnen braucht mehr Rechenzeit, aber nur, solange die Zeit sich ändert oder moduliert wird. Bis zur Grundgeschwindigkeit sind es 4 Gewichte pro Sample, darüber mehr (8 bei doppelter Geschwindigkeit), dazu die kubische Leseinterpolation. Im Normalbetrieb ist der Aufwand gleich wie bisher.
+- Das Speichern dauert etwas länger, weil der Deluge dabei Audio rechnet.
+
+**Geprüft:**
+- **Host-Test** mit dem Delay-Code der Firmware (24 Prüfpunkte, UndefinedBehaviorSanitizer bricht beim ersten Fehler ab): Wiederholungen nach Zeitänderungen bitgenau, Höhen und Rauschen bei Modulation, Blocktreppen, Sprünge bei sieben Arten von Zeitänderungen, keine neuen Puffer bei langen Delays, Filterkurven, Aussteuerung mit HPF bei vollem Feedback, Filter abschalten ohne Sprung.
+- **Build:** ohne Warnungen, zwei Builds mit identischer SHA-256.
+- **Code-Prüfungen:** drei, mit einer Gegenprüfung jedes Befunds. Sie fanden sechs Fehler in meinen Änderungen, alle behoben:
+  - Ein neuer Puffer knackte beim Übernehmen.
+  - Der HPF übersteuerte bei vollem Feedback bis auf das 1,84-Fache der Begrenzung.
+  - Ein abgeschalteter HPF behielt seinen Zustand. Das gab später einen Klick, 175-mal so steil wie der Ton.
+  - Filterreste blieben nach einem Neustart des Delays stehen.
+  - Unnötige Rechenzeit ging in Bibliotheksaufrufe.
+  - Beim Speichern wären gestreamte Samples ohne Nachladen abgebrochen.
+
 ## Bedienung
 
 Das Menü liegt unter **Settings → Tuning → Master tune (Hz)**. Die 7-Segment-Anzeige zeigt `TUNE` → `MTUN`.
@@ -280,8 +333,8 @@ Version 1 liegt weiterhin in der Git-Historie dieses Ordners.
 ```sh
 git clone https://github.com/SynthstromAudible/DelugeFirmware && cd DelugeFirmware
 git checkout release_1_2_1
-git am /pfad/zu/patches/*.patch        # alle = v10; nur 0001 = v2, 0001-0003 = v3, 0001-0004 = v4, 0001-0005 = v5, 0001-0006 = v6, 0001-0007 = v7, 0001-0008 = v8, 0001-0009 = v9
-./dbt configure -DRELEASE_TYPE:STRING=mastertune-v10   # Name in der Versionsanzeige, z. B. mastertune-v9 für v9
+git am /pfad/zu/patches/*.patch        # alle = v11; nur 0001 = v2, 0001-0003 = v3, 0001-0004 = v4, 0001-0005 = v5, 0001-0006 = v6, 0001-0007 = v7, 0001-0008 = v8, 0001-0009 = v9, 0001-0010 = v10
+./dbt configure -DRELEASE_TYPE:STRING=mastertune-v11   # Name in der Versionsanzeige, z. B. mastertune-v10 für v10
 ./dbt build release                      # Ergebnis: build/Release/deluge.bin
 
 # Rechentest (Host-Compiler)
@@ -304,4 +357,7 @@ python3 /pfad/zu/tests/run_neon_shift_test.py .
 
 # Reverb (v10): alle Modelle auf dem PC gemessen, mit UndefinedBehaviorSanitizer
 /pfad/zu/tests/reverb/run.sh .
+
+# Delay (v11): Wiederholungen, Zeitänderungen und Filter auf dem PC gemessen, mit UndefinedBehaviorSanitizer
+/pfad/zu/tests/delay/run.sh .
 ```

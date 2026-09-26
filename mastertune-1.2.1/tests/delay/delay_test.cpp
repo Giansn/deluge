@@ -420,6 +420,51 @@ int main() {
 	}
 #endif
 
+#ifndef NO_DELAY_FILTERS
+	// 12. The low cut switched off while the high cut stays on, and the high cut later: no step either time. (Until
+	// the review, the low cut's state froze when it went off, and came back all at once when the high cut went off.)
+	{
+		Runner r;
+		r.delay.highCut = 25;
+		r.delay.lowCut = 40;
+		std::vector<double> out;
+		size_t t = 0;
+		auto play = [&](size_t n) {
+			for (size_t pos = 0; pos < n; pos += kBlock) {
+				std::vector<int32_t> in(kBlock);
+				for (int i = 0; i < kBlock; i++) {
+					in[i] = (int32_t)(std::sin(2 * M_PI * 60 * (double)(t + i) / kFs) * (1 << 28));
+				}
+				t += kBlock;
+				auto b = r.block(in.data(), kBlock, rate);
+				for (auto& x : b) {
+					out.push_back(x.l / 2147483648.0);
+				}
+			}
+		};
+		play(66150);
+		r.delay.lowCut = 0;
+		play(44100);
+		size_t highCutOff = out.size();
+		r.delay.highCut = Delay::kHighCutOff;
+		play(44100);
+		auto maxD2 = [&](size_t from, size_t to) {
+			double m = 0;
+			for (size_t i = from + 1; i + 1 < to; i++) {
+				m = std::max(m, std::abs(out[i + 1] - 2 * out[i] + out[i - 1]));
+			}
+			return m;
+		};
+		double steady = maxD2(30000, 66150);
+		double atHighCutOff = maxD2(highCutOff - 256, highCutOff + 256);
+		printf("low cut off, then high cut off: step when the high cut goes %.2f times the steady one\n",
+		       atHighCutOff / steady);
+		CHECK(atHighCutOff / steady < 1.5, "switching the high cut off after the low cut steps (%.2f)",
+		      atHighCutOff / steady);
+		CHECK(std::abs(r.delay.lowCutStateL) < 1.f, "the low cut's state has gone");
+	}
+#endif
+
 	printf("%d checks, %d failed\n", checks, failures);
 	if (failures == 0) {
 		printf("all delay checks passed\n");
