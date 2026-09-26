@@ -1,6 +1,6 @@
 # Deluge 1.2.1 mit Master Tune
 
-Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer.
+Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits.
 
 | Datei | Version (Settings → Firmware version) | Inhalt |
 |---|---|---|
@@ -11,9 +11,10 @@ Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit
 | `deluge-1.2.1-mastertune-v6-1e1af07a.bin` | `1.2.1-mastertune-v6-1e1af07a` | v5 + zweite Bounce-Version: feste Ratchet-Anzahl, Bounce ohne Leiserwerden |
 | `deluge-1.2.1-mastertune-v7-ca0b5bd7.bin` | `1.2.1-mastertune-v7-ca0b5bd7` | v6 + SD-Karte über USB für DEx und deluge-editor |
 | `deluge-1.2.1-mastertune-v8-76c5a9b8.bin` | `1.2.1-mastertune-v8-76c5a9b8` | v7 + USB-Audio: Ausgang des Deluge als Aufnahme-Eingang am Computer |
+| `deluge-1.2.1-mastertune-v9-c0212731.bin` | `1.2.1-mastertune-v9-c0212731` | v8 + klügeres Sample-Streaming, Kit RAM saver |
 
-SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298` (vollständig: `sha256sum *.bin`).
-Quellcode: `patches/0001` bis `0008` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008.
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745` (vollständig: `sha256sum *.bin`).
+Quellcode: `patches/0001` bis `0009` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009.
 
 ## v3 und v4: Unterschiede
 
@@ -156,6 +157,20 @@ v8 enthält v7 unverändert. Neu kann der Deluge sein Ausgangssignal über USB a
 
 **Geprüft:** Deskriptoren gegen die Regeln von USB 2.0, USB Audio 1.0 und USB MIDI (64 Prüfpunkte). Puffer und Paketsteuerung in einer Simulation über 10 Minuten mit Taktabweichungen bis 1400 ppm, einem Computer, der 200 ms nicht liest, und 20 ms Stillstand der Engine (39 Prüfpunkte, mit Sanitizern). Build ohne Warnungen, zwei Builds mit identischer SHA-256, eine Code-Prüfung. Sie fand zwei Fehler, beide behoben: MIDI-Empfang über USB wäre während des Streamings ausgefallen, und nach langem Sperren der Interrupts wäre nur eine Hälfte des Doppelpuffers nachgefüllt worden.
 
+## v9: klügeres Sample-Streaming und RAM-Sparer für Kits
+
+v9 enthält v8 unverändert und verbessert, wie der Deluge Samples von der SD-Karte lädt. Die Karte wird dadurch nicht schneller, aber ihre Leistung geht dorthin, wo sie gebraucht wird, und ungenutzte Kit-Reihen belegen keinen festen RAM mehr.
+
+1. **Laden nach Dringlichkeit (Fehler aus 1.2.1 behoben).** Die Warteschlange für Ladeaufträge sortierte seit jeher nach Speicheradresse statt nach Priorität. Jetzt kommt zuerst, was eine spielende Stimme als Nächstes braucht, danach die Starts von Samples, die vielleicht nie spielen. **Wirkung:** weniger abbrechende Stimmen und weniger «card too slow» unter Last, etwa beim Kit-Wechsel während des Spielens.
+2. **Doppelte Reserve beim Streaming.** Eine spielende Stimme hält drei statt zwei Cluster voraus. Der nächste Block hat damit zwei statt eine Clusterdauer Zeit, bei 32-KB-Clustern etwa 250–370 statt 120–190 ms (Stereo). Kostet 32 KB pro gerade streamende Stimme.
+3. **Kurze Samples ganz im RAM (Fehler aus 1.2.1 behoben).** Samples bis vier Cluster (bis 128 KB bei 32-KB-Clustern) sollten ganz im Speicher bleiben. Ein Rechenfehler hielt stattdessen die ersten zwei Cluster doppelt, der Rest konnte verdrängt und neu geladen werden.
+4. **Kit RAM saver** (Settings → Community features → **Kit RAM saver**, 7-Segment `KRAM`, standardmässig an): Kit-Reihen ohne Noten in allen Clips des Songs geben den festgehaltenen Start ihrer Samples frei, meist 64 KB pro Sample. Bei einem Kit mit 50 Samples, von denen der Song 5 nutzt, sind das rund 3 MB. Die Samples bleiben im Kit und im Cache, bis der RAM anderweitig gebraucht wird. Bekommt eine Reihe Noten, holt der Deluge ihren Start innerhalb einer Sekunde zurück. Ausgenommen sind Kits mit Kit-Arpeggiator oder MIDI-Learn fürs ganze Kit sowie Reihen mit eigenem MIDI-Learn, weil sie auch ohne Noten spielen können.
+5. **Kein verlorener Schlag.** Ist der Start eines Samples beim Anschlag nicht im RAM, wartet die Stimme, bis er geladen ist (meist wenige Millisekunden, höchstens 100 ms), und spielt dann von Anfang an. In 1.2.1 fiel der Schlag in so einem Fall aus.
+
+**Grenzen:** Nicht auf dem Gerät getestet. Beim Vorhören oder MIDI-Spielen einer bisher ungenutzten Reihe kann der allererste Schlag wenige Millisekunden später kommen, falls ihr Start inzwischen aus dem RAM verdrängt wurde. Sequenzierte Noten sind nicht betroffen, weil Reihen mit Noten ihre Starts behalten. Wer das nicht will, schaltet den Kit RAM saver aus.
+
+**Geprüft:** die Warteschlange mit dem echten Firmware-Code auf dem PC (Reihenfolge, gleiche Prioritäten, Erkennung der niedrigsten Priorität), Build ohne Warnungen, zwei Builds mit identischer SHA-256, eine Code-Prüfung. Sie fand drei Fehler, alle behoben: Ein wartender Schlag konnte durch die automatische Release-Logik stumm bleiben, der Kit RAM saver konnte beim Laden eines Presets in eine Kit-Reihe in freigegebenen Speicher schreiben, und beim Erhöhen von Unison während des Wartens übernahm die neue Stimme einen falschen Zustand. Ausserdem laden ein später Einstieg in ein Sample (Stummschaltung mitten in der Note aufgehoben) und der Wechsel vom Cache zurück zur Karte jetzt mit der Priorität ihrer Stimme statt mit der niedrigsten.
+
 ## Bedienung
 
 Das Menü liegt unter **Settings → Tuning → Master tune (Hz)**. Die 7-Segment-Anzeige zeigt `TUNE` → `MTUN`.
@@ -241,8 +256,8 @@ Version 1 liegt weiterhin in der Git-Historie dieses Ordners.
 ```sh
 git clone https://github.com/SynthstromAudible/DelugeFirmware && cd DelugeFirmware
 git checkout release_1_2_1
-git am /pfad/zu/patches/*.patch        # alle = v8; nur 0001 = v2, 0001-0003 = v3, 0001-0004 = v4, 0001-0005 = v5, 0001-0006 = v6, 0001-0007 = v7
-./dbt configure -DRELEASE_TYPE:STRING=mastertune-v8   # Name in der Versionsanzeige, z. B. mastertune-v7 für v7
+git am /pfad/zu/patches/*.patch        # alle = v9; nur 0001 = v2, 0001-0003 = v3, 0001-0004 = v4, 0001-0005 = v5, 0001-0006 = v6, 0001-0007 = v7, 0001-0008 = v8
+./dbt configure -DRELEASE_TYPE:STRING=mastertune-v9   # Name in der Versionsanzeige, z. B. mastertune-v8 für v8
 ./dbt build release                      # Ergebnis: build/Release/deluge.bin
 
 # Rechentest (Host-Compiler)
@@ -259,4 +274,7 @@ python3 /pfad/zu/tests/run_neon_shift_test.py .
 
 # USB-Audio (v8): Deskriptoren und Puffer-Simulation auf dem PC
 /pfad/zu/tests/usbaudio/run.sh .
+
+# Lade-Warteschlange (v9) auf dem PC (braucht g++-multilib)
+/pfad/zu/tests/streaming/run.sh .
 ```

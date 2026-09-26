@@ -1,0 +1,884 @@
+From c0212731f6c04b3c94d1a9965e3d148d9cc11e6f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 11:05:40 +0000
+Subject: [PATCH] Smarter sample streaming: loading priority, more read-ahead,
+ kit RAM saver
+
+- storage/cluster/cluster_priority_queue: the loading queue sorts by
+  priority, most urgent first and first come first served among equal
+  priorities. 1.2.1 inserted each cluster by its address and then
+  overwrote that sort key with the priority, so the loading order had
+  nothing to do with urgency: a playing voice's next cluster could wait
+  behind the starts of samples that may never play.
+- A playing voice now holds three clusters from its play position on
+  (kNumClustersReaderAhead) instead of two, so each load has two
+  clusters' playing time to arrive instead of one. Sample starts stay
+  pinned with two clusters.
+- SampleHolderForVoice: short samples (up to four clusters) are held in
+  RAM whole, as intended. 1.2.1 computed the byte for the rest as
+  (start + clusterSizeMagnitude) << 1, inside the first cluster, so it
+  held the first two clusters twice and the rest could be evicted.
+- Kit RAM saver (community feature, on by default): once a second, kit
+  rows without notes in any clip of the song let go of the pinned
+  starts of their samples (usually 64 KB each), and rows that get notes
+  claim them again. Kits with the kit arpeggiator on or with MIDI
+  learned, and rows with MIDI learned, keep theirs.
+- A voice whose sample start isn't in RAM yet (such a row, evicted)
+  waits for it (up to 100 ms) and plays from the beginning, instead of
+  dropping the hit.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/definitions_cxx.hpp                       |   4 +
+ src/deluge/deluge.cpp                         |   2 +
+ src/deluge/gui/l10n/english.json              |   3 +-
+ src/deluge/gui/l10n/g_english.cpp             |   1 +
+ src/deluge/gui/l10n/g_seven_segment.cpp       |   1 +
+ src/deluge/gui/l10n/seven_segment.json        |   3 +-
+ src/deluge/gui/l10n/strings.h                 |   1 +
+ .../menu_item/runtime_feature/settings.cpp    |   4 +-
+ src/deluge/model/clip/audio_clip.cpp          |   2 +-
+ src/deluge/model/drum/drum.h                  |   1 +
+ src/deluge/model/instrument/kit_ram_saver.cpp | 135 ++++++++++++++++++
+ src/deluge/model/instrument/kit_ram_saver.h   |  36 +++++
+ src/deluge/model/sample/sample_holder.cpp     |  10 +-
+ src/deluge/model/sample/sample_holder.h       |   1 +
+ .../model/sample/sample_holder_for_voice.cpp  |  26 +++-
+ .../model/sample/sample_low_level_reader.cpp  |  18 +--
+ .../model/sample/sample_low_level_reader.h    |   2 +-
+ .../settings/runtime_feature_settings.cpp     |   5 +
+ .../model/settings/runtime_feature_settings.h |   1 +
+ src/deluge/model/voice/voice.cpp              |  34 ++++-
+ src/deluge/model/voice/voice_sample.cpp       |  16 ++-
+ src/deluge/model/voice/voice_sample.h         |   6 +-
+ .../model/voice/voice_unison_part_source.cpp  |  22 ++-
+ src/deluge/processing/sound/sound.cpp         |  23 ++-
+ .../storage/audio/audio_file_manager.cpp      |   5 +-
+ .../cluster/cluster_priority_queue.cpp        |  15 +-
+ .../storage/cluster/cluster_priority_queue.h  |   8 +-
+ 27 files changed, 338 insertions(+), 47 deletions(-)
+ create mode 100644 src/deluge/model/instrument/kit_ram_saver.cpp
+ create mode 100644 src/deluge/model/instrument/kit_ram_saver.h
+
+diff --git a/src/definitions_cxx.hpp b/src/definitions_cxx.hpp
+index 023bcdde..6aa83a52 100644
+--- a/src/definitions_cxx.hpp
++++ b/src/definitions_cxx.hpp
+@@ -617,6 +617,10 @@ enum class MIDITransposeControlMethod : uint8_t {
+ constexpr auto kNumMIDITransposeControlMethods = util::to_underlying(MIDITransposeControlMethod::CHORD) + 1;
+ 
+ constexpr int32_t kNumClustersLoadedAhead = 2;
++// mastertune-v9: clusters a playing voice holds from its play position on, the current one included. With 3, the next
++// load has two clusters' playing time to arrive instead of one (at 32 KB clusters about 250 to 370 ms instead of 120 to
++// 190 ms for stereo samples). Sample starts stay pinned with kNumClustersLoadedAhead.
++constexpr int32_t kNumClustersReaderAhead = 3;
+ 
+ enum class InputMonitoringMode : uint8_t {
+ 	SMART,
+diff --git a/src/deluge/deluge.cpp b/src/deluge/deluge.cpp
+index 9421756d..f1a0b107 100644
+--- a/src/deluge/deluge.cpp
++++ b/src/deluge/deluge.cpp
+@@ -53,6 +53,7 @@
+ #include "memory/general_memory_allocator.h"
+ #include "model/clip/instrument_clip.h"
+ #include "model/clip/instrument_clip_minder.h"
++#include "model/instrument/kit_ram_saver.h"
+ #include "model/output.h"
+ #include "model/settings/runtime_feature_settings.h"
+ #include "model/song/song.h"
+@@ -599,6 +600,7 @@ void registerTasks() {
+ 	if (usbAudioEnabled) {
+ 		addRepeatingTask([]() { usbAudioReportGaps(); }, p++, 0.5, 0.5, 1, "usb audio gaps");
+ 	}
++	addRepeatingTask([]() { kit_ram_saver::routine(); }, p++, 1, 1, 2, "kit ram saver");
+ 	// this one actually actions them
+ 	addRepeatingTask([]() { encoders::interpretEncoders(false); }, p++, 0.005, 0.005, 0.01, "interpret encoders slow");
+ 
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index 9b022ac8..3b7afc53 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -922,6 +922,7 @@
+         "STRING_FOR_ARP_BOUNCE_FADE_MENU_TITLE": "Bounce fade",
+         "STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO": "USB audio",
+         "STRING_FOR_RESTART_TO_APPLY": "Restart to apply",
+-        "STRING_FOR_USB_AUDIO_GAP": "USB audio gap"
++        "STRING_FOR_USB_AUDIO_GAP": "USB audio gap",
++        "STRING_FOR_COMMUNITY_FEATURE_KIT_RAM_SAVER": "Kit RAM saver"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index 31b3992d..d683bc59 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -851,6 +851,7 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO, "USB audio"},
+         {STRING_FOR_RESTART_TO_APPLY, "Restart to apply"},
+         {STRING_FOR_USB_AUDIO_GAP, "USB audio gap"},
++        {STRING_FOR_COMMUNITY_FEATURE_KIT_RAM_SAVER, "Kit RAM saver"},
+     },
+ };
+ } // namespace deluge::l10n::built_in
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index 5a11bc68..9ca5294b 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -493,6 +493,7 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO, "UAUD"},
+         {STRING_FOR_RESTART_TO_APPLY, "RSTR"},
+         {STRING_FOR_USB_AUDIO_GAP, "UGAP"},
++        {STRING_FOR_COMMUNITY_FEATURE_KIT_RAM_SAVER, "KRAM"},
+     },
+     &built_in::english,
+ };
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index ab50c8aa..000583bc 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -527,6 +527,7 @@
+         "STRING_FOR_BOUNCE_FADE": "BFAD",
+         "STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO": "UAUD",
+         "STRING_FOR_RESTART_TO_APPLY": "RSTR",
+-        "STRING_FOR_USB_AUDIO_GAP": "UGAP"
++        "STRING_FOR_USB_AUDIO_GAP": "UGAP",
++        "STRING_FOR_COMMUNITY_FEATURE_KIT_RAM_SAVER": "KRAM"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index 38612435..9f02421e 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -966,6 +966,7 @@ enum class String : size_t {
+ 	STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO,
+ 	STRING_FOR_RESTART_TO_APPLY,
+ 	STRING_FOR_USB_AUDIO_GAP,
++	STRING_FOR_COMMUNITY_FEATURE_KIT_RAM_SAVER,
+ 
+ 	STRING_LAST
+ };
+diff --git a/src/deluge/gui/menu_item/runtime_feature/settings.cpp b/src/deluge/gui/menu_item/runtime_feature/settings.cpp
+index e3a29a64..559ae086 100644
+--- a/src/deluge/gui/menu_item/runtime_feature/settings.cpp
++++ b/src/deluge/gui/menu_item/runtime_feature/settings.cpp
+@@ -51,6 +51,7 @@ SettingToggle menuAlternativePlaybackStartBehaviour(RuntimeFeatureSettingType::A
+ SettingToggle menuAccessibilityShortcuts(RuntimeFeatureSettingType::AccessibilityShortcuts);
+ SettingToggle menuEnableGridViewLoopPads(RuntimeFeatureSettingType::EnableGridViewLoopPads);
+ UsbAudioSetting menuUsbAudio(RuntimeFeatureSettingType::UsbAudio);
++SettingToggle menuKitRamSaver(RuntimeFeatureSettingType::KitRamSaver);
+ 
+ std::array<MenuItem*, RuntimeFeatureSettingType::MaxElement - kNonTopLevelSettings> subMenuEntries{
+     &menuDrumRandomizer,
+@@ -76,7 +77,8 @@ std::array<MenuItem*, RuntimeFeatureSettingType::MaxElement - kNonTopLevelSettin
+     &menuAlternativePlaybackStartBehaviour,
+     &menuAccessibilityShortcuts,
+     &menuEnableGridViewLoopPads,
+-    &menuUsbAudio};
++    &menuUsbAudio,
++    &menuKitRamSaver};
+ 
+ Settings::Settings(l10n::String name, l10n::String title) : menu_item::Submenu(name, title, subMenuEntries) {
+ }
+diff --git a/src/deluge/model/clip/audio_clip.cpp b/src/deluge/model/clip/audio_clip.cpp
+index f0eaf689..c38c380c 100644
+--- a/src/deluge/model/clip/audio_clip.cpp
++++ b/src/deluge/model/clip/audio_clip.cpp
+@@ -552,7 +552,7 @@ void AudioClip::render(ModelStackWithTimelineCounter* modelStack, int32_t* outpu
+ 	if (doingLateStart && ((AudioOutput*)output)->envelope.state < EnvelopeStage::FAST_RELEASE) {
+ 		uint64_t numSamplesIn = guide.getSyncedNumSamplesIn();
+ 
+-		LateStartAttemptStatus result = voiceSample->attemptLateSampleStart(&guide, sample, numSamplesIn);
++		LateStartAttemptStatus result = voiceSample->attemptLateSampleStart(&guide, sample, numSamplesIn, 0, 1);
+ 		if (result != LateStartAttemptStatus::SUCCESS) {
+ 			if (result == LateStartAttemptStatus::FAILURE) {
+ 				unassignVoiceSample(false);
+diff --git a/src/deluge/model/drum/drum.h b/src/deluge/model/drum/drum.h
+index e57e6bce..29e3937e 100644
+--- a/src/deluge/model/drum/drum.h
++++ b/src/deluge/model/drum/drum.h
+@@ -54,6 +54,7 @@ public:
+ 	bool earlyNoteStillActive;
+ 
+ 	bool auditioned;
++	bool keepSampleStarts = true;      // mastertune-v9: see model/instrument/kit_ram_saver.h
+ 	uint8_t lastMIDIChannelAuditioned; // Primarily for MPE purposes
+ 
+ 	int8_t lastExpressionInputsReceived[2][kNumExpressionDimensions];
+diff --git a/src/deluge/model/instrument/kit_ram_saver.cpp b/src/deluge/model/instrument/kit_ram_saver.cpp
+new file mode 100644
+index 00000000..0bf01ad9
+--- /dev/null
++++ b/src/deluge/model/instrument/kit_ram_saver.cpp
+@@ -0,0 +1,135 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "model/instrument/kit_ram_saver.h"
++#include "gui/ui/load/load_song_ui.h"
++#include "gui/ui/ui.h"
++#include "model/clip/clip.h"
++#include "model/clip/instrument_clip.h"
++#include "model/drum/drum.h"
++#include "model/instrument/kit.h"
++#include "model/note/note_row.h"
++#include "model/settings/runtime_feature_settings.h"
++#include "model/song/song.h"
++#include "processing/sound/sound_drum.h"
++#include "processing/source.h"
++#include "storage/multi_range/multisample_range.h"
++
++namespace kit_ram_saver {
++namespace {
++
++// Calls f(source, holder) for each loaded sample the drum can play
++template <typename F>
++void forEachSample(SoundDrum* drum, F f) {
++	for (int32_t s = 0; s < kNumSources; s++) {
++		Source& source = drum->sources[s];
++		if (source.oscType != OscType::SAMPLE) {
++			continue;
++		}
++		for (int32_t r = 0; r < source.ranges.getNumElements(); r++) {
++			SampleHolderForVoice& holder = ((MultisampleRange*)source.ranges.getElement(r))->sampleHolder;
++			if (holder.audioFile) {
++				f(source, holder);
++			}
++		}
++	}
++}
++
++void markKitRows(ClipArray& clips) {
++	for (int32_t c = 0; c < clips.getNumElements(); c++) {
++		Clip* clip = clips.getClipAtIndex(c);
++		if (clip->type != ClipType::INSTRUMENT || !clip->output || clip->output->type != OutputType::KIT) {
++			continue;
++		}
++		InstrumentClip* instrumentClip = (InstrumentClip*)clip;
++		// With the kit arpeggiator on, any row can sound
++		bool keepAll = (instrumentClip->arpSettings.mode != ArpMode::OFF);
++		if (keepAll) {
++			for (Drum* drum = ((Kit*)clip->output)->firstDrum; drum; drum = drum->next) {
++				drum->keepSampleStarts = true;
++			}
++			continue;
++		}
++		for (int32_t i = 0; i < instrumentClip->noteRows.getNumElements(); i++) {
++			NoteRow* noteRow = instrumentClip->noteRows.getElement(i);
++			if (!noteRow->drum || noteRow->hasNoNotes()) {
++				continue;
++			}
++			// Reach the drum only through the kit's own list: a row can still point at a drum that's gone, while a
++			// preset loads into it, or in another clip of the kit
++			for (Drum* drum = ((Kit*)clip->output)->firstDrum; drum; drum = drum->next) {
++				if (drum == noteRow->drum) {
++					drum->keepSampleStarts = true;
++					break;
++				}
++			}
++		}
++	}
++}
++
++} // namespace
++
++void routine() {
++	if (!currentSong || getCurrentUI() == &loadSongUI || currentUIMode == UI_MODE_LOADING_SONG_ESSENTIAL_SAMPLES
++	    || currentUIMode == UI_MODE_LOADING_SONG_UNESSENTIAL_SAMPLES_UNARMED
++	    || currentUIMode == UI_MODE_LOADING_SONG_UNESSENTIAL_SAMPLES_ARMED
++	    || currentUIMode == UI_MODE_LOADING_SONG_NEW_SONG_PLAYING) {
++		return;
++	}
++
++	bool enabled = runtimeFeatureSettings.isOn(RuntimeFeatureSettingType::KitRamSaver);
++
++	// Which rows may sound
++	for (Output* output = currentSong->firstOutput; output; output = output->next) {
++		if (output->type != OutputType::KIT) {
++			continue;
++		}
++		Kit* kit = (Kit*)output;
++		bool keepAll = !enabled || kit->midiInput.containsSomething() || kit->defaultArpSettings.mode != ArpMode::OFF;
++		for (Drum* drum = kit->firstDrum; drum; drum = drum->next) {
++			drum->keepSampleStarts = keepAll || drum->midiInput.containsSomething();
++		}
++	}
++	if (enabled) {
++		markKitRows(currentSong->sessionClips);
++		markKitRows(currentSong->arrangementOnlyClips);
++	}
++
++	// Let go of or claim again the starts of their samples
++	for (Output* output = currentSong->firstOutput; output; output = output->next) {
++		if (output->type != OutputType::KIT) {
++			continue;
++		}
++		for (Drum* drum = ((Kit*)output)->firstDrum; drum; drum = drum->next) {
++			if (drum->type != DrumType::SOUND) {
++				continue;
++			}
++			bool keep = drum->keepSampleStarts;
++			forEachSample((SoundDrum*)drum, [keep](Source& source, SampleHolderForVoice& holder) {
++				bool claimed = (holder.clustersForStart[0] != nullptr);
++				if (keep && !claimed) {
++					holder.claimClusterReasons(source.sampleControls.reversed, CLUSTER_ENQUEUE);
++				}
++				else if (!keep && claimed) {
++					holder.unassignAllClusterReasons();
++				}
++			});
++		}
++	}
++}
++
++} // namespace kit_ram_saver
+diff --git a/src/deluge/model/instrument/kit_ram_saver.h b/src/deluge/model/instrument/kit_ram_saver.h
+new file mode 100644
+index 00000000..fbca112c
+--- /dev/null
++++ b/src/deluge/model/instrument/kit_ram_saver.h
+@@ -0,0 +1,36 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++// Kit RAM saver (mastertune-v9, community feature, on by default).
++//
++// Every sample of a kit keeps the start of its audio (two clusters, usually 64 KB) pinned in RAM, so a hit plays at
++// once. For kit rows that have no notes in any clip of the song, that's RAM held for nothing: a kit of 50 samples of
++// which a song uses 5 pins about 3 MB. This lets go of the starts of those rows, so the RAM can serve as cache for
++// what's actually playing. The samples stay in the kit and their clusters stay cached until the RAM is needed for
++// something else. As soon as a row gets notes again, its start is claimed and loaded again.
++//
++// Rows that can sound without notes keep their starts: all rows of a kit with the kit arpeggiator on or with MIDI
++// learned for the whole kit, and rows with MIDI learned for themselves. Auditioning or playing a row whose start got
++// evicted waits for it to load (a few milliseconds) instead of dropping the hit, see VoiceUnisonPartSource::noteOn().
++namespace kit_ram_saver {
++
++// Main loop, about once a second
++void routine();
++
++} // namespace kit_ram_saver
+diff --git a/src/deluge/model/sample/sample_holder.cpp b/src/deluge/model/sample/sample_holder.cpp
+index 4fd39c13..c63ea049 100644
+--- a/src/deluge/model/sample/sample_holder.cpp
++++ b/src/deluge/model/sample/sample_holder.cpp
+@@ -164,6 +164,12 @@ void SampleHolder::claimClusterReasons(bool reversed, int32_t clusterLoadInstruc
+ 	// unassignAllReasons(); // This now happens as part of reassessPosForMarker(), called below
+ 
+ 	int32_t playDirection = reversed ? -1 : 1;
++	claimClusterReasonsForMarker(clustersForStart, getStartPlaybackByte(reversed), playDirection,
++	                             clusterLoadInstruction);
++}
++
++// Where playback of this sample begins, a little before the start marker, in bytes from the start of the file
++int32_t SampleHolder::getStartPlaybackByte(bool reversed) {
+ 	int32_t bytesPerSample = audioFile->numChannels * ((Sample*)audioFile)->byteDepth;
+ 
+ 	// This code basically copied from VoiceSource::setupPlaybackBounds()
+@@ -182,9 +188,7 @@ void SampleHolder::claimClusterReasons(bool reversed, int32_t clusterLoadInstruc
+ 		}
+ 	}
+ 
+-	int32_t startPlaybackAtByte = ((Sample*)audioFile)->audioDataStartPosBytes + startPlaybackAtSample * bytesPerSample;
+-
+-	claimClusterReasonsForMarker(clustersForStart, startPlaybackAtByte, playDirection, clusterLoadInstruction);
++	return ((Sample*)audioFile)->audioDataStartPosBytes + startPlaybackAtSample * bytesPerSample;
+ }
+ 
+ void SampleHolder::claimClusterReasonsForMarker(Cluster** clusters, uint32_t startPlaybackAtByte, int32_t playDirection,
+diff --git a/src/deluge/model/sample/sample_holder.h b/src/deluge/model/sample/sample_holder.h
+index 104e3355..7e33b332 100644
+--- a/src/deluge/model/sample/sample_holder.h
++++ b/src/deluge/model/sample/sample_holder.h
+@@ -55,6 +55,7 @@ public:
+ 	Cluster* clustersForStart[kNumClustersLoadedAhead];
+ 
+ protected:
++	int32_t getStartPlaybackByte(bool reversed);
+ 	void claimClusterReasonsForMarker(Cluster** clusters, uint32_t startPlaybackAtByte, int32_t playDirection,
+ 	                                  int32_t clusterLoadInstruction);
+ 	virtual void sampleBeenSet(bool reversed, bool manuallySelected) {}
+diff --git a/src/deluge/model/sample/sample_holder_for_voice.cpp b/src/deluge/model/sample/sample_holder_for_voice.cpp
+index 784c0a56..f828f675 100644
+--- a/src/deluge/model/sample/sample_holder_for_voice.cpp
++++ b/src/deluge/model/sample/sample_holder_for_voice.cpp
+@@ -94,11 +94,27 @@ void SampleHolderForVoice::claimClusterReasons(bool reversed, int32_t clusterLoa
+ 	}
+ 
+ 	else if (((Sample*)audioFile)->clusters.getNumElements() <= 4) {
+-		// claim the next few reasons for the sample instead since we can keep it all cached
+-		int32_t nextClusterStartByte =
+-		    ((Sample*)audioFile)->audioDataStartPosBytes + audioFileManager.clusterSizeMagnitude << 1;
+-
+-		claimClusterReasonsForMarker(clustersForLoopStart, nextClusterStartByte, playDirection, clusterLoadInstruction);
++		// claim the next few reasons for the sample instead since we can keep it all cached.
++		// mastertune-v9: that's the (up to) two clusters after the two the start holds. 1.2.1 computed
++		// (audioDataStartPosBytes + clusterSizeMagnitude) << 1 here, a byte in the first cluster, so it held the first
++		// two clusters a second time and the rest of a short sample could still get evicted and streamed again.
++		Sample* sample = (Sample*)audioFile;
++		int32_t nextClusterIndex = (getStartPlaybackByte(reversed) >> audioFileManager.clusterSizeMagnitude)
++		                           + kNumClustersLoadedAhead * playDirection;
++		if (nextClusterIndex >= sample->getFirstClusterIndexWithAudioData()
++		    && nextClusterIndex < sample->getFirstClusterIndexWithNoAudioData()) {
++			claimClusterReasonsForMarker(clustersForLoopStart,
++			                             (uint32_t)nextClusterIndex << audioFileManager.clusterSizeMagnitude,
++			                             playDirection, clusterLoadInstruction);
++		}
++		else { // Nothing beyond what the start holds
++			for (int32_t l = 0; l < kNumClustersLoadedAhead; l++) {
++				if (clustersForLoopStart[l]) {
++					audioFileManager.removeReasonFromCluster(clustersForLoopStart[l], "E246");
++					clustersForLoopStart[l] = NULL;
++				}
++			}
++		}
+ 	}
+ 
+ 	// Or if no loop start point now, clear out any reasons we had before
+diff --git a/src/deluge/model/sample/sample_low_level_reader.cpp b/src/deluge/model/sample/sample_low_level_reader.cpp
+index 43895851..541f55c6 100644
+--- a/src/deluge/model/sample/sample_low_level_reader.cpp
++++ b/src/deluge/model/sample/sample_low_level_reader.cpp
+@@ -32,7 +32,7 @@
+ #include "dsp/interpolation/shift_buffer.h"
+ 
+ SampleLowLevelReader::SampleLowLevelReader() {
+-	for (int32_t l = 0; l < kNumClustersLoadedAhead; l++) {
++	for (int32_t l = 0; l < kNumClustersReaderAhead; l++) {
+ 		clusters[l] = NULL;
+ 	}
+ }
+@@ -43,7 +43,7 @@ SampleLowLevelReader::~SampleLowLevelReader() {
+ }
+ 
+ void SampleLowLevelReader::unassignAllReasons(bool wontBeUsedAgain) {
+-	for (int32_t l = 0; l < kNumClustersLoadedAhead; l++) {
++	for (int32_t l = 0; l < kNumClustersReaderAhead; l++) {
+ 		if (clusters[l]) {
+ 			audioFileManager.removeReasonFromCluster(clusters[l], "E027", wontBeUsedAgain);
+ 			clusters[l] = NULL;
+@@ -317,7 +317,7 @@ bool SampleLowLevelReader::assignClusters(SamplePlaybackGuide* guide, Sample* sa
+                                           int32_t priorityRating) {
+ 	int32_t finalClusterIndex = guide->getFinalClusterIndex(sample, shouldObeyMarkers());
+ 
+-	for (int32_t l = 0; l < kNumClustersLoadedAhead; l++) {
++	for (int32_t l = 0; l < kNumClustersReaderAhead; l++) {
+ 
+ 		// Grab it.
+ 		clusters[l] = sample->clusters.getElement(clusterIndex)
+@@ -356,11 +356,11 @@ bool SampleLowLevelReader::moveOnToNextCluster(SamplePlaybackGuide* guide, Sampl
+ 	int32_t bytePosWithinOldCluster = (uint32_t)currentPlayPos - (uint32_t)&clusters[0]->data;
+ 	audioFileManager.removeReasonFromCluster(clusters[0], "E035");
+ 
+-	for (int32_t l = 0; l < kNumClustersLoadedAhead - 1; l++) {
++	for (int32_t l = 0; l < kNumClustersReaderAhead - 1; l++) {
+ 		clusters[l] = clusters[l + 1];
+ 	}
+ 
+-	clusters[kNumClustersLoadedAhead - 1] = NULL;
++	clusters[kNumClustersReaderAhead - 1] = NULL;
+ 
+ 	// First things first - if there is no next Cluster or it's not loaded...
+ 	if (!clusters[0]) {
+@@ -379,7 +379,7 @@ bool SampleLowLevelReader::moveOnToNextCluster(SamplePlaybackGuide* guide, Sampl
+ 	bytePosWithinOldCluster = bytePosWithinOldCluster + 4 - sample->byteDepth;
+ 
+ 	// And for the one at the far end, just grab the next one
+-	Cluster* oldLastCluster = clusters[kNumClustersLoadedAhead - 2];
++	Cluster* oldLastCluster = clusters[kNumClustersReaderAhead - 2];
+ 
+ 	if (oldLastCluster) {
+ 		int32_t prevClusterIndex = oldLastCluster->clusterIndex;
+@@ -389,14 +389,14 @@ bool SampleLowLevelReader::moveOnToNextCluster(SamplePlaybackGuide* guide, Sampl
+ 		// Check that there actually is a next Cluster. If not...
+ 		if (newClusterIndex * guide->playDirection
+ 		    > guide->getFinalClusterIndex(sample, shouldObeyMarkers()) * guide->playDirection) {
+-			clusters[kNumClustersLoadedAhead - 1] = NULL;
++			clusters[kNumClustersReaderAhead - 1] = NULL;
+ 		}
+ 
+ 		// Or if there is...
+ 		else {
+ 
+ 			// Grab it.
+-			clusters[kNumClustersLoadedAhead - 1] =
++			clusters[kNumClustersReaderAhead - 1] =
+ 			    sample->clusters.getElement(newClusterIndex)
+ 			        ->getCluster(sample, newClusterIndex, CLUSTER_ENQUEUE, priorityRating);
+ 
+@@ -1269,7 +1269,7 @@ bool SampleLowLevelReader::readSamplesForTimeStretching(
+ 
+ void SampleLowLevelReader::cloneFrom(SampleLowLevelReader* other, bool stealReasons) {
+ 
+-	for (int32_t l = 0; l < kNumClustersLoadedAhead; l++) {
++	for (int32_t l = 0; l < kNumClustersReaderAhead; l++) {
+ 		if (clusters[l]) {
+ 			audioFileManager.removeReasonFromCluster(clusters[l], "E131", false);
+ 		}
+diff --git a/src/deluge/model/sample/sample_low_level_reader.h b/src/deluge/model/sample/sample_low_level_reader.h
+index 7b6ac670..fceaa21f 100644
+--- a/src/deluge/model/sample/sample_low_level_reader.h
++++ b/src/deluge/model/sample/sample_low_level_reader.h
+@@ -99,7 +99,7 @@ public:
+ 
+ 	int16x4_t interpolationBuffer[2][kInterpolationMaxNumSamples >> 2];
+ 
+-	Cluster* clusters[kNumClustersLoadedAhead];
++	Cluster* clusters[kNumClustersReaderAhead];
+ 
+ private:
+ 	bool assignClusters(SamplePlaybackGuide* guide, Sample* sample, int32_t clusterIndex, int32_t priorityRating);
+diff --git a/src/deluge/model/settings/runtime_feature_settings.cpp b/src/deluge/model/settings/runtime_feature_settings.cpp
+index 7ef2ab28..3458ec03 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.cpp
++++ b/src/deluge/model/settings/runtime_feature_settings.cpp
+@@ -200,6 +200,11 @@ void RuntimeFeatureSettings::init() {
+ 	// UsbAudio (mastertune-v8): the Deluge's output as a USB audio input on the computer. Read at boot only.
+ 	SetupOnOffSetting(settings[RuntimeFeatureSettingType::UsbAudio], STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO, "usbAudio",
+ 	                  RuntimeFeatureStateToggle::Off);
++
++	// KitRamSaver (mastertune-v9): kit rows without notes let go of their samples' starts, see
++	// model/instrument/kit_ram_saver.h
++	SetupOnOffSetting(settings[RuntimeFeatureSettingType::KitRamSaver], STRING_FOR_COMMUNITY_FEATURE_KIT_RAM_SAVER,
++	                  "kitRamSaver", RuntimeFeatureStateToggle::On);
+ }
+ 
+ void RuntimeFeatureSettings::readSettingsFromFile(StorageManager& bdsm) {
+diff --git a/src/deluge/model/settings/runtime_feature_settings.h b/src/deluge/model/settings/runtime_feature_settings.h
+index 40cbdcee..fceb4712 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.h
++++ b/src/deluge/model/settings/runtime_feature_settings.h
+@@ -67,6 +67,7 @@ enum RuntimeFeatureSettingType : uint32_t {
+ 	AccessibilityShortcuts,
+ 	EnableGridViewLoopPads,
+ 	UsbAudio,
++	KitRamSaver,
+ 	MaxElement // Keep as boundary
+ };
+ 
+diff --git a/src/deluge/model/voice/voice.cpp b/src/deluge/model/voice/voice.cpp
+index 15cf9108..382559c4 100644
+--- a/src/deluge/model/voice/voice.cpp
++++ b/src/deluge/model/voice/voice.cpp
+@@ -911,6 +911,12 @@ uint32_t Voice::getLocalLFOPhaseIncrement() {
+ 
+ 					VoiceSample* voiceSample = voiceUnisonPartSource->voiceSample;
+ 
++					// mastertune-v9: still waiting for the start of the sample, so nothing has played yet. Decide
++					// once it does.
++					if (voiceSample->samplesWaitedForStart >= 0) {
++						goto skipAutoRelease;
++					}
++
+ 					Sample* sample = (Sample*)guides[s].audioFileHolder->audioFile;
+ 					Cluster* cluster = voiceSample->clusters[0];
+ 					int32_t bytePos = voiceSample->getPlayByteLowLevel(sample, &guides[s]);
+@@ -2105,6 +2111,30 @@ pitchTooHigh:
+ 				goto instantUnassign;
+ 			}
+ 
++			// mastertune-v9: waiting for the start of the sample to arrive from the card (see
++			// VoiceUnisonPartSource::noteOn())
++			if (voiceSample->samplesWaitedForStart >= 0) [[unlikely]] {
++				if (voiceSample->clusters[0] && voiceSample->clusters[0]->loaded) {
++					voiceSample->samplesWaitedForStart = -1;
++					// Keep the start cluster from being stolen while the reader sets up afresh
++					Cluster* startCluster = voiceSample->clusters[0];
++					audioFileManager.addReasonToCluster(startCluster);
++					voiceSample->unassignAllReasons(false);
++					bool started = voiceSample->setupClusersForInitialPlay(&guides[s], sample, 0, false, 1);
++					audioFileManager.removeReasonFromCluster(startCluster, "E710");
++					if (!started) {
++						goto instantUnassign;
++					}
++				}
++				else {
++					voiceSample->samplesWaitedForStart += numSamples;
++					if (voiceSample->samplesWaitedForStart > kSampleRate / 10) { // Give up after 100 ms
++						goto instantUnassign;
++					}
++					continue;
++				}
++			}
++
+ 			// If user unmuted mid-note...
+ 			bool tryToStartMidNote = voiceSample->pendingSamplesLate;
+ 			if (tryToStartMidNote) [[unlikely]] {
+@@ -2139,8 +2169,8 @@ pitchTooHigh:
+ 					    >> 24;
+ 				}
+ 
+-				LateStartAttemptStatus result =
+-				    voiceSample->attemptLateSampleStart(&guides[s], sample, rawSamplesLate, numSamples);
++				LateStartAttemptStatus result = voiceSample->attemptLateSampleStart(&guides[s], sample, rawSamplesLate,
++				                                                                    numSamples, getPriorityRating());
+ 
+ 				if (result == LateStartAttemptStatus::FAILURE) {
+ 					goto instantUnassign;
+diff --git a/src/deluge/model/voice/voice_sample.cpp b/src/deluge/model/voice/voice_sample.cpp
+index cbab1a5f..3f40531a 100644
+--- a/src/deluge/model/voice/voice_sample.cpp
++++ b/src/deluge/model/voice/voice_sample.cpp
+@@ -41,6 +41,7 @@ VoiceSample::VoiceSample() {
+ void VoiceSample::beenUnassigned(bool wontBeUsedAgain) {
+ 	unassignAllReasons(wontBeUsedAgain);
+ 	endTimeStretching();
++	samplesWaitedForStart = -1; // Back to the pool, where a new unison part may take it without noteOn()
+ }
+ 
+ // You'll normally want to call setupClustersForInitialPlay() after this
+@@ -51,6 +52,7 @@ void VoiceSample::noteOn(SamplePlaybackGuide* guide, uint32_t samplesLate, int32
+ 
+ 	pendingSamplesLate = samplesLate; // We store this to deal with later, because in order to deal with this we need to
+ 	                                  // know the pitch-adjustment, and that's not calculated yet
++	samplesWaitedForStart = -1;
+ 	oscPos = 0;
+ 	interpolationBufferSizeLastTime = 0;
+ 	timeStretcher = NULL; // Just in case
+@@ -167,7 +169,8 @@ void VoiceSample::setupCacheLoopPoints(SamplePlaybackGuide* guide, Sample* sampl
+ 
+ // Returns a status such as LateStartAttemptStatus::WAIT
+ LateStartAttemptStatus VoiceSample::attemptLateSampleStart(SamplePlaybackGuide* voiceSource, Sample* sample,
+-                                                           int64_t rawSamplesSinceStart, int32_t numSamples) {
++                                                           int64_t rawSamplesSinceStart, int32_t numSamples,
++                                                           int32_t priorityRating) {
+ 
+ 	int32_t bytesPerSample = sample->numChannels * sample->byteDepth;
+ 
+@@ -199,13 +202,14 @@ LateStartAttemptStatus VoiceSample::attemptLateSampleStart(SamplePlaybackGuide*
+ 
+ 	// We load our new Clusters into a secondary array first, to preserve the reason-holding power of whatever is
+ 	// already in our main one until we unassign them below
+-	Cluster* newClusters[kNumClustersLoadedAhead];
++	Cluster* newClusters[kNumClustersReaderAhead];
+ 	memset(newClusters, 0, sizeof(newClusters));
+ 
+-	for (int32_t l = 0; l < kNumClustersLoadedAhead; l++) {
++	for (int32_t l = 0; l < kNumClustersReaderAhead; l++) {
+ 
+ 		// Grab it.
+-		newClusters[l] = sample->clusters.getElement(clusterIndex)->getCluster(sample, clusterIndex, CLUSTER_ENQUEUE);
++		newClusters[l] = sample->clusters.getElement(clusterIndex)
++		                     ->getCluster(sample, clusterIndex, CLUSTER_ENQUEUE, priorityRating);
+ 
+ 		// If failure (would only happen in insanely rare case where there's no free RAM)
+ 		if (l == 0 && !newClusters[l]) {
+@@ -848,9 +852,9 @@ readCachedWindow:
+ 				unassignAllReasons(false); // We're going to set new "reasons".
+ 
+ 				int32_t nextUncachedClusterIndex = uncachedClusterIndex;
+-				for (int32_t l = 0; l < kNumClustersLoadedAhead; l++) {
++				for (int32_t l = 0; l < kNumClustersReaderAhead; l++) {
+ 					clusters[l] = sample->clusters.getElement(nextUncachedClusterIndex)
+-					                  ->getCluster(sample, nextUncachedClusterIndex, CLUSTER_ENQUEUE);
++					                  ->getCluster(sample, nextUncachedClusterIndex, CLUSTER_ENQUEUE, priorityRating);
+ 					if (!clusters[l]) {
+ 						break;
+ 					}
+diff --git a/src/deluge/model/voice/voice_sample.h b/src/deluge/model/voice/voice_sample.h
+index 507c1a1e..916a75dc 100644
+--- a/src/deluge/model/voice/voice_sample.h
++++ b/src/deluge/model/voice/voice_sample.h
+@@ -42,7 +42,7 @@ public:
+ 
+ 	void setupCacheLoopPoints(SamplePlaybackGuide* voiceSource, Sample* sample, LoopType loopingType);
+ 	LateStartAttemptStatus attemptLateSampleStart(SamplePlaybackGuide* voiceSource, Sample* sample,
+-	                                              int64_t rawSamplesLate, int32_t numSamples = 0);
++	                                              int64_t rawSamplesLate, int32_t numSamples, int32_t priorityRating);
+ 	void endTimeStretching();
+ 	bool render(SamplePlaybackGuide* guide, int32_t* oscBuffer, int32_t numSamples, Sample* sample, int32_t numChannels,
+ 	            LoopType loopingType, int32_t phaseIncrement, int32_t timeStretchRatio, int32_t amplitude,
+@@ -74,6 +74,10 @@ public:
+ 
+ 	uint32_t pendingSamplesLate; // This isn't used for AudioClips. And for samples in STRETCH mode, the exact number
+ 	                             // isn't relevant - it gets recalculated
++
++	// mastertune-v9: how long this voice has waited for the start of its sample to arrive from the card, or -1
++	int32_t samplesWaitedForStart = -1;
++
+ 	TimeStretcher* timeStretcher;
+ 
+ 	SampleCache* cache;
+diff --git a/src/deluge/model/voice/voice_unison_part_source.cpp b/src/deluge/model/voice/voice_unison_part_source.cpp
+index 9186f7c4..ee7d37b1 100644
+--- a/src/deluge/model/voice/voice_unison_part_source.cpp
++++ b/src/deluge/model/voice/voice_unison_part_source.cpp
+@@ -26,6 +26,8 @@
+ #include "playback/playback_handler.h"
+ #include "processing/engines/audio_engine.h"
+ #include "processing/source.h"
++#include "storage/audio/audio_file_manager.h"
++#include "storage/cluster/cluster.h"
+ #include "storage/multi_range/multisample_range.h"
+ 
+ VoiceUnisonPartSource::VoiceUnisonPartSource() {
+@@ -62,7 +64,25 @@ bool VoiceUnisonPartSource::noteOn(Voice* voice, Source* source, VoiceSamplePlay
+ 		if (samplesLate) {
+ 			return true; // We're finished in this case
+ 		}
+-		return voiceSample->setupClusersForInitialPlay(guide, (Sample*)guide->audioFileHolder->audioFile, 0, false, 1);
++		if (voiceSample->setupClusersForInitialPlay(guide, (Sample*)guide->audioFileHolder->audioFile, 0, false, 1)) {
++			return true;
++		}
++		// mastertune-v9: the start of the sample isn't in RAM yet - for example a kit row whose start the kit RAM saver
++		// let go of, and which then got evicted. It's now queued to load first, so wait for it and play from the
++		// beginning (see Voice::render()), rather than dropping the hit.
++		if (voiceSample->clusters[0]) {
++			// Put the play position at the start already, for whatever asks for it while we wait (auto-release, sync
++			// correction, the play cursor)
++			Sample* sample = (Sample*)guide->audioFileHolder->audioFile;
++			int32_t startByte = guide->getBytePosToStartPlayback(false);
++			voiceSample->setupForPlayPosMovedIntoNewCluster(
++			    guide, sample,
++			    startByte - (voiceSample->clusters[0]->clusterIndex << audioFileManager.clusterSizeMagnitude),
++			    sample->byteDepth);
++			voiceSample->samplesWaitedForStart = 0;
++			return true;
++		}
++		return false;
+ 	}
+ 
+ 	if (synthMode != SynthMode::FM
+diff --git a/src/deluge/processing/sound/sound.cpp b/src/deluge/processing/sound/sound.cpp
+index b80b9c1d..fcdd3950 100644
+--- a/src/deluge/processing/sound/sound.cpp
++++ b/src/deluge/processing/sound/sound.cpp
+@@ -3093,13 +3093,22 @@ void Sound::setNumUnison(int32_t newNum, ModelStackWithSoundFlags* modelStack) {
+ 
+ 									newVoiceSample->doneFirstRenderYet = true;
+ 
+-									// Don't do any caching for new part. Old parts will stop using their cache anyway
+-									// because their pitch will have changed
+-									newVoiceSample->stopUsingCache(
+-									    &thisVoice->guides[s], (Sample*)thisVoice->guides[s].audioFileHolder->audioFile,
+-									    thisVoice->getPriorityRating(),
+-									    thisVoice->guides[s].getLoopingType(&sources[s]) == LoopType::LOW_LEVEL);
+-									// TODO: should really check success of that...
++									// mastertune-v9: if the old part still waits for the start of the sample, the new
++									// one waits with it, and both start from the beginning together. No cache yet.
++									if (oldVoiceSample->samplesWaitedForStart >= 0) {
++										newVoiceSample->samplesWaitedForStart = oldVoiceSample->samplesWaitedForStart;
++										newVoiceSample->cache = nullptr;
++									}
++									else {
++										// Don't do any caching for new part. Old parts will stop using their cache
++										// anyway because their pitch will have changed
++										newVoiceSample->stopUsingCache(
++										    &thisVoice->guides[s],
++										    (Sample*)thisVoice->guides[s].audioFileHolder->audioFile,
++										    thisVoice->getPriorityRating(),
++										    thisVoice->guides[s].getLoopingType(&sources[s]) == LoopType::LOW_LEVEL);
++										// TODO: should really check success of that...
++									}
+ 								}
+ 							}
+ 						}
+diff --git a/src/deluge/storage/audio/audio_file_manager.cpp b/src/deluge/storage/audio/audio_file_manager.cpp
+index eabba792..3a3927cb 100644
+--- a/src/deluge/storage/audio/audio_file_manager.cpp
++++ b/src/deluge/storage/audio/audio_file_manager.cpp
+@@ -1486,10 +1486,7 @@ void AudioFileManager::removeReasonFromCluster(Cluster* cluster, char const* err
+ }
+ 
+ bool AudioFileManager::loadingQueueHasAnyLowestPriorityElements() {
+-	int32_t numElements = loadingQueue.getNumElements();
+-	return (numElements
+-	        && ((PriorityQueueElement*)audioFileManager.loadingQueue.getElementAddress(numElements - 1))->priorityRating
+-	               == 0xFFFFFFFF);
++	return loadingQueue.hasAnyLowestPriorityElements();
+ }
+ 
+ // Caller must also set alternateAudioFileLoadPath.
+diff --git a/src/deluge/storage/cluster/cluster_priority_queue.cpp b/src/deluge/storage/cluster/cluster_priority_queue.cpp
+index 43585d46..3b8492c9 100644
+--- a/src/deluge/storage/cluster/cluster_priority_queue.cpp
++++ b/src/deluge/storage/cluster/cluster_priority_queue.cpp
+@@ -25,18 +25,27 @@ ClusterPriorityQueue::ClusterPriorityQueue()
+ }
+ 
+ // Returns error
++// mastertune-v9: sorted by priority, most urgent first, and in order of arrival among equal priorities. 1.2.1 inserted
++// by the Cluster's address and then overwrote that key with the priority, so the loading order had nothing to do with
++// urgency: a playing voice's next cluster could wait behind the starts of samples that may never play.
+ Error ClusterPriorityQueue::add(Cluster* cluster, uint32_t priorityRating) {
+-	int32_t i = insertAtKey((int32_t)cluster);
+-	if (i == -1) {
++	int32_t key = keyForPriority(priorityRating);
++	// After all elements with the same key
++	int32_t i = (key == INT32_MAX) ? numElements : search(key + 1, GREATER_OR_EQUAL);
++	if (insertAtIndex(i) != Error::NONE) {
+ 		return Error::INSUFFICIENT_RAM;
+ 	}
+ 
+ 	PriorityQueueElement* element = (PriorityQueueElement*)getElementAddress(i);
+-	element->priorityRating = priorityRating;
++	element->key = key;
+ 	element->cluster = cluster;
+ 	return Error::NONE;
+ }
+ 
++bool ClusterPriorityQueue::hasAnyLowestPriorityElements() {
++	return numElements && getKeyAtIndex(numElements - 1) == keyForPriority(0xFFFFFFFF);
++}
++
+ Cluster* ClusterPriorityQueue::grabHead() {
+ 	if (!numElements) {
+ 		return NULL;
+diff --git a/src/deluge/storage/cluster/cluster_priority_queue.h b/src/deluge/storage/cluster/cluster_priority_queue.h
+index b69ad738..4d62594f 100644
+--- a/src/deluge/storage/cluster/cluster_priority_queue.h
++++ b/src/deluge/storage/cluster/cluster_priority_queue.h
+@@ -21,8 +21,10 @@
+ 
+ class Cluster;
+ 
++// mastertune-v9: the first field is the sort key, the priority rating (lower is more urgent) with its top bit flipped,
++// so the array's signed ordering sorts the unsigned ratings correctly. It used to be sorted by the Cluster's address.
+ struct PriorityQueueElement {
+-	uint32_t priorityRating;
++	int32_t key;
+ 	Cluster* cluster;
+ };
+ 
+@@ -34,4 +36,8 @@ public:
+ 	Cluster* grabHead();
+ 	bool removeIfPresent(Cluster* cluster);
+ 	bool checkPresent(Cluster* cluster);
++	// Whether anything with the lowest priority (0xFFFFFFFF, such as the starts of a song's samples) is waiting
++	bool hasAnyLowestPriorityElements();
++
++	static constexpr int32_t keyForPriority(uint32_t priorityRating) { return (int32_t)(priorityRating ^ 0x80000000u); }
+ };
+-- 
+2.43.0
+
