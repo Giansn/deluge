@@ -1,0 +1,59 @@
+name: DelugeRec für Windows
+# Baut mastertune-1.2.1/tools/deluge_rec.py zu DelugeRec.exe (PyInstaller: eine Datei, ohne Konsole), prüft die .exe
+# auf Windows mit ihrem Selbsttest (Fenster, Demo-Signal, eine Aufnahme, PortAudio) und legt sie auf das Release
+# «deluge-rec» sowie als Artefakt des Laufs.
+on:
+  push:
+    branches: [geraet-ergebnisse]
+    paths:
+      - mastertune-1.2.1/tools/deluge_rec.py
+      - mastertune-1.2.1/tools/deluge_rec.ico
+      - .github/workflows/deluge-rec-windows.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: mastertune-1.2.1/tools
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: python -m pip install --upgrade pip pyinstaller sounddevice numpy
+
+      - name: Build
+        run: >-
+          pyinstaller --noconfirm --onefile --windowed --name DelugeRec
+          --icon mastertune-1.2.1/tools/deluge_rec.ico mastertune-1.2.1/tools/deluge_rec.py
+
+      - name: Self-test of the .exe
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "selftest"
+          $p = Start-Process -FilePath dist\DelugeRec.exe -ArgumentList "--selftest", "6", "--out", $out -Wait -PassThru
+          Get-Content (Join-Path $out "selftest.txt")
+          Get-Item dist\DelugeRec.exe | Select-Object Name, Length
+          if ($p.ExitCode -ne 0) { throw "self-test failed (exit $($p.ExitCode))" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DelugeRec-windows
+          path: dist/DelugeRec.exe
+
+      - name: Release deluge-rec
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view deluge-rec > /dev/null 2>&1 || gh release create deluge-rec --prerelease \
+            --target "$GITHUB_SHA" --title "DelugeRec für Windows" \
+            --notes "Nimmt den USB-Audio-Ausgang des Deluge auf (mastertune ab v8): DelugeRec.exe herunterladen und starten, keine Installation. Windows fragt beim ersten Start, weil die Datei nicht signiert ist: «Weitere Informationen», dann «Trotzdem ausführen». Quelle: mastertune-1.2.1/tools/deluge_rec.py."
+          gh release upload deluge-rec dist/DelugeRec.exe --clobber
