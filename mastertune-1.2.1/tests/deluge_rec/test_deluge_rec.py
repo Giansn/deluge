@@ -214,9 +214,10 @@ class Writer(EngineCase):
             self.take(e, blocks)
         finally:
             dr.MAX_DATA_BYTES = old
-        files = sorted(self.dir.iterdir(), key=lambda p: p.stat().st_mtime_ns)
-        base = files[0].name[:-4]
-        self.assertEqual([p.name for p in files], [base + ".WAV", base + " part 2.WAV", base + " part 3.WAV"])
+        # By the take's name, not by the files' times: Windows may give all three the same one
+        names = [e.base + ".WAV", e.base + " part 2.WAV", e.base + " part 3.WAV"]
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), sorted(names))
+        files = [self.dir / n for n in names]
         self.assertEqual([parse_wav(p)[2] // 6 for p in files], [1200, 1200, 300])
         self.assertEqual(b"".join(parse_wav(p)[3] for p in files), expected_bytes(blocks))
 
