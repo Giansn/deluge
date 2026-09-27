@@ -1,7 +1,9 @@
 #!/bin/sh
 # Tests of tools/retune_library.py (the sample library converted once to the master tune, so that it plays natively):
 #   1. pc_test.py: a card with every kind of file and reference converted to 432 Hz: pitch, lengths, chunks, positions,
-#      paths, what is left alone, readers (libsndfile, scipy, wave, sox, ffmpeg), dry run, second run, back to 440 Hz.
+#      paths, what is left alone, readers (libsndfile, scipy, wave, sox, ffmpeg), dry run, second run, back to 440 Hz;
+#      peaks over full scale (32-bit float, or --no-float a little quieter; never clipped); a dry run over 300 MB of
+#      songs keeps only their references and positions (peak memory).
 #      paths_memory_test.py: paths in CP437 as the Deluge writes them (umlauts) and in UTF-8; a dry run over 300 MB of
 #      WAV holds no audio in memory (only the headers are read while planning).
 #   2. retune_emu.py: the firmware in the emulator (unicorn) plays a song from the original card and from the

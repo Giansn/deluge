@@ -7,6 +7,8 @@
    audio clip on the _ts copy (its path written in CP437 again), the report written and readable. An XML written on a
    computer in UTF-8 must still work too.
 2. Memory: the plan reads only the headers. A dry run over 300 MB of WAV (sparse files) must not hold the audio.
+   Measured with resource/wait4 on Unix, with psutil on Windows (pip install psutil); without either that part is
+   skipped with a message.
 
 Usage: paths_memory_test.py <work dir>   Needs: what pc_test.py needs
 """
@@ -19,7 +21,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from pc_test import TOOL, check, sine, wav  # noqa: E402
+from pc_test import TOOL, check, no_memory_measurement, run_measured, sine, wav  # noqa: E402
 import pc_test  # noqa: E402
 from tone import firmware_wav_view  # noqa: E402
 
@@ -108,20 +110,20 @@ def test_memory(work, n_files=30, mb=10):
     failures_before = pc_test.failures
 
     def dry_run(folder):
-        """(exit status, output, peak RSS in MB) of a dry run in its own process."""
-        proc = subprocess.Popen([sys.executable, TOOL, "--card", folder, "--dry-run", "--tuning", "432"],
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        text = proc.stdout.read().decode("utf-8", "replace")
-        _, status, usage = os.wait4(proc.pid, 0)
-        return status, text, usage.ru_maxrss / 1024  # kB on Linux
+        """(exit status, output, peak memory in MB or None, how) of a dry run in its own process."""
+        return run_measured([sys.executable, TOOL, "--card", folder, "--dry-run", "--tuning", "432"])
 
-    _, _, base_mb = dry_run(os.path.dirname(small))
-    status, text, rss_mb = dry_run(card)
+    _, _, base_mb, _ = dry_run(os.path.dirname(small))
+    status, text, rss_mb, how = dry_run(card)
     total_mb = n_files * mb
-    print(f"memory: dry run over {total_mb} MB of WAV: peak RSS {rss_mb:.0f} MB ({base_mb:.0f} MB for one small file)")
     check(status == 0, f"memory: the dry run failed:\n{text[-1500:]}")
     check(text.count(f"{size // 4} samples") == n_files, "memory: not every file planned with its length")
-    check(rss_mb - base_mb < total_mb / 4, f"memory: peak RSS {rss_mb:.0f} MB for {total_mb} MB of WAV, "
+    if rss_mb is None or base_mb is None:
+        no_memory_measurement("memory")
+        return
+    print(f"memory: dry run over {total_mb} MB of WAV: peak {rss_mb:.0f} MB ({how}; {base_mb:.0f} MB for one small "
+          f"file)")
+    check(rss_mb - base_mb < total_mb / 4, f"memory: peak {rss_mb:.0f} MB for {total_mb} MB of WAV, "
                                            f"{base_mb:.0f} MB for one file (the audio is held)")
     print(f"memory: {'ok' if pc_test.failures == failures_before else 'FAILED'}")
 

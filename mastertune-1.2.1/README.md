@@ -611,6 +611,7 @@ python3 tools/retune_library.py --card KOPIE_DER_KARTE --out NEUE_KARTE     # St
 **Was es tut:**
 - **Samples umrechnen:** Jedes Sample wird im exakten Verhältnis umgerechnet (440/432 = 55/54, soxr). Ein 440-Hz-Ton misst danach 432,00 Hz, die Abweichung liegt unter 0,002 Cent. Die Dauer wächst um 55/54.
 - **Abtastrate:** 48- und 96-kHz-Dateien bringt es im selben Durchgang auf 44,1 kHz. Die rechnet der Deluge sonst immer um.
+- **Spitzen über 0 dBFS:** Das Umrechnen kann einzelne Spitzen knapp über 0 dBFS erzeugen, etwa bei Samples, die auf 0 dBFS normalisiert sind. Abgeschnitten wird nichts: Eine solche Datei mit 8 bis 32 Bit PCM schreibt das Werkzeug als 32-Bit-Float, alle anderen Dateien behalten ihr Format. Der Report listet sie auf. Der Deluge begrenzt Float-Samples beim Laden allerdings auf 0 dBFS. Mit `--no-float` wird eine solche Datei stattdessen gerade so viel leiser wie nötig, der Report nennt die dB.
 - **Positionen anpassen:** Start- und Endmarken, Loops und Audio-Clip-Positionen in allen Songs, Kits und Synths werden angepasst. Ebenso die Chunks `smpl` und `cue` in den Dateien.
 - **Audio-Clips und Samples mit Time-Stretch:** Sie bekommen eine Kopie `_ts`, die nur die Tonhöhe verschiebt und die Länge hält (Rubber Band).
 - **AIFF:** wird zu WAV, weil der Deluge `mtun` nur in WAV liest. Der Pfad im XML wird angepasst.
@@ -624,6 +625,7 @@ python3 tools/retune_library.py --card KOPIE_DER_KARTE --out NEUE_KARTE     # St
 - Die ganze Karte braucht ohne Sample-Cache 34 % weniger, mit Cache 6 %.
 
 **Grenzen:**
+- **Immer die ganze Karte:** Wandle immer eine Kopie der ganzen Karte um und kopiere das ganze Ergebnis auf eine zweite Karte, nie nur einzelne Ordner. Samples, die mehrere Songs, Kits oder Synths teilen, wären sonst umgewandelt, die Positionen in den übrigen Songs aber nicht. Die Originalkarte bleibt unberührt.
 - **Transponierte Noten** werden weiter umgerechnet, zum Beispiel ein Synth-Sample, das melodisch gespielt wird.
 - **Bei 440 Hz** klingen umgewandelte Samples dank `mtun` richtig, kosten dann aber wieder Umrechnung.
 - **Sehr kurze Loops und Single-Cycle-Samples:** Die Loop-Länge wird auf ganze Samples gerundet, das verstimmt sie um bis zu 1,4 Cent. Das Werkzeug warnt.
