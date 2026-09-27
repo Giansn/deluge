@@ -10,12 +10,18 @@ Checks:
 - left alone: wavetables, files already at 432 Hz, unreferenced files that may be wavetables, all other files; the
   card folder itself unchanged; a dry run writes nothing; a second run finds nothing to do;
 - readable by libsndfile (soundfile), scipy, Python's wave, sox and ffmpeg (the last two if installed);
-- the way back: the converted card converted to 440 Hz sounds like the original (pitch).
+- the way back: the converted card converted to 440 Hz sounds like the original (pitch);
+- peaks over full scale after resampling: an integer file written as 32-bit float with its samples unclipped, or with
+  --no-float just as much quieter as needed, never clipped (test_peaks());
+- memory: a dry run over 300 MB of songs (many large XML files) keeps only their references and positions, not the
+  texts and parse trees (test_xml_memory(); the peak memory is measured with resource/wait4 on Unix, with psutil on
+  Windows if installed, else that part is skipped).
 
-Usage: pc_test.py <work dir>   Needs: numpy scipy soxr soundfile pylibrb (sox and ffmpeg optional)
+Usage: pc_test.py <work dir>   Needs: numpy scipy soxr soundfile pylibrb (sox and ffmpeg optional, psutil on Windows)
 """
 import hashlib
 import io
+import json
 import math
 import os
 import re
@@ -23,6 +29,8 @@ import shutil
 import struct
 import subprocess
 import sys
+import tempfile
+import time
 import warnings
 import wave
 from fractions import Fraction
@@ -291,8 +299,263 @@ def run_tool(*args):
     return r.returncode, r.stdout + r.stderr
 
 
+def run_measured(args):
+    """Runs a command: (exit status, output, peak memory in MB or None, how it was measured). Unix: the child's
+    maximum resident set size (os.wait4); Windows: its peak working set (psutil, polled until it ends); without
+    either None, and the caller skips its memory checks."""
+    with tempfile.TemporaryFile() as out:
+        proc = subprocess.Popen(args, stdout=out, stderr=subprocess.STDOUT)
+        peak, how = None, None
+        if hasattr(os, "wait4"):
+            _, status, usage = os.wait4(proc.pid, 0)
+            proc.returncode = os.waitstatus_to_exitcode(status)
+            # ru_maxrss: kB on Linux, bytes on macOS
+            peak, how = usage.ru_maxrss / (1 << 20 if sys.platform == "darwin" else 1 << 10), "ru_maxrss"
+        else:
+            try:
+                import psutil
+            except ImportError:
+                psutil = None
+            if psutil is not None:
+                how, peak = "psutil peak working set", 0.0
+                try:
+                    ps = psutil.Process(proc.pid)
+                    while proc.poll() is None:
+                        m = ps.memory_info()
+                        peak = max(peak, getattr(m, "peak_wset", m.rss) / (1 << 20))
+                        time.sleep(0.02)
+                except psutil.Error:  # Ended between poll() and memory_info(): the last reading stands
+                    pass
+            proc.wait()
+        out.seek(0)
+        return proc.returncode, out.read().decode("utf-8", "replace"), peak, how
+
+
+def no_memory_measurement(what):
+    print(f"{what}: SKIPPED the memory measurement: this system has no os.wait4 and psutil isn't installed "
+          f"(pip install psutil)")
+
+
 def rnd(x):
     return math.floor(x + Fraction(1, 2))
+
+
+# --- peaks over full scale
+
+
+def peaky(rate, seconds, at=0.25, burst=48):
+    """A quiet tone with a short burst at a quarter of the sample rate, 45 degrees off the samples: they sit at full
+    scale, the waveform between them peaks at +3 dB, and resampling brings those peaks out."""
+    x = sine(440, rate, seconds, 0.3)
+    s = int(at * rate)
+    x[s:s + burst] = np.sqrt(2) * np.sin(np.pi / 2 * np.arange(burst) + np.pi / 4)
+    return np.clip(x, -1, 1)
+
+
+def wav_audio(data):
+    """(view, float64 samples (frames, channels) at full scale 1.0, unclipped) of a WAV the tool wrote."""
+    v = firmware_wav_view(data)
+    raw = data[v["data_start"]:v["data_start"] + v["data_length"]]
+    if v["float"]:
+        x = np.frombuffer(raw, "<f4").astype(np.float64)
+    elif v["byte_depth"] == 3:
+        b = np.frombuffer(raw, np.uint8).reshape(-1, 3).astype(np.int32)
+        u = b[:, 0] | (b[:, 1] << 8) | (b[:, 2] << 16)
+        x = (u - ((u & 0x800000) << 1)) / 2 ** 23
+    else:
+        x = np.frombuffer(raw, f"<i{v['byte_depth']}") / 2 ** (8 * v["byte_depth"] - 1)
+    return v, x.reshape(-1, v["channels"])
+
+
+def test_peaks(work):
+    """Files whose resampled peaks go over full scale: by default written as 32-bit float with the samples as
+    resampled (unclipped); with --no-float in their format, just as much quieter as needed; nothing clipped, both
+    listed in the report. Other files keep their format."""
+    import soxr
+    card = os.path.join(work, "card")
+    inst = struct.pack(">BbBBBBh", 60, 0, 0, 127, 1, 127, 0) + struct.pack(">HHH", 0, 0, 0) * 2
+    stereo = np.stack([peaky(48000, 0.5), sine(700, 48000, 0.5, 0.3)], axis=1)
+    files = {"SAMPLES/PEAK16.WAV": (wav(peaky(44100, 0.5), 44100, 16), 44100, 16),
+             "SAMPLES/PEAK24.WAV": (wav(stereo, 48000, 24), 48000, 24),
+             "SAMPLES/PEAK.AIF": (aiff(peaky(44100, 0.5), 44100, 16, [], inst), 44100, 16),
+             "SAMPLES/PEAKF.WAV": (wav(peaky(44100, 0.5) * 1.0, 44100, 32, True), 44100, 32),
+             "SAMPLES/QUIET.WAV": (wav(sine(440, 44100, 0.5, 0.5), 44100, 16), 44100, 16)}
+    for rel, (data, _, _) in files.items():
+        os.makedirs(os.path.dirname(os.path.join(card, rel)), exist_ok=True)
+        open(os.path.join(card, rel), "wb").write(data)
+
+    def reference(rel):
+        """The source resampled as the tool does it, without clipping: soxr VHQ, the exact ratio, the rounded length."""
+        data, rate, _ = files[rel]
+        src = soundfile.read(io.BytesIO(data), always_2d=True, dtype="float64")[0]
+        f = Fraction(44100, rate) * Fraction(4400, TARGET)
+        n = rnd(src.shape[0] * f)
+        y = soxr.resample(src, f.denominator, f.numerator, quality="VHQ")
+        y = np.concatenate([y, np.zeros((max(0, n - y.shape[0]), y.shape[1]))])[:n]
+        return y
+
+    peaks = ("SAMPLES/PEAK16.WAV", "SAMPLES/PEAK24.WAV", "SAMPLES/PEAK.WAV")
+    failures_before = failures
+    for mode in ("float", "no-float"):
+        out = os.path.join(work, mode)
+        code, text = run_tool("--card", card, "--out", out, "--tuning", "432", "--jobs", "2",
+                              *(["--no-float"] if mode == "no-float" else []))
+        if not check(code == 0, f"peaks ({mode}): the tool failed: {text[-1500:]}"):
+            continue
+        rep = open(os.path.join(out, "RETUNE_REPORT.txt"), encoding="utf-8").read()
+        js = json.load(open(os.path.join(out, "RETUNE_REPORT.json"), encoding="utf-8"))
+        check(re.search(r"\d samples clipped", rep) is None, f"peaks ({mode}): the report says something was clipped")
+        for rel in peaks + ("SAMPLES/QUIET.WAV",):
+            src_rel = rel.replace("PEAK.WAV", "PEAK.AIF")
+            _, rate, bits = files[src_rel]
+            v, y = wav_audio(open(os.path.join(out, rel), "rb").read())
+            ref = reference(src_rel)
+            outs = js["files"][src_rel]["outputs"]["resample"]
+            check(v["mtun"] == TARGET and v["rate"] == 44100 and y.shape == ref.shape,
+                  f"peaks ({mode}): {rel}: mtun {v['mtun']}, {v['rate']} Hz, {y.shape} (expected {ref.shape})")
+            if rel == "SAMPLES/QUIET.WAV":
+                check(not v["float"] and v["byte_depth"] == 2 and "QUIET" not in rep.split("Summary:")[1],
+                      f"peaks ({mode}): QUIET.WAV (no peaks over full scale) changed format or is listed")
+                continue
+            check(ref.max() > 1.2, f"peaks: the test file {rel} doesn't go over full scale ({ref.max():.3f})")
+            line = next((ln for ln in rep.split("Summary:")[1].splitlines() if ln.startswith(f"  {rel}: ")), "")
+            if mode == "float":
+                check(v["float"] and v["byte_depth"] == 4 and b"fact" in open(os.path.join(out, rel), "rb").read(),
+                      f"peaks: {rel} not written as 32-bit float (with a fact chunk)")
+                err = float(np.max(np.abs(y - ref)))
+                check(y.max() > 1.2 and err < 1e-6, f"peaks: {rel}: peak {y.max():.4f}, off the unclipped resample "
+                                                     f"by up to {err:.2e}")
+                check("Als 32-Bit-Float geschrieben, weil Spitzen über 0 dBFS (3)" in rep
+                      and f"{bits}-bit PCM -> 32-bit float, peak +" in line,
+                      f"peaks: {rel} not listed as written as float: {line!r}")
+                check(outs.get("written_as") == "32-bit float", f"peaks: JSON of {rel}: {outs}")
+            else:
+                check(not v["float"] and v["byte_depth"] == bits // 8, f"peaks (--no-float): {rel} changed format")
+                fit = float(np.sum(y * ref) / np.sum(ref * ref))  # The level, measured
+                g, gain_db = outs.get("gain") or 1.0, outs.get("gain_db")
+                check(gain_db is not None and g < 1 and abs(20 * math.log10(g) - gain_db) < 0.001
+                      and abs(20 * math.log10(fit / g)) < 0.001,
+                      f"peaks (--no-float): {rel}: level {20 * math.log10(fit):+.4f} dB, the report says {gain_db}")
+                # Nothing clipped: every sample is the scaled resample to within the rounding (half a step); just
+                # enough quieter: the peak reaches full scale within a step
+                err = float(np.max(np.abs(y - g * ref))) * 2 ** (bits - 1)
+                check(err < 0.5 + 1e-6, f"peaks (--no-float): {rel}: off the scaled resample by {err:.3f} steps "
+                                        f"(clipped?)")
+                check(max(y.max() * 2 ** (bits - 1), -y.min() * 2 ** (bits - 1) - 1) > 2 ** (bits - 1) - 3,
+                      f"peaks (--no-float): {rel}: lowered more than needed (peak {y.max():.6f} / {y.min():.6f})")
+                check("Leiser geschrieben, weil Spitzen über 0 dBFS (3, --no-float)" in rep
+                      and line.startswith(f"  {rel}: -") and " dB (" in line,
+                      f"peaks (--no-float): {rel} not listed with its dB: {line!r}")
+        # A float file stays float and keeps its peaks; the report says the firmware limits them
+        v, y = wav_audio(open(os.path.join(out, "SAMPLES/PEAKF.WAV"), "rb").read())
+        check(v["float"] and y.max() > 1.2 and "PEAKF.WAV: float, the resampled peak is +" in rep,
+              f"peaks ({mode}): the float file: float {v['float']}, peak {y.max():.3f}, or not in the warnings")
+    print(f"peaks: {'ok' if failures == failures_before else 'FAILED'}")
+
+
+# --- memory of a dry run over a card with many large songs
+
+
+def big_song(n_kits, rows=16, clips=4):
+    """A song as the Deluge writes them: kits with sample rows (each with its zone positions, many parameters) and
+    clips with long note data (about 8 KB of XML per sample row, as on a real card: 295 MB with about 30 000
+    positions); the names with an umlaut in CP437, so that the text isn't plain ASCII."""
+    params = " ".join(f'{k}="0x{(i * 0x1234567) & 0xFFFFFFFF:08X}"' for i, k in enumerate(
+        ("arpeggiatorGate", "portamento", "compressorShape", "oscAVolume", "oscBVolume", "oscAPulseWidth",
+         "oscBPulseWidth", "noiseVolume", "volume", "pan", "lpfFrequency", "lpfResonance", "hpfFrequency",
+         "hpfResonance", "lfo1Rate", "lfo2Rate", "modulator1Amount", "modulator2Amount", "modulator1Feedback",
+         "modulator2Feedback", "carrier1Feedback", "carrier2Feedback", "modFXRate", "modFXDepth", "delayRate",
+         "delayFeedback", "reverbAmount", "arpeggiatorRate", "stutterRate", "sampleRateReduction", "bitCrush",
+         "modFXOffset", "modFXFeedback")))
+    knobs = "".join(f'\t\t\t\t\t\t<modKnob controlsParam="{p}" />\n' for p in
+                    ("pan", "volumePostFX", "lpfResonance", "lpfFrequency", "env1Release", "env1Attack",
+                     "delayFeedback", "delayRate", "reverbAmount", "volumePostReverbSend", "pitch", "lfo1Rate",
+                     "portamento", "stutterRate", "bitcrushAmount", "sampleRateReduction"))
+    out = ['<?xml version="1.0" encoding="UTF-8"?>\n<song firmwareVersion="c1.2.1" earliestCompatibleFirmware="4.1.0">'
+           '\n\t<instruments>\n']
+    for k in range(n_kits):
+        out.append(f'\t\t<kit presetName="Kit {k} ä" presetFolder="KITS">\n\t\t\t<soundSources>\n')
+        for r in range(rows):
+            start = 100 + (k * rows + r) * 37 % 40000
+            out.append(
+                f'\t\t\t\t<sound name="Row {r} ä" polyphonic="auto" voicePriority="1" mode="subtractive" '
+                f'lpfMode="24dB" modFXType="none" filterRoute="H2L">\n'
+                f'\t\t\t\t\t<osc1 type="sample" transpose="0" cents="0" loopMode="1" reversed="0" '
+                f'timeStretchEnable="0" timeStretchAmount="0" fileName="SAMPLES/ONE.WAV">\n'
+                f'\t\t\t\t\t\t<zone startSamplePos="{start}" endSamplePos="{start + 4000}" />\n'
+                f'\t\t\t\t\t</osc1>\n\t\t\t\t\t<osc2 type="square" transpose="0" cents="0" retrigPhase="-1" />\n'
+                f'\t\t\t\t\t<lfo1 type="triangle" syncLevel="0" />\n\t\t\t\t\t<lfo2 type="triangle" />\n'
+                f'\t\t\t\t\t<unison num="1" detune="8" />\n\t\t\t\t\t<delay pingPong="1" analog="0" syncLevel="7" />\n'
+                f'\t\t\t\t\t<compressor syncLevel="6" attack="327244" release="936" />\n'
+                f'\t\t\t\t\t<defaultParams {params}>\n'
+                f'\t\t\t\t\t\t<envelope1 attack="0x80000000" decay="0xE6666654" sustain="0x7FFFFFFF" '
+                f'release="0x80000000" />\n'
+                f'\t\t\t\t\t\t<envelope2 attack="0xE6666654" decay="0xE6666654" sustain="0xFFFFFFE9" '
+                f'release="0xE6666654" />\n'
+                f'\t\t\t\t\t\t<patchCables>\n\t\t\t\t\t\t\t<patchCable source="velocity" destination="volume" '
+                f'amount="0x3FFFFFE8" />\n\t\t\t\t\t\t</patchCables>\n\t\t\t\t\t</defaultParams>\n'
+                f'\t\t\t\t\t<modKnobs>\n{knobs}\t\t\t\t\t</modKnobs>\n\t\t\t\t</sound>\n')
+        out.append('\t\t\t</soundSources>\n\t\t</kit>\n')
+    out.append('\t</instruments>\n\t<sessionClips>\n')
+    for k in range(n_kits * clips):
+        out.append(f'\t\t<instrumentClip inKeyMode="0" instrumentPresetName="Kit {k // clips} ä" length="1536">\n'
+                   f'\t\t\t<noteRows>\n')
+        for r in range(rows):
+            data = "".join(f"{(t * 24):08X}0000000C40{(r * 7 + t) % 127:02X}FF40" for t in range(64))
+            out.append(f'\t\t\t\t<noteRow drumIndex="{r}" noteDataWithLift="0x{data}" />\n')
+        out.append('\t\t\t</noteRows>\n\t\t</instrumentClip>\n')
+    out.append('\t</sessionClips>\n</song>\n')
+    return "".join(out).encode("cp437")
+
+
+def test_xml_memory(work, total_mb=300, file_mb=3):
+    """A dry run over a card with total_mb of songs (as many files of file_mb as that takes: hard links of one song,
+    so that it takes no disk space): its peak memory must stay far below the XML's size (before: about 11 bytes per
+    character held, 3.4 GB for 295 MB of XML on a real card)."""
+    one = wav(sine(440, 44100, 1.0), 44100, 16)
+    kits = max(1, round(file_mb * (1 << 20) / len(big_song(1))))
+    song = big_song(kits)
+    n = max(1, round(total_mb * (1 << 20) / len(song)))
+    cards = {}
+    for name, count in (("small", 1), ("big", n)):
+        card = os.path.join(work, name)
+        os.makedirs(os.path.join(card, "SAMPLES"))
+        os.makedirs(os.path.join(card, "SONGS"))
+        open(os.path.join(card, "SAMPLES", "ONE.WAV"), "wb").write(one)
+        first = os.path.join(card, "SONGS", "SONG000.XML")
+        open(first, "wb").write(song)
+        for i in range(1, count):
+            p = os.path.join(card, "SONGS", f"SONG{i:03d}.XML")
+            try:
+                os.link(first, p)
+            except OSError:
+                shutil.copyfile(first, p)
+        cards[name] = card
+    xml_mb = n * len(song) / (1 << 20)
+    failures_before = failures
+    rows = kits * 16
+    measured = {}
+    for name, card in cards.items():
+        t = time.time()
+        code, text, peak, how = run_measured([sys.executable, TOOL, "--card", card, "--dry-run", "--tuning", "432",
+                                              "--quiet"])
+        measured[name] = peak
+        count = 1 if name == "small" else n
+        m = re.search(r"(\d+) XML files with (\d+) values changed", text)
+        check(code == 0 and m is not None and int(m.group(1)) == count and int(m.group(2)) == count * rows * 2,
+              f"memory ({name}): the dry run failed or found other positions: {text[-800:]}")
+        if name == "big":
+            print(f"xml memory: dry run over {n} songs, {xml_mb:.0f} MB of XML ({rows} sample rows each): "
+                  + (f"peak {peak:.0f} MB ({how}; one song: {measured['small']:.0f} MB), {time.time() - t:.0f} s"
+                     if peak is not None else "not measured"))
+    if measured["big"] is None:
+        no_memory_measurement("xml memory")
+        return
+    # What grows with the card is only the references and positions (and the report): far less than the XML
+    check(measured["big"] < 1024 and measured["big"] - measured["small"] < xml_mb / 3,
+          f"xml memory: peak {measured['big']:.0f} MB for {xml_mb:.0f} MB of XML ({measured['small']:.0f} MB for one "
+          f"song): the texts or parse trees are held")
+    print(f"xml memory: {'ok' if failures == failures_before else 'FAILED'}")
 
 
 def main():
@@ -480,7 +743,7 @@ def main():
           and f"<endMilliseconds>{e_ms % 1000}</endMilliseconds>" in old, f"OLD.XML (ms) not scaled: {old}")
 
     # --- report
-    rep = open(os.path.join(out, "RETUNE_REPORT.txt")).read()
+    rep = open(os.path.join(out, "RETUNE_REPORT.txt"), encoding="utf-8").read()
     check("SAMPLES/NOPE.WAV: referenced but not on the card" in rep, "missing file not reported")
     check(re.search(r"SHORT\.WAV: loop of 611 samples -> its period is [+-]\d", rep) is not None,
           "short loop not reported")
@@ -518,6 +781,9 @@ def main():
           f"back to 440 Hz: max {max(back_err):.6f} cents")
     print("read by: " + ", ".join(f"{k} {v}" for k, v in readers.items()) + f" of {len(expect)} files"
           + ("" if sox else " (sox not installed)") + ("" if ffmpeg else " (ffmpeg not installed)"))
+
+    test_peaks(os.path.join(work, "peaks"))
+    test_xml_memory(os.path.join(work, "xml_memory"))
     print(f"{failures} FAILURES" if failures else "all checks passed")
 
 

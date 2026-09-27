@@ -505,7 +505,7 @@ def convert_job(job):
     with open(job["dst"], "wb") as fh:
         fh.write(data)
     return job["index"], dict(size=len(data), seconds=time.time() - t, warnings=warnings, peak=peak, over=over,
-                              as_float=as_float, gain_db=db(gain) if gain != 1 else None)
+                              as_float=as_float, gain=gain, gain_db=db(gain) if gain != 1 else None)
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -1200,7 +1200,8 @@ def main():
             return {}
         return dict(peak_dbfs=round(db(r["peak"]), 3), samples_over_full_scale=r["over"],
                     written_as="32-bit float" if r["as_float"] else None,
-                    gain_db=None if r["gain_db"] is None else round(r["gain_db"], 3))
+                    gain_db=None if r["gain_db"] is None else round(r["gain_db"], 3),
+                    gain=None if r["gain_db"] is None else r["gain"])
 
     if not args.dry_run:
         with open(os.path.join(args.out, "RETUNE_REPORT.txt"), "w", encoding="utf-8",

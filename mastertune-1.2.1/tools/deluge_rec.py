@@ -29,11 +29,12 @@ import math
 import os
 import queue
 import re
+import signal
+import struct
 import subprocess
 import sys
 import threading
 import time
-import wave
 from pathlib import Path
 
 import numpy as np
@@ -41,8 +42,9 @@ import numpy as np
 RATE = 44100
 CHANNELS = 2
 FULL_SCALE = 2 ** 31            # The 24-bit samples arrive left-justified in int32
-PREROLL_S = 0.3
-MAX_DATA_BYTES = 4_000_000_000  # WAV sizes are 32-bit: a take ends before 4 GB (about 4 h 11 min)
+PREROLL = round(0.3 * RATE)     # ARM: the frames kept before the first sample over the threshold
+MAX_DATA_BYTES = 4_000_000_000  # WAV sizes are 32-bit: after 4 GB (about 4 h 11 min) a take goes on in the next file
+HEADER_EVERY = 2 * RATE         # The WAV header is brought up to date every 2 s: a crash leaves a readable file
 THRESH_MIN, THRESH_MAX = -60, -12
 
 # --- the look: panel, OLED, pads (the Deluge's colours), lettering
@@ -160,6 +162,50 @@ def to_db(peak):
     return 20 * math.log10(peak / FULL_SCALE) if peak > 0 else -math.inf
 
 
+def pack24(block):
+    """int32 samples (24 bits left-justified) as little-endian 3-byte samples. Rounded, not cut off: a sample that
+    arrives exactly stays exactly the same, and one that went through float on the way (WASAPI shared, Core Audio)
+    comes back to its 24-bit value instead of one step below."""
+    v = (block.astype(np.int64) + 128) >> 8
+    np.clip(v, -2 ** 23, 2 ** 23 - 1, out=v)
+    return v.astype("<i4").view(np.uint8).reshape(-1, 4)[:, :3].tobytes()
+
+
+class WavFile:
+    """A WAV file, stereo, 24 bits, 44.1 kHz. Never overwrites a file. The header gets the current size every 2 s, so
+    after a crash or a closed console the file holds everything up to shortly before."""
+
+    def __init__(self, path):
+        self.f = open(path, "xb")
+        self.frames, self.next_header = 0, HEADER_EVERY
+        self.f.write(self.header())
+
+    def header(self):
+        data = self.frames * CHANNELS * 3
+        return b"RIFF%sWAVEfmt %sdata%s" % (struct.pack("<I", 36 + data), struct.pack(
+            "<IHHIIHH", 16, 1, CHANNELS, RATE, RATE * CHANNELS * 3, CHANNELS * 3, 24), struct.pack("<I", data))
+
+    def write(self, block):
+        self.f.write(pack24(block))
+        self.frames += len(block)
+        if self.frames >= self.next_header:
+            self.next_header = self.frames + HEADER_EVERY
+            self.update_header()
+
+    def update_header(self):
+        end = self.f.tell()
+        self.f.seek(0)
+        self.f.write(self.header())
+        self.f.seek(end)
+        self.f.flush()
+
+    def close(self):
+        try:
+            self.update_header()
+        finally:
+            self.f.close()
+
+
 class DemoStatus:
     input_overflow = False
 
@@ -214,7 +260,8 @@ class Engine:
         self.q, self.cmd = queue.SimpleQueue(), queue.SimpleQueue()
         self.peak = np.zeros(CHANNELS, np.int64)
         self.or_bits = 0
-        self.overflows = 0
+        self.overflows, self.gaps = 0, 0  # Overflows: for the display; gaps: all, for the take's line in the console
+        self.take_gaps = 0
         self.wav, self.name, self.frames = None, "", 0
         self.last_take = None          # (name, seconds, bytes)
         self.events = collections.deque(maxlen=8)
@@ -260,7 +307,7 @@ class Engine:
                     extra = sd.WasapiSettings(exclusive=exclusive) if exclusive is not None else None
                     stream = sd.InputStream(device=index, channels=CHANNELS, samplerate=RATE, dtype="int32",
                                             blocksize=1024, latency="high", callback=self.callback,
-                                            extra_settings=extra)
+                                            extra_settings=extra, dither_off=True)
                     stream.start()
                 except Exception:
                     continue
@@ -285,8 +332,9 @@ class Engine:
     # --- the audio thread
 
     def callback(self, indata, frames, time_info, status):
-        if status is not None and status.input_overflow:
+        if status is not None and status.input_overflow:  # PortAudio lost samples before this block
             self.overflows += 1
+            self.gaps += 1
         block = np.array(indata, dtype=np.int32, copy=True)
         self.peak = np.maximum(self.peak, np.abs(block.astype(np.int64)).max(axis=0))
         self.or_bits |= int(np.bitwise_or.reduce(block, axis=None)) & 0xFFFFFFFF
@@ -312,38 +360,64 @@ class Engine:
 
     # --- the writer thread
 
-    def next_name(self):
-        self.out_dir.mkdir(parents=True, exist_ok=True)
+    def next_number(self):
         used = [int(m.group(1)) for p in self.out_dir.iterdir()
-                if (m := re.fullmatch(r"USB(\d{5})\.WAV", p.name, re.I))]
-        return f"USB{max(used, default=0) + 1:05d}.WAV"
+                if (m := re.fullmatch(r"USB(\d{5,})\.WAV", p.name, re.I))]
+        return max(used, default=0) + 1
 
     def open_file(self):
-        self.name = self.next_name()
-        self.wav = wave.open(str(self.out_dir / self.name), "wb")
-        self.wav.setnchannels(CHANNELS)
-        self.wav.setsampwidth(3)
-        self.wav.setframerate(RATE)
-        self.frames = 0
-        self.state = "rec"
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        n = self.next_number()
+        while True:  # A file of the same name (another program, another case) is never overwritten
+            name = f"USB{n:05d}.WAV"
+            try:
+                self.wav = WavFile(self.out_dir / name)
+                break
+            except FileExistsError:
+                n += 1
+        self.name, self.frames, self.take_gaps, self.state = name, 0, self.gaps, "rec"
 
     def write(self, block):
-        if self.wav is None:
+        if self.wav is None or not len(block):
             return
-        # The top three bytes of each little-endian int32 are the 24-bit sample
-        self.wav.writeframes(block.astype("<i4", copy=False).view(np.uint8).reshape(-1, 4)[:, 1:].tobytes())
+        self.wav.write(block)
         self.frames += len(block)
-        if self.frames * CHANNELS * 3 >= MAX_DATA_BYTES:
+        if self.frames * CHANNELS * 3 >= MAX_DATA_BYTES:  # The take goes on without a gap in the next file
             self.close_file()
-            self.events.append("4GB LIMIT: SAVED")
+            self.open_file()
+            self.events.append("4GB: NEXT FILE")
 
     def close_file(self):
-        if self.wav is not None:
-            self.wav.close()
+        wav, self.wav = self.wav, None
+        if wav is not None:
+            wav.close()
             self.last_take = (self.name, self.seconds(), self.frames * CHANNELS * 3)
             self.events.append("SAVED " + self.name[:-4])
-            print(f"gespeichert: {self.out_dir / self.name} ({self.seconds():.1f} s)", flush=True)
-        self.wav, self.state = None, "idle"
+            gaps = self.gaps - self.take_gaps
+            print(f"gespeichert: {self.out_dir / self.name} ({self.seconds():.1f} s"
+                  + (f", {gaps} Lücken: der Computer war zu langsam)" if gaps else ")"), flush=True)
+        self.state = "idle"
+
+    def drain(self):
+        """Writes the blocks that are still queued: they were recorded before the take was stopped."""
+        while True:
+            try:
+                self.write(self.q.get_nowait())
+            except queue.Empty:
+                return
+
+    def trigger(self, preroll, block):
+        """ARM: the first sample over the threshold starts the take, with exactly PREROLL frames before it (fewer only
+        if ARM was pressed less than 0.3 s before). True once the take runs."""
+        over = FULL_SCALE * 10 ** (self.threshold_db / 20)
+        loud = np.flatnonzero(np.abs(block.astype(np.int64)).max(axis=1) >= over)
+        if not len(loud):
+            return False
+        before = np.concatenate([*preroll, block[:loud[0]]])
+        self.open_file()
+        self.write(before[len(before) - PREROLL:] if len(before) > PREROLL else before)
+        self.write(block[loud[0]:])
+        return True
 
     def write_loop(self):
         preroll, preroll_frames = collections.deque(), 0
@@ -359,6 +433,8 @@ class Engine:
                             preroll_frames = 0
                             self.state = "armed"
                         elif c == "stop":
+                            if self.state == "rec":
+                                self.drain()
                             self.close_file()
                 except queue.Empty:
                     pass
@@ -369,18 +445,19 @@ class Engine:
                 if self.state == "rec":
                     self.write(block)
                 elif self.state == "armed":
-                    preroll.append(block)
-                    preroll_frames += len(block)
-                    while preroll_frames - len(preroll[0]) >= PREROLL_S * RATE:
-                        preroll_frames -= len(preroll.popleft())
-                    if to_db(int(np.abs(block.astype(np.int64)).max())) >= self.threshold_db:
-                        self.open_file()
-                        for b in preroll:
-                            self.write(b)
+                    if self.trigger(preroll, block):
                         preroll.clear()
                         preroll_frames = 0
-            except OSError as e:
-                self.wav, self.state = None, "idle"
+                    else:  # Keep at least PREROLL frames, without the oldest block if it is not needed
+                        preroll.append(block)
+                        preroll_frames += len(block)
+                        while preroll_frames - len(preroll[0]) >= PREROLL:
+                            preroll_frames -= len(preroll.popleft())
+            except Exception as e:  # A full or removed disk: the take ends as far as it got, the program goes on
+                try:
+                    self.close_file()
+                except Exception:
+                    self.wav, self.state = None, "idle"
                 self.events.append("DISK ERROR")
                 print(f"Fehler beim Schreiben: {e}", flush=True)
         self.close_file()
@@ -708,7 +785,9 @@ def main():
     engine = Engine(output_dir(args.out), args.device, args.shared, args.demo,
                     min(THRESH_MAX, max(THRESH_MIN, args.threshold)))
     root = tk.Tk()
-    App(root, engine, min(3.0, max(1.0, root.winfo_fpixels("1i") / 96)))
+    app = App(root, engine, min(3.0, max(1.0, root.winfo_fpixels("1i") / 96)))
+    for sig in (signal.SIGINT, signal.SIGTERM):  # Ctrl+C in the console: the take is saved, the window closes
+        signal.signal(sig, lambda *a: root.after(0, app.quit))
     try:
         root.mainloop()
     finally:
