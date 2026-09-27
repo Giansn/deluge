@@ -13,12 +13,15 @@ def demodulate(x, rate, f_guess, bandwidth):
     return sosfiltfilt(sos, z.real) + 1j * sosfiltfilt(sos, z.imag)
 
 
-def tone_frequency(x, rate, f_guess, bandwidth=40.0, threshold=0.3, margin_s=None, segments=None):
+def tone_frequency(x, rate, f_guess, bandwidth=40.0, threshold=0.3, margin_s=None, segments=None, edge=0):
     """Frequency of the tone near f_guess: the slope of its phase (weighted least squares) where its amplitude is
     above threshold * its maximum, away from the edges of those stretches by margin_s (default 4 / bandwidth), or
-    within the given (start, stop) sample segments. Returns (Hz, samples used)."""
+    within the given (start, stop) sample segments; edge samples at both ends of x are left out (the filter's edges).
+    Returns (Hz, samples used)."""
     zf = demodulate(x, rate, f_guess, bandwidth)
     amp = np.abs(zf)
+    if edge:
+        amp[:edge] = amp[-edge:] = 0
     margin = int((margin_s if margin_s is not None else 4 / bandwidth) * rate)
     use = np.zeros(len(x), bool)
     if segments is None:

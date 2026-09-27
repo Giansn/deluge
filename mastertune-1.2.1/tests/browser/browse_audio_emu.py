@@ -55,6 +55,7 @@ def main():
     run = sdl.Run(a)
     emu, sym = run.emu, run.emu.sym
     run.setup_tasks()
+    run.reset_counters()
     if a.sd_latency != "instant":
         se.SdModel(emu, *(float(x) for x in a.sd_latency.split(",")), wait="yield")
     string_memory, = se.gdb_values(emu, ["(int)&((String*)0)->stringMemory"])
@@ -62,7 +63,7 @@ def main():
 
     def name():
         p = emu.u32(entered + string_memory)
-        return emu.ram_str(p, 128) if p else ""
+        return emu.ram(p, 128).split(b"\0")[0].decode(errors="replace") if p else ""
     reads = [0]
 
     def on_read(e):
