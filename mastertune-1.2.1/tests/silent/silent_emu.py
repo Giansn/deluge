@@ -9,8 +9,8 @@ hold nothing that could sound or move on, skips its effects (v12 on). mastertune
 effects and a buffer. This song plays tracks, stops them with long tails, changes things while they're silent and
 starts them again, so any difference between the check before and the check after shows in the output:
   KICKK  a kick on every beat, the sidechain's source (sideChainSend), all the time
-  KDLY   a kit: a snare and a bell in bar 0 and again in bar 5 of its 8-bar clip; delay with high feedback (its tail,
-         then given up), reverb send, sidechain ducking; its LPF opened fully, automated down from bar 1.5 to 3.5 while
+  KDLY   a kit: a snare and a bell in bar 0 and again in bar 5 of its 8-bar clip; delay with feedback (18 repeats, a
+         bar's tail, then given up), reverb send, sidechain ducking; its LPF opened fully, automated down from bar 1.5 to 3.5 while
          silent (the filter comes on: a mode change, which resets it), the bell row's pan automated (the rows'
          automation ticks while the kit is silent); the upper gold knob (volume) turned at bar 2.75 while silent
   KMOD   a kit with chorus, its depth 0 until the automation turns it up at bar 3 (mod FX on while silent), notes in
@@ -22,10 +22,13 @@ starts them again, so any difference between the check before and the check afte
   LNEW   an audio track whose clip doesn't play at first, launched at bar 2.5 (instantly, a late start)
   DRN    a drone track: a 300 Hz drone row whose note starts at bar 4 and ends at bar 6 of its 8-bar clip, ducked
 Knob and stutter as the user does them in the song view, the clip's pad held (SessionView::padAction(),
-modEncoderAction(), modEncoderButtonAction()); clips started and stopped at once with Shift + the status pad. Played from the start for --bars (default 8) bars,
-one AudioEngine::routine() window at a time (song_emu.Player, no culling), --init-sounds and seed 1 as run.sh's
-bit-exact recipe.
-Results: <out>/measured.wav (what the codec gets, as song_emu's), <out>/result.json (instructions per window, the
+modEncoderAction(), modEncoderButtonAction()); clips started and stopped at once with Shift + the status pad. Played
+from the start for --bars (default 8) bars, one AudioEngine::routine() window at a time (song_emu.Player, no culling),
+--init-sounds and seed 1 as tests/song/run.sh's bit-exact recipe. With a build that has the early return, it counts
+its calls by track and half bar (each calls advanceWithNothingToRender() once): where they stop and start again shows
+the events above reaching the tracks.
+Results: <out>/measured.wav (what the codec gets, as song_emu's), <out>/measured.npy (the same before its 16 bits:
+the render buffer times the master volume, float64), <out>/result.json (instructions per window, the
 early return's calls by track where the ELF has it, RMS per half bar).
 """
 import argparse
@@ -171,7 +174,7 @@ def song():
         kit_part("KDLY", ["SNARE", "BELL"], 8,
                  {"SNARE": steps(0, [0, 6]) + steps(5, [0, 4]), "BELL": steps(0, [3]) + steps(5, [10])},
                  dict(reverbAmount=knob(25), sidechainCompressorVolume=knob(35),
-                      _delay=dict(rate=knob(25), feedback=knob(24)),
+                      _delay=dict(rate=knob(25), feedback=knob(17)),
                       _lpf=dict(frequency=automation(knob(50), [(knob(50), 3 * TBAR // 2, False),
                                                                 (knob(22), 7 * TBAR // 2, True)]),
                                 resonance=knob(10))),
@@ -187,7 +190,7 @@ def song():
                  dict(reverbAmount=knob(0), stutterRate=knob(30), _lpf=open_lpf),
                  extra_attrs=dict(activeModFunction=6)),
         audio_part("LREV", True, dict(reverbAmount=knob(30), sidechainCompressorVolume=knob(40),
-                                      _delay=dict(rate=knob(20), feedback=knob(18)), _lpf=open_lpf), mod_function=1),
+                                      _delay=dict(rate=knob(20), feedback=knob(12)), _lpf=open_lpf), mod_function=1),
         audio_part("LNEW", False, dict(reverbAmount=knob(10), _lpf=open_lpf)),
         drone_part(),
     ]
@@ -267,12 +270,14 @@ def main():
     # GlobalEffectableForClip inside the Kit (a thunk to Kit's) or the AudioOutput (the base's), with that as this
     early = sorted(address for name, (address, _) in sym.by_name.items() if "advanceWithNothingToRender" in name
                    and (name.startswith("_ZN23GlobalEffectableForClip") or name.startswith("_ZThn")))
-    calls = {}
+    calls = {}  # this -> calls per half bar
     window_calls = []
+    position = [0]  # Samples played before this window
+    half_bars = int(2 * args.bars) + 1
 
     def count(e):
         this = e.uc.reg_read(song_emu.UC_ARM_REG_R0)
-        calls[this] = calls.get(this, 0) + 1
+        calls.setdefault(this, [0] * half_bars)[min(half_bars - 1, position[0] * 2 // BAR)] += 1
         window_calls[-1] += 1
     for address in early:
         emu.intercept(address, count)
@@ -322,6 +327,7 @@ def main():
             song_emu.drain_uarts(emu)
             done += 1
         window_calls.append(0)
+        position[0] = total
         w = player.window()
         total += w[1]
         out.append(w[4])
@@ -329,6 +335,7 @@ def main():
     print(f"played {args.bars:g} bars: {len(log)} windows ({time.time() - t:.1f} s), actions: "
           + ", ".join(f"{a[0]:g} {a[1]}" for a in actions), flush=True)
     x = np.concatenate(out)
+    np.save(os.path.join(args.out, "measured.npy"), x)  # Before the 16 bits and their clipping: the exact output
     pcm = (np.clip(x, -1, 1) * 32767).astype("<i2").tobytes()
     with open(os.path.join(args.out, "measured.wav"), "wb") as f:
         f.write(b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt "
@@ -349,14 +356,18 @@ def main():
                     by_track[name] = calls[output + off]
     result = dict(elf=os.path.abspath(args.elf), bars=args.bars, windows=len(log), samples=samples,
                   instructions_per_128=instructions * 128 / samples, early_return_symbol=bool(early),
-                  early_returns=sum(calls.values()), early_returns_by_track=by_track, rms_db_per_half_bar=rms,
+                  early_returns=sum(map(sum, calls.values())),
+                  early_returns_by_track={k: sum(v) for k, v in by_track.items()},
+                  early_returns_by_track_per_half_bar=by_track, rms_db_per_half_bar=rms,
                   window_log_fields=["instructions", "samples", "voices", "early returns"], window_log=log)
     json.dump(result, open(os.path.join(args.out, "result.json"), "w"), indent=1)
     print(f"per 128 samples: {result['instructions_per_128']:,.0f} instructions; output RMS per half bar (dB): "
           + " ".join(f"{r:.0f}" for r in rms), flush=True)
     if early:
-        print(f"early returns: {result['early_returns']:,} "
-              f"({', '.join(f'{k} {v:,}' for k, v in by_track.items())})", flush=True)
+        print(f"early returns: {result['early_returns']:,}; by track, per half bar (of {BAR // 256} windows of 128):",
+              flush=True)
+        for name, per in by_track.items():
+            print(f"  {name:6} {sum(per):6,}  " + " ".join(f"{c:3}" for c in per), flush=True)
     os.remove(sd)
 
 
