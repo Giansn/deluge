@@ -475,7 +475,7 @@ class Gui(EngineCase):
         block[0] = [round(dr.FULL_SCALE * 10 ** (-9 / 20)), -2 ** 31]
         feed(e, [block])
         app.tick()
-        self.assertEqual(lit(0), list(range(6)))  # -9 dBFS - 20 dB = -29 dBFS: up to the pad for -30
+        self.assertEqual([i for i in lit(0) if i < 15], list(range(6)))  # -9 - 20 dB = -29 dBFS: to the pad for -30
         self.assertGreater(app.clip_until, time.monotonic())  # The right channel arrived at full scale
         app.quit()
 
@@ -675,9 +675,8 @@ class Monitoring(EngineCase):
         sys.modules.pop("sounddevice", None)
 
     def test_buffer_exact_and_bounded(self):
-        """What arrives plays after MONITOR_TARGET frames: a fade-in, then exactly (24 bits in float32), a fade-out
-        where it runs dry; at most MONITOR_LIMIT behind; run dry, silence until MONITOR_TARGET frames are there
-        again."""
+        """What arrives plays after MONITOR_TARGET frames: a fade-in, then exactly (24 bits in float32); run dry, the last
+        frame fades out, then silence until MONITOR_TARGET frames are there again; at most MONITOR_LIMIT behind."""
         b, fade = dr.MonitorBuffer(), dr.MONITOR_FADE
         x = samples24(dr.MONITOR_TARGET + 1000)
         out = np.ones((500, 2), np.float32)
@@ -691,19 +690,18 @@ class Monitoring(EngineCase):
             b.pull(o)
             got.append(o)
         got, want = np.concatenate(got).astype(np.float64), x.astype(np.float64) / 2 ** 31
-        mid = slice(fade, len(x) - fade)
+        mid = slice(fade, len(x))
         self.assertTrue(np.array_equal(got[mid], want[mid]))
         self.assertTrue(np.array_equal((got[mid] * 2 ** 31).astype(np.int64), x[mid]))
         ramp = (np.arange(1, fade + 1) / fade)[:, None]
         self.assertTrue(np.allclose(got[:fade], want[:fade] * ramp, rtol=1e-6, atol=0))  # Fading in
-        self.assertTrue(np.allclose(got[len(x) - fade:len(x)], want[len(x) - fade:] * ramp[::-1] * fade / (fade + 1),
-                                    rtol=1e-6, atol=0))  # Fading out
-        self.assertFalse(got[len(x):].any())  # Run dry: silence
         self.assertEqual(b.underruns, 1)
-        o = np.ones((100, 2), np.float32)
-        b.push(x[:100])
+        b.push(x[:100])  # Priming again: nothing plays until MONITOR_TARGET frames are there ...
+        o = np.ones((600, 2), np.float32)
         b.pull(o)
-        self.assertFalse(o.any())  # Priming again until MONITOR_TARGET frames are there
+        tail = np.concatenate([got[len(x):], o])  # ... but the last frame fades out over MONITOR_FADE frames
+        self.assertTrue(np.allclose(tail[:fade], want[-1] * (1 - ramp), rtol=0, atol=1e-7))
+        self.assertFalse(tail[fade:].any())
         b.reset()
         for _ in range(20):
             b.push(samples24(1024))
@@ -803,6 +801,31 @@ class Monitoring(EngineCase):
         self.assertEqual((b.drops, b.underruns), (1, 1))
         self.assertGreater(np.abs(y).max(), 0.49)
         self.assertLess(np.abs(np.diff(y)).max(), 1.1 * np.pi * 440 / dr.RATE)  # The sine's largest step: 0.031
+
+    def test_no_clicks_with_small_blocks(self):
+        """Blocks of 1024 in, 512 or 64 out: the buffer runs dry exactly at a block's end, and a skip ahead spans many
+        blocks. The last frame still fades out, and the crossfade still takes MONITOR_FADE frames."""
+        sine = np.round(np.sin(2 * np.pi * 440 * np.arange(dr.RATE) / dr.RATE) * 2 ** 22).astype(np.int64) << 8
+        x = np.repeat(sine[:, None], 2, axis=1).astype(np.int32)
+        for n in (512, 64):
+            b, got = dr.MonitorBuffer(), []
+
+            def pull(count):
+                o = np.empty((count, 2), np.float32)
+                b.pull(o)
+                got.append(o[:, 0])
+            for i in range(4):
+                b.push(x[i * 1024:(i + 1) * 1024])
+            for _ in range(4 * 1024 // n):
+                pull(n)
+            for i in range(4, 12):  # Now too far behind: a skip ahead, then running dry at a block's end
+                b.push(x[i * 1024:(i + 1) * 1024])
+            for _ in range(8 * 1024 // n + 8):
+                pull(n)
+            y = np.concatenate(got).astype(np.float64)
+            self.assertEqual((b.drops, b.underruns), (1, 1), n)
+            self.assertLess(np.abs(np.diff(y)).max(), 1.1 * np.pi * 440 / dr.RATE, n)
+            self.assertEqual(y[-1], 0.0)
 
     def test_the_monitor_opens_and_closes_with_the_input(self):
         """PortAudio restarts when the input opens (so a Deluge plugged in later shows up): the monitor's output is

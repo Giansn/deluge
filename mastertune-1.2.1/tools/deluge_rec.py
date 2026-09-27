@@ -294,8 +294,9 @@ class DemoInput:
 class MonitorBuffer:
     """The frames on their way from the Deluge's input to the monitor's output: a ring between two clocks. It plays
     once MONITOR_TARGET frames are there, fading in; over MONITOR_LIMIT it skips ahead to the newest MONITOR_TARGET
-    frames, crossfaded; run dry, it fades out and plays silence until MONITOR_TARGET frames are there again. Each fade
-    is MONITOR_FADE frames: no clicks. Between the fades, 24-bit samples stay exact in float32."""
+    frames, crossfaded; run dry, the last frame played fades to silence, which lasts until MONITOR_TARGET frames are
+    there again. Each fade is MONITOR_FADE frames long, however small the output's blocks: no clicks. Between the
+    fades, 24-bit samples stay exact in float32."""
 
     def __init__(self, size=RATE):
         self.buf = np.zeros((size, CHANNELS), np.float32)
@@ -306,7 +307,11 @@ class MonitorBuffer:
     def reset(self):
         with self.lock:
             self.written = self.read = 0  # Frames so far, both ends
-            self.priming, self.faded_in, self.skip_to = True, 0, None
+            self.priming, self.faded_in = True, 0
+            self.skip_from = self.skip_to = None  # A skip ahead: from where to where, crossfaded
+            self.skipped = 0                      # ... and how much of the crossfade is done
+            self.last = np.zeros(CHANNELS, np.float32)  # The last frame the output got
+            self.decay_from, self.decay_pos = self.last, MONITOR_FADE  # Run dry: the last frame fading out
             self.underruns = self.drops = 0
 
     def push(self, block):
@@ -318,8 +323,10 @@ class MonitorBuffer:
             self.buf[:len(x) - first] = x[first:]
             self.written += len(x)
             behind = self.written - self.read
-            if behind > self.size - MONITOR_FADE:  # The output stalled: what it would play next is gone
-                self.read, self.priming, self.skip_to = self.written - MONITOR_TARGET, True, None
+            oldest = self.read if self.skip_from is None else min(self.read, self.skip_from + self.skipped)
+            if self.written - oldest > self.size - MONITOR_FADE:  # The output stalled: what it would play is gone
+                self.read, self.priming = self.written - MONITOR_TARGET, True
+                self.skip_from = self.skip_to = None
                 self.drops += 1
             elif behind > MONITOR_LIMIT and self.skip_to is None:
                 if self.priming:
@@ -332,20 +339,36 @@ class MonitorBuffer:
         i = pos % self.size
         return self.buf[i:i + n] if i + n <= self.size else np.concatenate((self.buf[i:], self.buf[:i + n - self.size]))
 
+    def decay(self, out, start):
+        """Adds the rest of the fade-out of the last frame (after running dry) to out, from start on."""
+        m = min(len(out) - start, MONITOR_FADE - self.decay_pos)
+        if m > 0:
+            g = 1 - (self.decay_pos + np.arange(1, m + 1, dtype=np.float32)) / MONITOR_FADE
+            out[start:start + m] += self.decay_from * g[:, None]
+            self.decay_pos += m
+
     def pull(self, out):
         n = len(out)
         with self.lock:
+            if self.priming and self.written - self.read < MONITOR_TARGET:
+                out.fill(0)
+                self.decay(out, 0)
+                self.last = out[-1].copy()
+                return
             if self.priming:
-                if self.written - self.read < MONITOR_TARGET:
-                    out.fill(0)
-                    return
                 self.priming, self.faded_in = False, 0
             done = 0
-            if self.skip_to is not None:  # Too far behind: on to the newest MONITOR_TARGET frames, crossfaded
-                done = min(MONITOR_FADE, n)
-                r = ((np.arange(done, dtype=np.float32) + 0.5) / done)[:, None]
-                out[:done] = self.frames(self.read, done) * (1 - r) + self.frames(self.skip_to, done) * r
-                self.read, self.skip_to = self.skip_to + done, None
+            if self.skip_to is not None:  # Too far behind: on to the newest frames, crossfaded over MONITOR_FADE
+                if self.skip_from is None:
+                    self.skip_from, self.skipped = self.read, 0
+                done = min(MONITOR_FADE - self.skipped, n)
+                r = ((self.skipped + np.arange(done, dtype=np.float32) + 0.5) / MONITOR_FADE)[:, None]
+                out[:done] = (self.frames(self.skip_from + self.skipped, done) * (1 - r)
+                              + self.frames(self.skip_to + self.skipped, done) * r)
+                self.skipped += done
+                self.read = self.skip_to + self.skipped
+                if self.skipped >= MONITOR_FADE:
+                    self.skip_from = self.skip_to = None
             k = min(n - done, self.written - self.read)
             out[done:done + k] = self.frames(self.read, k)
             self.read += k
@@ -355,12 +378,16 @@ class MonitorBuffer:
                 gain = np.arange(self.faded_in + 1, self.faded_in + m + 1, dtype=np.float32) / MONITOR_FADE
                 out[:m] *= gain[:, None]
                 self.faded_in += m
-            if played < n:  # Run dry: what there was fades out, then silence until MONITOR_TARGET frames are there
-                t = min(played, MONITOR_FADE)
-                out[played - t:played] *= (np.arange(t, 0, -1, dtype=np.float32) / (t + 1))[:, None]
+            self.decay(out[:played], 0)  # What is left of an earlier fade-out, under the fade-in
+            if played < n:  # Run dry: the last frame fades out, then silence until MONITOR_TARGET frames are there
                 out[played:] = 0
+                self.decay_from = (out[played - 1] if played else self.last).copy()
+                self.decay_pos = 0
+                self.decay(out, played)
                 self.underruns += 1
                 self.priming = True
+                self.skip_from = self.skip_to = None
+            self.last = out[-1].copy()
 
 
 class Monitor:
@@ -1279,7 +1306,7 @@ def main():
         volume = 0
     engine = Engine(output_dir(args.out), args.device, args.shared, args.demo or bool(args.selftest),
                     min(THRESH_MAX, max(THRESH_MIN, int(threshold))))
-    engine.volume_db = volume
+    engine.volume_db, engine.gain = volume, 10 ** (volume / 20) if volume < 0 else 1.0  # No ramp from 0 dB at start
     m = engine.monitor
     m.output = saved.get("output")
     if args.output:  # Part of a name: the first output that has it
