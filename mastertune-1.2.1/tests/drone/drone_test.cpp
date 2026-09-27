@@ -1142,6 +1142,42 @@ int main(int argc, char** argv) {
 		printf("song file: %zu attributes round trip, defaults without them, clamped\n", file.size());
 	}
 
+	// 19. A tone whose highest harmonic sits right at the 18 kHz limit keeps the same band-limited table while life
+	// drifts it (the review of v15 found ~10 switches in 30 s, each a tick up to 0.15 of the tone's peak): the harmonic
+	// in the band around 18 kHz (-20 dB of the tone when there, under -90 dB when not) is there in every 93 ms frame
+	// over 30 s, or in none
+	{
+		struct Case {
+			const char* name;
+			Timbre timbre;
+			int32_t frequency;
+			int32_t life;
+		};
+		for (Case c : {Case{"Rich 2250 Hz", Timbre::RICH, 225000, 5}, Case{"Rich 2250 Hz", Timbre::RICH, 225000, 20},
+		               Case{"Pulse 1500 Hz", Timbre::PULSE, 150000, 5}}) {
+			TestDrone d = makeDrone();
+			d.drone.seed(1);
+			d.settings.life = c.life;
+			d.tones[0] = on(Mode::TONE, c.timbre, c.frequency, 0, 0, 50, 0);
+			run(d, 22050);
+			const size_t kF = 4096;
+			size_t frames = (size_t)(30 * kFs / kF), with = 0;
+			double lowest = 1e9, highest = -1e9;
+			for (size_t n = 0; n < frames; n++) {
+				Out o = run(d, kF);
+				auto m = spectrum(o.l, 0, kF);
+				double share =
+				    10 * std::log10((bandEnergy(m, kF, 17600, 18400) + 1e-30) / bandEnergy(m, kF, 20, 21000));
+				lowest = std::min(lowest, share);
+				highest = std::max(highest, share);
+				with += (share > -60);
+			}
+			printf("%s, life %d, 30 s: the 18 kHz harmonic in %zu of %zu frames (%.1f to %.1f dB of the tone)\n",
+			       c.name, (int)c.life, with, frames, lowest, highest);
+			CHECK(with == 0 || with == frames, "%s, life %d: table switches as it drifts", c.name, (int)c.life);
+		}
+	}
+
 	costs();
 
 	printf("%d checks, %d failed\n", checks, failures);
