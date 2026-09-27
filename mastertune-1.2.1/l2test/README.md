@@ -1,15 +1,15 @@
-# L2-Cache: zwei Testversionen
+# L2-Cache: die Testversion für Code (l2i)
 
-Beide Versionen sind **v16 mit eingeschaltetem L2-Cache**, sonst unverändert, auch mit dem Profiler (Settings → CPU monitor → Profile, siehe `prof/README.md`). Die passende `.symbols.json` liegt neben jeder Datei. Sie sind zum Messen und Testen gedacht, nicht für Auftritte, solange sie nicht länger auf dem Gerät geprüft sind.
+**Ab v17 ist die Version mit L2 für Code und Daten (l2d) die Hauptdatei** im Hauptordner (`deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin`), weil sie sich mit v16 am Gerät bewährt hat: «New Sitar Grii 10» hörbar besser, kein Absturz. Hier bleibt die Zwischenstufe **l2i**: v17 mit L2 nur für Code, sonst unverändert, auch mit dem Profiler (Settings → CPU monitor → Profile, siehe `prof/README.md`). Die passende `.symbols.json` liegt neben jeder Datei. Sie sind zum Messen und Testen gedacht, nicht für Auftritte, solange sie nicht länger auf dem Gerät geprüft sind.
 
 **Erste Messung am Gerät (mit v14):** Der CPU-Monitor zeigte ohne L2 97 %, 13 Stimmen, Qualität gesenkt und abgeschnittene Stimmen. Mit L2 waren es ebenfalls 97 % und Qualität gesenkt, aber **keine abgeschnittenen Stimmen** mehr. Einmal stürzte das Gerät kurz nach dem Einschalten des CPU-Monitors ab. Die Ursache ist offen. Wenn es wieder passiert, bitte Version (l2i oder l2d) und Anzeige notieren: eingefroren, Neustart oder eine Meldung wie «E…».
 
 | Datei | Was | Risiko |
 |---|---|---|
-| `deluge-1.2.1-mastertune-v16-l2i-0186f612.bin` | L2 **nur für Code**. Stand der Community von 12/2024, dort seither in Nightly und Beta. | gering |
-| `deluge-1.2.1-mastertune-v16-l2d-03ccaac5.bin` | L2 **für Code und Daten**, mit Prefetch. Stand der Community von 04/2026 mit den Korrekturen danach. | mittel |
+| `deluge-1.2.1-mastertune-v17-l2i-e476310e.bin` | L2 **nur für Code**. Stand der Community von 12/2024, dort seither in Nightly und Beta. | gering |
+| `../deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin` (Hauptordner) | L2 **für Code und Daten**, mit Prefetch. Stand der Community von 04/2026 mit den Korrekturen danach. | mittel, mit v16 am Gerät ohne Absturz |
 
-SHA-256: l2i `837f2e69…4520692e`, l2d `5b184a78…d32e5a2e`. Patches auf v16: `0001-…` und `0002-…` (nur Code), `0003-…` (Daten).
+SHA-256: l2i `571646a9…2122370c`, l2d `aad4d080…5ec32c4b`. Patches auf v17: `0001-…` und `0002-…` (nur Code), `0003-…` (Daten).
 
 ## Worum es geht
 
@@ -27,11 +27,11 @@ Wie viel es bringt, weiss niemand: Die Community nennt keine Zahl, und der Emula
 ## Messen
 
 1. Den Test-Song `diag/loadtest-card.zip` auf die Karte kopieren (siehe `diag/README.md`).
-2. Mit **v16** starten, `MT_LOADTEST` laden, **Settings → CPU monitor → On**, **Play**. Nach etwa 30 Sekunden die Anzeige oben links notieren (`CPU 61% 24V`), am besten dreimal im Abstand von einigen Sekunden.
+2. Mit **v17 ohne L2** (`deluge-1.2.1-mastertune-v17-2cb5e31b.bin`) starten, `MT_LOADTEST` laden, **Settings → CPU monitor → On**, **Play**. Nach etwa 30 Sekunden die Anzeige oben links notieren (`CPU 61% 24V`), am besten dreimal im Abstand von einigen Sekunden.
 3. Dasselbe mit **l2i** und mit **l2d**.
 4. Genauer geht es mit `tools/cpu_monitor.html` (eine Minute, CSV exportieren).
 
-Weniger CPU % bei gleich vielen Stimmen heisst: Der L2 bringt so viel. Erscheinen mit v16 `QL` (Qualität gesenkt) oder `VC` (Stimmen abgeschnitten), sollten sie mit dem L2 seltener werden.
+Weniger CPU % bei gleich vielen Stimmen heisst: Der L2 bringt so viel. Erscheinen ohne L2 `QL` (Qualität gesenkt) oder `VC` (Stimmen abgeschnitten), sollten sie mit dem L2 seltener werden.
 
 ## Testen, vor allem die Daten-Version
 
@@ -43,11 +43,11 @@ Weniger CPU % bei gleich vielen Stimmen heisst: Der L2 bringt so viel. Erscheine
 - **OLED:** Schnell durch Presets blättern und auf Pixelfehler oder verschobene Zeilen achten.
 - **USB:** Mit DEx oder deluge-editor eine Datei auf die Karte kopieren und zurück, dann vergleichen.
 
-Wenn etwas auffällt: zurück zu v16 und mir beschreiben, was passiert ist.
+Wenn etwas auffällt: zurück zu v17 ohne L2 und mir beschreiben, was passiert ist.
 
-## Zurück zu v16 ohne L2
+## Zurück zu v17 ohne L2
 
-Wie jedes Firmware-Update: `deluge-1.2.1-mastertune-v16-…bin` aus dem Hauptordner auf die Karte und neu starten.
+Wie jedes Firmware-Update: `deluge-1.2.1-mastertune-v17-2cb5e31b.bin` aus dem Hauptordner auf die Karte und neu starten.
 
 ## Geprüft
 
@@ -58,12 +58,13 @@ Wie jedes Firmware-Update: `deluge-1.2.1-mastertune-v16-…bin` aus dem Hauptord
   - Daten-Version: Prefetch an. Die Daten werden am Ende des Starts einmal freigegeben, direkt nachdem alles zurückgeschrieben und geleert ist.
   - Jedes OLED-Bild wird vor dem DMA in L1 und L2 zurückgeschrieben (alle 25 Cache-Zeilen) und synchronisiert.
   - Die Cache-Pflege trifft auch bei krummen Adressen jede Zeile genau einmal.
-- **Song:** Der Volllast-Song klingt mit beiden Versionen Bit für Bit wie v16 ohne L2, in allen drei Läufen. Mutable und Digital klingen zudem wie v14 und v15. Der dritte Lauf, mit Culling wie auf dem Gerät, hängt von der Rechenzeit ab und unterscheidet sich darum von v14.
+- **Song:** Der Volllast-Song klingt mit beiden Versionen Bit für Bit wie ohne L2, in allen drei Läufen. Mutable und Digital klingen zudem wie v14 und v15. Der dritte Lauf, mit Culling wie auf dem Gerät, hängt von der Rechenzeit ab und unterscheidet sich darum von v14.
 - **Gegenprüfer** (Code, jede DMA-Übertragung der Firmware):
   - In den L2-Änderungen selbst fand er keinen Fehler.
   - Umgesetzt sind seine Vorschläge für die Code-Version (L2-Pflege auch dort) und für die Freigabe der Daten (Interrupts aus, zurückschreiben statt nur leeren).
   - Zwei ältere Fehler, die er dabei fand, sind seit v14 behoben (siehe README, v14).
 - **Auf v15 übertragen:** Die drei L2-Änderungen liessen sich ohne Konflikt auf v15 setzen. Alle Prüfungen oben liefen erneut mit den v15-Versionen.
+- **Auf v17 übertragen:** ebenso ohne Konflikt. Alle Prüfungen oben liefen erneut mit den v17-Versionen, dazu die ganze Testreihe von v17 auf l2d.
 - **Auf v16 übertragen:** ebenso ohne Konflikt. Alle Prüfungen oben liefen erneut mit den v16-Versionen, dazu der Profiler mit l2i (21 Prüfungen).
 - **Nicht prüfbar im Emulator:**
   - das echte Cache-Verhalten und die Geschwindigkeit

@@ -9,3 +9,5 @@
   - `DRONE=1 tests/song/run.sh`: bestanden.
   - Der Volllast-Song klingt Bit für Bit wie v16 (`87a7df29…`, `4473b315…`).
 - **Auf dem Gerät nicht getestet.** v17 enthält die Korrektur ebenfalls und ersetzt diese Datei.
+
+**Abgelöst durch v17** (`deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin` im Hauptordner). v17 enthält diese Korrektur ebenfalls.

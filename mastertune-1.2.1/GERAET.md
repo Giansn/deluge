@@ -21,31 +21,36 @@ Vor jeder Arbeit `git pull`, denn die Cloud-Session liefert laufend nach.
 - **Python 3.12 nehmen.** `python-rtmidi` hat für neuere Versionen keine fertigen Pakete.
 - **Port-Namen:** Die Ports heissen `Deluge 0`, `MIDIIN2 (Deluge) 1` und `MIDIIN3 (Deluge) 2`. Ab Commit nach `0377a67` erkennt das Skript `MIDIIN3` von selbst, `-p` ist dann nicht mehr nötig.
 
-## Aufträge (Stand 27.09.2026, nach dem l2d-Nachtrag)
+## Aufträge (Stand 27.09.2026, v17 ist da)
 
-Erledigt: der erste Bericht zu v16 und die Messung mit l2d. l2d ist hörbar besser und lief ohne Absturz, darum wird es ab v17 die Hauptversion.
+Erledigt: der Bericht zu v16, l2d, der Song für den Emulator, der Retune-Test unter Windows.
 
-1. **Den Song für den Emulator.** Er ist noch nicht auf GitHub: Der Commit mit den Samples kam nicht an.
-   - Zuerst nur `karte/SONGS/New Sitar Grii 10.XML` und `karte/samples-new-sitar-grii-10.csv` committen und pushen. Die beiden Dateien sind klein, und damit kann ich schon arbeiten. Samples mit gleichem Format und gleicher Länge erzeuge ich im Emulator selbst.
-   - Die Samples danach in einem eigenen Commit, gern in mehreren Teilen. Einzelne Dateien über 100 MB nimmt GitHub nicht an.
-2. **440 gegen 432 Hz** (die wichtigste Messung). Bei 432 Hz muss jede Sample-Stimme umgerechnet werden, auch jeder Drum-Schlag. Bei 440 Hz spielen die untransponierten Drums ohne Umrechnung, das kostet einen Bruchteil.
-   - Mit der l2d-Firmware, fester Ablauf: 30 s Stillstand, dann 40 s dieselbe Stelle mit denselben Clips.
-   - Einmal mit Settings → Tuning auf 432 Hz, einmal auf 440 Hz. Sonst alles gleich.
-   - Dateien `…-l2d-432.jsonl` und `…-l2d-440.jsonl`.
-3. **Sobald v17 da ist:** dieselbe Messung mit v17 (l2d, 432 Hz) für den Vergleich mit v16.
-4. **Wenn es passt:** die übrigen v16-Punkte 1, 2 und 4 sowie l2i.
+1. **v17 aufspielen:** `deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin`, die neue Hauptdatei mit L2 für Code und Daten. Settings → Firmware version zeigt `1.2.1-mastertune-v17-l2d-b3385d83`. Bei einem Absturz: `deluge-1.2.1-mastertune-v17-2cb5e31b.bin` ohne L2.
+2. **Die wichtigste Messung: «New Sitar Grii 10» mit v17**, wie der v16-Bericht. 432 Hz, CPU monitor auf Profile, 30 s Stillstand, dann 40 s dieselbe Stelle mit denselben Clips. `live -s 70 -o 2026-..-v17-l2d-grosser-song.jsonl --symbols deluge-1.2.1-mastertune-v17-l2d-b3385d83.symbols.json`.
+   - Der Emulator erwartet etwa die halbe Last: 41 statt 93 % Anzeige, die Kits 14 statt 38 %.
+   - Notieren: QL, abgeschnittene Stimmen, die längste Lücke, und ob Oboe und Sitar jetzt zu hören sind.
+3. **Neues in v17 kurz ausprobieren:**
+   - **Drone-Ansicht:** öffnen (per SCALE in der Song-Ansicht). Der Deluge darf nicht mehr hängen.
+   - **CPU-Monitor-Kürzel:** LEARN halten und den TEMPO-Knopf drücken. Er schaltet ein und aus. Nach dem Neustart muss der Modus erhalten sein.
+   - **Song-Übersicht:** Songs `TRACK`, `TRACK 2`, `TRACK 3` erscheinen als eine Zeile «TRACK». Klick klappt auf, BACK klappt zu, laden, auch während der Wiedergabe.
+   - **HPF-Pfeifton:** In der Song-Ansicht HPF mit viel Resonanz, dann das LPF aufdrehen. Der Ton soll jetzt etwa so laut sein wie die Musik, nicht weit darüber. Und: Stand das LPF bei deinem Fall auf Drive?
+4. **Die Bibliothek `deluge topics` auf 432 Hz umwandeln** (`tools/retune_library.py`, Stand ab Commit `77e6d42`):
+   - Dateien, deren Spitzen über 0 dBFS gingen, schreibt es wie gewünscht als 32-Bit-Float. Der Deluge begrenzt sie beim Abspielen trotzdem auf 0 dBFS.
+   - Immer die ganze Karte, in einen neuen Ordner, dann auf eine zweite Karte. `RETUNE_REPORT.txt` mit pushen.
+   - Danach Messung 2 mit der umgewandelten Karte wiederholen.
+5. **DELUGE USB REC** (`tools/deluge_rec.py`, oder die `DelugeRec.exe` der Helfer-Session, sobald sie den geprüften Stand gebaut hat):
+   - eine Aufnahme mit USB audio an. Zeigt das Display `24B`?
+   - Die Tasten R, A, S, F.
+
 ## Stand (27.09.2026)
 
 | Datei | Was |
 |---|---|
-| `deluge-1.2.1-mastertune-v16-c610417f.bin` | **aktuelle Version:** Drone-Spuren, Profiler, USB audio bleibt nach dem Neustart an. Im README der Abschnitt «v16». |
-| `l2test/deluge-1.2.1-mastertune-v16-l2i-0186f612.bin` | v16 mit L2-Cache nur für Code (Risiko gering) |
-| `l2test/deluge-1.2.1-mastertune-v16-l2d-03ccaac5.bin` | v16 mit L2-Cache für Code und Daten (Risiko mittel) |
+| `deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin` | **aktuelle Version**, mit L2-Cache für Code und Daten. Im README der Abschnitt «v17». |
+| `deluge-1.2.1-mastertune-v17-2cb5e31b.bin` | dieselbe ohne L2, zum Zurückwechseln |
+| `l2test/deluge-1.2.1-mastertune-v17-l2i-e476310e.bin` | v17 mit L2 nur für Code |
 | `*.symbols.json` neben jeder `.bin` | Funktionsnamen für den Profiler, nur zu genau dieser `.bin` passend |
-
-**In Arbeit (Cloud):**
-- **v17 (Leistung):** Die Audio-Routine läuft nicht mehr alle 12 µs, und beim Streamen von der Karte werden keine Stimmen mehr unnötig abgeschnitten. Im Emulator sinkt die Anzeige im Leerlauf von 90 auf 16 %.
-- **Song-Browser:** Versionen `TRACK`, `TRACK 2`, `TRACK 3` klappen unter `TRACK` auf.
+| `hotfix/…v16-l2d-dronefix…` | abgelöst durch v17 |
 
 **Aufspielen:** die `.bin` ins Hauptverzeichnis der SD-Karte, keine andere `.bin` daneben. Beim Einschalten **SHIFT** halten. Danach unter Settings → Firmware version den Namen prüfen.
 
@@ -57,8 +62,8 @@ Am Deluge: **Settings → CPU monitor → On**. Mit **Profile** kommen zusätzli
 cd mastertune-1.2.1
 python3 tools/deluge_profiler.py live                          # eine Zeile pro Sekunde, Ctrl-C beendet
 python3 tools/deluge_profiler.py live -s 60 -o messung.jsonl \
-    --symbols deluge-1.2.1-mastertune-v16-c610417f.symbols.json  # 60 s, mit Profile auch die teuersten Funktionen
-python3 tools/deluge_profiler.py report messung.jsonl --symbols deluge-1.2.1-mastertune-v16-c610417f.symbols.json
+    --symbols deluge-1.2.1-mastertune-v17-l2d-b3385d83.symbols.json  # 60 s, mit Profile auch die teuersten Funktionen
+python3 tools/deluge_profiler.py report messung.jsonl --symbols deluge-1.2.1-mastertune-v17-l2d-b3385d83.symbols.json
 ```
 
 Für Claude: `live` mit `-s` und `-o` im Hintergrund laufen lassen und die Ausgabe lesen, oder danach `report`.
@@ -73,7 +78,7 @@ Für Claude: `live` mit `-s` und `-o` im Hintergrund laufen lassen und die Ausga
 - **SD:** Ladevorgänge von der Karte, mittlere und längste Dauer.
 - **Mit Profile** alle 5 s: der Anteil der Audio-Routine, die teuersten Spuren (auf dem Gerät gemessen), Tasks und mit `--symbols` Funktionen.
 
-## Tests am Gerät (v16, auf dem Gerät noch nie geprüft)
+## Tests am Gerät (v16, zum Teil erledigt; für v17 siehe Aufträge)
 
 Jeden Punkt mit ok oder nicht ok und einer kurzen Beobachtung notieren.
 
