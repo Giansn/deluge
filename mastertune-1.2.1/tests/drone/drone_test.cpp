@@ -1056,15 +1056,17 @@ int main(int argc, char** argv) {
 			int32_t fm;
 		};
 		std::vector<Case> cases;
+		// Some just below where a table with fewer harmonics takes over, their highest just below 18 kHz: 740 Hz (24),
+		// 1490 Hz (12), 2240 Hz (8) and 3590 Hz (5)
 		for (auto form : {DroneSettings::FmForm::SINE, DroneSettings::FmForm::SAW}) {
-			for (int32_t f : {22000, 33000, 44000, 88000, 150000}) {
+			for (int32_t f : {22000, 33000, 44000, 74000, 88000, 149000}) {
 				cases.push_back({Timbre::PULSE, f, form, 50});
 			}
-			for (int32_t f : {50000, 100000, 200000}) {
+			for (int32_t f : {50000, 100000, 224000}) {
 				cases.push_back({Timbre::RICH, f, form, 50});
 			}
-			cases.push_back({Timbre::ORGAN, 200000, form, 50});
-			cases.push_back({Timbre::SOFT, 250000, form, 50});
+			cases.push_back({Timbre::ORGAN, 224000, form, 50});
+			cases.push_back({Timbre::SOFT, 359000, form, 50});
 			for (int32_t f : {300000, 500000}) {
 				cases.push_back({Timbre::SINE, f, form, 50});
 			}
