@@ -3,9 +3,11 @@
 
 Covers the WAV writer (byte for byte, header, header during the take, 4 GB split, stop, quit, disk error), ARM with
 pre-roll (to the frame), file numbering, the meter (dBFS, pads, bit depth), the choice of the input (Windows WASAPI
-exclusive first and the fallbacks, macOS, Linux) and --demo. Needs only numpy.
+exclusive first and the fallbacks, macOS, Linux), the monitor (its buffer, the outputs offered, never the Deluge,
+the choice of the output and its menu) and --demo. Needs only numpy.
 """
 import importlib.util
+import json
 import math
 import os
 import re
@@ -350,14 +352,15 @@ class Gui(EngineCase):
             sys.modules.pop("tkinter", None)
 
     def test_keys(self):
-        """The keyboard: R (and the space bar) REC, A ARM, S (and Esc) STOP, F (and O) FOLDER, upper and lower case."""
+        """The keyboard: R (and the space bar) REC, A ARM, S (and Esc) STOP, M MON, O OUT, F FOLDER, upper and lower
+        case."""
         e = self.engine()
         root = self.tk.Tk()
         app = dr.App(root, e, 1.0)
         pressed = []
         app.press = pressed.append
         want = {"r": "rec", "R": "rec", "<space>": "rec", "a": "arm", "A": "arm", "s": "stop", "S": "stop",
-                "<Escape>": "stop", "f": "folder", "F": "folder", "o": "folder", "O": "folder"}
+                "<Escape>": "stop", "m": "mon", "M": "mon", "o": "out", "O": "out", "f": "folder", "F": "folder"}
         for key, action in want.items():
             self.assertIn(key, root.bindings, key)
             pressed.clear()
@@ -409,19 +412,40 @@ class FakeStream:
         self.closed = True
 
 
-class FakeSd(types.ModuleType):
-    """sounddevice with made-up devices: (name, host API, input channels)."""
+class FakeOutStream:
+    def __init__(self, sd, **kw):
+        self.sd, self.kw, self.closed, self.active = sd, kw, False, True
+        sd.outputs_opened.append(self)
 
-    def __init__(self, devices, fail=()):
+    def start(self):
+        if self.kw["device"] in self.sd.fail_out:
+            raise RuntimeError("PortAudio: invalid sample rate")
+
+    def close(self):
+        self.closed = True
+
+
+class FakeSd(types.ModuleType):
+    """sounddevice with made-up devices: (name, host API, input channels[, output channels]); each host API's default
+    output is its first device with outputs."""
+
+    def __init__(self, devices, fail=(), fail_out=()):
         super().__init__("sounddevice")
         self.apis = sorted({d[1] for d in devices})
-        self.devices = [{"name": n, "hostapi": self.apis.index(a), "max_input_channels": c} for n, a, c in devices]
-        self.fail, self.opened = set(fail), []
-        self.WasapiSettings = lambda exclusive: types.SimpleNamespace(exclusive=exclusive)
+        self.devices = [{"name": d[0], "hostapi": self.apis.index(d[1]), "max_input_channels": d[2],
+                         "max_output_channels": d[3] if len(d) > 3 else 0} for d in devices]
+        self.fail, self.fail_out, self.opened, self.outputs_opened = set(fail), set(fail_out), [], []
+        self.WasapiSettings = lambda exclusive=False, auto_convert=False: types.SimpleNamespace(
+            exclusive=exclusive, auto_convert=auto_convert)
         self.InputStream = lambda **kw: FakeStream(self, **kw)
+        self.OutputStream = lambda **kw: FakeOutStream(self, **kw)
 
     def query_devices(self): return self.devices
-    def query_hostapis(self): return [{"name": a} for a in self.apis]
+
+    def query_hostapis(self):
+        return [{"name": a, "default_output_device": next(
+            (i for i, d in enumerate(self.devices) if d["hostapi"] == k and d["max_output_channels"]), -1)}
+            for k, a in enumerate(self.apis)]
     def _terminate(self): pass
     def _initialize(self): pass
 
@@ -487,9 +511,170 @@ class Devices(EngineCase):
         ok, e, sd = self.connect(WINDOWS[:1] + WINDOWS[5:])
         self.assertEqual((ok, e.connected, sd.opened), (False, False, []))
 
-    def test_sends_nothing(self):
+    def test_never_to_the_deluge(self):
+        """Nothing goes to the Deluge: no MIDI or SysEx at all, no stream that plays and records at once, and the
+        monitor's outputs leave out every device with Deluge in its name (also a Deluge that could play what the
+        computer sends, as a later USB audio could)."""
         code = SRC.read_text(encoding="utf-8")
-        self.assertIsNone(re.search(r"OutputStream|RawStream|sd\.Stream\b|\.play\(|rtmidi|mido|sysex", code, re.I))
+        self.assertIsNone(re.search(r"RawStream|sd\.Stream\b|\.play\(|rtmidi|mido|sysex", code, re.I))
+        self.assertEqual(len(re.findall(r"OutputStream\(", code)), 1)  # Only the monitor's
+        sys.modules["sounddevice"] = FakeSd(WINDOWS_OUT)
+        try:
+            m = dr.Monitor()
+            self.assertFalse([o for o in m.outputs() if o and "deluge" in o.lower()])
+            m.output = "Speakers (Deluge)"
+            self.assertEqual(m.candidates(), [])
+            self.assertFalse(m.start())
+        finally:
+            sys.modules.pop("sounddevice", None)
+
+
+WINDOWS_OUT = [("Microsoft Sound Mapper - Output", "MME", 0, 2), ("Speakers (Realtek(R) Audio)", "MME", 0, 2),
+               ("Headphones (USB Headset With a", "MME", 0, 2), ("Primary Sound Driver", "Windows DirectSound", 0, 2),
+               ("Speakers (Realtek(R) Audio)", "Windows DirectSound", 0, 2),
+               ("Speakers (Realtek(R) Audio)", "Windows WASAPI", 0, 2),
+               ("Headphones (USB Headset With a Very Long Name)", "Windows WASAPI", 0, 2),
+               ("Speakers (Deluge)", "Windows WASAPI", 0, 2), ("Line (Deluge)", "Windows WASAPI", 2, 0),
+               ("Speakers (Realtek(R) Audio)", "Windows WDM-KS", 0, 2)]
+
+
+class Monitoring(EngineCase):
+    def setUp(self):
+        super().setUp()
+        sys.modules["sounddevice"] = self.sd = FakeSd(WINDOWS_OUT)
+
+    def tearDown(self):
+        super().tearDown()
+        sys.modules.pop("sounddevice", None)
+
+    def test_buffer_exact_and_bounded(self):
+        """What arrives plays exactly (24 bits in float32), after MONITOR_TARGET frames; at most MONITOR_LIMIT behind;
+        run dry, silence until MONITOR_TARGET frames are there again."""
+        b = dr.MonitorBuffer()
+        x = samples24(dr.MONITOR_TARGET + 1000)
+        out = np.ones((500, 2), np.float32)
+        b.push(x[:1000])
+        b.pull(out)
+        self.assertFalse(out.any())  # Not yet
+        b.push(x[1000:])
+        got = []
+        for n in (512, 441, 1024, 3, 1100):  # 32 frames more than there are
+            o = np.empty((n, 2), np.float32)
+            b.pull(o)
+            got.append(o)
+        got = np.concatenate(got)
+        self.assertTrue(np.array_equal(got[:len(x)], x.astype(np.float64) / 2 ** 31))
+        self.assertTrue(np.array_equal((got[:len(x)].astype(np.float64) * 2 ** 31).astype(np.int64), x))
+        self.assertFalse(got[len(x):].any())  # Run dry: silence
+        self.assertEqual(b.underruns, 1)
+        o = np.ones((100, 2), np.float32)
+        b.push(x[:100])
+        b.pull(o)
+        self.assertFalse(o.any())  # Priming again until MONITOR_TARGET frames are there
+        b.reset()
+        for _ in range(20):
+            b.push(samples24(1024))
+        self.assertLessEqual(b.written - b.read, dr.MONITOR_LIMIT)
+        self.assertGreater(b.drops, 0)
+
+    def test_outputs_offered(self):
+        """The system's default first, then each device once (MME's names cut after 31 characters are the same
+        device), never Windows' aliases of the default and never the Deluge."""
+        self.assertEqual(dr.Monitor().outputs(), [None, "Speakers (Realtek(R) Audio)",
+                                                  "Headphones (USB Headset With a Very Long Name)"])
+
+    def test_output_ways(self):
+        """WASAPI shared with Windows converting to the device's rate first, then DirectSound, MME, WDM-KS."""
+        m = dr.Monitor("Speakers (Realtek(R) Audio)")
+        self.assertEqual([c[1:] for c in m.candidates()], [(5, "Windows WASAPI"), (4, "Windows DirectSound"),
+                                                           (1, "MME"), (9, "Windows WDM-KS")])
+        self.assertTrue(m.start())
+        kw = self.sd.outputs_opened[-1].kw
+        self.assertEqual((kw["device"], kw["samplerate"], kw["channels"], kw["dtype"], kw["extra_settings"].auto_convert),
+                         (5, 44100, 2, "float32", True))
+        self.assertEqual((m.on, m.api, m.name), (True, "WASAPI", "Speakers (Realtek(R) Audio)"))
+        m.stop()
+        self.assertTrue(self.sd.outputs_opened[-1].closed)
+        self.sd.fail_out = {5, 4}
+        self.assertTrue(m.start())
+        self.assertEqual((self.sd.outputs_opened[-1].kw["device"], m.api), (1, "MME"))
+        self.assertTrue(all(o.closed for o in self.sd.outputs_opened[:-1]))  # The failed tries let go
+        m.output = "Headphones (USB Headset With a"  # As MME names it: the same device
+        self.sd.fail_out = set()
+        self.assertTrue(m.start())
+        self.assertEqual(self.sd.outputs_opened[-1].kw["device"], 6)
+
+    def test_system_default(self):
+        """Each host API's default output, WASAPI's first, Windows' aliases as the fallbacks; none at all if Windows
+        has the Deluge as its default output (the aliases would lead there)."""
+        m = dr.Monitor()
+        self.assertEqual([c[1] for c in m.candidates()], [5, 3, 0, 9])
+        self.assertTrue(m.start())
+        self.assertEqual(self.sd.outputs_opened[-1].kw["device"], 5)
+        sys.modules["sounddevice"] = FakeSd([("Microsoft Sound Mapper - Output", "MME", 0, 2),
+                                             ("Speakers (Deluge)", "Windows WASAPI", 0, 2),
+                                             ("Speakers (Realtek(R) Audio)", "Windows WASAPI", 0, 2)])
+        self.assertEqual(m.candidates(), [])
+        self.assertFalse(m.start())
+
+    def test_input_feeds_the_monitor_only_when_on(self):
+        e = self.engine()
+        feed(e, [samples24(1024)])
+        self.assertEqual(e.monitor.buffer.written, 0)
+        self.assertTrue(e.monitor.start())
+        blocks = [samples24(1024) for _ in range(2)]
+        feed(e, blocks)
+        self.assertEqual(e.monitor.buffer.written, 2048)
+        out = np.empty((2048, 2), np.float32)
+        e.monitor.play(out, 2048, None, None)
+        self.assertTrue(np.array_equal(out, np.concatenate(blocks).astype(np.float64) / 2 ** 31))
+        self.sd.outputs_opened[-1].active = False  # Headphones unplugged
+        self.assertTrue(e.monitor.lost())
+        self.assertFalse(e.monitor.on)
+        settle(e)
+
+    def test_menu_and_keys(self):
+        """OUT opens the list on the OLED, up/down or the knob move, Enter (or OUT, or a click on the knob) chooses
+        and switches the monitor on; Esc leaves the list; MON switches it off and on; the settings keep the choice."""
+        old_tk = sys.modules.get("tkinter")
+        sys.modules["tkinter"] = tk = FakeTk()
+        try:
+            e = self.engine()
+            root = tk.Tk()
+            app = dr.App(root, e, 1.0, settings=self.dir / "settings.json")
+            app.boot_until = 0
+            app.press("out")
+            self.assertEqual(app.menu["items"][1:], ["Speakers (Realtek(R) Audio)",
+                                                     "Headphones (USB Headset With a Very Long Name)"])
+            app.tick()
+            self.assertTrue(app.oled.fb.any())
+            root.bindings["<Down>"](None)
+            root.bindings["<Down>"](None)
+            root.bindings["<Down>"](None)  # Stops at the last
+            root.bindings["<Escape>"](None)
+            self.assertIsNone(app.menu)
+            self.assertFalse(e.monitor.on)
+            app.press("out")
+            app.turn(-1)
+            root.bindings["<Return>"](None)
+            self.assertEqual((e.monitor.output, e.monitor.on), ("Speakers (Realtek(R) Audio)", True))
+            self.assertEqual(json.loads((self.dir / "settings.json").read_text()),
+                             {"output": "Speakers (Realtek(R) Audio)", "monitor": True, "threshold": -40})
+            app.tick()
+            app.press("mon")
+            self.assertFalse(e.monitor.on)
+            app.press("mon")
+            self.assertTrue(e.monitor.on)
+            app.press("out")
+            app.grab_knob(types.SimpleNamespace(y=0))  # A click on the knob chooses
+            self.assertIsNone(app.menu)
+            app.quit()
+            self.assertFalse(e.monitor.on)
+        finally:
+            if old_tk is not None:
+                sys.modules["tkinter"] = old_tk
+            else:
+                sys.modules.pop("tkinter", None)
 
 
 class Demo(EngineCase):
