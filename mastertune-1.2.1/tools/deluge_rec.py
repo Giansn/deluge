@@ -12,7 +12,7 @@ Bedienung (Maus oder Tasten):
   REC     R, Leertaste   Aufnahme starten oder beenden
   ARM     A              Aufnahme startet von selbst, sobald das Signal über die Schwelle steigt (0,3 s Vorlauf)
   STOP    S, Esc         Aufnahme beenden, die Datei ist dann fertig
-  FOLDER  O              Aufnahme-Ordner öffnen
+  FOLDER  F, O           Aufnahme-Ordner öffnen
   Knopf   Mausrad, ziehen, Pfeil auf/ab, + -   Schwelle für ARM, -60 bis -12 dBFS
 Die Dateien heissen USB00001.WAV, USB00002.WAV ... wie die Aufnahmen am Deluge (REC00001.WAV). Standardordner:
 Musik/Deluge USB im Benutzerordner.
@@ -35,6 +35,7 @@ import subprocess
 import sys
 import threading
 import time
+import wave
 from pathlib import Path
 
 import numpy as np
@@ -52,6 +53,14 @@ THRESH_MIN, THRESH_MAX = -60, -12
 PANEL, PLATE, EDGE, BEZEL, LABEL, SMALL = "#0e0e10", "#18181b", "#26262b", "#050506", "#d8d8de", "#8c8c96"
 OLED_ON, OLED_OFF = (226, 238, 255), (7, 9, 13)
 PAD_COLOURS = ["#2fdc6e"] * 9 + ["#b8e636", "#f2d22e", "#f2d22e", "#ff9f1c", "#ff7a1c", "#ff5a1f", "#ff2d2d"]
+ICON_PNG = ("iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAB8klEQVR4nO2bsVLCQBCG/2SsGbVEwZ7KwtoH4BXw8fQVeADH0oIq"
+            "vUTT6vAAaOEsXC6Xu4QElr3sV5HcDbP7sXNzy8wmaMBsdv/bZN+5kWWrJLTHu0Fq4jY+Ec4FO/GiWPcd00kYj6elZ5eIygszeamJ"
+            "25gibAmp+RBj8kA5F7u6U9dCTMkTdRIufBslMMe28m5ZLuwdRbGunAsJsDciKXlK/GUyqawt8hxAvQiSkGWrpFIBEphj60ycoLVF"
+            "ntdKIBJpv34oeZs6CVQFfj1nRtvkgf9qcJ0ThBgBhyRP+CQEz4DR6NK7vtn8lJ6/Jzfe/Vf5V6fv7xsxFXAsVAB3ANyoAO4AmrJE"
+            "urvhtcV3IRIjADhMQug2KEoAALyNrhtLiPIqTHRphoD9VVhkMwTsk3NVQ+hXNxErgGiTrAtxZ0Df9N4LrF9vvfunj5+d9vfdOwy+"
+            "AlQAdwDcqADuALhRAdwBcCO2F+iKyL/Fj4EK4A6Am2AvcPf+5F3/eHg+6X7tBXpGBXAHwI0K4A6AGxXAHQA32gswx8GOCuAOgBtx"
+            "vUDb/SEGXwEqgDsAblQAdwDcqACaobEHCWLGnBcQOzDRBVNASh/MhZgxkwccZ0DMEly57QSY83QxSqibHSxVQKwSfIOTOjrr+4LB"
+            "Dk/bSBXRZHz+D/TV1SQk6UmAAAAAAElFTkSuQmCC")  # 64 x 64, the pads and the REC LED
 
 # A 5 x 7 pixel font: 7 rows of 5 bits per glyph
 FONT = {
@@ -303,6 +312,7 @@ class Engine:
         for _, index, api in self.candidates():
             modes = ([] if self.shared else [True]) + [False] if api == "Windows WASAPI" else [None]
             for exclusive in modes:
+                stream = None
                 try:
                     extra = sd.WasapiSettings(exclusive=exclusive) if exclusive is not None else None
                     stream = sd.InputStream(device=index, channels=CHANNELS, samplerate=RATE, dtype="int32",
@@ -310,6 +320,11 @@ class Engine:
                                             extra_settings=extra, dither_off=True)
                     stream.start()
                 except Exception:
+                    if stream is not None:  # Opened but did not start: let go, or it blocks the next way
+                        try:
+                            stream.close()
+                        except Exception:
+                            pass
                     continue
                 self.stream = stream
                 self.api = {"Windows WASAPI": "WASAPI " + ("EXCL" if exclusive else "SHARED"),
@@ -492,6 +507,8 @@ class App:
 
         self.W, self.H = Z(440), Z(366)
         root.title("DELUGE USB REC")
+        self.icon = tk.PhotoImage(data=ICON_PNG)
+        root.iconphoto(True, self.icon)
         root.configure(bg=PANEL)
         root.resizable(False, False)
         c = self.c = tk.Canvas(root, width=self.W, height=self.H, bg=PANEL, highlightthickness=0)
@@ -518,13 +535,16 @@ class App:
         # Round buttons with their LEDs, and the gold knob
         by = Z(304)
         self.buttons = {}
-        for key, x, colour, text in (("rec", 56, "#ff2d2d", "REC"), ("arm", 124, "#ffae1c", "ARM"),
-                                     ("stop", 192, "#e8e8f0", "STOP"), ("folder", 266, "#3d8bff", "FOLDER")):
+        for key, x, colour, text, letter in (("rec", 56, "#ff2d2d", "REC", "R"), ("arm", 124, "#ffae1c", "ARM", "A"),
+                                             ("stop", 192, "#e8e8f0", "STOP", "S"),
+                                             ("folder", 266, "#3d8bff", "FOLDER", "F")):
             cx = Z(x)
             ring = c.create_oval(cx - Z(17), by - Z(17), cx + Z(17), by + Z(17), fill="#26262a", outline="#3c3c42",
                                  width=Z(2))
             led = c.create_oval(cx - Z(6), by - Z(6), cx + Z(6), by + Z(6), fill=self.dim(colour, 0.22), outline="")
             self.label(cx - self.label_width(text, Z(2)) // 2, by + Z(26), text, Z(2))
+            # Its key on the computer's keyboard, small underneath
+            self.label(cx - self.label_width(letter, Z(1)) // 2, by + Z(44), letter, Z(1), fill=SMALL)
             for item in (ring, led):
                 c.tag_bind(item, "<Button-1>", lambda e, k=key: self.press(k))
                 c.tag_bind(item, "<Enter>", lambda e: c.configure(cursor="hand2"))
@@ -547,7 +567,7 @@ class App:
         self.update_knob()
 
         for keys, action in ((("r", "R", "<space>"), "rec"), (("a", "A"), "arm"), (("s", "S", "<Escape>"), "stop"),
-                             (("o", "O"), "folder")):
+                             (("f", "F", "o", "O"), "folder")):
             for k in keys:
                 root.bind(k, lambda e, a=action: self.press(a))
         for k in ("<plus>", "<KP_Add>", "<Up>"):
@@ -767,6 +787,7 @@ def main():
     ap.add_argument("--threshold", type=int, default=-40, help="Schwelle für ARM in dBFS (Standard -40)")
     ap.add_argument("--list", action="store_true", help="Audio-Eingänge auflisten und beenden")
     ap.add_argument("--demo", action="store_true", help="ohne Deluge ausprobieren: ein Testsignal statt des Eingangs")
+    ap.add_argument("--selftest", type=float, metavar="S", help=argparse.SUPPRESS)  # For the build: see selftest()
     args = ap.parse_args()
     if args.list:
         import sounddevice as sd
@@ -782,16 +803,51 @@ def main():
         except Exception:
             pass
     import tkinter as tk
-    engine = Engine(output_dir(args.out), args.device, args.shared, args.demo,
+    engine = Engine(output_dir(args.out), args.device, args.shared, args.demo or bool(args.selftest),
                     min(THRESH_MAX, max(THRESH_MIN, args.threshold)))
     root = tk.Tk()
     app = App(root, engine, min(3.0, max(1.0, root.winfo_fpixels("1i") / 96)))
     for sig in (signal.SIGINT, signal.SIGTERM):  # Ctrl+C in the console: the take is saved, the window closes
         signal.signal(sig, lambda *a: root.after(0, app.quit))
+    result = [0]
+    if args.selftest:
+        selftest(root, app, engine, args.selftest, result)
     try:
         root.mainloop()
     finally:
         engine.shutdown()
+    sys.exit(result[0])
+
+
+def selftest(root, app, engine, seconds, result):
+    """The build's check of the finished program (also the .exe): the window with the demo signal, a take from 1 s
+    to the end, PortAudio loaded. Writes selftest.txt into the output folder; exit status 1 if something failed."""
+    def check():
+        lines, ok = [], True
+        try:
+            import sounddevice as sd
+            lines.append(f"portaudio: {sd.get_portaudio_version()[1]}, {len(sd.query_devices())} devices")
+        except Exception as ex:
+            ok = False
+            lines.append(f"portaudio: FAILED {ex!r}")
+        take = engine.last_take
+        try:
+            with wave.open(str(engine.out_dir / take[0]), "rb") as w:
+                fmt = (w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes())
+            good = fmt[:3] == (CHANNELS, 3, RATE) and fmt[3] >= (seconds - 2) * RATE
+            lines.append(f"take: {take[0]} channels {fmt[0]}, bytes {fmt[1]}, {fmt[2]} Hz, {fmt[3]} frames: "
+                         + ("ok" if good else "FAILED"))
+            ok &= good
+        except Exception as ex:
+            ok = False
+            lines.append(f"take: FAILED {ex!r}")
+        lines.append("selftest: " + ("ok" if ok else "FAILED"))
+        (engine.out_dir / "selftest.txt").write_text("\n".join(lines) + "\n")
+        result[0] = 0 if ok else 1
+        app.quit()
+    root.after(1000, lambda: app.press("rec"))
+    root.after(int(seconds * 1000) - 600, lambda: app.press("stop"))
+    root.after(int(seconds * 1000), check)
 
 
 if __name__ == "__main__":
