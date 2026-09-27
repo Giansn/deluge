@@ -41,6 +41,7 @@ Needs: pip install numpy soxr (and pylibrb for the length-keeping pitch shift).
 """
 import argparse
 import concurrent.futures
+import hashlib
 import json
 import math
 import os
@@ -60,6 +61,11 @@ AUDIO_EXTENSIONS = (".wav", ".aif", ".aiff")
 XML_FOLDERS = ("SONGS", "KITS", "SYNTHS")
 LOOP_WARN_CENTS = 0.1
 SUFFIX_TS = "_ts"  # The copy for length-keeping uses of a file that is also used as a plain sample
+BLOCK = 1 << 17  # Frames converted at a time (about 3 s): a job's memory doesn't grow with the file's length
+TMP_SUFFIX = ".retune-tmp"  # A file being written; renamed when complete
+PROGRESS = "RETUNE_PROGRESS.jsonl"  # In the new card's folder while converting: the files finished (for --resume)
+MEMORY_SHARE = 0.5  # Of the memory available at the start, the conversions use at most this share (--max-memory)
+MEMORY_UNKNOWN = 2 << 30  # Assumed available where it can't be read
 
 try:
     import soxr
@@ -86,7 +92,6 @@ class AudioInfo:
         self.mtun = None  # Valid mtun value (tenths of Hz), as the firmware reads it
         self.clm = False  # Serum wavetable chunk
         self.chunks = []  # WAV: (id, bytes) in file order, "data" with b"" as a placeholder; AIFF: its chunks
-        self.data = b""  # Raw audio data (only with read_audio_info(..., with_data=True))
         self.data_pos = self.data_len = None  # Where the audio data is in the file
         self.file_size = 0
         self.block_align = 0
@@ -103,9 +108,9 @@ def is_valid_tuning(tenths):
     return MIN_TENTHS <= tenths <= MAX_TENTHS
 
 
-def read_audio_info(fh, with_data=False):
-    """The headers of an open file: the chunks are read and the audio data skipped (with_data: read too). So that
-    planning a whole card doesn't hold its audio in memory."""
+def read_audio_info(fh):
+    """The headers of an open file: the chunks are read and the audio data skipped (Source reads it block by block).
+    So that neither planning a whole card nor converting a long file holds its audio in memory."""
     info = AudioInfo()
     fh.seek(0, os.SEEK_END)
     info.file_size = fh.tell()
@@ -121,9 +126,6 @@ def read_audio_info(fh, with_data=False):
     else:
         info.error = "RF64 (not supported by the firmware)" if head[:4] in (b"RF64", b"BW64") else \
             "not a WAV or AIFF file"
-    if with_data and info.kind:
-        fh.seek(info.data_pos)
-        info.data = fh.read(info.frames * info.block_align)
     return info
 
 
@@ -363,59 +365,133 @@ def scale_cue(body, f, n_old, n_new):
 # Conversion (runs in worker processes)
 
 
-def resample(x, f_num, f_den):
-    """x resampled by the exact ratio f_num / f_den (output length round(n * ratio)), soxr very high quality."""
-    n_new = math.floor(Fraction(x.shape[0] * f_num, f_den) + Fraction(1, 2))
-    y = soxr.resample(np.ascontiguousarray(x), f_den, f_num, quality="VHQ")
-    if y.shape[0] < n_new:
-        y = np.concatenate([y, np.zeros((n_new - y.shape[0], x.shape[1]))])
-    return np.ascontiguousarray(y[:n_new], dtype=np.float64)
+class Source:
+    """A file's audio, read by frame range and decoded (float64, (frames, channels)): never the whole file at once."""
+
+    def __init__(self, fh, info):
+        self.fh, self.info, self.n = fh, info, info.frames
+
+    def read(self, a, b):
+        ba = self.info.block_align
+        self.fh.seek(self.info.data_pos + a * ba)
+        return decode(self.fh.read((b - a) * ba), self.info)
+
+    def blocks(self, block):
+        for a in range(0, self.n, block):
+            yield self.read(a, min(self.n, a + block))
+
+    def periodic(self, a, b):
+        """Frames a to b of the audio repeated endlessly both ways (0: its first frame; needs frames)."""
+        parts = []
+        while a < b:
+            i = a % self.n
+            k = min(b - a, self.n - i)
+            parts.append(self.read(i, i + k))
+            a += k
+        return parts[0] if len(parts) == 1 else np.concatenate(parts)
 
 
-def pitch_shift_keep_length(x, rate, scale, loop):
+def resample(blocks, f_num, f_den, channels, n_new):
+    """The audio (blocks) resampled by the exact ratio f_num / f_den, soxr very high quality, block by block: soxr's
+    stream gives the same samples as resampling the whole file at once. n_new frames in all (round(n * ratio)),
+    padded with silence at the end where soxr gives fewer."""
+    rs = soxr.ResampleStream(f_den, f_num, channels, dtype="float64", quality="VHQ")
+    sent = 0
+    for x in blocks:
+        y = rs.resample_chunk(np.ascontiguousarray(x, dtype=np.float64))[:n_new - sent]
+        if len(y):
+            sent += len(y)
+            yield y
+    y = rs.resample_chunk(np.zeros((0, channels)), last=True)[:n_new - sent]  # The rest, flushed
+    sent += len(y)
+    if len(y):
+        yield y
+    if sent < n_new:
+        yield np.zeros((n_new - sent, channels))
+
+
+RB_PAD, RB_STEP = 16384, 4096  # Rubber Band: the padding on each side, the frames per process() call
+
+
+def pitch_shift_keep_length(src, rate, scale, loop, block):
     """Rubber Band R3 (finer engine, channels together): pitch times scale, the same length and timing. Its real-time
     mode at a fixed ratio: the offline mode (study pass) lets the timing drift (about 0.13 % for 432/440, events up to
     tens of ms early, caught up at the end). Padded on both sides, so that the edges get whole analysis windows: with
     the file's own other end for a loop (an audio clip or a looping sample: no dip in level at the loop point), with
-    silence for a one-shot."""
+    silence for a one-shot. Block by block: the input (Rubber Band's preferred start pad of silence, the padding, the
+    audio, the padding) goes in RB_STEP frames at a time, its start delay and the padding are dropped from the output,
+    which yields the file's n frames in blocks."""
     from pylibrb import Option, RubberBandStretcher
+    n, ch = src.n, src.info.channels
+    if n == 0:
+        return
     options = Option.PROCESS_REALTIME | Option.ENGINE_FINER | Option.CHANNELS_TOGETHER
-    stretcher = RubberBandStretcher(int(rate), x.shape[1], options, 1.0, float(scale))
-    n, pad, step = x.shape[0], 16384, 4096
-    padded = np.pad(x, ((pad, pad), (0, 0)), mode="wrap" if loop else "constant")
-    # As Rubber Band asks: its preferred start pad of silence first, then its start delay dropped from the output
-    padded = np.concatenate([np.zeros((stretcher.get_preferred_start_pad(), x.shape[1])), padded])
-    audio = np.ascontiguousarray(padded.T, dtype=np.float32)
-    stretcher.set_max_process_size(step)
+    stretcher = RubberBandStretcher(int(rate), ch, options, 1.0, float(scale))
+    start_pad = stretcher.get_preferred_start_pad()
+    stretcher.set_max_process_size(RB_STEP)
     delay = stretcher.get_start_delay()
-    out, have = [], 0
-    for i in range(0, audio.shape[1], step):
-        stretcher.process(audio[:, i:i + step], final=i + step >= audio.shape[1])
-        a = stretcher.available()
-        if a > 0:
-            out.append(stretcher.retrieve(a))
-            have += a
-    while have < delay + pad + n:
-        a = stretcher.available()
-        if a <= 0:
+    total = start_pad + RB_PAD + n + RB_PAD
+    skip = delay + RB_PAD  # Output frames before the file's first one
+    have = sent = 0
+
+    def padded(a, b):
+        """Frames a to b of the input as Rubber Band gets it."""
+        k0, k1 = a - start_pad - RB_PAD, b - start_pad - RB_PAD  # As the file's frames
+        y = np.zeros((b - a, ch))
+        s, e = (max(k0, -RB_PAD), k1) if loop else (max(k0, 0), min(k1, n))
+        if s < e:
+            y[s - k0:e - k0] = src.periodic(s, e)
+        return y
+
+    def take(out):
+        """Of the retrieved frames (channels, frames) the file's."""
+        nonlocal have, sent
+        a, b = max(skip, have), min(skip + n, have + out.shape[1])
+        if a < b:
+            sent += b - a
+            yield out[:, a - have:b - have].T.astype(np.float64)
+        have += out.shape[1]
+
+    step_block = max(RB_STEP, block // RB_STEP * RB_STEP)  # The steps stay at multiples of RB_STEP
+    for a in range(0, total, step_block):
+        b = min(total, a + step_block)
+        audio = np.ascontiguousarray(padded(a, b).T, dtype=np.float32)
+        for i in range(a, b, RB_STEP):
+            stretcher.process(audio[:, i - a:i - a + RB_STEP], final=i + RB_STEP >= total)
+            available = stretcher.available()
+            if available > 0:
+                yield from take(stretcher.retrieve(available))
+        del audio
+    while have < skip + n:
+        available = stretcher.available()
+        if available <= 0:
             break
-        out.append(stretcher.retrieve(a))
-        have += a
-    y = np.concatenate(out, axis=1).T.astype(np.float64) if out else np.zeros((0, x.shape[1]))
-    y = y[delay + pad:delay + pad + n]
-    if y.shape[0] < n:
-        y = np.concatenate([y, np.zeros((n - y.shape[0], x.shape[1]))])
-    return y
+        yield from take(stretcher.retrieve(available))
+    if sent < n:
+        yield np.zeros((n - sent, ch))
 
 
-def build_wav(info, frames_new, rate_new, audio_bytes, f, mtun, warnings, where, as_float=False):
-    """The WAV file: the original's chunks in their order (fmt with the new rate, smpl, cue and fact scaled, mtun
-    replaced and put right before data), or for an AIFF a new fmt with its note (inst) and sustain loop (smpl).
-    as_float: the audio is 32-bit float instead of the original's integer format (fmt changed, a fact chunk added)."""
+def converted_blocks(src, job):
+    """The job's converted audio, float64 blocks of (frames, channels)."""
+    blocks = src.blocks(job["block"])
+    if job["mode"] == "keep_length" and job["pitch_num"] != job["pitch_den"]:
+        blocks = pitch_shift_keep_length(src, src.info.rate, Fraction(job["pitch_num"], job["pitch_den"]), job["loop"],
+                                         job["block"])
+    if job["f_num"] != job["f_den"]:
+        blocks = resample(blocks, job["f_num"], job["f_den"], src.info.channels, job["frames_new"])
+    return blocks
+
+
+def build_wav(info, frames_new, rate_new, data_len, f, mtun, warnings, where, as_float=False):
+    """The WAV file around its audio data of data_len bytes: (the bytes before the data, those after it). The
+    original's chunks in their order (fmt with the new rate, smpl, cue and fact scaled, mtun replaced and put right
+    before data), or for an AIFF a new fmt with its note (inst) and sustain loop (smpl). as_float: the audio is 32-bit
+    float instead of the original's integer format (fmt changed, a fact chunk added)."""
     n_old = info.frames
     tag, bits = (3, 32) if as_float else (1, info.bits)
     block_align = info.channels * bits // 8
     out = []
+    data_at = None
     if info.kind == "wav":
         has_fact = any(cid == b"fact" for cid, _ in info.chunks)
         for cid, body in info.chunks:
@@ -433,7 +509,7 @@ def build_wav(info, frames_new, rate_new, audio_bytes, f, mtun, warnings, where,
                     out.append(chunk(b"fact", struct.pack("<I", frames_new)))
                 if mtun is not None:
                     out.append(mtun_chunk(mtun))
-                out.append(chunk(b"data", audio_bytes))
+                data_at = len(out)
             elif cid == b"smpl":
                 out.append(chunk(cid, scale_smpl(body, f, n_old, frames_new, rate_new, warnings, where)))
             elif cid == b"cue ":
@@ -467,46 +543,86 @@ def build_wav(info, frames_new, rate_new, audio_bytes, f, mtun, warnings, where,
             out.append(chunk(b"fact", struct.pack("<I", frames_new)))
         if mtun is not None:
             out.append(mtun_chunk(mtun))
-        out.append(chunk(b"data", audio_bytes))
-    body = b"WAVE" + b"".join(out)
-    return b"RIFF" + struct.pack("<I", len(body)) + body
+        data_at = len(out)
+    head, tail = b"".join(out[:data_at]), b"".join(out[data_at:])
+    pad = b"\0" if data_len & 1 else b""
+    size = 4 + len(head) + 8 + data_len + len(pad) + len(tail)
+    if size >= 1 << 32:
+        raise RuntimeError(f"the converted file would have {size + 8} bytes: over the 4 GB a WAV file can hold")
+    return (b"RIFF" + struct.pack("<I", size) + b"WAVE" + head + b"data" + struct.pack("<I", data_len),
+            pad + tail)
+
+
+def write_wav(path, src, job, as_float, gain):
+    """Converts and writes the job's file to path, block by block: returns what it found (the peaks before the gain,
+    the samples clipped as written, the warnings, the file's size)."""
+    info = src.info
+    bits = 32 if as_float else info.bits
+    is_float = as_float or info.float
+    data_len = job["frames_new"] * info.channels * (bits // 8)
+    warnings = []
+    head, tail = build_wav(info, job["frames_new"], job["rate_new"], data_len, Fraction(job["f_num"], job["f_den"]),
+                           job["mtun"], warnings, job["rel"], as_float)
+    hi, lo, clipped, frames = -math.inf, math.inf, 0, 0
+    with open(path, "wb") as out:
+        out.write(head)
+        for y in converted_blocks(src, job):
+            if not len(y):
+                continue
+            frames += len(y)
+            hi, lo = max(hi, float(np.max(y))), min(lo, float(np.min(y)))
+            data, c = encode(y * gain if gain != 1 else y, bits, is_float)
+            clipped += c
+            out.write(data)
+            del y, data
+        if frames != job["frames_new"]:
+            raise RuntimeError(f"length {frames}, expected {job['frames_new']}")
+        out.write(tail)
+        out.flush()
+        os.fsync(out.fileno())  # On the disk before it gets its name: a crash leaves no half-written file under it
+    return dict(hi=hi, lo=lo, peak=max(hi, -lo) if frames else 0.0, clipped=clipped, warnings=warnings,
+                size=len(head) + data_len + len(tail))
 
 
 def convert_job(job):
-    """One output file. job: dict (see plan_file()); returns (index, result dict)."""
+    """One output file, written block by block (a few blocks of job["block"] frames in memory, whatever the file's
+    length) to a temporary name, renamed when complete. job: dict (see plan()); returns (index, result dict)."""
     t = time.time()
-    with open(job["src"], "rb") as fh:
-        info = read_audio_info(fh, with_data=True)
-    x = decode(info)
-    warnings = []
-    if job["mode"] == "keep_length" and job["pitch_num"] != job["pitch_den"]:
-        x = pitch_shift_keep_length(x, info.rate, Fraction(job["pitch_num"], job["pitch_den"]), job["loop"])
-    if job["f_num"] != job["f_den"]:
-        x = resample(x, job["f_num"], job["f_den"])
-    if x.shape[0] != job["frames_new"]:
-        raise RuntimeError(f"length {x.shape[0]}, expected {job['frames_new']}")
-    peak = float(np.max(np.abs(x))) if x.size else 0.0
-    # Peaks over full scale (resampling a file normalized to 0 dBFS): never clipped. An integer file becomes 32-bit
-    # float, or (--no-float) just as much quieter as it needs
-    over = 0 if info.float else over_full_scale(x, info.bits)
-    as_float, gain = False, 1.0
-    if over and job.get("no_float"):
-        gain = headroom_gain(x, info.bits)
-        x = x * gain
-    elif over:
-        as_float = True
-    audio, clipped = encode(x, 32 if as_float else info.bits, as_float or info.float)
-    if clipped:  # Can't happen (see above): never write a clipped file
-        raise RuntimeError(f"{clipped} samples would be clipped")
+    tmp = job["dst"] + TMP_SUFFIX
+    os.makedirs(os.path.dirname(job["dst"]), exist_ok=True)
+    try:
+        with open(job["src"], "rb") as fh:
+            src = Source(fh, read_audio_info(fh))
+            info = src.info
+            as_float, gain = False, 1.0
+            r = write_wav(tmp, src, job, as_float, gain)
+            # Peaks over full scale (resampling a file normalized to 0 dBFS): never clipped. An integer file becomes
+            # 32-bit float, or (--no-float) just as much quieter as it needs: known only at the end, so such a file is
+            # converted and written a second time (the same samples: the conversion is deterministic)
+            over = 0 if info.float else r["clipped"]
+            if over:
+                if job.get("no_float"):
+                    gain = headroom_gain(r["hi"], r["lo"], info.bits)
+                else:
+                    as_float = True
+                r2 = write_wav(tmp, src, job, as_float, gain)
+                if (r2["hi"], r2["lo"]) != (r["hi"], r["lo"]):
+                    raise RuntimeError("the second pass gave other samples")
+                if r2["clipped"]:  # Can't happen (see above): never write a clipped file
+                    raise RuntimeError(f"{r2['clipped']} samples would be clipped")
+                r = dict(r2, peak=r["peak"])
+        os.replace(tmp, job["dst"])
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+    warnings, peak = r["warnings"], r["peak"]
     if info.float and peak >= 1:
         warnings.append(f"{job['out_rel']}: float, the resampled peak is {db(peak):+.2f} dBFS: kept in the file, "
                         f"but the firmware limits float samples to full scale as it loads them")
-    data = build_wav(info, job["frames_new"], job["rate_new"], audio, Fraction(job["f_num"], job["f_den"]),
-                     job["mtun"], warnings, job["rel"], as_float)
-    os.makedirs(os.path.dirname(job["dst"]), exist_ok=True)
-    with open(job["dst"], "wb") as fh:
-        fh.write(data)
-    return job["index"], dict(size=len(data), seconds=time.time() - t, warnings=warnings, peak=peak, over=over,
+    return job["index"], dict(size=r["size"], seconds=time.time() - t, warnings=warnings, peak=peak, over=over,
                               as_float=as_float, gain=gain, gain_db=db(gain) if gain != 1 else None)
 
 
@@ -915,7 +1031,8 @@ def plan(args, log):
                                  dst=os.path.join(args.out or "", o.rel), mode=o.mode, f_num=o.f.numerator,
                                  f_den=o.f.denominator, pitch_num=o.pitch.numerator, pitch_den=o.pitch.denominator,
                                  frames_new=o.frames_new, rate_new=o.rate_new, mtun=o.mtun, loop=p.loops,
-                                 no_float=args.no_float))
+                                 no_float=args.no_float, frames=frames, channels=info.channels,
+                                 block=args.block))
                 o.job = jobs[-1]
     return files, xmls, plans, jobs, warnings
 
@@ -1008,6 +1125,264 @@ def apply_edits(text, edits):
 
 
 # --------------------------------------------------------------------------------------------------------------------
+# Memory: how many files are converted at once
+
+
+# A job's peak memory, measured (tests/retune/pc_test.py, test_streaming()): its worker process with numpy, soxr and
+# Rubber Band loaded, and per sample of a block in flight (read, decoded, resampled, encoded), plus the resampler's
+# and Rubber Band's own state
+WORKER_MEMORY = 80 << 20
+BYTES_PER_SAMPLE = 120
+SOXR_MEMORY = 16 << 20
+RB_MEMORY = 48 << 20
+
+
+def job_memory(job):
+    """A job's estimated peak memory in bytes, beyond its process's own (WORKER_MEMORY): from the file's length up
+    to one block, since a longer file is converted block by block."""
+    frames = min(job["frames"], job["block"])
+    f = max(1.0, job["f_num"] / job["f_den"])
+    m = frames * job["channels"] * BYTES_PER_SAMPLE * f
+    if job["f_num"] != job["f_den"]:
+        m += SOXR_MEMORY
+    if job["mode"] == "keep_length" and job["pitch_num"] != job["pitch_den"]:
+        m += RB_MEMORY + frames * job["channels"] * 24  # Its input and output blocks (float64, float32)
+    return int(m)
+
+
+def available_memory():
+    """(bytes of memory available for new processes, how it was read), or (None, why not)."""
+    try:
+        import psutil
+        return psutil.virtual_memory().available, "psutil"
+    except Exception:  # Not installed (or not working here)
+        pass
+    if sys.platform.startswith("linux"):
+        try:
+            with open("/proc/meminfo") as fh:
+                for line in fh:
+                    if line.startswith("MemAvailable:"):
+                        return int(line.split()[1]) * 1024, "/proc/meminfo"
+        except (OSError, ValueError, IndexError):
+            pass
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            class MemoryStatus(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong)] + [
+                    (name, ctypes.c_ulonglong) for name in ("total", "available", "total_page", "available_page",
+                                                           "total_virtual", "available_virtual", "extended")]
+            status = MemoryStatus()
+            status.dwLength = ctypes.sizeof(status)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return status.available, "GlobalMemoryStatusEx"
+        except Exception:
+            pass
+    return None, "can't be read here (pip install psutil)"
+
+
+def parse_size(text):
+    """--max-memory: 4G, 4GB, 3000M, 3000 (MB)."""
+    m = re.fullmatch(r"\s*(\d+(?:\.\d*)?)\s*([kmgt]?)i?b?\s*", text, re.I)
+    if not m:
+        raise argparse.ArgumentTypeError(f"{text!r}: a size such as 4G, 3000M or 3000 (MB)")
+    size = int(float(m.group(1)) * {"": 1 << 20, "k": 1 << 10, "m": 1 << 20, "g": 1 << 30, "t": 1 << 40}[
+        m.group(2).lower()])
+    if size < 1 << 20:
+        raise argparse.ArgumentTypeError(f"{text!r}: at least 1 MB")
+    return size
+
+
+class Limiter:
+    """Which jobs run at once: the worker processes' own memory and the running jobs' estimates (job_memory()) stay
+    within the budget, and never more jobs than processes. A job that needs more than the budget alone runs alone."""
+
+    def __init__(self, todo, args):
+        available, how = available_memory()
+        if args.max_memory:
+            self.budget = args.max_memory
+            self.why = "--max-memory" + (f"; {human(available)} available ({how})" if available else "")
+        elif available is None:
+            self.budget = int(MEMORY_UNKNOWN * MEMORY_SHARE)
+            self.why = f"the available memory {how}: {human(MEMORY_UNKNOWN)} assumed"
+        else:
+            self.budget = int(available * MEMORY_SHARE)
+            self.why = f"half of the {human(available)} available ({how}); --max-memory to change"
+        self.block = args.block
+        self.need = {j["index"]: job_memory(j) for j in todo}
+        smallest = min(self.need.values(), default=0)
+        self.workers = max(1, min(args.jobs, len(todo), int(self.budget // (WORKER_MEMORY + smallest))))
+        self.fixed = self.workers * WORKER_MEMORY
+        self.running = {}  # index -> estimate
+        self.most_jobs = self.most_memory = 0
+
+    def describe(self):
+        if not self.need:
+            return "memory: nothing to convert"
+        lo, hi = min(self.need.values()), max(self.need.values())
+        text = (f"memory: at most {human(self.budget)} for the conversions ({self.why}); a job needs about "
+                f"{human(WORKER_MEMORY + lo)} to {human(WORKER_MEMORY + hi)} (a file is converted in blocks of "
+                f"{self.block} frames, whatever its length): {self.workers} process(es) at once")
+        if self.fixed + hi > self.budget:
+            text += ", fewer while large files run" + (" (a file that needs more than that runs alone)"
+                                                      if WORKER_MEMORY + hi > self.budget else "")
+        return text
+
+    def fits(self, job):
+        if not self.running:
+            return True
+        return (len(self.running) < self.workers
+                and self.fixed + sum(self.running.values()) + self.need[job["index"]] <= self.budget)
+
+    def start(self, job):
+        self.running[job["index"]] = self.need[job["index"]]
+        self.most_jobs = max(self.most_jobs, len(self.running))
+        self.most_memory = max(self.most_memory, self.fixed + sum(self.running.values()))
+
+    def finish(self, index):
+        del self.running[index]
+
+
+def run_jobs(todo, args, done):
+    """Converts the jobs (the largest first), as many at once as the Limiter lets; done(job, result) as each ends.
+    Returns the Limiter (what it chose, what ran)."""
+    limiter = Limiter(todo, args)
+    print(limiter.describe(), flush=True)
+    if not todo:
+        return limiter
+    order = sorted(todo, key=lambda j: (-limiter.need[j["index"]], -j["frames"], j["index"]))
+    print(f"converting {len(todo)} files with {limiter.workers} process(es) ...", flush=True)
+    count = 0
+
+    def finished(job, result):
+        nonlocal count
+        done(job, result)
+        count += 1
+        if not args.quiet and (count % 50 == 0 or count == len(todo)):
+            print(f"  {count}/{len(todo)}", flush=True)
+
+    if limiter.workers == 1:
+        for j in order:
+            limiter.start(j)
+            finished(j, convert_job(j)[1])
+            limiter.finish(j["index"])
+        return limiter
+    by_index = {j["index"]: j for j in todo}
+    with concurrent.futures.ProcessPoolExecutor(limiter.workers) as pool:
+        running, pending = {}, list(reversed(order))
+        while pending or running:
+            while pending and limiter.fits(pending[-1]):
+                j = pending.pop()
+                limiter.start(j)
+                running[pool.submit(convert_job, j)] = j["index"]
+            ready, _ = concurrent.futures.wait(running, return_when=concurrent.futures.FIRST_COMPLETED)
+            for fut in ready:
+                index = running.pop(fut)
+                limiter.finish(index)
+                try:
+                    finished(by_index[index], fut.result()[1])
+                except Exception as e:
+                    for other in running:
+                        other.cancel()
+                    raise RuntimeError(f"{by_index[index]['rel']} -> {by_index[index]['out_rel']}: {e} (the files "
+                                       f"finished so far are kept: --resume continues)") from e
+    return limiter
+
+
+# --------------------------------------------------------------------------------------------------------------------
+# Progress: --resume
+
+
+def progress_header(args):
+    return dict(retune_progress=1, tuning=args.tenths, rate=args.rate, no_float=args.no_float)
+
+
+def job_key(job):
+    """What a finished file was made from and how: the same key, the same file."""
+    st = os.stat(job["src"])
+    fields = [job[k] for k in ("rel", "out_rel", "mode", "f_num", "f_den", "pitch_num", "pitch_den", "frames_new",
+                               "rate_new", "mtun", "loop", "no_float")] + [st.st_size, st.st_mtime_ns]
+    return hashlib.sha1(json.dumps(fields).encode()).hexdigest()
+
+
+class Progress:
+    """PROGRESS in the new card's folder: its options, then a line per converted file as soon as it is complete
+    (written under a temporary name, on the disk, renamed). --resume skips those files (if they are still there with
+    their size) and removes the temporary files of the ones that weren't finished. Removed at the end of a run."""
+
+    def __init__(self, args):
+        self.path = os.path.join(args.out, PROGRESS)
+        self.finished, self.removed = {}, 0
+        if args.resume and os.path.exists(self.path):
+            with open(self.path, encoding="utf-8", errors="replace") as fh:
+                for line in fh.read().splitlines()[1:]:  # The header: checked in main()
+                    try:
+                        e = json.loads(line)
+                        self.finished[e["key"]] = e
+                    except (ValueError, KeyError, TypeError):  # A line cut off by the interruption
+                        pass
+            for dirpath, _, names in os.walk(args.out):
+                for name in names:
+                    if name.endswith(TMP_SUFFIX):
+                        os.remove(os.path.join(dirpath, name))
+                        self.removed += 1
+            self.fh = open(self.path, "a", encoding="utf-8")
+        else:
+            self.fh = open(self.path, "w", encoding="utf-8")
+            self.write(progress_header(args))
+
+    def write(self, entry):
+        self.fh.write(json.dumps(entry) + "\n")
+        self.fh.flush()
+        os.fsync(self.fh.fileno())
+
+    def result(self, job):
+        """The result of a job finished before, or None."""
+        e = self.finished.get(job["key"])
+        try:
+            if e is not None and e["out"] == job["out_rel"] and os.path.getsize(job["dst"]) == e["result"]["size"]:
+                return e["result"]
+        except (OSError, KeyError, TypeError):
+            pass
+        return None
+
+    def add(self, job, result):
+        self.write(dict(key=job["key"], out=job["out_rel"], result=result))
+
+    def close(self):
+        self.fh.close()
+        os.remove(self.path)
+
+
+def read_progress_header(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.loads(fh.readline())
+    except (OSError, ValueError):
+        return None
+
+
+def write_file(dst, data):
+    """Written under a temporary name, then renamed: the name exists only for the complete file."""
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    with open(dst + TMP_SUFFIX, "wb") as fh:
+        fh.write(data)
+    os.replace(dst + TMP_SUFFIX, dst)
+
+
+def copy_file(src, dst, resume):
+    """A copy, under a temporary name first; with --resume one that is already there (same size and time) stays."""
+    if resume and os.path.isfile(dst):
+        s, d = os.stat(src), os.stat(dst)
+        if s.st_size == d.st_size and abs(s.st_mtime - d.st_mtime) <= 2:
+            return
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copy2(src, dst + TMP_SUFFIX)
+    os.replace(dst + TMP_SUFFIX, dst)
+
+
+# --------------------------------------------------------------------------------------------------------------------
 
 
 def human(n):
@@ -1023,7 +1398,8 @@ def main():
                                  epilog="Needs: pip install numpy soxr (and pylibrb for audio clips and time-stretched "
                                         "samples)")
     ap.add_argument("--card", required=True, help="the card's folder (a copy of the SD card); only read")
-    ap.add_argument("--out", help="the new card's folder (must not exist or be empty); not needed with --dry-run")
+    ap.add_argument("--out", help="the new card's folder (must not exist or be empty, except with --resume); not needed "
+                                  "with --dry-run")
     ap.add_argument("--tuning", "--target", type=float, default=432.0,
                     help="the master tune the library is for, in Hz (415.3 to 466.2, 0.1 Hz steps; default 432)")
     ap.add_argument("--rate", type=int, default=44100,
@@ -1033,7 +1409,16 @@ def main():
                     help="an integer file whose resampled peaks go over full scale is written a little quieter, "
                          "just enough (the report gives the dB), instead of as 32-bit float")
     ap.add_argument("--dry-run", action="store_true", help="only report what would be done")
-    ap.add_argument("--jobs", type=int, default=os.cpu_count() or 1, help="files converted at once (processes)")
+    ap.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
+                    help="files converted at once (processes) at most; fewer if the memory needs it (see "
+                         "--max-memory)")
+    ap.add_argument("--max-memory", type=parse_size,
+                    help="memory the conversions may use together, e.g. 4G or 3000M (default: half of the memory "
+                         "available at the start)")
+    ap.add_argument("--resume", action="store_true",
+                    help="continue an interrupted run into the same --out (same options): the files it finished "
+                         "are kept, the rest converted, then all songs, kits and synths written")
+    ap.add_argument("--block", type=int, default=BLOCK, help=argparse.SUPPRESS)  # Frames per block (tests)
     ap.add_argument("--quiet", action="store_true", help="only the summary and the warnings on the console")
     args = ap.parse_args()
     args.tenths = int(round(args.tuning * 10))
@@ -1041,6 +1426,8 @@ def main():
         ap.error("--tuning: 415.3 to 466.2 Hz in steps of 0.1 Hz, as the firmware's menu")
     if args.rate and not 5000 <= args.rate <= 96000:
         ap.error("--rate: 5000 to 96000 (or 0)")
+    if args.jobs < 1 or args.block < 1:
+        ap.error("--jobs (and --block): at least 1")
     args.card = os.path.abspath(args.card)
     if not os.path.isdir(args.card):
         ap.error(f"--card: {args.card} is not a folder")
@@ -1052,7 +1439,15 @@ def main():
         if o.startswith(c) or c.startswith(o):
             ap.error("--out must be outside the card's folder (and not contain it)")
         if os.path.exists(args.out) and (not os.path.isdir(args.out) or os.listdir(args.out)):
-            ap.error(f"--out: {args.out} exists and is not empty")
+            if not args.resume or not os.path.isdir(args.out):
+                ap.error(f"--out: {args.out} exists and is not empty (--resume continues an interrupted run in it)")
+            header = read_progress_header(os.path.join(args.out, PROGRESS))
+            if header is None:
+                ap.error(f"--resume: {args.out} has no {PROGRESS}: that run is complete, or was made by an older "
+                         f"version of this tool (its files can't be trusted); convert into a new, empty folder")
+            if header != progress_header(args):
+                ap.error(f"--resume: {args.out} was started with other options ({header}); use the same --tuning, "
+                         f"--rate and --no-float, or a new, empty folder")
     elif args.out:
         args.out = os.path.abspath(args.out)
     if soxr is None:
@@ -1075,26 +1470,34 @@ def main():
     files, xmls, plans, jobs, warnings = plan(args, log)
     edits = xml_edits(xmls, warnings)
 
-    # Converting
+    # Converting: the audio first, then the other files and the XML (so that an interrupted run leaves no XML that
+    # points at audio not yet converted)
     results = {}
-    if not args.dry_run:
+    if args.dry_run:
+        print(Limiter(jobs, args).describe().replace("memory:", "memory (if converting):"), flush=True)
+    else:
         os.makedirs(args.out, exist_ok=True)
-        if jobs:
-            print(f"converting {len(jobs)} files with {args.jobs} process(es) ...", flush=True)
-            done = 0
-            if args.jobs > 1 and len(jobs) > 1:
-                with concurrent.futures.ProcessPoolExecutor(args.jobs) as pool:
-                    futures = [pool.submit(convert_job, j) for j in jobs]
-                    for fut in concurrent.futures.as_completed(futures):
-                        i, r = fut.result()
-                        results[i] = r
-                        done += 1
-                        if not args.quiet and (done % 50 == 0 or done == len(jobs)):
-                            print(f"  {done}/{len(jobs)}", flush=True)
+        progress = Progress(args)
+        todo = []
+        for j in jobs:
+            j["key"] = job_key(j)
+            r = progress.result(j)
+            if r is None:
+                todo.append(j)
             else:
-                for j in jobs:
-                    i, r = convert_job(j)
-                    results[i] = r
+                results[j["index"]] = r
+        if args.resume:
+            print(f"resume: {len(jobs) - len(todo)} of {len(jobs)} files were converted before, "
+                  f"{progress.removed} unfinished file(s) removed", flush=True)
+
+        def done(job, result):
+            results[job["index"]] = result
+            progress.add(job, result)
+
+        limiter = run_jobs(todo, args, done)
+        if todo:
+            print(f"memory: at most {limiter.most_jobs} job(s) ran at once, estimated {human(limiter.most_memory)} of "
+                  f"{human(limiter.budget)}", flush=True)
         # Everything else: copied, the XML edited
         # An original is copied unless all its outputs are converted files (under its name or, an AIFF, as WAV)
         not_copied = set()
@@ -1103,20 +1506,16 @@ def main():
                 not_copied.add(p.rel.lower())
             for o in p.outputs.values():
                 if not o.convert and o.rel.lower() != p.rel.lower():  # The original under a second name
-                    dst = os.path.join(args.out, o.rel)
-                    os.makedirs(os.path.dirname(dst), exist_ok=True)
-                    shutil.copy2(os.path.join(args.card, p.rel), dst)
+                    copy_file(os.path.join(args.card, p.rel), os.path.join(args.out, o.rel), args.resume)
         for rel in files:
             if rel.lower() in not_copied:
                 continue
             dst = os.path.join(args.out, rel)
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
             if rel in edits and edits[rel][0]:
                 data = apply_edits(read_xml(args.card, rel, xmls[rel]), edits[rel][0])
-                with open(dst, "wb") as fh:
-                    fh.write(data.encode("utf-8", errors="surrogateescape"))
+                write_file(dst, data.encode("utf-8", errors="surrogateescape"))
             else:
-                shutil.copy2(os.path.join(args.card, rel), dst)
+                copy_file(os.path.join(args.card, rel), dst, args.resume)
     for j in jobs:
         warnings += results.get(j["index"], {}).get("warnings", [])
 
@@ -1223,6 +1622,7 @@ def main():
             xml={rel: [readable(line) for line in e[1]] for rel, e in edits.items() if e[1]})
         with open(os.path.join(args.out, "RETUNE_REPORT.json"), "w", encoding="utf-8") as fh:
             json.dump(report, fh, indent=1)
+        progress.close()  # Complete: nothing left to resume
         print(f"\nreport: {os.path.join(args.out, 'RETUNE_REPORT.txt')}")
 
 

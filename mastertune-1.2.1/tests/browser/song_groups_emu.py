@@ -100,12 +100,13 @@ VERS = "VERS"  # A folder of its own, at the top level (the checks in SONGS keep
 VERS_NAMES = ([f"E{n:02d}X" for n in range(1, 27)] + [f"F {n}" for n in range(1, 27)]
               + [f"H{n:03d}X" for n in range(1, 61)])
 # The folder NEW (the group: the whole name without the number at its end), in the order the browser sorts them; the
-# songs loaded from it have LPF knobs of their own
+# songs loaded from it have LPF knobs of their own. ZOO: typing finds TRACK FINAL (Browser::predictExtendedText() takes
+# the file before where the text would sort, not the folder's last one)
 NEW = "NEW"
 SITAR = ["New Sitar Grii", "New Sitar Grii 2", "New Sitar Grii 9", "New Sitar Grii 10"]
 LONG = "The Longest Song Name On This Card"
 NEW_NAMES = (["New Drum Idea", "New Drum Idea 2"] + SITAR + ["SONG1", "SONG1 2", "SONG2", LONG, LONG + " 2", "TRACK",
-             "TRACK 2", "TRACK 2 FINAL", "TRACK 3", "TRACK 4", "TRACK FINAL"])
+             "TRACK 2", "TRACK 2 FINAL", "TRACK 3", "TRACK 4", "TRACK FINAL", "ZOO"])
 NEW_KNOBS = {"New Sitar Grii 9": 38, "New Sitar Grii 10": 40, "TRACK FINAL": 42, "TRACK 4": 44, LONG + " 2": 46,
              "New Drum Idea": 48}
 OLD = NEW + "/OLD"  # A folder in NEW (BACK from it goes up to NEW)
@@ -771,12 +772,12 @@ def run_new(b, check):
           f"{knob2}, {name2!r}")
 
     # 24: typing
-    b.open("SONG2", folder=NEW)
+    b.open("New Drum Idea", folder=NEW)
     b.type("TRACK F")
     s10, f10 = b.state(), b.frame()
     b.press(BUTTON_SELECT)
     knob, name = b.loaded()
-    b.open("SONG2", folder=NEW)
+    b.open("New Drum Idea", folder=NEW)
     b.type("TRACK 4")
     s11, f11 = b.state(), b.frame()
     b.press(BUTTON_SELECT)
@@ -793,7 +794,7 @@ def run_new(b, check):
     # 25: delete refused on a folded row, as before on a version (another group folded out too)
     b.open("New Drum Idea", folder=NEW)
     b.press(BUTTON_SELECT)
-    for _ in range(5):
+    for _ in range(6):  # New Drum Idea 2, New Sitar Grii >, OLD, SONG1 >, SONG2, the long name >
         b.turn(1)
     mark = len(d.events)
     b.shift_save()
@@ -866,6 +867,17 @@ def run_7seg(a, sd, out, check):
                                             ("DEFAULT", ["DEFAULT"])]
           and steps[0][1] == 0 and steps[1][1] == 0 and steps[2][1] <= 3 and steps[3][1] <= 3,
           "; ".join(f"{n} {t} ({r} reads)" for n, r, t in steps))
+    b.close()
+
+    b.open("New Drum Idea", folder=NEW)
+    texts = []
+    for _ in range(5):
+        mark = len(b.d.events)
+        b.turn(1)
+        texts.append((b.scroll_texts(mark)[-1:] or [None])[0])
+    # (SONG2 isn't in the 7-segment display's list: Browser, as before)
+    check(f'27. 7-segment, NEW: +1 from New Drum Idea: "New Sitar Grii--", "OLD", "SONG1--", then "{LONG}--"',
+          texts[:3] == ["New Sitar Grii--", "OLD", "SONG1--"] and LONG + "--" in texts[3:], f"{texts}")
     b.close()
 
 
