@@ -1,6 +1,6 @@
 # Deluge 1.2.1 mit Master Tune
 
-Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern, v12 einen Frequenz-Drone mit bis zu 16 Tönen, v13 mehr Leistung, einen Ping-Pong-Arp, flimmerfreies Dimmen der Pads, genaueres MIDI und einen überarbeiteten Drone, v14 ein Reverb ohne Wabbeln, ein Delay ohne Tonhöhensprung und einen Countdown beim Song-Wechsel, v15 einen lebendigen Drone (Life, FM, Pulse), einen CPU-Monitor in einer Zeile und drei Korrekturen aus der Community.
+Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern, v12 einen Frequenz-Drone mit bis zu 16 Tönen, v13 mehr Leistung, einen Ping-Pong-Arp, flimmerfreies Dimmen der Pads, genaueres MIDI und einen überarbeiteten Drone, v14 ein Reverb ohne Wabbeln, ein Delay ohne Tonhöhensprung und einen Countdown beim Song-Wechsel, v15 einen lebendigen Drone (Life, FM, Pulse), einen CPU-Monitor in einer Zeile und drei Korrekturen aus der Community, v16 Drone-Spuren für Song- und Arranger-View und einen Profiler.
 
 | Datei | Version (Settings → Firmware version) | Inhalt |
 |---|---|---|
@@ -18,10 +18,11 @@ Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit
 | `deluge-1.2.1-mastertune-v13-9b861a5c.bin` | `1.2.1-mastertune-v13-9b861a5c` | v12-perf + Drone-Feinschliff, Ping-Pong-Arp, flimmerfreies Dimmen, schnelleres Speichern, genaueres MIDI, CPU-Monitor in Worten |
 | `deluge-1.2.1-mastertune-v14-c1d1c8bb.bin` | `1.2.1-mastertune-v14-c1d1c8bb` | v13 + Reverb ohne Wabbeln (Modulation, Pre-delay), Delay ohne Tonhöhensprung, Countdown beim Song-Wechsel, zwei Korrekturen für die Karte |
 | `deluge-1.2.1-mastertune-v15-b5f5c900.bin` | `1.2.1-mastertune-v15-b5f5c900` | v14 + lebendiger Drone (Life, FM, Pulse), CPU-Monitor in einer Zeile, Section-Start per CC, USB-MIDI ohne Paketverlust, Clock-Ausgänge unter externer Clock |
+| `deluge-1.2.1-mastertune-v16-c610417f.bin` | `1.2.1-mastertune-v16-c610417f` | v15 + Drone-Spuren (Drones als Kit-Spuren in Song- und Arranger-View, Hz-Spur pro Reihe), Profiler, USB audio bleibt nach dem Neustart an |
 
-SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7`, v14 `cb17bbb3…8e23e6e5`, v15 `cdce07f3…da7ca652` (vollständig: `sha256sum *.bin`).
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7`, v14 `cb17bbb3…8e23e6e5`, v15 `cdce07f3…da7ca652`, v16 `7eed1a77…71897f9f` (vollständig: `sha256sum *.bin`).
 Nachgeprüft am 26.09.2026: Jede Version v2–v12 wurde aus ihrem Commit in einer eigenen Arbeitskopie komplett neu gebaut, mit 441–448 neu übersetzten Dateien. Jede SHA-256 stimmt mit der ausgelieferten Datei überein.
-Quellcode: `patches/0001` bis `0041` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 sind die Leistungsversion v12-perf, gleich wie `perf/0001`–`0003`), v14 = 0001–0035, v15 = 0001–0041.
+Quellcode: `patches/0001` bis `0055` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 sind die Leistungsversion v12-perf, gleich wie `perf/0001`–`0003`), v14 = 0001–0035, v15 = 0001–0041, v16 = 0001–0055.
 
 ## v3 und v4: Unterschiede
 
@@ -342,20 +343,21 @@ Das OLED zeigt Ton, Modus, Tonhöhe und den Beat mit seinem Bereich (Delta, Thet
 - **`diag/`:** die Messversion v12-diag, v12 plus CPU-Monitor.
   - Zeigt CPU-Last, Stimmen, Qualitätsabsenkung und SD-Zeiten auf dem OLED und per USB-MIDI.
   - Dazu `tools/cpu_monitor.html` und ein Test-Song. Details: `diag/README.md`.
-- **`l2test/`:** zwei Testversionen von v15 mit eingeschaltetem L2-Cache, einmal nur für Code, einmal auch für Daten. Mit v14 zeigte die erste Messung am Gerät: keine abgeschnittenen Stimmen mehr.
+- **`l2test/`:** zwei Testversionen von v16 mit eingeschaltetem L2-Cache, einmal nur für Code, einmal auch für Daten. Mit v14 zeigte die erste Messung am Gerät: keine abgeschnittenen Stimmen mehr.
   - Zum Messen mit dem CPU-Monitor am Gerät, noch nicht für Auftritte.
   - Anleitung, Risiken und Prüfungen: `l2test/README.md`.
 - **`prof/`:** die Profiler-Messversion v15-prof, einmal ohne L2 und einmal mit L2 für Code.
   - Settings → CPU monitor → Profile schickt 1000-mal pro Sekunde an den Computer, wo die CPU gerade arbeitet, dazu die genaue Rechenzeit jeder Spur.
   - `tools/profiler.html` (Chrome/Edge) oder `tools/deluge_profiler.py` zeigen die Zeit pro Spur, Task und Funktion.
   - Anleitung und Prüfungen: `prof/README.md`.
+  - Ab v16 hat jede Version den Profiler, auch die L2-Testversionen. Die passende `.symbols.json` liegt neben der Firmware.
 - **`research/OPTIMIERUNG.md`:** alle Messungen und Erkenntnisse zur Optimierung.
 
 ## v13: mehr Leistung, Ping-Pong-Arp, flimmerfreies Dimmen, genaueres MIDI, Drone-Feinschliff
 
 v13 enthält v12 und die Leistungsversion v12-perf, dazu die folgenden Neuerungen. **Auf dem Gerät ist nichts davon getestet**; geprüft ist alles im Emulator mit dem Maschinencode der Firmware und von unabhängigen Gegenprüfern.
 
-**Drone** (Handbuch `docs/Drone-Handbuch.pdf`, auf v15 nachgeführt):
+**Drone** (Handbuch `docs/Drone-Handbuch.pdf`, auf v16 nachgeführt):
 - **Select drehen stellt die Tonhöhe** in spürbaren Rasten: 1 Hz pro Klick, mit Shift 0,1 Hz; als Note ein Halbton, mit Shift ein Cent. Die Goldknöpfe bleiben für schnelles Stimmen.
 - **SYNTH / KIT / MIDI / CV wählen den Modus** des gewählten Tons: Ton / Binaural / Monaural / Isochron. Die LED der Taste zeigt den aktuellen Modus.
 - Die Pads leuchten ruhig, nichts pulsiert mehr.
@@ -519,6 +521,61 @@ v15 enthält v14. **Auf dem Gerät ist nichts davon getestet.** Geprüft ist all
 - **CPU-Monitor** (`tests/cpu_stats`): Zeile mit und ohne QL/VC, Decoder von `tools/cpu_monitor.html` unverändert.
 - **Song-Wechsel** (`tests/songchange`): Countdown und Regler wie in v14.
 - **Build:** ohne neue Warnungen. Zwei komplette Neubauten ergeben dieselbe SHA-256 (je 466 neu übersetzte Dateien, `cdce07f3…da7ca652`). Die Patches ergeben mit `git am` auf `release_1_2_1` genau diesen Stand.
+
+## v16: Drone-Spuren, Profiler, USB audio bleibt an
+
+v16 enthält v15. **Auf dem Gerät ist nichts davon getestet.** Geprüft ist alles im Emulator mit dem Maschinencode der Firmware, auf dem PC mit dem Code der Drone und von einem unabhängigen Gegenprüfer. Mit L2-Cache gibt es v16 als Testversionen in `l2test/`.
+
+**Drone-Spuren: Drones in Song- und Arranger-View platzieren und überlagern:**
+- **Was es ist:** eine Kit-Spur, deren Reihen Drone-Töne sind. Ihre Clips starten in der Song-View und liegen im Arranger wie die jedes Kits. So lassen sich Drones gezielt setzen und überlagern, jede Spur mit den Effekten, der Lautstärke und der Sidechain ihres Kits.
+- **Die Noten sind das Gate:** Solange eine Note dauert, klingt der Ton der Reihe. Er blendet weich ein und aus wie beim Song-Drone. Eine Note über den ganzen Clip hält über die Loop-Grenze. Mit dem Arpeggiator der Reihe pulsiert der Ton im Rhythmus.
+- **Drone-Spur erstellen:** In der Drone-Ansicht **Shift + Kit**.
+  - Das ergibt ein neues Kit (DRONE1, DRONE2, …) mit 16 Drone-Reihen, den Tönen des Song-Drones.
+  - Die eingeschalteten Töne bekommen eine Note über den ganzen Clip.
+  - Der Clip steht unten in der Song-View, noch nicht gestartet. Gestartet klingt er wie der Drone, gleich laut. Der Song-Drone selbst bleibt, wie er ist.
+- **Eine Kit-Reihe zur Drone-Reihe machen:** In der Clip-View eines Kits das Audition-Pad der Reihe halten (oder eine neue Reihe anlegen), dann **Shift + Kit**. Die Reihe klingt dann mit 200 Hz. Kit allein öffnet wie bisher den Sample-Browser.
+- **Tonhöhe spielen:** In der Clip-View eine Drone-Reihe wählen, mit ihrem Audition-Pad (Affect Entire aus).
+  - **Select drehen:** 1 Hz pro Raste, mit Shift 0,1 Hz.
+  - **Oberer Goldknopf:** 1 Hz, schnell gedreht 10 Hz, mit Shift 0,01 Hz. Bei einem Ton als Note: Halbtöne, mit Shift Cent.
+  - **Unterer Goldknopf:** Pegel der Reihe.
+  - **Select drücken:** das Ton-Menü der Reihe (Modus, Tonhöhe, Beat, Sync, Puls, Klangfarbe, Pegel, Pan, Arpeggiator).
+  - Das OLED zeigt Modus und Hz als Namen der Reihe, die 7-Segment-Anzeige die Hz.
+  - Das Pad einer Reihe, die gerade aus dem Sequenzer klingt, wählt sie nur aus. Sie klingt weiter.
+- **Hz-Wechsel aufnehmen:** **PLAY**, dann **REC**, dann Select oder den oberen Goldknopf drehen.
+  - Jeder Wechsel landet als Knoten in der Hz-Spur der Reihe und spielt im nächsten Loop wieder ab. Zwischen den Knoten gleitet der Ton in etwa 15 ms.
+  - Das geht auch in den Arranger, wie jede Aufnahme.
+  - Ohne REC ändert sich der Grundton der Reihe, die aufgenommene Spur verschiebt sich mit.
+  - Unter REC nimmt Shift + Select die feinen 0,1-Hz-Schritte auf. Shift + oberer Goldknopf löscht die Hz-Spur wie jede Automation, die Reihe kehrt dann sofort zu ihrem Grundton zurück.
+- **Die Hz-Spur bleibt:** Noten aufnehmen, verschieben oder euklidisch verteilen lassen sie unverändert. Die Noten sind nur das Gate.
+- **MIDI:** Pitch-Bend auf einer Drone-Reihe wirkt im Bend-Bereich der Reihe (Standard 2 Halbtöne) und wird unter REC ebenfalls aufgenommen.
+- **Rechenzeit:** pro klingender Reihe 0,3–0,45 % CPU, 16 Reihen 5–7 %. Reihen mit geschlossenem Gate kosten nichts.
+- **Song-Datei:** neue Reihen `<droneTone …>` mit den Attributen der Drone-Töne. Die Hz-Spur liegt in den Noten-Daten der Reihe.
+  - Ältere Firmware überspringt Drone-Reihen, alle anderen Reihen bleiben richtig, denn v16 speichert die Drone-Reihen zuletzt.
+  - Ein v16-Song mit Drone-Spuren sollte trotzdem nicht in älterer Firmware gespeichert werden: Dort gehen die Drone-Reihen verloren.
+
+**Profiler** (Settings → CPU monitor → **Profile**): wie in der Messversion `prof/`, siehe dort. Er zeigt am Computer die Rechenzeit pro Spur, Task und Funktion (`tools/profiler.html`). Die Symbol-Datei zu v16 liegt neben der Firmware.
+
+**USB audio bleibt nach dem Neustart an:** Bisher speicherte das Settings-Menü seine Werte erst beim Verlassen. USB audio verlangt beim Einschalten einen Neustart, und wer direkt aus dem Menü neu startete, fand es danach wieder aus. v16 speichert diese Einstellung sofort. Mit älteren Versionen: vor dem Neustart das Menü mit Back verlassen.
+
+**Geprüft:**
+- **Drone** (`tests/drone`, PC): 150 Prüfungen. Der Song-Drone klingt Bit für Bit wie in v15.
+- **Emulator** (`tests/song`, DRONE=1, 60 Prüfungen):
+  - eine Drone-Reihe klingt mit ihren Hz und folgt der Hz-Spur (300,009 Hz)
+  - ihr Pegel liegt 0,00 dB neben einem gleich eingestellten Ton des Song-Drones
+  - Speichern und Laden ergeben dieselben Samples
+  - REC nimmt Hz-Wechsel auf (250, 260, 220 Hz) und spielt sie ab
+  - eine Kit-Reihe wird zur Drone-Reihe
+  - Speichern während der Wiedergabe: kein Einbruch (vorher bis 25 dB, jetzt 0,003 dB)
+  - Noten aufnehmen, verschieben und euklidisch verteilen lassen die Hz-Spur unverändert
+  - Shift beim Aufnehmen, MIDI-Pitch-Bend, das Pad während einer Note
+- **Song-Wechsel** (`tests/songchange`): 131 Prüfungen. Der Gegenprüfer spielte ihn zusätzlich mit einer laufenden Drone-Spur durch, ohne Absturz.
+- **Der Volllast-Song** klingt Bit für Bit wie v15. Songs ohne Drone-Spuren speichern dasselbe XML wie v15.
+- **Gegenprüfer:** sieben Befunde, alle behoben, jeder mit einem Test.
+  - Der wichtigste war ein Datenverlust: Eine live aufgenommene Note setzte die Hz-Spur ab dieser Stelle zurück.
+  - Dazu kommt die Pad-Auswahl während einer Note: Die Reihe verstummte bis zur nächsten Note.
+- **USB audio** (`tests/settings`, Emulator): eingeschaltet, ohne das Menü zu verlassen, dann neu gestartet. Die Karte hält den Wert, das Menü zeigt nach dem Neustart an. 2 von 2 Prüfungen, mit v15 0 von 2.
+- **Profiler:** wie in `prof/README.md`, mit v16 erneut im Emulator: 21 Prüfungen bestanden.
+- **Build:** ohne neue Warnungen. Je zwei komplette Neubauten ergeben dieselbe SHA-256, auch bei den beiden L2-Versionen. Alle Prüfungen oben liefen auf genau diesen Builds, dazu Clock, Sections und L2 wie in v15 (`tests/clock`, `tests/sections`, `tests/l2`). Der Volllast-Song klingt auch mit L2 Bit für Bit wie v15.
 
 ## Bedienung
 
