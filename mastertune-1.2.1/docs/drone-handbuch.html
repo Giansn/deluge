@@ -36,7 +36,7 @@
 
 <div class="cover">
   <h1>Frequenz-Drone</h1>
-  <div class="subtitle">Handbuch für den Deluge mit Firmware 1.2.1-mastertune v15 (v13 und v14: ohne Life, FM und Pulse; v12: zudem ohne Triolen, Attack/Release, Knopf-Sektionen und Reverb-Send, dort pulsieren die Pads)</div>
+  <div class="subtitle">Handbuch für den Deluge mit Firmware 1.2.1-mastertune v16 (v15: ohne Drone-Spuren; v13 und v14: zudem ohne Life, FM und Pulse; v12: zudem ohne Triolen, Attack/Release, Knopf-Sektionen und Reverb-Send, dort pulsieren die Pads)</div>
   <p>Der Drone spielt bis zu <b>16 Dauertöne</b> unter die Musik deines Songs. Jeder Ton kann ruhig stehen oder in einem Beat schweben: <b>binaural</b>, <b>monaural</b> oder <b>isochron</b>, frei in Hertz oder synchron zum Tempo, auch in Triolen. Die Tonhöhe stellst du in Hertz oder als Note ein, die dem Master Tune folgt. Isochrone Pulse haben Attack und Release. Der Drone duckt sich unter die Sidechain des Songs, kann ins Song-Reverb senden und wird mit dem Song gespeichert.</p>
   <ol class="toc">
     <li>Schnellstart</li>
@@ -366,8 +366,36 @@
 </table>
 <ul>
   <li><b>Getestet</b> im Emulator (46 Prüfpunkte auf PC und Cortex-A9) und auf dem Gerät mit v12. Die Neuerungen von v13 und v15 sind auf dem Gerät noch nicht getestet; Life, FM und Pulse sind auf dem PC mit 116 Prüfpunkten geprüft.</li>
-  <li>Der Drone sendet kein MIDI und nimmt keine Noten von Tastatur oder MIDI an.</li>
-  <li>Automation oder Modulation der Drone-Werte gibt es nicht; Änderungen macht man von Hand.</li>
+  <li>Der Song-Drone sendet kein MIDI und nimmt keine Noten von Tastatur oder MIDI an. Drone-Spuren (Kapitel 16) nehmen Noten an: Sie öffnen das Gate der Reihe.</li>
+  <li>Die Werte des Song-Drones lassen sich nicht automatisieren. Bei Drone-Spuren wird die Tonhöhe jeder Reihe mit REC als Hz-Spur aufgenommen (Kapitel 16).</li>
+</ul>
+
+<h2 class="page-break">16. Drone-Spuren (v16)</h2>
+<p>Der Song-Drone klingt, solange er an ist. Mit <b>Drone-Spuren</b> setzt du Drones gezielt: Eine Drone-Spur ist ein Kit, dessen Reihen Drone-Töne sind. Ihre Clips startest du in der Song-View und legst sie im Arranger ab wie jeden Kit-Clip. Mehrere Drone-Spuren können sich überlagern, jede mit den Effekten, der Lautstärke und der Sidechain ihres Kits.</p>
+<table>
+  <tr><th style="width:30%">Was</th><th>So geht's</th></tr>
+  <tr><td>Drone-Spur aus dem Drone machen</td><td>In der Drone-Ansicht <span class="key">SHIFT</span> + <span class="key">KIT</span>. Es entsteht ein neues Kit (DRONE1, DRONE2 …) mit 16 Reihen, den Tönen des Song-Drones; die eingeschalteten Töne bekommen eine Note über den ganzen Clip. Der Clip steht unten in der Song-View und ist noch nicht gestartet. Der Song-Drone selbst bleibt unverändert.</td></tr>
+  <tr><td>Eine Kit-Reihe zur Drone-Reihe machen</td><td>In der Clip-View eines Kits das Audition-Pad der Reihe halten (oder eine neue Reihe anlegen), dann <span class="key">SHIFT</span> + <span class="key">KIT</span>. Die Reihe klingt mit 200 Hz.</td></tr>
+  <tr><td>Gate</td><td>Die Noten einer Drone-Reihe sind ihr Gate: Solange eine Note dauert, klingt der Ton, mit weichem Ein- und Ausblenden. Eine Note über den ganzen Clip hält über die Loop-Grenze. Mit dem Arpeggiator der Reihe pulsiert der Ton im Rhythmus.</td></tr>
+  <tr><td>Reihe wählen</td><td>Ihr Audition-Pad (Affect Entire aus). Klingt die Reihe gerade aus dem Sequenzer, wählt das Pad sie nur aus, sie klingt weiter.</td></tr>
+  <tr><td>Tonhöhe</td><td>Select drehen: 1 Hz pro Raste, mit <span class="key">SHIFT</span> 0,1 Hz. Oberer Goldknopf: 1 Hz, schnell gedreht 10 Hz, mit <span class="key">SHIFT</span> 0,01 Hz. Ein Ton als Note: Halbtöne, mit <span class="key">SHIFT</span> Cent.</td></tr>
+  <tr><td>Pegel</td><td>Unterer Goldknopf</td></tr>
+  <tr><td>Menü der Reihe</td><td>Select drücken: Modus, Tonhöhe, Beat, Sync, Puls, Klangfarbe, Pegel, Pan, dazu Arpeggiator und Randomizer der Reihe</td></tr>
+  <tr><td>Anzeige</td><td>OLED: Modus und Hz als Name der Reihe; 7-Segment: die Hz</td></tr>
+</table>
+<h3>Hz-Wechsel aufnehmen und spielen</h3>
+<ul>
+  <li><span class="key">PLAY</span>, dann <span class="key">RECORD</span>, dann Select oder den oberen Goldknopf drehen: Jeder Wechsel wird als Knoten in die <b>Hz-Spur</b> der Reihe geschrieben und spielt im nächsten Loop wieder ab. Zwischen zwei Knoten gleitet der Ton in etwa 15 ms. Das geht auch beim Aufnehmen in den Arranger.</li>
+  <li>Ohne <span class="key">RECORD</span> ändert sich der Grundton der Reihe; eine aufgenommene Hz-Spur verschiebt sich mit.</li>
+  <li>Unter <span class="key">RECORD</span>: <span class="key">SHIFT</span> + Select nimmt die feinen 0,1-Hz-Schritte auf. <span class="key">SHIFT</span> + oberer Goldknopf löscht die Hz-Spur, wie jede Automation; die Reihe kehrt sofort zu ihrem Grundton zurück.</li>
+  <li>Die Hz-Spur gehört zur Reihe, nicht zu den Noten: Noten aufnehmen, verschieben oder euklidisch verteilen lässt sie unverändert.</li>
+  <li>MIDI-Pitch-Bend auf einer Drone-Reihe wirkt im Bend-Bereich der Reihe (Standard 2 Halbtöne) und wird unter <span class="key">RECORD</span> ebenfalls aufgenommen.</li>
+</ul>
+<h3>Gut zu wissen</h3>
+<ul>
+  <li>Rechenzeit: pro klingender Reihe etwa 0,3–0,45 % CPU, 16 Reihen 5–7 %. Reihen mit geschlossenem Gate kosten nichts.</li>
+  <li>Ein neues Drone-Kit klingt gleich laut wie der Song-Drone bei derselben Einstellung.</li>
+  <li>Songs mit Drone-Spuren öffnen ältere Firmware ohne die Drone-Reihen, die übrigen Reihen bleiben richtig. Dort gespeichert, sind die Drone-Reihen weg.</li>
 </ul>
 
 <script>
