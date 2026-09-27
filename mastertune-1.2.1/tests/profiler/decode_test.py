@@ -76,6 +76,19 @@ def main():
     if any(w not in text for w in want):
         failures += 1
         print(f"FAIL live summary lacks {[w for w in want if w not in text]}:\n{text}")
+    # The Deluge's third port among the MIDI inputs, by the names Windows, macOS and Linux give it
+    ports = {
+        "MIDIIN3 (Deluge) 2": ["Deluge 0", "MIDIIN2 (Deluge) 1", "MIDIIN3 (Deluge) 2"],
+        "Deluge Port 3": ["Deluge Port 1", "Deluge Port 2", "Deluge Port 3"],
+        "Deluge:Deluge MIDI 3 32:2": ["Midi Through:Midi Through Port-0 14:0", "Deluge:Deluge MIDI 1 32:0",
+                                      "Deluge:Deluge MIDI 2 32:1", "Deluge:Deluge MIDI 3 32:2"],
+    }
+    for want, names in ports.items():
+        checks += 1
+        got = deluge_profiler.third_deluge_ports(names)
+        if not got or got[0] != want:
+            failures += 1
+            print(f"FAIL third port of {names}: {got}")
     print(f"deluge_profiler.py decoder: {checks} checks, {failures} failed")
     sys.exit(1 if failures else 0)
 

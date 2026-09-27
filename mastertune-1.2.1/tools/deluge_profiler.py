@@ -31,6 +31,7 @@ import bisect
 import collections
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -194,6 +195,16 @@ class Namer:
 
 # --- recording
 
+def third_deluge_ports(names):
+    """The MIDI input names that are the Deluge's third port, best first; all the Deluge's if none is recognisably
+    the third."""
+    deluge = [n for n in names if "deluge" in n.lower()]
+    windows = [n for n in deluge if "midiin3" in n.lower().replace(" ", "")]
+    other = [n for n in deluge if n not in windows and not n.lower().startswith("midiin")
+             and re.search(r"(?:port|midi)\s*3(?!\d)|\s3$", n.strip(), re.I)]
+    return windows + other or deluge
+
+
 def open_input(port_name=None):
     try:
         import mido
@@ -201,10 +212,10 @@ def open_input(port_name=None):
         raise SystemExit("needs mido and python-rtmidi: pip install mido python-rtmidi")
     names = mido.get_input_names()
     if port_name is None:
-        # The Deluge's third USB MIDI port (the CPU monitor's and the profiler's)
-        deluge = [n for n in names if "deluge" in n.lower()]
-        third = [n for n in deluge if n.rstrip().endswith("3") or "port 3" in n.lower()]
-        candidates = third or deluge
+        # The Deluge's third USB MIDI port (the CPU monitor's and the profiler's). Its name differs: "Deluge Port 3"
+        # (macOS), "Deluge:Deluge MIDI 3 28:2" (Linux), "MIDIIN3 (Deluge) 2" (Windows, where the last digit is the
+        # port's index and the first port is plain "Deluge 0")
+        candidates = third_deluge_ports(names)
         if not candidates:
             raise SystemExit(f"no Deluge among the MIDI inputs: {names}")
         port_name = candidates[0]

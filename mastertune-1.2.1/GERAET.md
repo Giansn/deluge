@@ -17,6 +17,24 @@ python3 mastertune-1.2.1/tools/deluge_profiler.py ports   # der Deluge erscheint
 
 Vor jeder Arbeit `git pull`, denn die Cloud-Session liefert laufend nach.
 
+**Windows:**
+- **Python 3.12 nehmen.** `python-rtmidi` hat für neuere Versionen keine fertigen Pakete.
+- **Port-Namen:** Die Ports heissen `Deluge 0`, `MIDIIN2 (Deluge) 1` und `MIDIIN3 (Deluge) 2`. Ab Commit nach `0377a67` erkennt das Skript `MIDIIN3` von selbst, `-p` ist dann nicht mehr nötig.
+
+## Aufträge (Stand 27.09.2026, nach dem ersten Bericht)
+
+1. **L2-Versionen mit demselben Song** (Punkt 6):
+   - «New Sitar Grii 10» mit `l2test/…v16-l2i-0186f612.bin`, dann mit `…v16-l2d-03ccaac5.bin`.
+   - Genau wie im ersten Bericht: CPU monitor auf Profile, 30 s Stillstand, dann etwa 40 s dieselbe Stelle spielen.
+   - Mit der passenden `.symbols.json` aus `l2test/`.
+   - Dazu notieren, ob Knackser oder Aussetzer zu hören sind. Lücken über 2,9 ms können welche geben.
+2. **Den Song für den Emulator:**
+   - Auf dem Gerät sieht der Profiler nicht in eine Spur hinein. Die Interrupts sind gesperrt, während sie rechnet. Der Emulator kann das.
+   - Bitte `SONGS/New Sitar Grii 10.XML` pushen. Instrumente und Kits stecken in der Song-Datei.
+   - Dazu die Samples, die er benutzt, mit ihren Pfaden ab dem Karten-Hauptverzeichnis, nach `geraet/karte/…`.
+   - Über 100 MB zusammen: nur die XML und eine Liste der Samples mit Grösse und Länge.
+3. **Die übrigen v16-Punkte**, wenn es passt: 1 (Versionsanzeige), 2 (USB audio), 4 (Drone-Spuren).
+
 ## Stand (27.09.2026)
 
 | Datei | Was |
