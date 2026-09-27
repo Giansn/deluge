@@ -244,27 +244,34 @@ static void testLine() {
 	formatSevenSegment(s, seg, sizeof(seg));
 	CHECK(strcmp(seg, "C 43") == 0);
 
-	// mastertune-v13: the top left corner, in words
-	char info[24];
-	char alert[24];
-	s.dspAvgPermille = 431;
-	s.voicesNow = 24;
-	formatInfo(s, info, sizeof(info));
-	printf("info: \"%s\"\n", info);
-	CHECK(strcmp(info, "CPU 43%  24 voices") == 0);
+	// mastertune-v15: one short line in the top left corner
+	char corner[32];
+	s.dspAvgPermille = 971;
+	s.voicesNow = 13;
+	formatCorner(s, true, false, false, corner, sizeof(corner));
+	printf("corner: \"%s\"\n", corner);
+	CHECK(strcmp(corner, "CPU 97% 13V") == 0);
+	formatCorner(s, true, true, false, corner, sizeof(corner));
+	CHECK(strcmp(corner, "CPU 97% 13V QL") == 0);
+	formatCorner(s, true, true, true, corner, sizeof(corner));
+	printf("corner: \"%s\"\n", corner);
+	CHECK(strcmp(corner, "CPU 97% 13V QL VC") == 0);
+	formatCorner(s, true, false, true, corner, sizeof(corner));
+	CHECK(strcmp(corner, "CPU 97% 13V VC") == 0);
 	s.dspAvgPermille = 1004;
 	s.voicesNow = 1200;
-	formatInfo(s, info, sizeof(info));
-	CHECK(strcmp(info, "CPU 100%  999 voices") == 0);
-	CHECK(strlen(info) <= kLineChars);
-	formatAlert(false, 0, alert, sizeof(alert));
-	CHECK(alert[0] == 0);
-	formatAlert(false, 3, alert, sizeof(alert));
-	CHECK(strcmp(alert, "quality lowered") == 0);
-	formatAlert(true, 3, alert, sizeof(alert));
-	CHECK(strcmp(alert, "voices cut!") == 0);
-	formatAlert(true, 0, alert, sizeof(alert));
-	CHECK(strcmp(alert, "voices cut!") == 0);
+	formatCorner(s, true, true, true, corner, sizeof(corner));
+	CHECK(strcmp(corner, "CPU 100% 999V QL VC") == 0);
+	CHECK(strlen(corner) <= kLineChars);
+	// Mode Alerts: the warnings alone
+	formatCorner(s, false, false, false, corner, sizeof(corner));
+	CHECK(corner[0] == 0);
+	formatCorner(s, false, true, false, corner, sizeof(corner));
+	CHECK(strcmp(corner, "QL") == 0);
+	formatCorner(s, false, false, true, corner, sizeof(corner));
+	CHECK(strcmp(corner, "VC") == 0);
+	formatCorner(s, false, true, true, corner, sizeof(corner));
+	CHECK(strcmp(corner, "QL VC") == 0);
 	s.dspAvgPermille = 99999;
 	formatSevenSegment(s, seg, sizeof(seg));
 	CHECK(strcmp(seg, "C999") == 0);
