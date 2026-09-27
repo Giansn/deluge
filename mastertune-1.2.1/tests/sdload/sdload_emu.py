@@ -333,17 +333,26 @@ class Run:
         regions.on_exit.update(task=task_exit, audio=audio_exit)
         self.regions = regions
 
+        # mastertune-v17: setDireness() goes by the audio routine's own time (AudioEngine::routineTimeAverage)
+        own = sym.by_name.get("_ZN11AudioEngine18routineTimeAverageE")
+        self.cull_judged_by = ("the audio routine's own average time" if own else
+                               "the current task's average duration")
+
         def on_cull(e):
             """cullVoice(saveVoice, type, ...): setDireness() judged by the current task's average duration
-            (getLastRunTimeforCurrentTask(), in samples: dspTime); against it the DMA's real lag."""
+            (getLastRunTimeforCurrentTask(), in samples: dspTime), from v17 by the audio routine's own
+            (routineTimeAverage); against it the DMA's real lag."""
             kind = e.uc.reg_read(UC_ARM_REG_R1)
             self.culls[se.CULL_TYPES[kind] if kind < len(se.CULL_TYPES) else str(kind)] += 1
             audio = [x for x in regions.stack if x[0] == "audio"]
             current = struct.unpack("<b", bytes(e.uc.mem_read(self.tm + current_off, 1)))[0]
             self.cull_context[f"routine() from {audio[-1][4][0] if audio else '?'}, current task "
                               f"{self.task_key(current)}"] += 1
-            average = struct.unpack("<d", bytes(e.uc.mem_read(self.tm + current * self.task_size + average_off, 8)))[0] \
-                if 0 <= current < self.num_slots else 0
+            if own:
+                average = struct.unpack("<d", bytes(e.uc.mem_read(own[0], 8)))[0]
+            else:
+                average = struct.unpack("<d", bytes(e.uc.mem_read(self.tm + current * self.task_size + average_off,
+                                                                  8)))[0] if 0 <= current < self.num_slots else 0
             self.cull_samples.append((round(average * SAMPLE_RATE), e.dma.gap() if e.dma else -1))
         emu.intercept(sym.find("_ZN11AudioEngine9cullVoiceE"), on_cull)
 
@@ -449,9 +458,8 @@ class Run:
         log(f"  cluster loads {self.cluster_loads}, SD reads {sd.get('r_commands', 0)} commands / {sd.get('r_sectors', 0)} "
             f"sectors, culls {dict(self.culls)}, DMA max gap {dma.max_gap} samples, underrun samples {dma.underruns}")
         if self.cull_samples:
-            log(f"  culls judged by up to {r['cull_judged_samples_max']} samples (setDireness(): the current task's "
-                f"average duration) while the DMA was at most {r['cull_dma_gap_max']} samples behind: "
-                f"{dict(self.cull_context)}")
+            log(f"  culls judged by up to {r['cull_judged_samples_max']} samples (setDireness(): {self.cull_judged_by}"
+                f") while the DMA was at most {r['cull_dma_gap_max']} samples behind: {dict(self.cull_context)}")
         if "sd_waits" in r:
             w = r["sd_waits"]
             log(f"  card waits ({w['model']['wait']}): {w['count']} commands, mean {w['ms_mean']:.2f} ms (the card's own "

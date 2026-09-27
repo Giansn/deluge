@@ -679,7 +679,8 @@ def task_stats_address(emu):
         if name in emu.sym.by_name:
             code = code + disassemble(emu, name)
     for i in range(5, len(code) - 1):
-        if (code[i][1] == "vldr" and code[i + 1][1] == "vmul.f64" and code[i - 1][1] == "mla"
+        # (v16: the compiler may put an unrelated load between the vldr and the vmul)
+        if (code[i][1] == "vldr" and any(c[1] == "vmul.f64" for c in code[i + 1:i + 3]) and code[i - 1][1] == "mla"
                 and code[i - 2][1].startswith("ldrsb")):
             mla = [r.strip() for r in code[i - 1][2].split(",")]  # mla rd, rsize, rindex, rbase
             size_at = next((j for j in range(i - 3, i - 6, -1)
@@ -720,7 +721,12 @@ class Player:
         start, size = sym.by_name["taskManager"]
         emu.uc.mem_write(start, bytes(size))
         self.culling = culling
-        self.task_average_address = task_stats_address(emu) if culling else None
+        # mastertune-v17: setDireness() goes by AudioEngine::routineTimeAverage, the audio routine's own time as it
+        # measures it (OS timer 0, i.e. emulated time here), no longer by the task's durationStats. Without culling it
+        # is zeroed before each call; with culling the firmware's own measurement stands, which is what the model of
+        # the task manager's average below computes for the older builds
+        self.own_average = sym.by_name.get("_ZN11AudioEngine18routineTimeAverageE")
+        self.task_average_address = task_stats_address(emu) if culling and not self.own_average else None
         self.task_average = 0.0  # Seconds
 
     def on_render(self, emu):
@@ -759,8 +765,10 @@ class Player:
         voices per Sound*)."""
         emu = self.emu
         emu.dma_free = 127
-        if self.culling:
+        if self.task_average_address:
             emu.uc.mem_write(self.task_average_address, struct.pack("<d", self.task_average))
+        elif self.own_average and not self.culling:
+            emu.uc.mem_write(self.own_average[0], bytes(8))
         self.window_culls = 0
         timer = emu.u32(self.sample_timer)
         before = emu.bc.bc_total()

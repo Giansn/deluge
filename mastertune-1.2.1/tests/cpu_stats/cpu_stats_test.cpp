@@ -208,6 +208,32 @@ static void testSmallCalls() {
 	CHECK(s.dspAvgPermille > 600);
 }
 
+/// mastertune-v17: a call that rendered nothing (the minimum window not due yet) isn't busy: windows of 60 samples at
+/// 20 %, each with a call in between that renders nothing but takes as long as a whole window would at 10 %; its time
+/// still counts for the SD card's (busyTicksTotal)
+static void testEmptyCalls() {
+	Collector c;
+	uint32_t halfSeq = 0;
+	Window w;
+	uint32_t t = 0, n = 0;
+	uint32_t window = (uint32_t)std::llround(60 * kTicksPerSample);
+	uint32_t emptyTotal = 0;
+	for (int i = 0; i < 400; i++) {
+		c.routineStart(t, n);
+		n += 60;
+		c.routineDone(t + window / 5, n, 2, 0);
+		uint32_t empty = window / 10;
+		c.routineStart(t + window / 2, n);
+		c.routineDone(t + window / 2 + empty, n, 2, 0);
+		emptyTotal += empty;
+		t += window;
+	}
+	CHECK(c.readHalf(w, halfSeq));
+	Summary s = summarize(w);
+	CHECK_NEAR(s.dspAvgPermille, 200, 2);
+	CHECK(c.busyTicksTotal() == 400 * (window / 5) + emptyTotal);
+}
+
 static void testLine() {
 	char line[32];
 	Summary s{};
@@ -368,6 +394,7 @@ int main(int argc, char** argv) {
 	testSdCardTime();
 	testRestart();
 	testSmallCalls();
+	testEmptyCalls();
 	testLine();
 	testSysex(argc > 1 ? argv[1] : "cpu_stats_cases.json");
 	if (failures) {
