@@ -3,7 +3,8 @@
 # docstring says what runs and what's checked): files whose names begin with the same word ("TRACK", "TRACK 2",
 # "TRACK 3") are one row, pressing it folds the group out, the select encoder goes through the versions, a version
 # loads (stopped and while playing), BACK and leaving the group fold it in, songs on their own as before, a group
-# larger than the browser's window of file items, the save browser unchanged, the 7-segment display.
+# larger than the browser's window of file items, the save browser unchanged, the 7-segment display, the folder read
+# only when needed next to and across a large group, SHIFT+SAVE (delete) refused on a folded group's row.
 #
 # Usage: ./run.sh <firmware tree | deluge.elf> [out dir]
 #   With a tree, it takes build/Release/deluge.elf and the tree's toolchain.

@@ -1044,6 +1044,9 @@ class RealTimeDma:
         self.start_position = slot  # The DMA reads where the firmware writes next: the buffer is full
         self.written = slot + 128  # Absolute number of the next sample the firmware writes (the DMA's count + 128)
         self.max_gap = 0
+        self.max_gap_at = None  # Emulated time (instructions) of the write that found it
+        self.over_64 = 0  # Times the gap went over 64 samples (less than half the buffer left)
+        self.over_64_now = False
         self.underruns = 0  # Samples written with a gap of 128 or more
         self.misplaced = 0  # Samples not written where expected (only after an underrun)
         self.pending = []  # Addresses written since the last collect()
@@ -1082,7 +1085,11 @@ class RealTimeDma:
                 self.misplaced += 1
                 self.written += (slot - self.written) % 128
             gap = self.gap()
-            self.max_gap = max(self.max_gap, gap)
+            if gap > self.max_gap:
+                self.max_gap, self.max_gap_at = gap, self.emu.now()
+            if gap > 64 and not self.over_64_now:
+                self.over_64 += 1
+            self.over_64_now = gap > 64
             if gap >= 128:
                 self.underruns += 1
             self.numbers.append(self.written)

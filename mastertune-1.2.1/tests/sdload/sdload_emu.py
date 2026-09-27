@@ -301,23 +301,42 @@ class Run:
         self.tm = sym["taskManager"]
         timer = sym["_ZN11AudioEngine16audioSampleTimerE"]
         rfs = sym["routineForSD"] & ~1
+        dire = sym.by_name.get("_ZN11AudioEngine11cpuDirenessE", (None,))[0]
+        wload = sym.by_name.get("_ZN11AudioEngineL18windowLoadPermilleE", (None,))[0]
         rfs_end = rfs + sym.by_name["routineForSD"][1]
         regions = se.Regions(emu, [("_ZN11TaskManager7runTaskEa", "task"), ("_ZN11AudioEngine7routineEv", "audio")],
                              "scheduler, idle loop")
         self.task_stack = []  # [task ID, instructions of the tasks run inside it]
+        self.innermost = []  # Task IDs, None for the audio routine: what runs now
+        self.stretch_from = [0]
+
+        def stretch(e):
+            """The innermost task's stretch since the last change of what runs ends: its longest (in a task's yield,
+            the scheduler's spinning between the tasks it runs counts to the task too, while the audio isn't due)."""
+            now = e.now()
+            if self.innermost and self.innermost[-1] is not None:
+                t = self.tasks[self.innermost[-1]]
+                t[3] = max(t[3], now - self.stretch_from[0])
+            self.stretch_from[0] = now
 
         def task_enter(e, back):
             tid = struct.unpack("<b", bytes([e.uc.reg_read(UC_ARM_REG_R0) & 0xFF]))[0]
-            self.task_stack.append([tid, 0, 0])  # ID, tasks run inside it, audio routine calls inside it
-            return tid
+            self.task_stack.append([tid, 0])
+            stretch(e)
+            self.innermost.append(tid)
+            return tid, e.now()
 
-        def task_exit(e, tid, n):
-            _, inner, audio = self.task_stack.pop() if self.task_stack else (tid, 0, 0)
+        def task_exit(e, extra, n):
+            tid, start = extra
+            self.task_runs.append((tid, start, e.now()))
+            stretch(e)
+            if self.innermost:
+                self.innermost.pop()
+            inner = self.task_stack.pop()[1] if self.task_stack else 0
             t = self.tasks[tid]
             t[0] += 1
             t[1] += n
             t[2] += n - inner
-            t[3] = max(t[3], n - inner - audio)  # How long the audio routine waited for it
             if self.task_stack:
                 self.task_stack[-1][1] += n
 
@@ -328,12 +347,17 @@ class Run:
                 depth = sum(1 for s in regions.stack if s[0] == "task")
                 caller = ("task manager" if depth == 1 else "task manager, inside another task's yield"
                           if depth > 1 else "other")
-            return caller, e.u32(timer), e.now()
+            stretch(e)
+            self.innermost.append(None)
+            state = (e.dma.gap() if e.dma else -1, e.u32(dire) if dire else 0, e.u32(wload) if wload else -1)
+            return caller, e.u32(timer), e.now(), state
 
         def audio_exit(e, extra, n):
-            if extra[0] in ("routineForSD()", "other") and self.task_stack:
-                self.task_stack[-1][2] += n  # Called from inside a task: the audio didn't wait for that part
-            self.routine_calls.append((extra[0], n, (e.u32(timer) - extra[1]) & 0xFFFFFFFF, extra[2], e.now()))
+            stretch(e)
+            if self.innermost:
+                self.innermost.pop()
+            self.routine_calls.append((extra[0], n, (e.u32(timer) - extra[1]) & 0xFFFFFFFF, extra[2], e.now(),
+                                       extra[3]))
 
         regions.on_enter.update(task=task_enter, audio=audio_enter)
         regions.on_exit.update(task=task_exit, audio=audio_exit)
@@ -368,8 +392,10 @@ class Run:
         emu.uc.ctl_flush_tb()
 
     def reset_counters(self):
-        self.tasks = collections.defaultdict(lambda: [0, 0, 0, 0])  # calls, inclusive, exclusive, longest run (excl.)
+        self.tasks = collections.defaultdict(lambda: [0, 0, 0, 0])  # calls, inclusive, exclusive, longest stretch
+        self.stretch_from[0] = self.emu.now()
         self.routine_calls = []  # (caller, instructions, samples, start, end)
+        self.task_runs = []  # (task ID, start, end)
         self.culls = collections.Counter()
         self.cull_context = collections.Counter()
         self.cull_samples = []  # (numSamples setDireness() judged by, the DMA's gap then)
@@ -410,7 +436,8 @@ class Run:
         audio_instr = sum(c[1] for c in calls)
         samples = sum(c[2] for c in calls)
         keys = {tid: self.task_key(tid) for tid in self.tasks}
-        tasks = {keys[tid]: dict(calls=v[0], inclusive=v[1] / total, exclusive=v[2] / total, longest_us=us(v[3]))
+        tasks = {keys[tid]: dict(calls=v[0], inclusive=v[1] / total, exclusive=v[2] / total,
+                                 longest_stretch_us=us(v[3]))
                  for tid, v in sorted(self.tasks.items(), key=lambda kv: -kv[1][2])}
         audio_task = next((v for tid, v in self.tasks.items() if keys[tid] == AUDIO_TASK), [0, 0, 0])
         runs = max(audio_task[0], 1)
@@ -437,7 +464,7 @@ class Run:
                  cull_judged_samples_max=max((c[0] for c in self.cull_samples), default=None),
                  cull_dma_gap_max=max((c[1] for c in self.cull_samples), default=None),
                  cluster_loads=self.cluster_loads,
-                 dma=dict(max_gap=dma.max_gap, underrun_samples=dma.underruns,
+                 dma=dict(max_gap=dma.max_gap, underrun_samples=dma.underruns, over_64=dma.over_64,
                           samples_played=int(dma.position() - dma.start_position)),
                  cpu_stats=windows)
         if emu.sd_model:
@@ -464,15 +491,29 @@ class Run:
         log("  tasks (exclusive / inclusive, runs): " + ", ".join(
             f"{k} {v['exclusive'] * 100:.1f}/{v['inclusive'] * 100:.1f}% ({v['calls']:,})"
             for k, v in list(tasks.items())[:10]))
-        longest = sorted(((k, v["longest_us"]) for k, v in tasks.items() if k != AUDIO_TASK), key=lambda kv: -kv[1])
-        log("  longest runs (exclusive, the audio routine waits meanwhile): " + ", ".join(
+        if dma.max_gap_at is not None:  # What ran in the 3 ms before the write that found the worst gap
+            at = dma.max_gap_at
+            smp = lambda x: (x - at) * SAMPLE_RATE / hz()  # noqa: E731
+            ev = [(c[3], f"audio {smp(c[3]):.0f}..{smp(c[4]):.0f} ({c[2]} smp, gap {c[5][0]} at start, direness "
+                         f"{c[5][1]}, window load {c[5][2] / 10:g} %, {c[0].split(',')[0]})")
+                  for c in calls if at - 0.003 * hz() <= c[4] and c[3] <= at]
+            ev += [(t0, f"{keys.get(tid, tid).split(' (')[0]} {smp(t0):.0f}..{smp(t1):.0f}")
+                   for tid, t0, t1 in self.task_runs if at - 0.003 * hz() <= t1 and t0 <= at and t1 - t0 > 0.00005 * hz()
+                   and keys.get(tid) != AUDIO_TASK]
+            r["worst_gap_events"] = [x for _, x in sorted(ev)]
+            log(f"  worst gap ({dma.max_gap}) at {at / hz():.3f} s; before it (samples from that write; tasks over 50 us): "
+                + "; ".join(r["worst_gap_events"][-14:]))
+        longest = sorted(((k, v["longest_stretch_us"]) for k, v in tasks.items() if k != AUDIO_TASK), key=lambda kv: -kv[1])
+        log("  longest stretches (a task running, nothing inside it: the audio routine waits meanwhile unless it's "
+            "a yield's spinning): " + ", ".join(
             f"{k} {u:.0f} us ({u * SAMPLE_RATE / 1e6:.0f} samples)" for k, u in longest[:4]))
         if self.ui_renders is not None:
             r["ui_renders"] = self.ui_renders[0]
             log(f"  UI load: {self.ui_renders[0]:,} redraws of the pads, sidebar and OLED ({self.ui_renders[0] / r['seconds']:.0f}/s)")
             self.ui_renders[0] = 0
         log(f"  cluster loads {self.cluster_loads}, SD reads {sd.get('r_commands', 0)} commands / {sd.get('r_sectors', 0)} "
-            f"sectors, culls {dict(self.culls)}, DMA max gap {dma.max_gap} samples, underrun samples {dma.underruns}")
+            f"sectors, culls {dict(self.culls)}, DMA max gap {dma.max_gap} samples (over 64 {dma.over_64} times), underrun "
+            f"samples {dma.underruns}")
         if self.cull_samples:
             log(f"  culls judged by up to {r['cull_judged_samples_max']} samples (setDireness(): {self.cull_judged_by}"
                 f") while the DMA was at most {r['cull_dma_gap_max']} samples behind: {dict(self.cull_context)}")
