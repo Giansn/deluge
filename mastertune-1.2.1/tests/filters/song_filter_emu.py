@@ -118,7 +118,9 @@ def main():
             x, knob_at = play_turning(args.elf, args.out, tools, args.build,
                                       song(lm, hm, route, int(hk), r, int(lr), args.synths), float(sw))
             np.save(os.path.join(args.out, f"{case.replace(',', '_')}_{label}.npy"), x)
-            res[label] = hf_profile(x[:, 0])
+            # what the codec gets: saturated at full scale (doSomeOutputting())
+            res[label] = hf_profile(np.clip(x[:, 0], -1, 1))
+            print(f"  {label}: peak {np.abs(x).max():.2f} (full scale 1), {np.mean(np.abs(x) > 1) * 100:.2f} % of samples clipped", flush=True)
         a, b = res["res"], res["ref"]
         m = min(len(a), len(b))
         e = a[:m, 2] - b[:m, 2]

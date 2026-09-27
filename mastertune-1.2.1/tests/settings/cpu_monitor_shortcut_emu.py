@@ -24,6 +24,11 @@ emulated Deluge has the 7-segment display; from 5. on the OLED is swapped in, as
    view): the shortcut toggles, no voice sounds, the UI mode back to none after LEARN. The task manager isn't run in
    the drone view: the graphics timer's UI::graphicsRoutine() loops there for ever (DroneView has no graphicsRoutine()
    of its own and RootUI can see the view underneath, so it tail-calls itself; v16 release too), a bug of its own
+8. the startup song mode "Last saved" (Settings > Defaults > Startup song): the song SONGS/SAVED.XML the startup song
+   (as saving it writes it; here by the menu left, the same RuntimeFeatureSettings::writeSettingsToFile()), then
+   another one open, not saved (UNSAVED): the shortcut, also while the card is busy, leaves the card's startup song
+   SAVED (it used to write the song open, so the next boot opened that or, never saved, DEFAULT.XML); restart in
+   "Last saved": SAVED opens, the monitor On
 Usage: cpu_monitor_shortcut_emu.py <deluge.elf> [--tools PREFIX] [--out DIR]   (BLOCKCOUNT_DIR: where blockcount.so is)
 Exit status 0 when every check passes."""
 import argparse
@@ -51,6 +56,7 @@ SESSION_VIEW = button(3, 1)
 CLIP_VIEW = button(3, 2)
 KEYBOARD = button(3, 3)
 OFF, ON, ALERTS, PROFILE = range(4)
+LASTSAVED = 3  # definitions_cxx.hpp: StartupSongMode
 NAMES = ["Off", "On", "Alerts", "Profile"]
 MENU_VALUE_OFFSET = 12  # Selection's value_ (CpuMonitorMode::writeCurrentValue(): ldrb [r0, #12])
 SYSEX_COMMAND = 0x10  # cpu_stats_core.h: kSysexCommand
@@ -69,13 +75,19 @@ def check(what, ok, detail=""):
 class Deluge:
     """One boot of the emulated Deluge on the card, and what the checks reach in it."""
 
-    def __init__(self, elf, sd, tools):
+    def __init__(self, elf, sd, tools, startup_mode=None):
+        """startup_mode: setupStartupSong() in that StartupSongMode (the song of CommunityFeatures.XML's startupSong);
+        by default the template mode (SONGS/DEFAULT.XML)"""
         self.sd = sd
         self.emu = emu = se.Emulator(elf, sd, tools, os.environ.get("BLOCKCOUNT_DIR", HERE), lambda s: None)
         se.setup_sd(emu)
         se.boot(emu)
-        se.load_startup_song(emu)
         sym = self.sym = emu.sym
+        if startup_mode is None:
+            se.load_startup_song(emu)
+        else:
+            emu.w32(sym["_ZN12FlashStorage22defaultStartupSongModeE"], startup_mode)
+            emu.call(sym["_Z16setupStartupSongv"], timeout_s=10)
         self.popups = []
         for name in ("_ZN6deluge3hid7display4OLED12displayPopupEPKc",
                      "_ZN6deluge3hid7display12SevenSegment12displayPopupEPKc"):
@@ -93,6 +105,10 @@ class Deluge:
                               "print (int)&((Song*)0)->insideWorldTickMagnitude", elf], capture_output=True,
                              text=True).stdout
         self.o_magnitude = int(re.findall(r"^\$\d+ = (\d+)$", out, re.M)[-1])
+        out = subprocess.run([emu.tool_prefix + "gdb", "-batch", "-ex", "list Song::Song", "-ex",
+                              "print (int)&((Song*)0)->name", "-ex", "print (int)&((Song*)0)->dirPath", elf],
+                             capture_output=True, text=True).stdout
+        self.o_name, self.o_dir_path = map(int, re.findall(r"^\$\d+ = (\d+)$", out, re.M)[-2:])
         self.oled = emu.u8(sym["_ZN6deluge3hid7display16have_oled_screenE"])
 
     def string(self, address):
@@ -127,6 +143,12 @@ class Deluge:
     def clock_scale(self):
         return self.emu.u32(self.emu.u32(self.sym["currentSong"]) + self.o_magnitude)
 
+    def song_path(self):
+        """The song open: its dirPath/name, as Song::getSongFullPath() without \".XML\""""
+        song = self.emu.u32(self.sym["currentSong"])
+        texts = [self.emu.u32(song + o) for o in (self.o_dir_path, self.o_name)]  # String: its stringMemory
+        return "/".join(self.string(t) if t else "" for t in texts)
+
     def samples(self):
         return self.emu.u32(self.sym["_ZN11AudioEngine16audioSampleTimerE"])
 
@@ -142,6 +164,15 @@ class Deluge:
             return None
         m = re.search(r'name="cpuMonitor"\s+value="(\d+)"', xml)
         return int(m.group(1)) if m else None
+
+    def startup_song(self):
+        """CommunityFeatures.XML's startupSong on the card, None if there's none"""
+        try:
+            xml = fat32.read_file(self.sd, "CommunityFeatures.XML").decode("ascii", "replace")
+        except FileNotFoundError:
+            return None
+        m = re.search(r'startupSong="([^"]*)"', xml)
+        return m.group(1) if m else None
 
     # --- what the user does
 
@@ -192,6 +223,12 @@ class Deluge:
         emu.call(sym["_ZN11SoundEditor14exitCompletelyEv"], editor)
         return opened, running
 
+    def name_song(self, name):
+        """The song open named so (currentSong->name.set()), as if that one had been loaded or saved"""
+        self.emu.uc.mem_write(se.STOP + 0x100, name.encode() + b"\0")
+        song = self.emu.u32(self.sym["currentSong"])
+        self.emu.call(self.sym["_ZN6String3setEPKcl"], song + self.o_name, se.STOP + 0x100, 0xFFFFFFFF)
+
     def oled_display(self):
         """The OLED in place of the 7-segment display (deluge::hid::display::swapDisplayType())"""
         self.emu.call(self.sym["_ZN6deluge3hid7display15swapDisplayTypeEv"])
@@ -219,6 +256,7 @@ def main():
     # The song opens in its first synth's clip view
     xml = make_sd.song_xml(lengths, 1, 2).replace("<instrumentClip", '<instrumentClip\n\t\t\tbeingEdited="1"', 1)
     files["SONGS/DEFAULT.XML"] = xml.encode()
+    files["SONGS/SAVED.XML"] = xml.encode()  # 8.: the song last saved
     make_sd.fat32.build(sd, files)
 
     print("== 1. boot, a card without CommunityFeatures.XML", flush=True)
@@ -326,6 +364,28 @@ def main():
           f"{'drone view' if drone else 'not the drone view'}, {NAMES[d.mode()]}, {voices} -> {d.voices()} voices, "
           f"UI mode {d.ui_mode():#x}, {popups!r}")
     check("the card says 1", d.saved() == ON, f"{d.saved()}")
+    d.close()
+    del d
+
+    print("== 8. the startup song mode \"Last saved\": the shortcut leaves the song last saved", flush=True)
+    d = Deluge(a.elf, sd, tools)
+    d.name_song("SAVED")
+    d.emu.w32(d.sym["_ZN12FlashStorage22defaultStartupSongModeE"], LASTSAVED)
+    d.settings_menu(ON)  # writeSettingsToFile() with the song open, as SaveSongUI::performSave() in "Last saved"
+    check("the card's startup song SONGS/SAVED.XML", d.startup_song() == "SONGS/SAVED.XML", f"{d.startup_song()}")
+    d.name_song("UNSAVED")  # Another song open, not saved
+    d.shortcut()
+    check("the shortcut: Off; the card's startup song still SONGS/SAVED.XML", d.mode() == OFF and d.saved() == OFF
+          and d.startup_song() == "SONGS/SAVED.XML", f"{NAMES[d.mode()]}, {d.saved()}, {d.startup_song()}")
+    d.shortcut(locked=True)
+    d.run(0.2)  # cpu_stats::routine() saves it, the card free
+    check("again, the card busy, saved later: On; still SONGS/SAVED.XML", d.mode() == ON and d.saved() == ON
+          and d.startup_song() == "SONGS/SAVED.XML", f"{NAMES[d.mode()]}, {d.saved()}, {d.startup_song()}")
+    d.close()
+    del d
+    d = Deluge(a.elf, sd, tools, startup_mode=LASTSAVED)
+    check("restart in \"Last saved\": SONGS/SAVED opens, the monitor On", d.song_path().startswith("SONGS/SAVED")
+          and d.mode() == ON, f"{d.song_path()!r}, {NAMES[d.mode()]}")
     d.close()
 
     print(f"CPU monitor shortcut and restart ({os.path.basename(a.elf)}): {checks - failures} of {checks} ok",
