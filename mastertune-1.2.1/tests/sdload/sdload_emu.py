@@ -308,16 +308,16 @@ class Run:
 
         def task_enter(e, back):
             tid = struct.unpack("<b", bytes([e.uc.reg_read(UC_ARM_REG_R0) & 0xFF]))[0]
-            self.task_stack.append([tid, 0])
+            self.task_stack.append([tid, 0, 0])  # ID, tasks run inside it, audio routine calls inside it
             return tid
 
         def task_exit(e, tid, n):
-            inner = self.task_stack.pop()[1] if self.task_stack else 0
+            _, inner, audio = self.task_stack.pop() if self.task_stack else (tid, 0, 0)
             t = self.tasks[tid]
             t[0] += 1
             t[1] += n
             t[2] += n - inner
-            t[3] = max(t[3], n - inner)
+            t[3] = max(t[3], n - inner - audio)  # How long the audio routine waited for it
             if self.task_stack:
                 self.task_stack[-1][1] += n
 
@@ -331,6 +331,8 @@ class Run:
             return caller, e.u32(timer), e.now()
 
         def audio_exit(e, extra, n):
+            if extra[0] in ("routineForSD()", "other") and self.task_stack:
+                self.task_stack[-1][2] += n  # Called from inside a task: the audio didn't wait for that part
             self.routine_calls.append((extra[0], n, (e.u32(timer) - extra[1]) & 0xFFFFFFFF, extra[2], e.now()))
 
         regions.on_enter.update(task=task_enter, audio=audio_enter)
@@ -492,16 +494,20 @@ class Run:
         return r
 
     def ui_load(self):
-        """--ui-load: every run of the pending-UI task (doAnyPendingUIRendering(), at most every 10 ms) redraws all main
-        pads, the sidebar and the OLED with the firmware's own functions (the open UI's renderMainPads(), renderSidebar(),
+        """--ui-load: every 10 ms the next doAnyPendingUIRendering() (the pending-UI task's, at most every 10 ms, or
+        another caller's) redraws all main pads, the sidebar and the OLED with the firmware's own functions (the open UI's renderMainPads(), renderSidebar(),
         renderOLED(); the pads' colours to the PIC's UART, the image to the OLED's DMA), as while a knob is turned or the
         view scrolls: the UI's real work at its real cost, which the audio routine waits for."""
         emu, sym = self.emu, self.emu.sym
         rows, side, oled = (sym["whichMainRowsNeedRendering"], sym["whichSideRowsNeedRendering"],
                             sym["doesOLEDNeedRendering"])
         self.ui_renders = [0]
+        last = [None]
 
         def before(e):
+            if last[0] is not None and e.now() - last[0] < 0.01 * se.CPU_HZ:
+                return
+            last[0] = e.now()
             e.uc.mem_write(rows, struct.pack("<I", 0xFF))
             e.uc.mem_write(side, struct.pack("<I", 0xFF))
             e.uc.mem_write(oled, b"\x01")

@@ -505,7 +505,9 @@ def run_oled(a, sd, out, check):
     b.turn(1)
     b.shift_save()
     on_version = (b.name(), b.is_open(b.v["_ZN6deluge3gui12context_menu10deleteFileE"]))
-    b.back()  # The prompt closes, nothing deleted
+    d.button(BUTTON_BACK, True)  # The prompt closes, nothing deleted
+    d.button(BUTTON_BACK, False)
+    b.settle()
     f = b.frame()
     check("16. SHIFT+SAVE on the folded row TRACK: no delete prompt (it would delete TRACK, not shown), a popup, the "
           "browser stays; on the version TRACK 2 (folded out): the prompt, as before; BACK: nothing deleted",
