@@ -1,0 +1,169 @@
+From c94077ffd65bf09c68f7654196fdca0ea1886668 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 15:53:33 +0000
+Subject: [PATCH 63/64] Audio: the minimum window starts early by its expected
+ render time, so the buffer keeps its reserve
+
+The minimum window (ffdebd79) waited until 32 samples were due and rendered about twice that. The render's own time
+came on top: at tests/sdload S4's 38 % load a render of 60 samples ended with 55 due, and one where voices started
+with 78 (79 of the output buffer's 128 samples gone: the worst DMA gap, v16 45).
+
+Now it renders its 60 samples (or twice what's due less 6, if more) once 32 less the expected render time are due
+(the window at the load measured, windowLoadPermille; 8 at the latest), so that the render ends with about 32 due
+whatever the load. Same windows, so the same CPU; the samples rendered ahead after a render are ~28 at any load (before
+28 less the render time).
+
+tests/sdload (the CPU at 400 MHz, 1 instruction per cycle; device = + 60 ns per SDRAM line touched; UI = the pads,
+sidebar and OLED redrawn every 10 ms by the firmware's own functions), v16 / v17 before / now:
+  S2 idle     calls/s 7,126 / 2,945 / 2,960, samples per render 6.2 / 60 / 60, monitor 90.2 / 11.7 / 11.6 %,
+              device 182 / 19.1 / 19.1 %, worst gap 19 / 49 / 46 (with UI 22 / 49 / 46)
+  S4 typical  calls/s 5,309 / 2,593 / 3,217, samples per render 8.4 / 60.2 / 59.9, monitor 92.7 / 38.6 / 38.3 %,
+              device 97.7 / 39.6 / 39.5 %, worst gap 45 / 79 / 65 (with UI 50 / 81 / 65), culls 37 / 0 / 0
+  clock       (S4's song on an external MIDI clock, typical card) worst gap 55 / 78 / 59, with UI 59 / 78 / 59
+No underruns. The one gap over 64 left (65) is when playback starts: the first renders with voices, at the load
+measured while idle.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ .../processing/engines/audio_engine.cpp       | 56 +++++++++++++------
+ src/deluge/processing/engines/audio_engine.h  |  4 +-
+ .../processing/engines/cpu_stats_core.cpp     |  8 +--
+ 3 files changed, 46 insertions(+), 22 deletions(-)
+
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index c8e4f556..161b7ab6 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -576,19 +576,28 @@ inline void setDireness(size_t numSamples) { // Consider direness and culling -
+ // spends it on every track and kit, sounding or not (in the emulator 43,500 instructions a render for tests/sdload's
+ // big project with nothing playing). Rendering whatever was due whenever routine() was called, the windows of a light
+ // load were short (the task manager calls it about every 16 samples, and every few samples while the playback routine's
+-// target interval was 0) and that cost was most of the CPU. At light load routine() now waits until kMinSamplesDue
+-// samples are due and then, as always, renders about twice that (60 samples, while 96 are still in the output buffer).
+-// Only while there's room to spare: the render time of windows that long under kMinWindowMaxLoadPermille of their
+-// audio's time, measured around the render (routineMeasured()), and cpuDireness at 0; not while a file is saved or
+-// loaded, which has its own minimum (minNumSamplesToRender).
+-constexpr size_t kMinSamplesDue = 32;
++// target interval was 0) and that cost was most of the CPU. At light load routine() now renders kMinWindowSamples at
++// once (or, as always, twice what's due less 6 if more), and waits until enough is due for that: so many that the
++// render ends when about kMinWindowEndDue are due, i.e. that less the render time expected (the window at the load
++// measured). The output buffer keeps what's left of its 128 samples through the render: with the render time
++// subtracted it doesn't shrink as the load grows (starting at a fixed 32 due, a render of 60 samples at 38 % load,
++// tests/sdload S4, ended with 55 due, and one where voices started with 78), which leaves a reserve for the other tasks
++// and a render that takes longer than expected. Only while there's room to spare: the render time of windows that long
++// under kMinWindowMaxLoadPermille of their audio's time, measured around the render (routineMeasured()), and
++// cpuDireness at 0; not while a file is saved or loaded, which has its own minimum (minNumSamplesToRender).
++constexpr size_t kMinWindowSamples = 60;
++constexpr int32_t kMinWindowEndDue = 32;
++/// It renders once this many are due at the latest, however long the render is expected to take
++constexpr int32_t kMinWindowStartDueLeast = 8;
++/// The windows whose load is measured: that long at least
++constexpr size_t kWindowLoadMinSamples = 32;
+ constexpr uint32_t kMinWindowMaxLoadPermille = 500;
+ /// While the load keeps it off, no windows that long are rendered to measure it again: after this long it applies again
+ /// until one is, and the load starts afresh from that one (1/8 s)
+ constexpr uint32_t kWindowLoadMaxAge = kSampleRate >> 3;
+-/// Render time over the audio's time of the windows of kMinSamplesDue samples or more, in 0.1 %: (7 * average + latest)
+-/// / 8, so that one busy window (voices starting) doesn't switch the minimum window off; and audioSampleTimer after the
+-/// latest
++/// Render time over the audio's time of the windows of kWindowLoadMinSamples samples or more, in 0.1 %: (7 * average +
++/// latest) / 8, so that one busy window (voices starting) doesn't switch the minimum window off; and audioSampleTimer
++/// after the latest
+ static uint32_t windowLoadPermille = 0;
+ static uint32_t windowLoadMeasuredAt = 0;
+ 
+@@ -600,6 +609,12 @@ static bool minimumWindowApplies() {
+ 	       || audioSampleTimer - windowLoadMeasuredAt >= kWindowLoadMaxAge;
+ }
+ 
++/// Samples due at which the minimum window is rendered: kMinWindowEndDue less the render time expected
++static size_t minimumWindowStartDue() {
++	int32_t renderTime = (int32_t)(std::min<uint32_t>(windowLoadPermille, 1000) * kMinWindowSamples / 1000);
++	return std::max<int32_t>(kMinWindowEndDue - renderTime, kMinWindowStartDueLeast);
++}
++
+ void scheduleMidiGateOutISR(uint32_t saddrPosAtStart, int32_t unadjustedNumSamplesBeforeLappingPlayHead,
+                             int32_t timeWithinWindowAtWhichMIDIOrGateOccurs);
+ void setMonitoringMode();
+@@ -639,12 +654,17 @@ void renderAudioForStemExport(size_t numSamples);
+ 	}
+ 
+ 	// mastertune-v17: the minimum window. Too little due yet: nothing rendered, and the audio task is due again when
+-	// kMinSamplesDue will be. What MIDI and gates wait to go out now (live, MIDI thru) goes, as it would with a render.
+-	if (!numRoutines && numSamples < kMinSamplesDue && minimumWindowApplies()) {
+-		flushMIDIGateBuffers();
+-		ignoreForStats();
+-		delayTask(routineTaskID, (double)(kMinSamplesDue - numSamples) / kSampleRate);
+-		return false;
++	// enough will be. What MIDI and gates wait to go out now (live, MIDI thru) goes, as it would with a render.
++	size_t minWindowSamples = 0;
++	if (!numRoutines && minimumWindowApplies()) {
++		size_t startDue = minimumWindowStartDue();
++		if (numSamples < startDue) {
++			flushMIDIGateBuffers();
++			ignoreForStats();
++			delayTask(routineTaskID, (double)(startDue - numSamples) / kSampleRate);
++			return false;
++		}
++		minWindowSamples = kMinWindowSamples;
+ 	}
+ #if AUTOMATED_TESTER_ENABLED
+ 	AutomatedTester::possiblyDoSomething();
+@@ -672,6 +692,10 @@ void renderAudioForStemExport(size_t numSamples);
+ 	if (numSamples < minNumSamplesToRender) {
+ 		numSamples = minNumSamplesToRender;
+ 	}
++	// mastertune-v17: the minimum window
++	if (numSamples < minWindowSamples) {
++		numSamples = minWindowSamples;
++	}
+ 
+ 	// Want to round to be doing a multiple of 4 samples, so the NEON functions can be utilized most efficiently.
+ 	// Note - this can take numSamples up as high as SSI_TX_BUFFER_NUM_SAMPLES (currently 128).
+@@ -1304,7 +1328,7 @@ void scheduleMidiGateOutISR(uint32_t saddrPosAtStart, int32_t unadjustedNumSampl
+ /// mastertune-v17: a call of routine() rendered `samples` in `ticks` of OS timer 0
+ static void routineMeasured(uint32_t ticks, uint32_t samples) {
+ 	routineTimeAverage = (routineTimeAverage + ticks / DELUGE_CLOCKS_PERf) / 2;
+-	if (samples >= kMinSamplesDue) {
++	if (samples >= kWindowLoadMinSamples) {
+ 		// 1000 * kSampleRate / DELUGE_CLOCKS_PER = 4410 / 3333
+ 		uint32_t load = (uint32_t)std::min<uint64_t>((uint64_t)ticks * 4410 / ((uint64_t)samples * 3333), 100000);
+ 		if (audioSampleTimer - windowLoadMeasuredAt > kWindowLoadMaxAge) {
+diff --git a/src/deluge/processing/engines/audio_engine.h b/src/deluge/processing/engines/audio_engine.h
+index 9dbba2e2..6c6e1c8f 100644
+--- a/src/deluge/processing/engines/audio_engine.h
++++ b/src/deluge/processing/engines/audio_engine.h
+@@ -70,8 +70,8 @@ class Reverb;
+  * so when the audio routine is finished and is then called again the next time, only say one or two
+  * samples will have been output via DMA to the DAC. This means the next window length is set at just
+  * one or two samples. I.e. lighter CPU load means shorter windows.
+- * (mastertune-v17: except that at light load the audio routine now waits until 32 samples are due and renders about
+- * twice that, since each window has a fixed cost too, see kMinSamplesDue in audio_engine.cpp.)
++ * (mastertune-v17: except that at light load the audio routine now renders 60 samples at once, since each window
++ * has a fixed cost too, starting early enough to end with about 32 due, see kMinWindowSamples in audio_engine.cpp.)
+  *
+  * Often the window length will be rounded to a multiple of 4, because various parts of the rendering code
+  * (e.g. oscillator table lookup / interpolation) use Arm NEON optimizations, which are implemented in
+diff --git a/src/deluge/processing/engines/cpu_stats_core.cpp b/src/deluge/processing/engines/cpu_stats_core.cpp
+index 4977fa4d..b89c80bd 100644
+--- a/src/deluge/processing/engines/cpu_stats_core.cpp
++++ b/src/deluge/processing/engines/cpu_stats_core.cpp
+@@ -134,10 +134,10 @@ void Collector::routineDone(uint32_t now, uint32_t sampleCounter, uint32_t voice
+ 	uint32_t samples = sampleCounter - routineSamplesStart_;
+ 	busyTotal_ += ticks; // Wraps, which is fine for differences
+ 	// mastertune-v17: a call that rendered nothing (nothing due yet, or less than the minimum window at light load, see
+-	// AudioEngine's kMinSamplesDue) isn't rendering: it doesn't count towards the load shown. Its time is still spent,
+-	// though, and so are the calls that only write out samples rendered ahead before: the load shown reads a little low
+-	// by those (a few hundred instructions each; in the emulator, tests/sdload S2 idle, ~2,200 such calls a second,
+-	// ~0.3 % of the CPU)
++	// AudioEngine's kMinWindowSamples) isn't rendering: it doesn't count towards the load shown. Its time is still
++	// spent, though, and so are the calls that only write out samples rendered ahead before: the load shown reads a
++	// little low by those (a few hundred instructions each; in the emulator, tests/sdload S2 idle, ~2,200 such calls a
++	// second, ~0.3 % of the CPU)
+ 	if (samples != 0) {
+ 		acc_.busyTicks += ticks;
+ 	}
+-- 
+2.43.0
+
