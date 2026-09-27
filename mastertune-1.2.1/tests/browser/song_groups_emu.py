@@ -11,7 +11,9 @@ folds it in. A song on its own looks and works as before. The save browser is un
 
 The card (SONGS/): A001..A150, BIG 1..BIG 120 (a group larger than the song browser's window of 100 file items),
 DEFAULT (the startup song), MID 1..MID 30, OTHER, TRACK, TRACK 2, TRACK 3, track 4, TRACK 10, the folder TRACK DEMOS,
-TRACK LIVE, TRACK!, TRACKS, Z001..Z150. Every song is a small one-synth song (a 1-bar clip); those loaded here have their own song LPF, so which
+TRACK LIVE, TRACK!, TRACKS, Z001..Z150; the folder VERS (not in SONGS: the rows above stay as they are): E01..E26,
+F 1..F 26, H001..H060, sorted in the directory too (where the song browser's window of file items starts after a read
+depends on it). Every song is a small one-synth song (a 1-bar clip); those loaded here have their own song LPF, so which
 song got loaded is known from the song itself, not from its name.
 
 What's driven, as the user would: the browser opened with openUI(&loadSongUI) (the current song's name set first: the
@@ -48,6 +50,16 @@ Checks (OLED unless said):
 16. SHIFT+SAVE (delete) on the folded row TRACK: no delete prompt (it would delete TRACK.XML, which the row doesn't
     show, and the prompt doesn't name it), a popup instead; on TRACK 2 in the group folded out: the prompt as before;
     BACK from it: nothing deleted
+17. a one-step move across a folder read: opened on VERS/F 25 (the window, culled at its start, begins with F 1: the
+    read dropped E26 without counting it), -1 x23: F 2 at the window's index 1; BACK: F 1 (the folder read again for
+    the file before it: the window then starts at the folder's first file), its name what the row shows, LOAD loads,
+    delete unlinks; pressed, LOAD: F 1 loads, the song named F 1. (Before: numFileItemsDeletedAtStart + the index the
+    same after the step, "not moved": F 2's name kept, F 1's file loaded as "F 2".)
+18. typing (the keyboard's pads, LoadSongUI::padAction()): opened on VERS/H050 (the window begins with F 26, the
+    group's last version), "F": F 26 at the window's index 0; BACK: the group folded in, F 1 selected, the browser open
+    (before: F 26 not seen as a version, the browser closed). From E26 +1: the folded row F 1, "F 1" typed (the
+    group's first version, exactly: the name as it was, no prediction): shown as typed, no arrow; pressed: F 1 loads
+    (before: the group folded out, nothing loaded)
 
 Usage: song_groups_emu.py <deluge.elf> [--tools PREFIX] [--out DIR] [--build DIR] [--baseline] [--no-7seg]
   --baseline: a build without the grouping: the same steps, reported (the old browser: every file a row), not checked.
@@ -55,6 +67,7 @@ Exit status 0 when all checks hold. Needs python3 with unicorn 2 and numpy, a C 
 """
 import argparse
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -79,10 +92,15 @@ NAME_AT = STOP + 0x400  # A name written for String::set()
 
 # The song LPF knob (0..50) of each song this test loads; all others FILLER
 KNOBS = {"DEFAULT": 5, "OTHER": 10, "TRACK": 12, "TRACK 2": 14, "TRACK 3": 16, "track 4": 18, "TRACK 10": 20,
-         "TRACK LIVE": 22, "TRACK!": 24, "TRACKS": 26, "BIG 1": 28, "BIG 120": 30}
+         "TRACK LIVE": 22, "TRACK!": 24, "TRACKS": 26, "BIG 1": 28, "BIG 120": 30, "F 1": 32, "F 2": 34, "F 4": 36}
 BIG = 120
 FILLER = 7
 TRACKS = ["TRACK", "TRACK 2", "TRACK 3", "track 4", "TRACK 10"]
+VERS = "VERS"  # A folder of its own, at the top level (the checks in SONGS keep their rows)
+VERS_NAMES = [f"E{n:02d}" for n in range(1, 27)] + [f"F {n}" for n in range(1, 27)] + [f"H{n:03d}" for n in range(1, 61)]
+DIR_AT = NAME_AT + 0x100
+# The keyboard (qwerty_ui.cpp keyboardChars, QWERTY): row r at pad y = kQwertyHomeRow (3) + 2 - r, column c at x = c + 3
+KEYS = ["1234567890-", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM,.", "__" + " " * 6]
 
 
 def log(s):
@@ -100,6 +118,7 @@ def build_sd(path):
              + ["DEFAULT"] + [f"MID {n}" for n in range(1, 31)] + ["OTHER"] + TRACKS + ["TRACK LIVE", "TRACK!", "TRACKS"] + [f"Z{n:03d}" for n in range(1, 151)])
     files = {f"SONGS/{n}.XML": song(KNOBS.get(n, FILLER)) for n in names}
     files["SONGS/TRACK DEMOS/DEMO.XML"] = song(FILLER)
+    files.update({f"{VERS}/{n}.XML": song(KNOBS.get(n, FILLER)) for n in VERS_NAMES})
     fat32.build(path, files)
     return len(files), sum(len(d) for d in files.values())
 
@@ -114,6 +133,9 @@ class Browser:
         self.ui = d.var["loadSongUI"]
         self.main = d.var["_ZN6deluge3hid7display4OLED4mainE"]
         self.string_memory, = song_emu.gdb_values(emu, ["(int)&((String*)0)->stringMemory"])
+        out = subprocess.run([emu.tool_prefix + "gdb", "-batch", "-ex", "list Song::Song", "-ex",
+                              "print (int)&((Song*)0)->dirPath", emu.elf], capture_output=True, text=True).stdout
+        self.dir_path = int(re.findall(r"^\$\d+ = (\d+)$", out, re.M)[0])  # Song::dirPath (Song in its context)
         try:
             self.group_off, = song_emu.gdb_values(emu, ["(int)&loadSongUI.openGroup - (int)&loadSongUI"])
         except SystemExit:
@@ -249,16 +271,31 @@ class Browser:
         self.settle(20000)
         return True
 
-    def open(self, name, ui=None):
-        """The browser opened with the current song's name set to name (it starts there)."""
+    def open(self, name, ui=None, folder="SONGS"):
+        """The browser opened with the current song's name set to name, its folder to folder (it starts there)."""
         d = self.d
         self.close()
         self.emu.uc.mem_write(NAME_AT, name.encode() + b"\0")
         d.call("_ZN6String3setEPKcl", d.song() + d.off["song_name"], NAME_AT, -1)
+        self.emu.uc.mem_write(DIR_AT, folder.encode() + b"\0")
+        d.call("_ZN6String3setEPKcl", d.song() + self.dir_path, DIR_AT, -1)
         d.drain_pic()
         ok = d.call("_Z6openUIP2UI", ui or self.ui) & 0xFF
         self.settle(2000)
         return bool(ok) and self.is_open(ui)
+
+    def type(self, text):
+        """Typed on the keyboard's pads (the first press also shows the keyboard: LoadSongUI::padAction())."""
+        pad = self.d.sym.find("_ZN10LoadSongUI9padActionElll")
+        for ch in text:
+            r = next(i for i, keys in enumerate(KEYS) if ch.upper() in keys)
+            x, y = KEYS[r].index(ch.upper()) + 3, 5 - r
+            self.settle()
+            self.d.drain_pic()
+            self.d.call(pad, self.ui, x, y, 127)
+            self.d.call(pad, self.ui, x, y, 0)
+            for _ in range(3):
+                self.d.step()
 
     def shift_save(self):
         """SHIFT held, SAVE pressed and released (Browser: delete the selected file, its prompt)."""
@@ -532,6 +569,59 @@ def run_oled(a, sd, out, check):
     check("13. the save browser: the versions each a row of their own, no arrows",
           [r["text"] for r in f] in (TRACKS[i:i + 3] for i in range(3)) and row(f, "TRACK 2")
           and not any(r["arrow"] or r["indent"] for r in f), b.show(f))
+    b.close()
+
+    # 17: a one-step move across a folder read, the window's start culled: BACK from F 2 at the window's index 1
+    b.open("F 25", folder=VERS)
+    s0 = b.state()
+    names = [b.turn(-1) for _ in range(23)]
+    s1, r1 = b.state(), b.reads
+    b.back()
+    s2, f2, r2 = b.state(), b.frame(), b.reads
+    b.press(BUTTON_SELECT)
+    s3, f3 = b.state(), b.frame()
+    b.press(BUTTON_LOAD)
+    knob, name = b.loaded()
+    r = row(f2, "F")
+    check("17. VERS/F 25, -1 x23: F 2 at the window's index 1 (its start culled); BACK: F 1 (the folder read again), "
+          "its name kept for LOAD and delete; pressed, LOAD: F 1 loads, named F 1",
+          s0["name"] == "F 25" and s0["group"] == "F" and names[-1] == "F 2" and s1["sel"] == 1 and s1["deleted"] > 0
+          and s2["name"] == "F 1" and s2["group"] == "" and r2 > r1 and r and r["arrow"] and r["sel"]
+          and s3["name"] == "F 1" and s3["group"] == "F" and row(f3, "F 1") and row(f3, "F 1")["sel"]
+          and knob == KNOBS["F 1"] and name == "F 1",
+          f"opened: {s0}; after -1 x23: {s1}; BACK ({r2 - r1} folder reads): {s2}, {b.show(f2)}; pressed: {s3}, "
+          f"{b.show(f3)}; loaded: LPF knob {knob} (F 1: {KNOBS['F 1']}, F 2: {KNOBS['F 2']}), name {name!r}")
+
+    # 18: typing onto a later version at the window's index 0, BACK; typing a folded group's first version, pressed
+    layout = d.emu.u8(d.sym["_ZN12FlashStorage14keyboardLayoutE"])
+    b.open("H050", folder=VERS)
+    s0 = b.state()
+    b.type("F")
+    s1, f1 = b.state(), b.frame()
+    b.back()
+    s2, f2 = b.state(), b.frame() if b.is_open() else []
+    r = row(f2, "F")
+    check("18. VERS/H050, typed F: F 26 (the group's last version) at the window's index 0; BACK: the group folded in, "
+          "F 1 selected, the browser open",
+          layout == 0 and s1["name"] == "F 26" and s1["sel"] == 0 and s1["deleted"] > 0 and b.is_open()
+          and s2["name"] == "F 1" and s2["group"] == "" and r and r["arrow"] and r["sel"],
+          f"keyboard layout {layout}; opened: {s0}; typed: {s1}, {b.show(f1)}; BACK: browser open {b.is_open()}, "
+          f"{s2}, {b.show(f2)}")
+    b.open("E26", folder=VERS)
+    b.turn(1)
+    s0, f0 = b.state(), b.frame()
+    b.type("F 1")
+    s1, f1 = b.state(), b.frame()
+    b.press(BUTTON_SELECT)
+    knob, name = b.loaded()
+    check("18. VERS/E26 +1: the folded row F; F 1 typed (the group's first version, exactly): shown as typed, no arrow; "
+          "pressed: F 1 loads (not the group folded out)",
+          row(f0, "F") and row(f0, "F")["arrow"] and s1["name"] == "F 1" and row(f1, "F 1")
+          and not any(x["arrow"] for x in f1) and not b.is_open() and knob == KNOBS["F 1"] and name == "F 1",
+          f"+1: {s0}, {b.show(f0)}; typed: {s1}, {b.show(f1)}; pressed: browser open {b.is_open()}, group "
+          f"{b.group()!r}, loaded: LPF knob {knob}, name {name!r}")
+    b.close()
+    b.open("DEFAULT")  # The song's folder SONGS again
     b.close()
 
 

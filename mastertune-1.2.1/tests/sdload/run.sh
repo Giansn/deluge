@@ -22,6 +22,11 @@
 #             yield to the task manager as the firmware's (USE_TASK_MANAGER); then the lines of SDRAM the audio
 #             routine touches while it plays (0.02 s more)
 #     s4ipc   s4 with the typical card and the CPU at 0.5 instructions per cycle (the emulator counts 1: no caches)
+#     s4ui    s4 with the typical card and UI work (--ui-load: every 10 ms the pads, sidebar and OLED redrawn by the
+#             firmware's own functions, as while a knob turns); the worst DMA gap is the audio's reserve
+#     clock   s4's song following an external MIDI clock (120 BPM) that comes in through the firmware's DIN MIDI input
+#             with the timing capture as on the RZ/A1 (clockin), the typical card, without and with --ui-load: where
+#             each tick is placed against the byte's arrival (the firmware aims at 168 samples later)
 #     s2play  the big project of s2 played 4 s with the typical card, the CPU at 1 and at 0.5 instructions per cycle
 #             (far beyond the CPU: it is for the load and the idle CPU, not a song to play)
 #     s5      the song browser: SONGS with 1,200 songs (with previews), the select encoder turned through all of
@@ -31,7 +36,7 @@
 #   typical 1 ms per command + 12 MB/s, fast 0.25 ms + 25 MB/s (the CPU at 400 MHz, 1 instruction per cycle; the
 #   driver's own work per command not counted, a lower bound).
 # Needs: python3 with unicorn 2 and numpy, a C compiler (blockcount.c), the tree's toolchain (nm, objdump, gdb).
-# About 25 minutes for all.
+# About 30 minutes for all.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 if [ -d "$1" ]; then
@@ -41,7 +46,7 @@ else
 fi
 OUT=$(realpath -m "${2:-$(mktemp -d)}")
 shift 2 || shift $#
-SCENARIOS=${*:-s1 s2 s2frag s3ref s4 s4ipc s2play s5}
+SCENARIOS=${*:-s1 s2 s2frag s3ref s4 s4ipc s4ui clock s2play s5}
 mkdir -p "$OUT"
 UC=$(python3 -c 'import os, unicorn; print(os.path.dirname(unicorn.__file__))')
 cc -O2 -shared -fPIC -I"$UC/include" "$HERE/../song/blockcount.c" -o "$OUT/blockcount.so" -L"$UC/lib" \
@@ -93,6 +98,13 @@ for s in $SCENARIOS; do
 	s4ipc)
 		image s4ipc s4 && emu "$OUT/s4ipc.img" s4-typical-ipc0.5 play --seconds "${PLAY_S:-4}" --sd-latency 1000,42.67 \
 			--ipc 0.5 ;;
+	s4ui)
+		image s4ui s4 && emu "$OUT/s4ui.img" s4-typical-ui play --seconds "${PLAY_S:-4}" --sd-latency 1000,42.67 \
+			--ui-load --lines ;;
+	clock)
+		image clock s4
+		KEEP=1 emu "$OUT/clock.img" clock clockin --seconds "${PLAY_S:-4}" --sd-latency 1000,42.67
+		emu "$OUT/clock.img" clock-ui clockin --seconds "${PLAY_S:-4}" --sd-latency 1000,42.67 --ui-load ;;
 	s2play)
 		image s2play s2
 		KEEP=1 emu "$OUT/s2play.img" s2play-typical play --seconds "${PLAY_S:-4}" --sd-latency 1000,42.67

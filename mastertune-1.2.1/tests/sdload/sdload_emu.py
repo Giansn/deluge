@@ -5,7 +5,7 @@ one emulator at a time); images from make_bigsd.py (their layout in <image>.json
 
 Usage: sdload_emu.py <deluge.elf> <image> <out dir> <scenario> [--save] [--idle S] [--idle-fixed S] [--lines]
                      [--seconds S] [--sd-latency CMD_US,SECTOR_US] [--sd-wait yield|loop] [--ipc X] [--steps N]
-                     [--settle-ms MS] [--tools PREFIX] [--build DIR]
+                     [--settle-ms MS] [--ui-load] [--bpm N] [--tools PREFIX] [--build DIR]
 Scenarios:
   load   boot (the card mounted), SONGS/DEFAULT.XML loaded as at startup (setupStartupSong()), then optionally
          --save (SONGS/SAVETEST.XML written as SaveSongUI does: the first cluster of a new file is where FatFS
@@ -38,8 +38,17 @@ Scenarios:
          manager until the card is done; loop: routineForSD() again and again, a build without USE_TASK_MANAGER).
          Cluster loads, the card waits (their time against the card's own), audio routine calls by where they come
          from (the task manager; a task run inside another task's yield, i.e. while it waits for the card;
-         routineForSD()), gaps (song_emu.RealTimeDma: 128 samples or more = an underrun), culled voices by type,
-         cpu_stats as shown (QL: direness above 0, VC: voices culled).
+         routineForSD()), gaps (song_emu.RealTimeDma: 128 samples or more = an underrun; how often over 64, i.e.
+         less than half the buffer left, and what ran in the 3 ms before the worst), culled voices by type, cpu_stats
+         as shown (QL: direness above 0, VC: voices culled), per task its longest stretch (running, nothing inside it).
+  clockin as play, but the song follows an external MIDI clock at --bpm (default 120) that comes in through the
+         firmware's own DIN MIDI input: a MIDI start, then 24 clocks per beat, each byte in the UART's receive ring
+         at its arrival with the timing capture the RZ/A1's DMA takes (the SSI transmit DMA's place), read by
+         uartGetCharWithTiming() as on the Deluge. Per tick (PlaybackHandler::inputTick()): when its sample plays
+         against the byte's arrival (the firmware aims at 168 samples: 40 + the output buffer's 128), how long the
+         byte waited, the samples rendered ahead then. Run.clock_in() says more.
+--ui-load: every 10 ms the pads, sidebar and OLED redrawn by the firmware's own functions (Run.ui_load()), as while a
+knob turns or the view scrolls.
   browse loads, opens the song browser (openUI(&loadSongUI)), lets the task manager run until its scroll-in has
          ended, then turns the select encoder one step at a time (LoadSongUI::selectEncoderAction(+1)) through the
          whole SONGS folder with --settle-ms of the task manager after each step (UI timers: the scrolling; a fast
@@ -466,7 +475,11 @@ class Run:
                  cluster_loads=self.cluster_loads,
                  dma=dict(max_gap=dma.max_gap, underrun_samples=dma.underruns, over_64=dma.over_64,
                           samples_played=int(dma.position() - dma.start_position)),
-                 cpu_stats=windows)
+                 cpu_stats=windows,
+                 # Per rendering call: seconds into the phase, samples, the DMA's gap at its start, cpuDireness and
+                 # windowLoadPermille then (v17), instructions, where it was called from
+                 renders=[(round((c[3] - i0) / hz(), 5), c[2], c[5][0], c[5][1], c[5][2], c[1], c[0])
+                          for c in rendering])
         if emu.sd_model:
             waits = emu.sd_model.waits[waits0:]
             d = np.array([w[1] for w in waits] or [0]) / hz() * 1e3
