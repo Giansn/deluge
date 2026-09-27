@@ -1,16 +1,18 @@
-// The 12 dB and 24 dB LP ladders' arithmetic noise at low cutoff (mastertune lpf-fix, the "rustle" report on v17): the
-// firmware's LpLadderFilter against a float64 model of the same ladder, the same coefficients (read from the filter)
-// and the same analog noise on the cutoff (the firmware's generator), so what differs is the firmware's rounding.
+// The 12 dB and 24 dB LP ladders' rustle at low cutoff (the report on v17): the firmware's LpLadderFilter against a
+// float64 model of the same ladder with the same coefficients (read from the filter) and a steady cutoff, as the
+// ladder should be. What differs is the firmware's rounding and, up to v18, its analog noise on the cutoff (a heavily
+// lowpassed random value, about 0.44 % rms, on every sample's moveability): the rustle, -21 to -42 dBc A-weighted.
 //
 // Per case (12 / 24 dB; a synth voice's filter with a 110 Hz saw at -44.5 dBFS, a kit's with a pad and drums mix at
 // -39 dBFS; cutoff 5, 15, 20 on the display, 28 to 195 Hz; resonance 0, 25, 75 %): 1 s of signal, then 0.6 s of
 // silence. Printed: the output level, the error against the model over the last 0.6 s of signal, A-weighted (dBFS and
 // dBc) and above 2 kHz, and the tail: what the firmware still puts out in the last 0.3 s of silence.
 //
-// Fails where, at cutoff 5 or 15, the A-weighted error is above kMaxErrorA (v17: -161 to -178 dBFS; since lpf-fix the
-// stages keep their state to 32 bits below the LSB and it's at the output word's own rounding, -183 to -200), or, at
-// resonance 0 and 25 %, the tail is above kMaxTail where the model's has died away (v17: -114 to -175 dBFS, the state
-// stuck in the stages' dead band; lpf-fix: silent). Built by run.sh with lpladder.h's private members public (to read
+// Fails where, at cutoff 5 or 15, the A-weighted error is above kMaxErrorA (v17: the analog noise, -65 to -85 dBFS, and
+// the rounding below it, -161 to -178 dBFS; with the noise off and the stages keeping their state to 32 bits below the
+// LSB, v18, it's at the output word's own rounding, -183 to -200), or, at resonance 0 and 25 %, the tail is above
+// kMaxTail where the model's has died away (v17: -114 to -175 dBFS, the state stuck in the stages' dead band; v18:
+// silent). Built by run.sh with lpladder.h's private members public (to read
 // the coefficients) and, on the PC, fixedpoint.h's rounded multiplies rounding as the Deluge's smmulr / smmlar do.
 #include "dsp/filter/lpladder.h"
 #include "util/functions.h"
@@ -64,8 +66,6 @@ struct Model {
 	bool saturate;
 	int sat;
 	double s[4] = {0, 0, 0, 0};
-	int32_t noiseLast = 0;
-	uint32_t noise;
 	double stage(int k, double x, double m, bool apf = false) {
 		double a = (x - s[k]) * m / P32 * 2;
 		double b = a + s[k];
@@ -73,10 +73,7 @@ struct Model {
 		return apf ? b * 2 - x : b;
 	}
 	double tick(double in) {
-		noise = 69069u * noise + 1234567u; // the analog noise on the cutoff, as the firmware's
-		int32_t d = ((int32_t)noise >> 2) - noiseLast;
-		noiseLast += d >> 7;
-		double m = c.m * (1 + noiseLast / P32);
+		double m = c.m; // a steady cutoff
 		double fs = (s[0] * c.c1 + s[1] * c.c2 + (twelve ? s[2] * c.d1 : s[2] * c.c3 + s[3] * c.d1)) / P32 * 4;
 		double x = (in - fs * c.pr / P32 * 8) * c.div / P32 * 4;
 		if (saturate) {
@@ -221,7 +218,7 @@ int main() {
 						buf[i] = i < kSignal ? (int32_t)std::round(in0[i] * inScale) : 0;
 					}
 					Model md{twelve, c, saturate, sat};
-					md.noise = jcong = 380116160;
+					jcong = 380116160; // (the firmware up to v18 took its analog noise from it)
 					std::vector<double> ref(n);
 					for (int i = 0; i < n; i++) {
 						ref[i] = md.tick(buf[i]) * outScale;
@@ -272,9 +269,9 @@ int main() {
 	printf("worst: error A %.1f dBFS at cutoff 5 / 15 (limit %.0f), tail %.1f dBFS at resonance 0 / 25 %% (limit %.0f)\n",
 	       worstA, kMaxErrorA, worstTail, kMaxTail);
 	if (failures) {
-		printf("FAIL: %d cases with the LP ladder's rounding above the limits\n", failures);
+		printf("FAIL: %d cases with the LP ladder's rustle or rounding above the limits\n", failures);
 		return 1;
 	}
-	printf("ok: the LP ladders' arithmetic noise at low cutoff is at the output word's own rounding\n");
+	printf("ok: no rustle: the LP ladders at low cutoff are at the output word's own rounding from a steady ladder\n");
 	return 0;
 }

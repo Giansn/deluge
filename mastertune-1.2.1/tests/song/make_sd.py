@@ -589,11 +589,16 @@ def main():
                     "names (SONGS/MT_LOADTEST.XML, SAMPLES/MT_LOADTEST/), so nothing on the card is overwritten")
     ap.add_argument("--lpf-mode", help="every LPF in this mode instead of 24dB (the XML's name: 12dB, 24dB, "
                     "24dBDrive, SVF_Band, SVF_Notch), e.g. SVF_Band to compare two builds without the LP ladders")
+    ap.add_argument("--static-filters", action="store_true",
+                    help="no patch cables to the filters (cutoff, resonance, morph): every filter's configuration stays "
+                    "the same all song long, e.g. to compare two builds where only moving filters should differ")
     args = ap.parse_args()
     files, lengths = samples()
     xml = song_xml(lengths, args.reverb_model, args.synths, args.midi_track, args.drone_life, args.drone_track)
     if args.lpf_mode:
         xml = xml.replace('lpfMode="24dB"', f'lpfMode="{args.lpf_mode}"')
+    if args.static_filters:
+        xml = re.sub(r'[ \t]*<patchCable source="[^"]*" destination="[lh]pf(Frequency|Resonance|Morph)"[^>]*/>\n', "", xml)
     files["SONGS/DEFAULT.XML"] = xml.encode()
     if args.xml_out:
         open(args.xml_out, "w").write(xml)
