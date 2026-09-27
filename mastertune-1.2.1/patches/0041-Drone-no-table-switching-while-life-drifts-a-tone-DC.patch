@@ -1,0 +1,84 @@
+From b5f5c900e2d613b8b0ea4e97b791f2ae2114ab76 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 09:31:51 +0000
+Subject: [PATCH 41/41] Drone: no table switching while life drifts a tone; DC
+ blocker fresh after a mode change; Rate ring bipolar
+
+From the review of the lively drone:
+- A tone whose highest harmonic sits right at the 18 kHz limit (Rich or Organ at 2250 Hz, Pulse at 750, 1125, 1500
+  or 3000 Hz, Soft at 3600 Hz, saw FM at 2250 or 3000 Hz) switched band-limited tables as life drifted it, about 10
+  times in 30 s, each a tick up to 0.15 of the tone's peak. With life, the tables (and the FM's limits) now go by the
+  highest frequency the drift can reach, e^(life x 6 cents x 3), so they stay the same while the tone drifts.
+- Binaural -> Tone -> Binaural with FM on: side B's DC blocker started from what it held the last time side B
+  sounded. It starts fresh when a new mode or timbre is taken on (in silence).
+- The Rate ring is bipolar (25 is as designed); pressing the knob for the FM form refreshes the display.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/drone/drone.cpp      | 12 ++++++++++--
+ src/deluge/gui/views/drone_view.cpp |  4 +++-
+ 2 files changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/src/deluge/dsp/drone/drone.cpp b/src/deluge/dsp/drone/drone.cpp
+index d034384c..61e3d7d9 100644
+--- a/src/deluge/dsp/drone/drone.cpp
++++ b/src/deluge/dsp/drone/drone.cpp
+@@ -860,6 +860,7 @@ void Drone::renderLivelyVoice(Voice& voice, const Tone& tone, std::span<float> m
+ 	// Life (mastertune-v15): a step along each of the tone's courses. Both sides of a beating tone move together, so
+ 	// the beat stays as set.
+ 	bool living = (lively.life > 0.f);
++	float plainCarrier = carrierTarget; // Without the drift: the tables go by it (below)
+ 	float breath = 1.f;
+ 	float panOffset = 0.f;
+ 	float shimmerEnd = 0.f;
+@@ -945,8 +946,14 @@ void Drone::renderLivelyVoice(Voice& voice, const Tone& tone, std::span<float> m
+ 	uint32_t carrierPhase = voice.carrierPhase;
+ 	uint32_t halfBeatPhase = voice.halfBeatPhase;
+ 
+-	// Band-limited for the highest frequency this block reaches
+-	float highestHz = (std::max(carrierStart, carrierEnd) + std::max(halfBeatStart, halfBeatEnd)) / kPhasePerHz;
++	// Band-limited for the highest frequency this block reaches. With life, for the highest the drift can reach, so a
++	// tone near a table's limit doesn't switch tables (and tick) as it drifts: the same tables all along
++	float highestCarrier = std::max(carrierStart, carrierEnd);
++	if (living) {
++		highestCarrier =
++		    std::max(highestCarrier, plainCarrier * std::exp(lively.life * kDriftPerCourse * kCourseLimit));
++	}
++	float highestHz = (highestCarrier + std::max(halfBeatStart, halfBeatEnd)) / kPhasePerHz;
+ 	const float* table = tableFor(voice.timbre, highestHz);
+ 
+ 	// FM (mastertune-v15): its depth blooms and fades on the tone's own course, gliding, and limited for high tones
+@@ -1113,6 +1120,7 @@ void Drone::renderLivelyVoice(Voice& voice, const Tone& tone, std::span<float> m
+ 		else {
+ 			voice.mode = tone.mode;
+ 			voice.timbre = tone.timbre;
++			voice.dc = {}; // Not from the last time the other side sounded
+ 		}
+ 	}
+ 
+diff --git a/src/deluge/gui/views/drone_view.cpp b/src/deluge/gui/views/drone_view.cpp
+index 07cbafbc..45a72469 100644
+--- a/src/deluge/gui/views/drone_view.cpp
++++ b/src/deluge/gui/views/drone_view.cpp
+@@ -482,7 +482,8 @@ void DroneView::showKnobSection() {
+ 		break;
+ 	case kSectionLifeRate:
+ 		indicator_leds::setKnobIndicatorLevel(1, level(currentSong->drone.life, Settings::kMaxLife));
+-		indicator_leds::setKnobIndicatorLevel(0, level(currentSong->drone.lifeRate, Settings::kMaxLife));
++		indicator_leds::setKnobIndicatorLevel(0, level(currentSong->drone.lifeRate, Settings::kMaxLife),
++		                                      true); // 25: as designed
+ 		break;
+ 	case kSectionFmPulseWidth:
+ 		indicator_leds::setKnobIndicatorLevel(1, level(currentSong->drone.fm, Settings::kMaxLife));
+@@ -638,6 +639,7 @@ void DroneView::modEncoderButtonAction(uint8_t whichModEncoder, bool on) {
+ 		else {
+ 			display->displayPopup(formName);
+ 		}
++		changed(false);
+ 		return;
+ 	}
+ 	if (!on || section_ != kSectionPitchBeat) {
+-- 
+2.43.0
+

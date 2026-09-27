@@ -557,6 +557,27 @@ Rohdaten: `raw/reverb-v14.json`. Commit `7c1ffede`, Tests `tests/reverb/modulati
 - **Umsetzung:** Menü Modulation 0–50 (Standard 0, 50 = v10–v13) und Pre-delay 0–100 ms (17,6 KB RAM).
   - Bei 50 ist der Volllast-Song mit Mutable bitgleich zu v13. Mit Digital weichen 176 von 705 792 Samples um 1 LSB ab (Rundung der Offsets).
 
+## 7l. Ruhelast grosser Songs (zu v15)
+
+**Anlass:** Am Gerät zeigte der CPU-Monitor bei einem grossen Projekt 87 %, obwohl nichts spielte.
+
+**Messung im Emulator** (v15, Stillstand, nie gespielt):
+- Song: die 8 Synths des Volllast-Songs achtmal (64 Synths) und das Kit viermal, Drone mit 4 Tönen an.
+- Ergebnis: 8,6 % bei Fenstern von 128 Samples, 13,5 % bei Fenstern von 16–24 Samples. Letzteres ist der Normalfall im Stillstand, weil die Engine dann alle 11 bis 16 Samples rechnet.
+- Pro Aufruf kosten die 64 stummen Synths zusammen rund 2 000 Befehle (`SoundInstrument::renderOutput`, etwa 31 je Synth), die 4 Kits 600 (`Kit::renderOutput`). Stumme Spuren werden also schon früh übersprungen.
+- Den Rest tragen das Song-Reverb (Mutable, 27–41 %), der Drone (14–19 %), der Master-Kompressor (8–12 %) und die feste Arbeit pro Aufruf (`Song::renderAudio`, `doSomeOutputting`).
+
+**Folgerungen:**
+- Die Zahl der Spuren erklärt 87 % nicht. Mögliche Ursachen im echten Song:
+  - Sounds, die nie still werden (Delay mit hohem Feedback, LFO auf der Lautstärke, Latch-Arp)
+  - viele Drone-Töne
+  - Audiospuren mit Eingangs-Monitoring
+  - Cache-Fehlgriffe, die der Emulator nicht kennt
+- Nächster Schritt: den Song des Nutzers (`SONGS/<Name>.XML`) im Emulator laden und nach Funktion aufschlüsseln.
+- Mögliche Hebel, falls es an den Master-Effekten liegt:
+  - Reverb und Master-Kompressor in Stille überspringen (Reverb-Eingang und -Fahne unter der Hörschwelle)
+  - im Stillstand in grösseren Blöcken rechnen, was die feste Arbeit pro Aufruf auf mehr Samples verteilt
+
 ## 8. Offen
 
 - [x] Volllast-Test Lauf 1 eingetragen, Priorisierung angepasst.

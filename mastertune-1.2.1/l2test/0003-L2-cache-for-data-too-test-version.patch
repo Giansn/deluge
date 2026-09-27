@@ -1,4 +1,4 @@
-From d079105214663bedd0addd6484edc575fd05c90e Mon Sep 17 00:00:00 2001
+From 09dd8886960a1ee72f65fb9ed184378e82188023 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 26 Sep 2026 23:52:22 +0000
 Subject: [PATCH 3/3] L2 cache for data too (test version)

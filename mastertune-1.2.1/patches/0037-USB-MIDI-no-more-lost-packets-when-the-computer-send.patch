@@ -1,0 +1,223 @@
+From 2a1b93f0f522468f0276b78bc5100590c24777f4 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 08:02:52 +0000
+Subject: [PATCH 37/41] USB MIDI: no more lost packets when the computer sends
+ faster than once per millisecond (upstream b93a9cfc)
+
+As a USB device, the Deluge re-arms a MIDI receive only when the task scheduler polls it,
+about once per millisecond. Meanwhile the hardware kept acknowledging incoming packets; one that
+arrived before the re-arm was thrown away after the computer had already seen it acknowledged.
+Dense MIDI from a DAW and SysEx (the SD access over USB, v7) lost packets or crawled.
+
+Now the pipe is set to NAK once a transfer is in, so the computer retries until the next re-arm;
+every packet already in the double-buffered FIFO is drained into a receive buffer of 192 instead
+of 64 bytes; an empty or mismatched FIFO reopens the pipe instead of forcing termination.
+Only the device side (USB to a computer), as upstream.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ .../r_usb_basic/src/driver/r_usb_pdriver.c    |   2 +
+ .../r_usb_basic/src/driver/r_usb_plibusbip.c  | 129 +++++++-----------
+ src/deluge/io/midi/midi_device_manager.cpp    |   2 +-
+ src/deluge/io/midi/midi_device_manager.h      |   5 +-
+ 4 files changed, 56 insertions(+), 82 deletions(-)
+
+diff --git a/src/RZA1/usb/r_usb_basic/src/driver/r_usb_pdriver.c b/src/RZA1/usb/r_usb_basic/src/driver/r_usb_pdriver.c
+index 0300da9f..19258468 100644
+--- a/src/RZA1/usb/r_usb_basic/src/driver/r_usb_pdriver.c
++++ b/src/RZA1/usb/r_usb_basic/src/driver/r_usb_pdriver.c
+@@ -95,6 +95,8 @@ usb_setup_t g_usb_pstd_req_reg; /* Device Request - Request structure */
+                  : uint16_t     status       : BRDYSTS register & BRDYENB register.
+  Return value    : none
+  ***********************************************************************************************************************/
++
++/// For reasons that are a mystery this isn't actually done in an interrupt. Maybe should be
+ static void usb_pstd_interrupt(uint16_t type, uint16_t status)
+ {
+     uint16_t stginfo;
+diff --git a/src/RZA1/usb/r_usb_basic/src/driver/r_usb_plibusbip.c b/src/RZA1/usb/r_usb_basic/src/driver/r_usb_plibusbip.c
+index 539e7e92..6da2ce68 100644
+--- a/src/RZA1/usb/r_usb_basic/src/driver/r_usb_plibusbip.c
++++ b/src/RZA1/usb/r_usb_basic/src/driver/r_usb_plibusbip.c
+@@ -875,99 +875,68 @@ void usbReceiveComplete(int ip, int deviceNum, int tranlen);
+ void usb_pstd_brdy_pipe_process_rohan_midi(uint16_t bitsts)
+ {
+ 
+-    // uint16_t startTime = *TCNT[TIMER_SYSTEM_SUPERFAST];
++    (void)bitsts;
+ 
+     uint16_t pipe = USB_CFG_PMIDI_BULK_IN;
+ 
+-    if (true || (bitsts & USB_BITSET(pipe)) != 0u) // Not really necessary
+-    {
+-        /* Interrupt check */
+-        // hw_usb_clear_status_bemp(USB_NULL, pipe);
+-
+-        if (true || USB_NULL != g_p_usb_pipe[pipe])
+-        {
+-            /* Pipe number to FIFO port select */
+-            // useport = USB_CUSE;//usb_pstd_pipe2fport(pipe);
++    // because this is polled theres no synchronization with the state of the bus so we have to handle some edge cases
+ 
+-            /* FIFO to Buffer data read */
+-            // usb_pstd_fifo_to_buf(pipe, USB_CUSE);
+-            {
+-                uint16_t end_flag = usb_read_data_fast_rohan(pipe);
++    // No receive armed? Then this is a stale BRDY for a packet we already drained below (BRDYSTS is cleared before
++    // this handler is called, so a packet arriving while we drain re-raises it afterwards). Nothing to do.
++    if (!connectedUSBMIDIDevices[0][0].currentlyWaitingToReceive)
++    {
++        return;
++    }
+ 
+-                if (end_flag == USB_READEND)
+-                { // I condensed USB_READSHRT into this too
+-                    // usb_pstd_data_end(pipe, newStatus);
+-                    {
++    // Rohan originally removed this as "not needed", but if midi is coming faster than
++    // we can handle it this is required to tell the host to retry.
++    // With the pipe NAKed the host just retries until the poll routine re-arms
++    usb_cstd_set_nak_fast_rohan(pipe);
+ 
+-                        // Turns out not needed!
+-#if 0
+-						/* PID = NAK */
+-						/* Set NAK */
+-						//usb_cstd_select_nak(USB_NULL, pipe);
+-						usb_cstd_set_nak_fast_rohan(pipe);
++    // A packet mid-transaction when NAK was written above still completes and lands in the FIFO. In case that's
++    // happening let's read until the pipes empty
++    for (uint32_t n = 0; n < 0xFFFFu; n++)
++    {
++        if (!(hw_usb_read_pipectr(USB_NULL, pipe) & USB_PBUSY))
++        {
++            break;
++        }
++    }
+ 
+-						/* Disable Interrupt */
+-						/* Disable Ready Interrupt */
+-						hw_usb_clear_brdyenb(USB_NULL,pipe);
++    uint16_t end_flag = usb_read_data_fast_rohan(pipe); // Reads the armed packet into receiveData
+ 
+-						/* Disable Not Ready Interrupt */
+-						hw_usb_clear_nrdyenb(USB_NULL,pipe);
++    if (USB_READEND != end_flag) // I condensed USB_READSHRT into READEND
++    {
++        // FIFO error, which seems to be bubbled up by the buffer not being ready
++        // Set the pipe up again and we'll read it next time
++        hw_usb_set_pid_nonzero_pipe_rohan(pipe, USB_PID_BUF);
++        return;
++    }
+ 
+-						/* Disable Empty Interrupt */
+-						hw_usb_clear_bempenb(USB_NULL,pipe);
++    // How many bytes the armed 64-byte transfer actually received.
++    int32_t total = 64 - g_usb_data_cnt[pipe];
+ 
+-						/* Disable Transaction count */
+-						//usb_cstd_clr_transaction_counter(USB_NULL, pipe);
+-						hw_usb_clear_trenb(USB_NULL, pipe);
+-						hw_usb_set_trclr(USB_NULL, pipe);
+-#endif
+-                        /* Call Back */
+-                        if (true || USB_NULL != g_p_usb_pipe[pipe])
+-                        {
+-                            /* Check PIPE TYPE */
+-                            if (true
+-                                || usb_cstd_get_pipe_type(USB_NULL, pipe)
+-                                       != USB_TYPFIELD_ISO) // Corrected by Rohan from USB_ISO
+-                            {
+-                                /* Transfer information set */
+-                                /* I don't actually read any of these...
+-                                g_p_usb_pstd_pipe[pipe]->tranlen    = g_usb_pstd_data_cnt[pipe];
+-                                g_p_usb_pstd_pipe[pipe]->status     = newStatus;
+-                                g_p_usb_pstd_pipe[pipe]->pipectr    = hw_usb_read_pipectr(USB_NULL,pipe);
+-                                g_p_usb_pstd_pipe[pipe]->keyword    = pipe;
+-                                */
+-                                //((usb_cb_t)g_p_usb_pstd_pipe[pipe]->complete)(g_p_usb_pstd_pipe[pipe], USB_NULL,
+-                                // USB_NULL); usbReceiveComplete(0, 0, g_usb_pstd_data_cnt[pipe]);
+-                                g_p_usb_pipe[pipe] = (usb_utr_t*)USB_NULL; // Is this necessary? Doesn't look like it
+-                                // Only sets received bytes for first device
+-                                // I've just pasted the relevant contents of usbReceiveComplete() in here
+-                                connectedUSBMIDIDevices[0][0].numBytesReceived =
+-                                    64 - g_usb_data_cnt[pipe]; // Seems wack, but yet, tranlen is now how many bytes
+-                                                               // didn't get received out of the original transfer size
+-                                // Warning - sometimes (with a Teensy, e.g. my knob box), length will be 0. Not sure why
+-                                // - but we need to cope with that case.
+-
+-                                connectedUSBMIDIDevices[0][0].currentlyWaitingToReceive =
+-                                    0; // Take note that we need to set up another receive
+-                            }
+-                        }
+-                    }
+-                }
+-                else
+-                { // USB_FIFOERROR and formerly USB_READOVER
+-                    usb_pstd_forced_termination(pipe, USB_DATA_ERR);
+-                }
+-            }
++    // Handle edge case where a packet was arriving when we set the NAK back
++    while (total + 64 <= (int32_t)sizeof(connectedUSBMIDIDevices[0][0].receiveData))
++    {
++        // pretend there's at least 64 more available. The code in read_data_fast notes that
++        // reading in this case is still ok and this handles the edge case of a transmission finishing while the
++        // copy is occuring. That's happening in DMA so a critical section wouldn't help
++        g_usb_data_cnt[pipe] = 64;
++        if (USB_READEND != usb_read_data_fast_rohan(pipe))
++        {
++            break; // FIFO empty - the usual case
+         }
++        total += 64 - g_usb_data_cnt[pipe];
+     }
+ 
+-    /*
+-    uint16_t endTime = *TCNT[TIMER_SYSTEM_SUPERFAST];
+-    uint16_t duration = endTime - startTime;
+-    uint32_t timePassedNS = superfastTimerCountToNS(duration);
+-    uartPrint("brdy process duration, nSec: ");
+-    uartPrintNumber(timePassedNS);
+-    */
++    g_p_usb_pipe[pipe] = (usb_utr_t*)USB_NULL; // Is this necessary? Doesn't look like it
++
++    // Only sets received bytes for first device
++    // I've just pasted the relevant contents of usbReceiveComplete() in here
++    connectedUSBMIDIDevices[0][0].numBytesReceived = total;
++
++    connectedUSBMIDIDevices[0][0].currentlyWaitingToReceive = 0; // Take note that we need to set up another receive
+ }
+ 
+ /***********************************************************************************************************************
+diff --git a/src/deluge/io/midi/midi_device_manager.cpp b/src/deluge/io/midi/midi_device_manager.cpp
+index ad9bf78f..4370c30e 100644
+--- a/src/deluge/io/midi/midi_device_manager.cpp
++++ b/src/deluge/io/midi/midi_device_manager.cpp
+@@ -712,7 +712,7 @@ ConnectedUSBMIDIDevice::ConnectedUSBMIDIDevice() {
+ 	sq = 0;
+ 	canHaveMIDISent = 0;
+ 	numBytesReceived = 0;
+-	memset(receiveData, 0, 64);
++	memset(receiveData, 0, sizeof(receiveData));
+ 	memset(dataSendingNow, 0, MIDI_SEND_BUFFER_LEN_INNER * 4);
+ 	numBytesSendingNow = 0;
+ 	memset(sendDataRingBuf, 0, MIDI_SEND_BUFFER_LEN_RING);
+diff --git a/src/deluge/io/midi/midi_device_manager.h b/src/deluge/io/midi/midi_device_manager.h
+index aaea447b..d70d55d6 100644
+--- a/src/deluge/io/midi/midi_device_manager.h
++++ b/src/deluge/io/midi/midi_device_manager.h
+@@ -82,7 +82,10 @@ struct ConnectedUSBMIDIDevice {
+ 	uint8_t sq; // Only for connections as HOST
+ 	uint8_t canHaveMIDISent;
+ 	uint16_t numBytesReceived;
+-	uint8_t receiveData[64];
++	// Receive transfers are armed for one 64-byte packet at a time, but the peripheral-mode bulk pipe is
++	// double-buffered, so its BRDY handler can have to drain up to two packets (plus margin) in one go rather than
++	// dropping what the hardware already ACKed - see usb_pstd_brdy_pipe_process_rohan_midi().
++	__attribute__((aligned(8))) uint8_t receiveData[192];
+ 
+ 	// This buffer is passed directly to the USB driver, and is limited to what the hardware allows
+ 	uint8_t dataSendingNow[MIDI_SEND_BUFFER_LEN_INNER * 4];
+-- 
+2.43.0
+

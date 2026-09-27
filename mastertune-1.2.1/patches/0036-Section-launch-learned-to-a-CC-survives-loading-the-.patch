@@ -1,0 +1,34 @@
+From 617e6dbcdaacf25db7caeec63e2f2206072797fd Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 08:02:10 +0000
+Subject: [PATCH 36/41] Section launch learned to a CC survives loading the
+ song (upstream 95b7acab)
+
+Song files keep a section's launch command with its channelOrZone, which for a learned CC is
+the channel + IS_A_CC. Loading took only plain channels (below 16), so the CC was dropped.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/model/song/song.cpp | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/deluge/model/song/song.cpp b/src/deluge/model/song/song.cpp
+index a61716e3..98992e84 100644
+--- a/src/deluge/model/song/song.cpp
++++ b/src/deluge/model/song/song.cpp
+@@ -1887,7 +1887,10 @@ unknownTag:
+ 						}
+ 
+ 						if (id < kMaxNumSections) {
+-							if (channel < 16 && note < 128) {
++							// A plain channel (0-15), an MPE zone (16-17) or, for a learned CC, channel + IS_A_CC
++							// (see LearnedMIDI::channelOrZone). 1.2.1 took only the first, so a section launch learned
++							// to a CC was gone after loading the song (upstream 95b7acab)
++							if (channel < IS_A_PC && note < 128) {
+ 								sections[id].launchMIDICommand.device = device;
+ 								sections[id].launchMIDICommand.channelOrZone = channel;
+ 								sections[id].launchMIDICommand.noteOrCC = note;
+-- 
+2.43.0
+

@@ -1,4 +1,4 @@
-From 198e9822ca2ec464ccf820f2395a04a0b0dc635c Mon Sep 17 00:00:00 2001
+From 9c3a2c71ea733978434c7f03169ac16f29ce55cd Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 26 Sep 2026 23:51:52 +0000
 Subject: [PATCH 2/3] L2 cache for code only: DMA buffers maintained in the L2
@@ -191,7 +191,7 @@ index 3b7d79c8..cff856de 100644
  		#if		(TARGET_RZ_A1 == 1)
  		if(hndl->trans_mode & SD_MODE_DMA_64){
 diff --git a/src/deluge/hid/display/oled.cpp b/src/deluge/hid/display/oled.cpp
-index 5d7d0049..8ea98c23 100644
+index e460b685..f1097241 100644
 --- a/src/deluge/hid/display/oled.cpp
 +++ b/src/deluge/hid/display/oled.cpp
 @@ -42,6 +42,7 @@ extern "C" {
@@ -202,7 +202,7 @@ index 5d7d0049..8ea98c23 100644
  
  extern uint8_t usbInitializationPeriodComplete;
  
-@@ -1322,7 +1323,7 @@ void OLED::freezeWithError(char const* text) {
+@@ -1315,7 +1316,7 @@ void OLED::freezeWithError(char const* text) {
  	uint32_t dataAddress = (uint32_t)(&OLED::main.hackGetImageStore()[0][0]);
  	DMACn(OLED_SPI_DMA_CHANNEL).N0SA_n = dataAddress;
  	// spiTransferQueueReadPos = (spiTransferQueueReadPos + 1) & (SPI_TRANSFER_QUEUE_SIZE - 1);

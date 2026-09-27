@@ -1,0 +1,1376 @@
+From 8fee7b700e1cbed9008bcaeb48fbcdb787516119 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 09:00:59 +0000
+Subject: [PATCH 40/41] Drone: life (drift, breath, shimmer), FM that blooms
+ (sine or saw), Pulse timbre
+
+The drone moves by itself like a played instrument, as chosen from the prototypes (render.py stage 4, render5.py a
+and b). With life and FM at 0 and no Pulse tone it's v14's drone bit for bit: renderVoice() is kept as it was (the
+firmware's float optimisations would round a version shared with the new code differently) and lively tones go to
+renderLivelyVoice(). The song test's measured.wav is v14's (87a7df29).
+
+- Life (0 to 50, drone-wide): each tone on its own slow random courses (white noise through two one-pole low-passes,
+  a step per block, xorshift64, never repeating; both sides of a beating tone together, so the beat stays as set):
+  pitch drift 6 cents standard deviation at 0.08 Hz, breath 3 dB at 0.12 Hz, shimmer: brightness (a crossfade
+  towards the fundamental alone, up to 60 %) and pan +-0.25 at 0.05 Hz, all growing linearly with life. Rate (0 to
+  50, 25 as designed): each 12.5 steps twice or half as fast.
+- FM (0 to 50): a modulator at each side's frequency plus 0.3 Hz moves its phase, the index blooming as 2 rad x
+  FM / 50 x clip(0.5 + 0.5 r)^2 on its own course (0.07 Hz, with the rate). Form Sine or Saw (8 harmonics, 1.3 times
+  as deep), crossfading when switched. So high tones don't alias badly, the index is limited by a budget of index
+  times frequency per timbre and form, and by the sidebands of the table's highest harmonic (for tones whose highest
+  harmonic is just below 18 kHz): with the sine modulator nothing aliases above -50 dB, with the saw no more than in
+  the chosen prototype (about -28 dB, from its reset's sweep). A DC blocker (two one-pole high-passes at 3 Hz) takes
+  out the sideband 1:1 FM puts near 0 Hz, which ducking or an isochronic pulse would turn into thumps.
+- Pulse timbre (4): the difference of two reads of new band-limited saw tables (24 harmonics, fewer for high tones),
+  width drone-wide 5 to 50 % (default 30), wandering +-12 % x life / 50 at 0.1 Hz between 8 and 50 %.
+- Changes of life, FM and its form glide or crossfade; to and from Pulse a tone goes through silence as before.
+- Drone view: the Delay section (mod button 3) has Life (upper) and Rate, the ModFX section (5) FM (upper; pressed:
+  Sine or Saw) and the pulse width, with popups and LED rings as the other sections. Menu: Life, Rate, FM, FM form,
+  Pulse width; Timbre: Pulse.
+- Song file: life, lifeRate, fm, fmForm and pulseWidth on the drone element, timbre 4. Without them a song loads the
+  defaults; older firmware ignores them (a Pulse tone becomes Rich).
+- The courses are seeded from jcong (only read) when the drone first sounds.
+- Cost on the Cortex-A9 per binaural tone and 128 samples: 6.4k instructions off, 8.5k with life (sine), 12.1k with
+  life (soft), 14.7k FM, 11.7k pulse, 24.5k all three. The song test's 4 tones: 20.7k -> 88.5k per 128 samples (1.8
+  -> 7.6 % CPU). RAM: 14 KB more (the saw tables).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/drone/drone.cpp                | 640 +++++++++++++++++-
+ src/deluge/dsp/drone/drone.h                  | 148 +++-
+ src/deluge/gui/l10n/english.json              |   5 +
+ src/deluge/gui/l10n/g_english.cpp             |   5 +
+ src/deluge/gui/l10n/g_seven_segment.cpp       |   5 +
+ src/deluge/gui/l10n/seven_segment.json        |   5 +
+ src/deluge/gui/l10n/strings.h                 |   7 +
+ src/deluge/gui/menu_item/drone/items.h        |  53 +-
+ src/deluge/gui/ui/menus.cpp                   |  11 +
+ src/deluge/gui/views/drone_view.cpp           |  69 +-
+ src/deluge/gui/views/drone_view.h             |   8 +-
+ src/deluge/model/song/song.cpp                |   9 +-
+ .../processing/engines/audio_engine.cpp       |   7 +
+ 13 files changed, 957 insertions(+), 15 deletions(-)
+
+diff --git a/src/deluge/dsp/drone/drone.cpp b/src/deluge/dsp/drone/drone.cpp
+index 6b228cf2..d034384c 100644
+--- a/src/deluge/dsp/drone/drone.cpp
++++ b/src/deluge/dsp/drone/drone.cpp
+@@ -21,10 +21,13 @@
+ #include "definitions_cxx.hpp"
+ #include <algorithm>
+ #include <cmath>
++#include <cstring>
+ 
+ namespace deluge::dsp {
+ 
+ std::array<const float*, Drone::kNumTables> Drone::tables_{};
++std::array<float, DroneSettings::kNumTimbres> Drone::fundamentals_{};
++float Drone::sawModulatorDepth_ = 0.f;
+ 
+ namespace {
+ 
+@@ -58,7 +61,7 @@ struct TimbreSpec {
+ 	size_t firstTable;
+ };
+ 
+-constexpr std::array<TimbreSpec, S::kNumTimbres> kTimbres{{
++constexpr std::array<TimbreSpec, 4> kTimbres{{
+     // SINE
+     {{0.f, 1.f}, {1, 0}, 0},
+     // SOFT: 1 / n^2 up to the 5th
+@@ -72,6 +75,76 @@ constexpr std::array<TimbreSpec, S::kNumTimbres> kTimbres{{
+ /// Harmonics stay below this, well clear of the Nyquist frequency
+ constexpr float kHighestHarmonicHz = 18000.f;
+ 
++// Life and FM (mastertune-v15)
++
++/// Highest harmonic of each band-limited saw, best first (the highest tone, 5 kHz, still gets 3)
++constexpr std::array<int32_t, Drone::kNumSawTables> kSawHarmonics{24, 16, 12, 8, 6, 4, 3};
++/// The saw modulator's harmonics, at most
++constexpr int32_t kSawModulatorHarmonics = 8;
++
++/// How fast each course moves at the life rate's middle (25): its low-passes' cutoff in hertz. By CourseIndex: drift,
++/// breath, shimmer, pan, the FM's bloom and the pulse width.
++constexpr std::array<float, 6> kCourseHz{0.08f, 0.12f, 0.05f, 0.05f, 0.07f, 0.1f};
++/// A course stays within this many standard deviations, so a tone never strays far
++constexpr float kCourseLimit = 3.f;
++/// What a standard deviation of each course does at the top of life: 6 cents of drift and 3 dB of breath (both as
++/// natural logarithms of the factor), 0.25 of pan (1 is all the way) and 12 % of pulse width. The shimmer crossfades
++/// up to this far towards the fundamental.
++constexpr float kDriftPerCourse = 6.f / 1200.f * 0.693147181f;
++constexpr float kBreathPerCourse = 3.f / 20.f * 2.302585093f;
++constexpr float kPanPerCourse = 0.25f;
++constexpr float kWidthPerCourse = 0.12f;
++constexpr float kShimmerMost = 0.6f;
++/// Where a wandering pulse width stops, unless the setting is narrower still
++constexpr float kWidthLowest = 0.08f;
++
++/// FM: the index at the top, and the modulator this far above the carrier, so the sidebands turn slowly
++constexpr float kFmDeepest = 2.f;
++constexpr float kModulatorOffsetHz = 0.3f;
++constexpr float kPhasePerRadian = 4294967296.f / 6.28318531f;
++/// FM spreads each harmonic into sidebands, the further the deeper and the higher the tone, until they reach past the
++/// Nyquist frequency and alias: the index times the tone's frequency (in hertz) stays within this, by timbre (sine,
++/// soft, organ, rich, pulse). Measured (tests/drone): with the sine modulator nothing aliases louder than -50 dB, with
++/// the saw no louder than in the sound it was chosen by (a pulse at 220 Hz, saw FM of 1.2 radians: about -28 dB).
++constexpr std::array<float, S::kNumTimbres> kFmReachSine{7000.f, 2200.f, 900.f, 900.f, 650.f};
++constexpr std::array<float, S::kNumTimbres> kFmReachSaw{2500.f, 1600.f, 400.f, 300.f, 240.f};
++/// And for a tone whose table has its highest harmonic just below kHighestHarmonicHz: that harmonic's sidebands, about
++/// index times it plus 3 of them further out (kSawTopSpread times as far for the saw), stay below this, whose alias
++/// is above 16 kHz
++constexpr float kFmFoldHz = 28100.f;
++constexpr float kSawTopSpread = 3.f;
++/// FM also puts a sideband at the modulator's 0.3 Hz offset, which ducking or an isochronic pulse would turn into
++/// thumps: a DC blocker (two one-pole high-passes at 3 Hz, -40 dB at 0.3 Hz) takes it out of the tones with FM
++constexpr float kDcBlock = 2.f * 3.14159265f * 3.f / (float)kSampleRate;
++
++/// The highest harmonic in the table Drone::tableFor() picks
++int32_t highestHarmonicOf(S::Timbre timbre, float highestFrequencyHz) {
++	float allowed = kHighestHarmonicHz / std::max(highestFrequencyHz, 1.f);
++	if (timbre == S::Timbre::PULSE) {
++		for (int32_t highest : kSawHarmonics) {
++			if ((float)highest <= allowed) {
++				return highest;
++			}
++		}
++		return kSawHarmonics.back();
++	}
++	for (int32_t highest : kTimbres[static_cast<size_t>(timbre)].levels) {
++		if (highest == 0) {
++			break;
++		}
++		if ((float)highest <= allowed) {
++			return highest;
++		}
++	}
++	return 1;
++}
++
++/// A glide of kGlide a block that arrives exactly
++float glide(float value, float target, float closeEnough) {
++	value += (target - value) * kGlide;
++	return (std::abs(target - value) < closeEnough) ? target : value;
++}
++
+ [[gnu::always_inline]] inline float readTable(const float* table, uint32_t phase) {
+ 	uint32_t index = phase >> 23; // 512 entries
+ 	float fraction = (float)(phase & 0x7FFFFF) * (1.f / 8388608.f);
+@@ -146,10 +219,50 @@ void Drone::initTables(float* memory) {
+ 			tables_[tableIndex] = table;
+ 			tableIndex++;
+ 		}
++		fundamentals_[&spec - kTimbres.data()] = (float)(spec.amplitude[1] / peak);
+ 	}
++
++	// The saws (mastertune-v15): 1 / n up to the 24th harmonic, and fewer for higher tones, all scaled by the full
++	// one's peak like the timbres. A pulse is the difference of two of them.
++	double sawPeak = 0;
++	for (size_t i = 0; i < kTableSize; i++) {
++		double v = 0;
++		for (int32_t h = 1; h <= kSawHarmonics[0]; h++) {
++			v += sine((i * h) % kTableSize) / h;
++		}
++		sawPeak = std::max(sawPeak, std::abs(v));
++	}
++	for (size_t s = 0; s < kNumSawTables; s++) {
++		float* table = memory + (kNumTimbreTables + s) * (kTableSize + 1);
++		for (size_t i = 0; i < kTableSize; i++) {
++			double v = 0;
++			for (int32_t h = 1; h <= kSawHarmonics[s]; h++) {
++				v += sine((i * h) % kTableSize) / h;
++			}
++			table[i] = (float)(v / sawPeak);
++		}
++		table[kTableSize] = table[0];
++		tables_[kNumTimbreTables + s] = table;
++	}
++	fundamentals_[static_cast<size_t>(Timbre::PULSE)] = (float)(1.0 / sawPeak); // Times sin(pi width) for a pulse
++	// The saw modulator as the prototype has it: 2 / pi times the sum of sin(n x) / n, 1.3 times as deep as the sine
++	sawModulatorDepth_ = (float)(1.3 * sawPeak * 2.0 / 3.14159265358979323846);
++}
++
++const float* Drone::sawTableFor(float highestFrequencyHz, int32_t mostHarmonics) {
++	float allowed = kHighestHarmonicHz / std::max(highestFrequencyHz, 1.f);
++	for (size_t s = 0; s < kNumSawTables; s++) {
++		if (kSawHarmonics[s] <= mostHarmonics && (float)kSawHarmonics[s] <= allowed) {
++			return tables_[kNumTimbreTables + s];
++		}
++	}
++	return tables_[kNumTimbreTables + kNumSawTables - 1];
+ }
+ 
+ const float* Drone::tableFor(Timbre timbre, float highestFrequencyHz) const {
++	if (timbre == Timbre::PULSE) {
++		return sawTableFor(highestFrequencyHz, kSawHarmonics[0]);
++	}
+ 	const TimbreSpec& spec = kTimbres[static_cast<size_t>(timbre)];
+ 	float highestHarmonic = kHighestHarmonicHz / std::max(highestFrequencyHz, 1.f);
+ 	size_t tableIndex = spec.firstTable;
+@@ -198,6 +311,35 @@ void Drone::pulseEdges(const Tone& tone, float beatHz, float* attack, float* rel
+ 	*release = std::clamp((float)std::clamp(tone.pulseRelease, (int32_t)0, S::kMaxPulseEdge) * 0.01f, shortest, 0.5f);
+ }
+ 
++bool DroneSettings::isLifeAttribute(const char* name) {
++	return !strcmp(name, "life") || !strcmp(name, "lifeRate") || !strcmp(name, "fm") || !strcmp(name, "fmForm")
++	       || !strcmp(name, "pulseWidth");
++}
++
++void DroneSettings::readLifeAttribute(const char* name, int32_t value) {
++	if (!strcmp(name, "life")) {
++		life = std::clamp(value, (int32_t)0, kMaxLife);
++	}
++	else if (!strcmp(name, "lifeRate")) {
++		lifeRate = std::clamp(value, (int32_t)0, kMaxLife);
++	}
++	else if (!strcmp(name, "fm")) {
++		fm = std::clamp(value, (int32_t)0, kMaxLife);
++	}
++	else if (!strcmp(name, "fmForm")) {
++		fmForm = (FmForm)std::clamp(value, (int32_t)0, kNumFmForms - 1);
++	}
++	else if (!strcmp(name, "pulseWidth")) {
++		pulseWidth = std::clamp(value, kMinPulseWidth, kMaxPulseWidth);
++	}
++}
++
++bool DroneSettings::lifeIsDefault() const {
++	const DroneSettings defaults{};
++	return life == defaults.life && lifeRate == defaults.lifeRate && fm == defaults.fm && fmForm == defaults.fmForm
++	       && pulseWidth == defaults.pulseWidth;
++}
++
+ bool Drone::isSounding(const Settings& settings) const {
+ 	for (size_t i = 0; i < kNumTones; i++) {
+ 		if (voices_[i].started || settings.tones[i].active) {
+@@ -220,6 +362,69 @@ void Drone::reset() {
+ 	voices_ = {};
+ }
+ 
++void Drone::seed(uint32_t seed) {
++	random_ = (((uint64_t)seed << 32) | seed) ^ 0x9E3779B97F4A7C15;
++	if (random_ == 0) {
++		random_ = 0x9E3779B97F4A7C15; // xorshift stays at 0
++	}
++}
++
++/// Uniform from -1 to 1: xorshift64 (Marsaglia), its upper half
++float Drone::randomBipolar() {
++	random_ ^= random_ << 13;
++	random_ ^= random_ >> 7;
++	random_ ^= random_ << 17;
++	return (float)(int32_t)(uint32_t)(random_ >> 32) * (1.f / 2147483648.f);
++}
++
++/// A block's step along a course: the noise through both low-passes
++float Drone::advance(Course& course, const Lively& lively, CourseIndex index) {
++	float coefficient = lively.coefficient[index];
++	course.smooth += coefficient * (randomBipolar() * lively.noiseGain[index] - course.smooth);
++	course.value += coefficient * (course.smooth - course.value);
++	return std::clamp(course.value, -kCourseLimit, kCourseLimit);
++}
++
++/// Life and FM for the whole drone this block: the settings glide, so turning them doesn't step, and the courses'
++/// low-passes follow the rate and the block's length
++void Drone::updateLively(Lively& lively, const Settings& settings, size_t numSamples) {
++	float lifeTarget = (float)std::clamp(settings.life, (int32_t)0, S::kMaxLife) * (1.f / (float)S::kMaxLife);
++	float fmTarget = (float)std::clamp(settings.fm, (int32_t)0, S::kMaxLife) * (kFmDeepest / (float)S::kMaxLife);
++	float sawTarget = (settings.fmForm == S::FmForm::SAW) ? 1.f : 0.f;
++	if (!isSounding()) {
++		// From silence, at the settings straight away
++		life_ = lifeTarget;
++		fmDepth_ = fmTarget;
++		saw_ = sawTarget;
++	}
++	lively.sawStart = saw_;
++	life_ = glide(life_, lifeTarget, 0.0005f);
++	fmDepth_ = glide(fmDepth_, fmTarget, 0.001f);
++	saw_ = glide(saw_, sawTarget, 0.0005f);
++	lively.life = life_;
++	lively.fmDepth = fmDepth_;
++	lively.sawEnd = saw_;
++	lively.width = (float)std::clamp(settings.pulseWidth, S::kMinPulseWidth, S::kMaxPulseWidth) * (1.f / 100.f);
++	if (life_ <= 0.f && fmDepth_ <= 0.f) {
++		return; // The courses stand still
++	}
++
++	if (settings.lifeRate != rateForFactor_) {
++		rateForFactor_ = settings.lifeRate;
++		rateFactor_ = std::exp2((float)(std::clamp(settings.lifeRate, (int32_t)0, S::kMaxLife) - 25) * (1.f / 12.5f));
++	}
++	float radiansPerHz = 6.28318531f * rateFactor_ * (float)numSamples / (float)kSampleRate;
++	for (size_t i = 0; i < kNumCourses; i++) {
++		// Each low-pass: 1 - e^-delta of the way a block, and the noise scaled so the second one's output has a
++		// standard deviation of 1 (the noise, uniform, has a variance of 1/3)
++		float delta = kCourseHz[i] * radiansPerHz;
++		float coefficient = delta * (1.f - 0.5f * delta);
++		float a = 1.f - coefficient;
++		lively.coefficient[i] = coefficient;
++		lively.noiseGain[i] = std::sqrt(3.f * (1.f + a) * (1.f + a) * (1.f + a) / (coefficient * (1.f + a * a)));
++	}
++}
++
+ void Drone::fadeOut(std::span<StereoSample> buffer) {
+ 	// Each tone off, at what its voice is playing (static: too big for the audio routine's stack)
+ 	static Settings fading;
+@@ -242,6 +447,11 @@ void Drone::fadeOut(std::span<StereoSample> buffer) {
+ 		return;
+ 	}
+ 	fading.volume = gainForVolume_;
++	fading.life = lastLife_;
++	fading.lifeRate = lastLifeRate_;
++	fading.fm = lastFm_;
++	fading.fmForm = lastFmForm_;
++	fading.pulseWidth = lastPulseWidth_;
+ 	Context context;
+ 	context.duck = lastDuck_;
+ 	render(buffer, fading, context);
+@@ -257,6 +467,11 @@ void Drone::render(std::span<StereoSample> buffer, const Settings& settings, con
+ 	}
+ 	float volumeGain = volumeGain_ * context.volume * kFullScale;
+ 	lastDuck_ = context.duck;
++	lastLife_ = settings.life;
++	lastLifeRate_ = settings.lifeRate;
++	lastFm_ = settings.fm;
++	lastFmForm_ = settings.fmForm;
++	lastPulseWidth_ = settings.pulseWidth;
+ 
+ 	Context chunkContext = context;
+ 	for (size_t start = 0; start < buffer.size(); start += kChunk) {
+@@ -264,10 +479,22 @@ void Drone::render(std::span<StereoSample> buffer, const Settings& settings, con
+ 		std::array<float, 2 * kChunk> mix{};
+ 		std::span<float> mixSpan{mix.data(), 2 * chunk.size()};
+ 
++		Lively lively;
++		updateLively(lively, settings, chunk.size());
++
+ 		bool any = false;
+ 		for (size_t i = 0; i < kNumTones; i++) {
+-			if (voices_[i].started || settings.tones[i].active) {
+-				renderVoice(voices_[i], settings.tones[i], mixSpan, chunkContext, volumeGain);
++			Voice& voice = voices_[i];
++			const Tone& tone = settings.tones[i];
++			if (voice.started || tone.active) {
++				// With life or FM, or a pulse, or until they've come to rest: the lively way
++				Timbre timbre = voice.started ? voice.timbre : tone.timbre;
++				if (lively.life > 0.f || lively.fmDepth > 0.f || voice.lively || timbre == Timbre::PULSE) {
++					renderLivelyVoice(voice, tone, mixSpan, chunkContext, volumeGain, lively);
++				}
++				else {
++					renderVoice(voice, tone, mixSpan, chunkContext, volumeGain);
++				}
+ 				any = true;
+ 			}
+ 		}
+@@ -296,6 +523,95 @@ void Drone::updatePanGains(Voice& voice, int32_t pan) {
+ 	}
+ }
+ 
++/// One side of a lively tone (mastertune-v15), before its gains: the timbre, or a pulse as the difference of two saws,
++/// read where FM moves the phase to, crossfaded towards its fundamental by the shimmer
++template <Drone::FmKind kFm, bool kPulse, bool kShimmer>
++void Drone::renderSide(float* out, size_t numSamples, uint32_t phase, uint32_t increment, int32_t step, float* dc,
++                       const Oscillator& oscillator) {
++	// All in locals: the output could alias the oscillator's floats, which would have them read again each sample
++	const float* table = oscillator.table;
++	const float* sine = oscillator.sine;
++	const float* sawModulator = oscillator.sawModulator;
++	uint32_t modulatorOffset = oscillator.modulatorOffset;
++	const uint32_t modulatorIncrement = oscillator.modulatorIncrement;
++	float sineDepth = oscillator.sineDepth;
++	const float sineDepthStep = oscillator.sineDepthStep;
++	float sawDepth = oscillator.sawDepth;
++	const float sawDepthStep = oscillator.sawDepthStep;
++	uint32_t width = oscillator.width;
++	const uint32_t widthStep = (uint32_t)oscillator.widthStep;
++	float shimmer = oscillator.shimmer;
++	const float shimmerStep = oscillator.shimmerStep;
++	float fundamental = oscillator.fundamental;
++	const float fundamentalStep = oscillator.fundamentalStep;
++	float dcShare = oscillator.dcShare;
++	const float dcShareStep = oscillator.dcShareStep;
++	float low1 = dc[0];
++	float low2 = dc[1];
++	for (size_t s = 0; s < numSamples; s++) {
++		uint32_t p = phase;
++		if constexpr (kFm != FmKind::NONE) {
++			// The modulator at the carrier's phase plus its slowly turning offset. At most 2 radians times the saw's
++			// 1.53 and its peak (below 1) of a cycle's 2^32: under 2^31, so the shift fits
++			uint32_t modulator = phase + modulatorOffset;
++			float shift = 0.f;
++			if constexpr (kFm == FmKind::SINE || kFm == FmKind::BOTH) {
++				shift += sineDepth * readTable(sine, modulator);
++				sineDepth += sineDepthStep;
++			}
++			if constexpr (kFm == FmKind::SAW || kFm == FmKind::BOTH) {
++				shift += sawDepth * readTable(sawModulator, modulator);
++				sawDepth += sawDepthStep;
++			}
++			p += (uint32_t)(int32_t)shift;
++			modulatorOffset += modulatorIncrement;
++		}
++		float v;
++		if constexpr (kPulse) {
++			v = 0.5f * (readTable(table, p) - readTable(table, p - width));
++		}
++		else {
++			v = readTable(table, p);
++		}
++		if constexpr (kShimmer) {
++			// The fundamental alone; a pulse's is a quarter cycle and half its width off the saw's
++			uint32_t fundamentalPhase = kPulse ? p + 0x40000000 - (width >> 1) : p;
++			v += fundamental * readTable(sine, fundamentalPhase) - shimmer * v;
++			shimmer += shimmerStep;
++			fundamental += fundamentalStep;
++		}
++		if constexpr (kPulse) {
++			width += widthStep;
++		}
++		if constexpr (kFm != FmKind::NONE) {
++			// Each high-pass takes out what its low-pass lets through
++			low1 += kDcBlock * (v - low1);
++			low2 += kDcBlock * (v - low1 - low2);
++			v -= dcShare * (low1 + low2);
++			dcShare += dcShareStep;
++		}
++		out[s] = v;
++		phase += increment;
++		increment += (uint32_t)step;
++	}
++	dc[0] = low1;
++	dc[1] = low2;
++}
++
++Drone::SideFunction Drone::sideFunction(FmKind fm, bool pulse, bool shimmer) {
++	static constexpr std::array<std::array<std::array<SideFunction, 2>, 2>, 4> kFunctions{{
++	    {{{&renderSide<FmKind::NONE, false, false>, &renderSide<FmKind::NONE, false, true>},
++	      {&renderSide<FmKind::NONE, true, false>, &renderSide<FmKind::NONE, true, true>}}},
++	    {{{&renderSide<FmKind::SINE, false, false>, &renderSide<FmKind::SINE, false, true>},
++	      {&renderSide<FmKind::SINE, true, false>, &renderSide<FmKind::SINE, true, true>}}},
++	    {{{&renderSide<FmKind::SAW, false, false>, &renderSide<FmKind::SAW, false, true>},
++	      {&renderSide<FmKind::SAW, true, false>, &renderSide<FmKind::SAW, true, true>}}},
++	    {{{&renderSide<FmKind::BOTH, false, false>, &renderSide<FmKind::BOTH, false, true>},
++	      {&renderSide<FmKind::BOTH, true, false>, &renderSide<FmKind::BOTH, true, true>}}},
++	}};
++	return kFunctions[static_cast<size_t>(fm)][pulse ? 1 : 0][shimmer ? 1 : 0];
++}
++
+ void Drone::renderVoice(Voice& voice, const Tone& tone, std::span<float> mix, const Context& context,
+                         float volumeGain) {
+ 	size_t numSamples = mix.size() / 2;
+@@ -490,4 +806,322 @@ void Drone::renderVoice(Voice& voice, const Tone& tone, std::span<float> mix, co
+ 	}
+ }
+ 
++/// A tone with life, FM or the Pulse timbre (mastertune-v15): as renderVoice(), with each side read by renderSide()
++/// before its gains. renderVoice() stays as it was for the steady drone: the firmware's float optimisations would
++/// round a version shared with this differently, and the steady drone keeps its sound bit for bit.
++void Drone::renderLivelyVoice(Voice& voice, const Tone& tone, std::span<float> mix, const Context& context,
++                              float volumeGain, const Lively& lively) {
++	size_t numSamples = mix.size() / 2;
++	float inverseNumSamples = 1.f / (float)numSamples;
++
++	// Settings, and where the glides get to by the end of this block
++	float frequencyHz;
++	if (tone.byNote) {
++		if (tone.note != voice.hzForNote || tone.cents != voice.hzForCents || context.a4Hz != voice.hzForA4) {
++			voice.hzForNote = tone.note;
++			voice.hzForCents = tone.cents;
++			voice.hzForA4 = context.a4Hz;
++			voice.noteHz = noteToHz(tone.note, tone.cents, context.a4Hz);
++		}
++		frequencyHz = voice.noteHz;
++	}
++	else {
++		frequencyHz = (float)std::clamp(tone.frequency, S::kMinFrequency, S::kMaxFrequency) * 0.01f;
++	}
++	float beatHz = (tone.sync > 0) ? syncedBeatHz(tone.sync, tone.triplet, context.quarterNotesPerSecond)
++	                               : (float)std::clamp(tone.beat, (int32_t)0, S::kMaxBeat) * 0.01f;
++	beatHz = std::min(beatHz,
++	                  frequencyHz); // So the lower of the two tones doesn't go below 0 Hz
++	float carrierTarget = frequencyHz * kPhasePerHz;
++	float halfBeatTarget = beatHz * 0.5f * kPhasePerHz;
++
++	if (!voice.started) {
++		// From silence, at the setting straight away
++		voice.started = true;
++		voice.mode = tone.mode;
++		voice.timbre = tone.timbre;
++		voice.carrierIncrement = carrierTarget;
++		voice.halfBeatIncrement = halfBeatTarget;
++		voice.level = 0.f;
++		voice.gainL = voice.gainR = 0.f;
++		updatePanGains(voice, tone.pan);
++		voice.panL = voice.panGainL;
++		voice.panR = voice.panGainR;
++		voice.courses = {};
++	}
++	if (!voice.lively) {
++		// Coming from renderVoice(), or from silence: life and FM from rest, a pulse at its width
++		voice.lively = true;
++		voice.shimmer = voice.fundamental = voice.fmIndex = voice.dcShare = 0.f;
++		voice.dc = {};
++		voice.width = lively.width;
++	}
++
++	// Life (mastertune-v15): a step along each of the tone's courses. Both sides of a beating tone move together, so
++	// the beat stays as set.
++	bool living = (lively.life > 0.f);
++	float breath = 1.f;
++	float panOffset = 0.f;
++	float shimmerEnd = 0.f;
++	float widthTarget = lively.width;
++	if (living) {
++		float x = lively.life * kDriftPerCourse * advance(voice.courses[DRIFT], lively, DRIFT);
++		carrierTarget *= 1.f + x * (1.f + x * (0.5f + x * (1.f / 6.f))); // e^x, x within +-0.011
++		breath = std::exp(lively.life * kBreathPerCourse * advance(voice.courses[BREATH], lively, BREATH));
++		shimmerEnd = kShimmerMost * lively.life
++		             * std::clamp(0.5f + 0.5f * advance(voice.courses[SHIMMER], lively, SHIMMER), 0.f, 1.f);
++		panOffset = kPanPerCourse * lively.life * advance(voice.courses[PAN], lively, PAN);
++		if (voice.timbre == Timbre::PULSE) {
++			widthTarget =
++			    std::clamp(lively.width + kWidthPerCourse * lively.life * advance(voice.courses[WIDTH], lively, WIDTH),
++			               std::min(lively.width, kWidthLowest), 0.5f);
++		}
++	}
++
++	// A new mode or timbre, or off, goes through silence
++	bool fadingOut = (!tone.active || tone.mode != voice.mode || tone.timbre != voice.timbre);
++	if (tone.level != voice.gainForLevel) {
++		voice.gainForLevel = tone.level;
++		voice.levelGain = levelToGain(tone.level);
++	}
++	float levelTarget = fadingOut ? 0.f : voice.levelGain * volumeGain;
++	if (living) {
++		levelTarget *= breath;
++	}
++	float levelEnd = voice.level + (levelTarget - voice.level) * (fadingOut ? kFade : kGlide);
++	if (fadingOut && levelEnd < kSilent) {
++		levelEnd = 0.f;
++	}
++
++	float carrierStart = voice.carrierIncrement;
++	float carrierEnd = carrierStart + (carrierTarget - carrierStart) * kGlide;
++	float halfBeatStart = voice.halfBeatIncrement;
++	float halfBeatEnd = halfBeatStart + (halfBeatTarget - halfBeatStart) * kGlide;
++	voice.carrierIncrement = carrierEnd;
++	voice.halfBeatIncrement = halfBeatEnd;
++
++	// A synced beat locks to the song's beat grid while it plays, pulling a
++	// quarter of the way there each block
++	float lockCorrection = 0.f;
++	if (tone.sync > 0 && context.position >= 0.) {
++		double cyclesPerQuarter = syncedCyclesPerQuarter(tone.sync, tone.triplet);
++		double halfBeats = context.position * cyclesPerQuarter * 0.5;
++		uint32_t target = (uint32_t)(uint64_t)((halfBeats - std::floor(halfBeats)) * 4294967296.0);
++		int32_t error = (int32_t)(target - voice.halfBeatPhase);
++		lockCorrection = std::clamp((float)error * 0.25f * inverseNumSamples, -0.5f * halfBeatEnd, 0.5f * halfBeatEnd);
++	}
++
++	// Gains: level, pan (constant power, 0 dB in the middle) and the sidechain,
++	// gliding over the block from where the last one ended, so ducking doesn't
++	// step
++	updatePanGains(voice, tone.pan);
++	float panTargetL = voice.panGainL;
++	float panTargetR = voice.panGainR;
++	if (living) {
++		// The shimmer's pan wanders around the setting: the same constant power law, from the sine table
++		float pan = std::clamp(
++		    (float)std::clamp(tone.pan, -S::kMaxPan, S::kMaxPan) * (1.f / (float)S::kMaxPan) + panOffset, -1.f, 1.f);
++		uint32_t angle = (uint32_t)((pan + 1.f) * 536870912.f); // 0 to a quarter cycle
++		panTargetL = readTable(tables_[0], angle + 0x40000000) * 1.41421356f;
++		panTargetR = readTable(tables_[0], angle) * 1.41421356f;
++	}
++	voice.panL += (panTargetL - voice.panL) * kGlide;
++	voice.panR += (panTargetR - voice.panR) * kGlide;
++	float gainEndL = levelEnd * voice.panL * context.duck;
++	float gainEndR = levelEnd * voice.panR * context.duck;
++	float gainL = voice.gainL;
++	float gainR = voice.gainR;
++	float gainStepL = (gainEndL - gainL) * inverseNumSamples;
++	float gainStepR = (gainEndR - gainR) * inverseNumSamples;
++
++	// Phase increments, gliding sample by sample
++	uint32_t carrierIncrement = (uint32_t)carrierStart;
++	int32_t carrierStep = (int32_t)(((int64_t)(uint32_t)carrierEnd - (int64_t)carrierIncrement) / (int64_t)numSamples);
++	uint32_t halfBeatIncrement = (uint32_t)std::max(halfBeatStart + lockCorrection, 0.f);
++	int32_t halfBeatStep =
++	    (int32_t)(((int64_t)(uint32_t)std::max(halfBeatEnd + lockCorrection, 0.f) - (int64_t)halfBeatIncrement)
++	              / (int64_t)numSamples);
++
++	uint32_t carrierPhase = voice.carrierPhase;
++	uint32_t halfBeatPhase = voice.halfBeatPhase;
++
++	// Band-limited for the highest frequency this block reaches
++	float highestHz = (std::max(carrierStart, carrierEnd) + std::max(halfBeatStart, halfBeatEnd)) / kPhasePerHz;
++	const float* table = tableFor(voice.timbre, highestHz);
++
++	// FM (mastertune-v15): its depth blooms and fades on the tone's own course, gliding, and limited for high tones
++	float fmTarget = 0.f;
++	if (lively.fmDepth > 0.f) {
++		float bloom = std::clamp(0.5f + 0.5f * advance(voice.courses[BLOOM], lively, BLOOM), 0.f, 1.f);
++		size_t timbre = static_cast<size_t>(voice.timbre);
++		float reach = kFmReachSine[timbre] + (kFmReachSaw[timbre] - kFmReachSine[timbre]) * lively.sawEnd;
++		float highest = (float)highestHarmonicOf(voice.timbre, highestHz);
++		float top = (kFmFoldHz / highestHz - highest - 3.f) / (highest * (1.f + (kSawTopSpread - 1.f) * lively.sawEnd));
++		fmTarget = std::min({lively.fmDepth * bloom * bloom, reach / highestHz, std::max(top, 0.f)});
++	}
++	float fmStart = voice.fmIndex;
++	float fmEnd = glide(fmStart, fmTarget, 0.0001f);
++	voice.fmIndex = fmEnd;
++	// The DC blocker comes in with FM at once (from nothing, so without a step), and fades out after it
++	float dcStart = voice.dcShare;
++	float dcEnd = (fmEnd > 0.f) ? 1.f : glide(dcStart, 0.f, 0.001f);
++	voice.dcShare = dcEnd;
++	bool fm = (fmStart > 0.f || fmEnd > 0.f || dcStart > 0.f);
++	if (!fm) {
++		voice.dc = {};
++	}
++
++	// The shimmer and a pulse's width, from where they were
++	float shimmerStart = voice.shimmer;
++	voice.shimmer = shimmerEnd;
++	float widthStart = voice.width;
++	float widthEnd = glide(widthStart, widthTarget, 0.00001f);
++	voice.width = widthEnd;
++	uint32_t widthPhaseStart = (uint32_t)(widthStart * 4294967296.f);
++	uint32_t widthPhaseEnd = (uint32_t)(widthEnd * 4294967296.f);
++	float fundamentalStart = voice.fundamental;
++	float fundamentalAmplitude = fundamentals_[static_cast<size_t>(voice.timbre)];
++	if (voice.timbre == Timbre::PULSE) {
++		fundamentalAmplitude *= readTable(tables_[0], widthPhaseEnd >> 1); // sin(pi width)
++	}
++	voice.fundamental = shimmerEnd * fundamentalAmplitude;
++
++	bool pulseWave = (voice.timbre == Timbre::PULSE);
++	bool shimmer = (voice.timbre != Timbre::SINE && (shimmerStart > 0.f || shimmerEnd > 0.f));
++
++	// Each side into its own buffer
++	float* out = mix.data();
++	Oscillator o;
++	o.table = table;
++	o.sine = tables_[0];
++	o.sawModulator = sawTableFor(highestHz, kSawModulatorHarmonics);
++	o.modulatorOffset = voice.modulatorPhase;
++	o.modulatorIncrement = (uint32_t)(kModulatorOffsetHz * kPhasePerHz);
++	float sineStart = fmStart * (1.f - lively.sawStart) * kPhasePerRadian;
++	float sineEnd = fmEnd * (1.f - lively.sawEnd) * kPhasePerRadian;
++	float sawStart = fmStart * lively.sawStart * sawModulatorDepth_ * kPhasePerRadian;
++	float sawEnd = fmEnd * lively.sawEnd * sawModulatorDepth_ * kPhasePerRadian;
++	o.sineDepth = sineStart;
++	o.sineDepthStep = (sineEnd - sineStart) * inverseNumSamples;
++	o.sawDepth = sawStart;
++	o.sawDepthStep = (sawEnd - sawStart) * inverseNumSamples;
++	o.width = widthPhaseStart;
++	o.widthStep = (int32_t)(((int64_t)widthPhaseEnd - (int64_t)widthPhaseStart) / (int64_t)numSamples);
++	o.shimmer = shimmerStart;
++	o.shimmerStep = (shimmerEnd - shimmerStart) * inverseNumSamples;
++	o.fundamental = fundamentalStart;
++	o.fundamentalStep = (voice.fundamental - fundamentalStart) * inverseNumSamples;
++	o.dcShare = dcStart;
++	o.dcShareStep = (dcEnd - dcStart) * inverseNumSamples;
++	FmKind fmKind = !fm                                    ? FmKind::NONE
++	                : (sawStart == 0.f && sawEnd == 0.f)   ? FmKind::SINE
++	                : (sineStart == 0.f && sineEnd == 0.f) ? FmKind::SAW
++	                                                       : FmKind::BOTH;
++	SideFunction renderOneSide = sideFunction(fmKind, pulseWave, shimmer);
++	uint32_t numSamples32 = (uint32_t)numSamples;
++	voice.modulatorPhase += o.modulatorIncrement * numSamples32;
++
++	float* a = sideA_.data();
++	float* b = sideB_.data();
++	if (voice.mode == Mode::BINAURAL || voice.mode == Mode::MONAURAL) {
++		renderOneSide(a, numSamples, carrierPhase - halfBeatPhase, carrierIncrement - halfBeatIncrement,
++		              (int32_t)((uint32_t)carrierStep - (uint32_t)halfBeatStep), &voice.dc[0], o);
++		renderOneSide(b, numSamples, carrierPhase + halfBeatPhase, carrierIncrement + halfBeatIncrement,
++		              (int32_t)((uint32_t)carrierStep + (uint32_t)halfBeatStep), &voice.dc[2], o);
++	}
++	else {
++		renderOneSide(a, numSamples, carrierPhase, carrierIncrement, carrierStep, &voice.dc[0], o);
++	}
++
++	// Where the phases get to, as renderVoice()'s loops have them
++	uint32_t steps = numSamples32 * (numSamples32 - 1) / 2;
++	carrierPhase += carrierIncrement * numSamples32 + (uint32_t)carrierStep * steps;
++	if (voice.mode == Mode::BINAURAL || voice.mode == Mode::MONAURAL) {
++		halfBeatPhase += halfBeatIncrement * numSamples32 + (uint32_t)halfBeatStep * steps;
++	}
++
++	switch (voice.mode) {
++	case Mode::TONE:
++		for (size_t s = 0; s < numSamples; s++) {
++			gainL += gainStepL;
++			gainR += gainStepR;
++			out[2 * s] += a[s] * gainL;
++			out[2 * s + 1] += a[s] * gainR;
++		}
++		break;
++
++	case Mode::BINAURAL:
++		for (size_t s = 0; s < numSamples; s++) {
++			gainL += gainStepL;
++			gainR += gainStepR;
++			out[2 * s] += a[s] * gainL;
++			out[2 * s + 1] += b[s] * gainR;
++		}
++		break;
++
++	case Mode::MONAURAL:
++		for (size_t s = 0; s < numSamples; s++) {
++			float v = 0.5f * (a[s] + b[s]);
++			gainL += gainStepL;
++			gainR += gainStepR;
++			out[2 * s] += v * gainL;
++			out[2 * s + 1] += v * gainR;
++		}
++		break;
++
++	case Mode::ISOCHRONIC: {
++		bool pulsing = (halfBeatEnd + lockCorrection) > 0.f;
++		float attack;
++		float release;
++		pulseEdges(tone, beatHz, &attack, &release);
++		float inverseAttack = 1.f / attack;
++		float inverseRelease = 1.f / release;
++		for (size_t s = 0; s < numSamples; s++) {
++			float v = a[s];
++			if (pulsing) {
++				v *= pulse((float)(halfBeatPhase << 1) * (1.f / 4294967296.f), attack, inverseAttack, release,
++				           inverseRelease);
++			}
++			halfBeatPhase += halfBeatIncrement;
++			halfBeatIncrement += halfBeatStep;
++			gainL += gainStepL;
++			gainR += gainStepR;
++			out[2 * s] += v * gainL;
++			out[2 * s + 1] += v * gainR;
++		}
++		break;
++	}
++	}
++
++	// The beat keeps its phase in the tone modes too, so a switch to a beating
++	// mode starts where the grid is
++	if (voice.mode == Mode::TONE) {
++		halfBeatPhase += (uint32_t)((halfBeatStart + halfBeatEnd) * 0.5f * (float)numSamples);
++	}
++
++	voice.carrierPhase = carrierPhase;
++	voice.halfBeatPhase = halfBeatPhase;
++	voice.level = levelEnd;
++	voice.gainL = gainEndL;
++	voice.gainR = gainEndR;
++
++	// Through silence: take on the new mode and timbre, or stop
++	if (fadingOut && levelEnd == 0.f) {
++		if (!tone.active) {
++			voice.started = false;
++		}
++		else {
++			voice.mode = tone.mode;
++			voice.timbre = tone.timbre;
++		}
++	}
++
++	// Once life and FM have come to rest (and it's no pulse), renderVoice() takes the tone on
++	if (!voice.started
++	    || (lively.life <= 0.f && lively.fmDepth <= 0.f && fmEnd <= 0.f && dcEnd <= 0.f && shimmerEnd <= 0.f
++	        && voice.timbre != Timbre::PULSE)) {
++		voice.lively = false;
++	}
++}
++
+ } // namespace deluge::dsp
+diff --git a/src/deluge/dsp/drone/drone.h b/src/deluge/dsp/drone/drone.h
+index 6fc676a4..50435920 100644
+--- a/src/deluge/dsp/drone/drone.h
++++ b/src/deluge/dsp/drone/drone.h
+@@ -44,6 +44,10 @@ namespace deluge::dsp {
+ /// keeps what's sounding, so a new song's drone takes over from the last one
+ /// without a break: tones glide to their new frequencies and levels, and fade
+ /// out and in where the mode or timbre changes.
++///
++/// Life and FM (mastertune-v15) make it move by itself, the way a played instrument does: each tone drifts, breathes
++/// and shimmers on its own slow random courses, and FM blooms and fades in it. Both at 0, it's the steady drone of
++/// before, bit for bit.
+ struct DroneSettings {
+ 	static constexpr size_t kNumTones = 16;
+ 
+@@ -55,8 +59,9 @@ struct DroneSettings {
+ 		SOFT,  ///< Harmonics 2 to 5, each at 1 / n^2: mellow
+ 		ORGAN, ///< Octaves 2, 4 and 8, like drawbars
+ 		RICH,  ///< Harmonics 2 to 8 at 1 / n, a band-limited saw
++		PULSE, ///< A band-limited pulse, 24 partials where the pitch allows, as wide as pulseWidth (mastertune-v15)
+ 	};
+-	static constexpr int32_t kNumTimbres = 4;
++	static constexpr int32_t kNumTimbres = 5;
+ 
+ 	// Frequencies in hundredths of a hertz, as the menu shows them
+ 	static constexpr int32_t kMinFrequency = 1000;   ///< 10.00 Hz
+@@ -106,6 +111,49 @@ struct DroneSettings {
+ 	int32_t sidechain = 0;
+ 	int32_t sidechainShape = -601295438; ///< As the reverb's default
+ 
++	/// Life (mastertune-v15), 0 to kMaxLife: each tone's pitch drifts (6 cents standard deviation at the top), its
++	/// level breathes (3 dB), its brightness and pan shimmer (towards its fundamental alone, and +-0.25 around its pan)
++	/// and a pulse's width wanders (+-12 %), each on its own slow random course, all growing with it. 0 is the steady
++	/// drone.
++	static constexpr int32_t kMaxLife = 50;
++	int32_t life = 0;
++	/// How fast life and the FM's bloom move, 0 to kMaxLife: 25 as designed (the pitch drifting at about 0.08 Hz),
++	/// each 12.5 steps twice as fast or half as fast
++	int32_t lifeRate = 25;
++	/// FM (mastertune-v15), 0 to kMaxLife: a modulator at each tone's frequency plus 0.3 Hz moves its phase, up to 2
++	/// radians deep at the top, the depth blooming and fading on its own course. Limited for high tones, so the
++	/// sidebands don't alias.
++	int32_t fm = 0;
++	enum class FmForm : uint8_t {
++		SINE, ///< A sine modulator
++		SAW,  ///< A band-limited saw (8 harmonics), 1.3 times as deep: brassy
++	};
++	static constexpr int32_t kNumFmForms = 2;
++	FmForm fmForm = FmForm::SINE;
++	/// Width of the Pulse timbre in percent of its cycle (mastertune-v15); life makes it wander around it, between 8
++	/// and 50 %
++	static constexpr int32_t kMinPulseWidth = 5;
++	static constexpr int32_t kMaxPulseWidth = 50;
++	int32_t pulseWidth = 30;
++
++	/// Song file (Song::writeDroneToFile()): life, FM and the pulse width as attributes of the drone, each as its name
++	/// and value
++	template <typename Write>
++	void writeLifeAttributes(Write&& write) const {
++		write("life", life);
++		write("lifeRate", lifeRate);
++		write("fm", fm);
++		write("fmForm", (int32_t)fmForm);
++		write("pulseWidth", pulseWidth);
++	}
++	/// Whether an attribute of the drone in a song file is one of them
++	[[nodiscard]] static bool isLifeAttribute(const char* name);
++	/// Takes one of them from a song file, within its range. A file without them (before mastertune-v15) keeps the
++	/// defaults: a steady drone.
++	void readLifeAttribute(const char* name, int32_t value);
++	/// Whether life, FM and the pulse width are as a new song has them
++	[[nodiscard]] bool lifeIsDefault() const;
++
+ 	[[nodiscard]] bool anyActive() const {
+ 		for (const Tone& tone : tones) {
+ 			if (tone.active) {
+@@ -139,7 +187,11 @@ public:
+ 	/// floats that stay put
+ 	static void initTables(float* memory);
+ 	static constexpr size_t kTableSize = 512;
+-	static constexpr size_t kNumTables = 13;
++	static constexpr size_t kNumTimbreTables = 13;
++	/// Band-limited saws (mastertune-v15), for the Pulse timbre and the saw FM: 24 harmonics, and fewer for higher
++	/// tones
++	static constexpr size_t kNumSawTables = 7;
++	static constexpr size_t kNumTables = kNumTimbreTables + kNumSawTables;
+ 	static constexpr size_t kTableMemoryFloats = kNumTables * (kTableSize + 1);
+ 	[[nodiscard]] static bool tablesReady() { return tables_[0] != nullptr; }
+ 
+@@ -155,6 +207,10 @@ public:
+ 	/// Starts every tone from silence again, e.g. for a new song
+ 	void reset();
+ 
++	/// Seeds life's random courses (mastertune-v15), e.g. from the firmware's random generator, so they differ from
++	/// one power-on to the next
++	void seed(uint32_t seed);
++
+ 	/// Fades out whatever is still sounding, at the pitch it's at: for when there's
+ 	/// no song to render the drone of, e.g. while one loads
+ 	void fadeOut(std::span<StereoSample> buffer);
+@@ -172,6 +228,57 @@ public:
+ 	static void pulseEdges(const Tone& tone, float beatHz, float* attack, float* release);
+ 
+ private:
++	/// A slow random course (mastertune-v15): white noise through two one-pole low-passes, a step each block,
++	/// wandering around 0 with a standard deviation of 1. It never repeats: the noise is xorshift64's, whose period is
++	/// 2^64 - 1 steps.
++	struct Course {
++		float smooth = 0.f; ///< After the first low-pass
++		float value = 0.f;  ///< After the second
++	};
++	enum CourseIndex : size_t { DRIFT, BREATH, SHIMMER, PAN, BLOOM, WIDTH, kNumCourses };
++
++	/// Life and FM for the whole drone in this block (mastertune-v15)
++	struct Lively {
++		float life = 0.f;     ///< 0 to 1, gliding to the setting
++		float fmDepth = 0.f;  ///< Deepest FM index in radians, gliding to the setting
++		float sawStart = 0.f; ///< FM form, 0 sine to 1 saw, crossfading: at the start of the block
++		float sawEnd = 0.f;   ///< And at its end
++		float width = 0.f;    ///< The pulse width setting, 0 to 1
++		std::array<float, kNumCourses> coefficient{}; ///< The courses' low-passes, for this block's length and the rate
++		std::array<float, kNumCourses> noiseGain{};   ///< So each course has a standard deviation of 1
++	};
++
++	/// FM with a sine or a saw modulator, or both while crossfading from one to the other
++	enum class FmKind : uint8_t { NONE, SINE, SAW, BOTH };
++
++	/// What a lively tone's sides read over a block (mastertune-v15), each value gliding from its start by its step
++	/// per sample
++	struct Oscillator {
++		const float* table;        ///< The timbre's, or for a pulse the saw it's made of
++		const float* sine;         ///< For the fundamental, and the sine modulator
++		const float* sawModulator; ///< The saw modulator's, band-limited for the tone's frequency
++		uint32_t modulatorOffset;  ///< The modulator's phase ahead of each side's carrier (0.3 Hz)
++		uint32_t modulatorIncrement;
++		float sineDepth; ///< FM index of the sine modulator in phase (2^32 a cycle)
++		float sineDepthStep;
++		float sawDepth; ///< And of the saw modulator
++		float sawDepthStep;
++		uint32_t width; ///< Pulse width in phase
++		int32_t widthStep;
++		float shimmer; ///< Crossfade towards the fundamental alone
++		float shimmerStep;
++		float fundamental; ///< The fundamental's gain in that crossfade: shimmer times its amplitude
++		float fundamentalStep;
++		float dcShare; ///< How much of the DC blocker is in (FM puts a sideband near 0 Hz)
++		float dcShareStep;
++	};
++	using SideFunction = void (*)(float* out, size_t numSamples, uint32_t phase, uint32_t increment, int32_t step,
++	                              float* dc, const Oscillator& oscillator);
++	template <FmKind kFm, bool kPulse, bool kShimmer>
++	static void renderSide(float* out, size_t numSamples, uint32_t phase, uint32_t increment, int32_t step, float* dc,
++	                       const Oscillator& oscillator);
++	static SideFunction sideFunction(FmKind fm, bool pulse, bool shimmer);
++
+ 	struct Voice {
+ 		uint32_t carrierPhase = 0;
+ 		uint32_t halfBeatPhase = 0;   ///< Runs at half the beat; the two tones sit
+@@ -199,19 +306,56 @@ private:
+ 		                        ///< through silence
+ 		Timbre timbre = Timbre::SINE;
+ 		bool started = false;
++
++		// Life and FM (mastertune-v15), at rest while both are off
++		bool lively = false; ///< Rendered by renderLivelyVoice(), until life and FM have come to rest
++		std::array<Course, kNumCourses> courses{};
++		float shimmer = 0.f;         ///< Crossfade towards the fundamental alone, at the end of the last block
++		float fundamental = 0.f;     ///< Shimmer times the fundamental's amplitude, at the end of the last block
++		float fmIndex = 0.f;         ///< Radians, at the end of the last block
++		float width = 0.f;           ///< Pulse width, 0 to 0.5 of the cycle, at the end of the last block
++		uint32_t modulatorPhase = 0; ///< The FM modulator's phase ahead of the carrier's, turning at 0.3 Hz
++		std::array<float, 4> dc{};   ///< The DC blocker's two low-passes, per side
++		float dcShare = 0.f;         ///< How much of the DC blocker is in, at the end of the last block
+ 	};
+ 
+ 	const float* tableFor(Timbre timbre, float highestFrequencyHz) const;
++	/// The saw with the most harmonics, up to mostHarmonics, that stay below kHighestHarmonicHz (mastertune-v15)
++	static const float* sawTableFor(float highestFrequencyHz, int32_t mostHarmonics);
+ 	void renderVoice(Voice& voice, const Tone& tone, std::span<float> mix, const Context& context, float volumeGain);
++	void renderLivelyVoice(Voice& voice, const Tone& tone, std::span<float> mix, const Context& context,
++	                       float volumeGain, const Lively& lively);
+ 	static void updatePanGains(Voice& voice, int32_t pan);
+ 	[[nodiscard]] static int32_t clampSync(int32_t sync);
++	void updateLively(Lively& lively, const Settings& settings, size_t numSamples);
++	float randomBipolar();
++	float advance(Course& course, const Lively& lively, CourseIndex index);
+ 
+ 	std::array<Voice, kNumTones> voices_{};
+ 	int32_t gainForVolume_ = -1;
+ 	float volumeGain_ = 0.f;
+ 	float lastDuck_ = 1.f; ///< Sidechain gain the last block ended at, for fadeOut()
+ 
++	// Life and FM for the whole drone (mastertune-v15)
++	float life_ = 0.f;                     ///< 0 to 1, gliding to the setting
++	float fmDepth_ = 0.f;                  ///< Deepest FM index in radians, gliding to the setting
++	float saw_ = 0.f;                      ///< FM form, 0 sine to 1 saw, crossfading to the setting
++	int32_t rateForFactor_ = -1;           ///< The life rate rateFactor_ was worked out for
++	float rateFactor_ = 1.f;               ///< How much faster than designed the courses move
++	uint64_t random_ = 0x9E3779B97F4A7C15; ///< xorshift64's state: never 0
++	// The settings the last block had, for fadeOut()
++	int32_t lastLife_ = 0;
++	int32_t lastLifeRate_ = 25;
++	int32_t lastFm_ = 0;
++	Settings::FmForm lastFmForm_ = Settings::FmForm::SINE;
++	int32_t lastPulseWidth_ = 30;
++	// Each side of a lively tone, rendered before its gains
++	std::array<float, 128> sideA_{};
++	std::array<float, 128> sideB_{};
++
+ 	static std::array<const float*, kNumTables> tables_;
++	static std::array<float, Settings::kNumTimbres> fundamentals_; ///< Amplitude of each timbre's fundamental
++	static float sawModulatorDepth_; ///< Scales the saw modulator to 1.3 times the sine's depth (see initTables())
+ };
+ 
+ } // namespace deluge::dsp
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index 347f699b..5f8ec334 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -948,6 +948,11 @@
+         "STRING_FOR_ORGAN": "Organ",
+         "STRING_FOR_RICH": "Rich",
+         "STRING_FOR_LEVEL": "Level",
++        "STRING_FOR_PULSE": "Pulse",
++        "STRING_FOR_LIFE": "Life",
++        "STRING_FOR_DRONE_RATE": "Rate",
++        "STRING_FOR_FM_FORM": "FM form",
++        "STRING_FOR_DRONE_PULSE_WIDTH": "Pulse width",
+         "STRING_FOR_CPU_MONITOR": "CPU monitor",
+         "STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING": "Flicker-free dimming",
+         "STRING_FOR_TIME_CHANGE": "Time change",
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index 1b509bf6..81b41ad6 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -876,6 +876,11 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_ORGAN, "Organ"},
+         {STRING_FOR_RICH, "Rich"},
+         {STRING_FOR_LEVEL, "Level"},
++        {STRING_FOR_PULSE, "Pulse"},
++        {STRING_FOR_LIFE, "Life"},
++        {STRING_FOR_DRONE_RATE, "Rate"},
++        {STRING_FOR_FM_FORM, "FM form"},
++        {STRING_FOR_DRONE_PULSE_WIDTH, "Pulse width"},
+         {STRING_FOR_CPU_MONITOR, "CPU monitor"},
+         {STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING, "Flicker-free dimming"},
+         {STRING_FOR_TIME_CHANGE, "Time change"},
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index 017ef128..c38eb82b 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -517,6 +517,11 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_ORGAN, "ORGN"},
+         {STRING_FOR_RICH, "RICH"},
+         {STRING_FOR_LEVEL, "LEVL"},
++        {STRING_FOR_PULSE, "PULS"},
++        {STRING_FOR_LIFE, "LIFE"},
++        {STRING_FOR_DRONE_RATE, "RATE"},
++        {STRING_FOR_FM_FORM, "FORM"},
++        {STRING_FOR_DRONE_PULSE_WIDTH, "PW"},
+         {STRING_FOR_CPU_MONITOR, "CPU"},
+         {STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING, "DIMM"},
+         {STRING_FOR_TIME_CHANGE, "TIME"},
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index d638c8aa..9ccf9883 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -552,6 +552,11 @@
+         "STRING_FOR_ORGAN": "ORGN",
+         "STRING_FOR_RICH": "RICH",
+         "STRING_FOR_LEVEL": "LEVL",
++        "STRING_FOR_PULSE": "PULS",
++        "STRING_FOR_LIFE": "LIFE",
++        "STRING_FOR_DRONE_RATE": "RATE",
++        "STRING_FOR_FM_FORM": "FORM",
++        "STRING_FOR_DRONE_PULSE_WIDTH": "PW",
+         "STRING_FOR_CPU_MONITOR": "CPU",
+         "STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING": "DIMM",
+         "STRING_FOR_TIME_CHANGE": "TIME",
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index bb103b29..7d047361 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -995,6 +995,13 @@ enum class String : size_t {
+ 	STRING_FOR_RICH,
+ 	STRING_FOR_LEVEL,
+ 
++	// drone: life and FM (mastertune-v15)
++	STRING_FOR_PULSE,
++	STRING_FOR_LIFE,
++	STRING_FOR_DRONE_RATE,
++	STRING_FOR_FM_FORM,
++	STRING_FOR_DRONE_PULSE_WIDTH,
++
+ 	// CPU monitor (mastertune-diag)
+ 	STRING_FOR_CPU_MONITOR,
+ 
+diff --git a/src/deluge/gui/menu_item/drone/items.h b/src/deluge/gui/menu_item/drone/items.h
+index fcd1af20..c2f0d925 100644
+--- a/src/deluge/gui/menu_item/drone/items.h
++++ b/src/deluge/gui/menu_item/drone/items.h
+@@ -241,7 +241,7 @@ public:
+ 	deluge::vector<std::string_view> getOptions() override {
+ 		using enum l10n::String;
+ 		return {l10n::getView(STRING_FOR_SINE), l10n::getView(STRING_FOR_SOFT), l10n::getView(STRING_FOR_ORGAN),
+-		        l10n::getView(STRING_FOR_RICH)};
++		        l10n::getView(STRING_FOR_RICH), l10n::getView(STRING_FOR_PULSE)};
+ 	}
+ };
+ 
+@@ -280,6 +280,57 @@ public:
+ 	void writeCurrentValue() override { currentSong->drone.reverb = this->getValue(); }
+ };
+ 
++/// Life for the whole drone (mastertune-v15): each tone drifts, breathes and shimmers on its own slow random
++/// courses, 0 to 50; 0 is the steady drone
++class Life final : public Integer {
++public:
++	using Integer::Integer;
++	[[nodiscard]] int32_t getMaxValue() const override { return Settings::kMaxLife; }
++	void readCurrentValue() override { this->setValue(currentSong->drone.life); }
++	void writeCurrentValue() override { currentSong->drone.life = this->getValue(); }
++};
++
++/// How fast life and the FM's bloom move: 25 as designed, each 12.5 steps twice as fast or half as fast
++class LifeRate final : public Integer {
++public:
++	using Integer::Integer;
++	[[nodiscard]] int32_t getMaxValue() const override { return Settings::kMaxLife; }
++	void readCurrentValue() override { this->setValue(currentSong->drone.lifeRate); }
++	void writeCurrentValue() override { currentSong->drone.lifeRate = this->getValue(); }
++};
++
++/// FM for the whole drone (mastertune-v15), 0 to 50: how deep it blooms on each tone
++class Fm final : public Integer {
++public:
++	using Integer::Integer;
++	[[nodiscard]] int32_t getMaxValue() const override { return Settings::kMaxLife; }
++	void readCurrentValue() override { this->setValue(currentSong->drone.fm); }
++	void writeCurrentValue() override { currentSong->drone.fm = this->getValue(); }
++};
++
++/// The FM's modulator: a sine, or a saw (brassier)
++class FmForm final : public Selection {
++public:
++	using Selection::Selection;
++	void readCurrentValue() override { this->setValue((int32_t)currentSong->drone.fmForm); }
++	void writeCurrentValue() override { currentSong->drone.fmForm = this->getValue<Settings::FmForm>(); }
++	deluge::vector<std::string_view> getOptions() override {
++		using enum l10n::String;
++		return {l10n::getView(STRING_FOR_SINE), l10n::getView(STRING_FOR_SAW)};
++	}
++};
++
++/// Width of the Pulse timbre, 5 to 50 %, for the whole drone (mastertune-v15)
++class PulseWidth final : public Integer {
++public:
++	using Integer::Integer;
++	[[nodiscard]] int32_t getMinValue() const override { return Settings::kMinPulseWidth; }
++	[[nodiscard]] int32_t getMaxValue() const override { return Settings::kMaxPulseWidth; }
++	void readCurrentValue() override { this->setValue(currentSong->drone.pulseWidth); }
++	void writeCurrentValue() override { currentSong->drone.pulseWidth = this->getValue(); }
++	const char* getUnit() override { return "%"; }
++};
++
+ /// How far the drone ducks with the song's sidechain
+ class SidechainAmount final : public Integer {
+ public:
+diff --git a/src/deluge/gui/ui/menus.cpp b/src/deluge/gui/ui/menus.cpp
+index 75056ca4..a6c6b906 100644
+--- a/src/deluge/gui/ui/menus.cpp
++++ b/src/deluge/gui/ui/menus.cpp
+@@ -1432,6 +1432,11 @@ drone_menu::Level droneLevelMenu{STRING_FOR_LEVEL, STRING_FOR_LEVEL};
+ drone_menu::Pan dronePanMenu{STRING_FOR_PAN, STRING_FOR_PAN};
+ drone_menu::Volume droneVolumeMenu{STRING_FOR_VOLUME_LEVEL, STRING_FOR_VOLUME_LEVEL};
+ drone_menu::ReverbSend droneReverbMenu{STRING_FOR_REVERB_AMOUNT, STRING_FOR_REVERB_AMOUNT};
++drone_menu::Life droneLifeMenu{STRING_FOR_LIFE, STRING_FOR_LIFE};
++drone_menu::LifeRate droneLifeRateMenu{STRING_FOR_DRONE_RATE, STRING_FOR_DRONE_RATE};
++drone_menu::Fm droneFmMenu{STRING_FOR_FM, STRING_FOR_FM};
++drone_menu::FmForm droneFmFormMenu{STRING_FOR_FM_FORM, STRING_FOR_FM_FORM};
++drone_menu::PulseWidth dronePulseWidthMenu{STRING_FOR_DRONE_PULSE_WIDTH, STRING_FOR_DRONE_PULSE_WIDTH};
+ drone_menu::SidechainAmount droneSidechainAmountMenu{STRING_FOR_VOLUME_DUCKING, STRING_FOR_VOLUME_DUCKING};
+ drone_menu::SidechainShape droneSidechainShapeMenu{STRING_FOR_SHAPE, STRING_FOR_SIDECH_SHAPE_MENU_TITLE};
+ drone_menu::SidechainMenu droneSidechainMenu{
+@@ -1462,6 +1467,12 @@ menu_item::Submenu droneToneMenu{
+         &dronePanMenu,
+         &droneVolumeMenu,
+         &droneReverbMenu,
++        // mastertune-v15: life and FM, for the whole drone
++        &droneLifeMenu,
++        &droneLifeRateMenu,
++        &droneFmMenu,
++        &droneFmFormMenu,
++        &dronePulseWidthMenu,
+         &droneSidechainMenu,
+     },
+ };
+diff --git a/src/deluge/gui/views/drone_view.cpp b/src/deluge/gui/views/drone_view.cpp
+index b1a127e9..07cbafbc 100644
+--- a/src/deluge/gui/views/drone_view.cpp
++++ b/src/deluge/gui/views/drone_view.cpp
+@@ -88,6 +88,8 @@ deluge::l10n::String timbreName(Settings::Timbre timbre) {
+ 		return STRING_FOR_ORGAN;
+ 	case Settings::Timbre::RICH:
+ 		return STRING_FOR_RICH;
++	case Settings::Timbre::PULSE:
++		return STRING_FOR_PULSE;
+ 	default:
+ 		return STRING_FOR_SINE;
+ 	}
+@@ -434,13 +436,24 @@ void DroneView::selectEncoderAction(int8_t offset) {
+ void DroneView::modButtonAction(uint8_t whichButton, bool on) {
+ 	if (on
+ 	    && (whichButton == kSectionLevelPan || whichButton == kSectionPitchBeat || whichButton == kSectionAttackRelease
+-	        || whichButton == kSectionSidechainReverb)) {
++	        || whichButton == kSectionLifeRate || whichButton == kSectionSidechainReverb
++	        || whichButton == kSectionFmPulseWidth)) {
+ 		section_ = whichButton;
+-		const char* name = (section_ == kSectionLevelPan)          ? "Level / Pan"
+-		                   : (section_ == kSectionAttackRelease)   ? "Attack / Release"
+-		                   : (section_ == kSectionSidechainReverb) ? "Sidechain / Reverb"
+-		                                                           : "Pitch / Beat";
+ 		if (display->haveOLED()) {
++			using enum deluge::l10n::String;
++			char name[32];
++			if (section_ == kSectionLifeRate || section_ == kSectionFmPulseWidth) {
++				bool life = (section_ == kSectionLifeRate);
++				snprintf(name, sizeof(name), "%s / %s", deluge::l10n::get(life ? STRING_FOR_LIFE : STRING_FOR_FM),
++				         deluge::l10n::get(life ? STRING_FOR_DRONE_RATE : STRING_FOR_DRONE_PULSE_WIDTH));
++			}
++			else {
++				snprintf(name, sizeof(name), "%s",
++				         (section_ == kSectionLevelPan)          ? "Level / Pan"
++				         : (section_ == kSectionAttackRelease)   ? "Attack / Release"
++				         : (section_ == kSectionSidechainReverb) ? "Sidechain / Reverb"
++				                                                 : "Pitch / Beat");
++			}
+ 			display->displayPopup(name);
+ 		}
+ 	}
+@@ -467,6 +480,15 @@ void DroneView::showKnobSection() {
+ 		indicator_leds::setKnobIndicatorLevel(1, level(currentSong->drone.sidechain, Settings::kMaxLevel));
+ 		indicator_leds::setKnobIndicatorLevel(0, level(currentSong->drone.reverb, Settings::kMaxLevel));
+ 		break;
++	case kSectionLifeRate:
++		indicator_leds::setKnobIndicatorLevel(1, level(currentSong->drone.life, Settings::kMaxLife));
++		indicator_leds::setKnobIndicatorLevel(0, level(currentSong->drone.lifeRate, Settings::kMaxLife));
++		break;
++	case kSectionFmPulseWidth:
++		indicator_leds::setKnobIndicatorLevel(1, level(currentSong->drone.fm, Settings::kMaxLife));
++		indicator_leds::setKnobIndicatorLevel(0, level(currentSong->drone.pulseWidth - Settings::kMinPulseWidth,
++		                                               Settings::kMaxPulseWidth - Settings::kMinPulseWidth));
++		break;
+ 	default:
+ 		indicator_leds::clearKnobIndicatorLevels(); // Pitch and beat have no end to show
+ 		break;
+@@ -530,6 +552,25 @@ void DroneView::modEncoderAction(int32_t whichModEncoder, int32_t offset) {
+ 				knobPopup("Reverb", currentSong->drone.reverb);
+ 			}
+ 			break;
++		case kSectionLifeRate: {
++			using enum deluge::l10n::String;
++			int32_t& value = upper ? currentSong->drone.life : currentSong->drone.lifeRate;
++			value = std::clamp(value + offset, (int32_t)0, Settings::kMaxLife);
++			knobPopup(deluge::l10n::get(upper ? STRING_FOR_LIFE : STRING_FOR_DRONE_RATE), value);
++			break;
++		}
++		case kSectionFmPulseWidth:
++			if (upper) {
++				currentSong->drone.fm = std::clamp(currentSong->drone.fm + offset, (int32_t)0, Settings::kMaxLife);
++				knobPopup(deluge::l10n::get(deluge::l10n::String::STRING_FOR_FM), currentSong->drone.fm);
++			}
++			else {
++				currentSong->drone.pulseWidth = std::clamp(currentSong->drone.pulseWidth + offset,
++				                                           Settings::kMinPulseWidth, Settings::kMaxPulseWidth);
++				knobPopup(deluge::l10n::get(deluge::l10n::String::STRING_FOR_DRONE_PULSE_WIDTH),
++				          currentSong->drone.pulseWidth, "%");
++			}
++			break;
+ 		}
+ 		changed(section_ == kSectionLevelPan); // The level shows on the pads
+ 		return;
+@@ -583,8 +624,24 @@ void DroneView::modEncoderAction(int32_t whichModEncoder, int32_t offset) {
+ }
+ 
+ void DroneView::modEncoderButtonAction(uint8_t whichModEncoder, bool on) {
++	// The upper knob pressed in the FM section: the modulator's form, sine or saw (mastertune-v15)
++	if (on && section_ == kSectionFmPulseWidth && whichModEncoder == 1) {
++		using enum deluge::l10n::String;
++		Settings::FmForm& form = currentSong->drone.fmForm;
++		form = (form == Settings::FmForm::SINE) ? Settings::FmForm::SAW : Settings::FmForm::SINE;
++		const char* formName = deluge::l10n::get(form == Settings::FmForm::SAW ? STRING_FOR_SAW : STRING_FOR_SINE);
++		if (display->haveOLED()) {
++			char buffer[32];
++			snprintf(buffer, sizeof(buffer), "%s: %s", deluge::l10n::get(STRING_FOR_FM_FORM), formName);
++			display->displayPopup(buffer);
++		}
++		else {
++			display->displayPopup(formName);
++		}
++		return;
++	}
+ 	if (!on || section_ != kSectionPitchBeat) {
+-		return; // Pressing the knobs does something in the pitch/beat section only
++		return; // Otherwise pressing the knobs does something in the pitch/beat section only
+ 	}
+ 	Settings::Tone& tone = toneAt(selected_);
+ 
+diff --git a/src/deluge/gui/views/drone_view.h b/src/deluge/gui/views/drone_view.h
+index 02b32048..ea4a763d 100644
+--- a/src/deluge/gui/views/drone_view.h
++++ b/src/deluge/gui/views/drone_view.h
+@@ -24,7 +24,8 @@
+ /// column switches a tone on and off, the audition column selects it, and the row shows its level as a bar in the
+ /// colour of its mode. The gold knobs set the selected tone's pitch (upper) and beat (lower), the select encoder its
+ /// mode, and pressing it opens the menu with all its settings and the drone's volume and sidechain. Back, Song or Scale
+-/// go back to Song view. See Song::drone.
++/// go back to Song view. See Song::drone. mastertune-v15: the Delay and ModFX sections of the gold knobs set the
++/// drone's life and FM.
+ class DroneView final : public RootUI {
+ public:
+ 	bool opened() override;
+@@ -59,11 +60,14 @@ private:
+ 
+ 	/// Which mod button's section the gold knobs are in, as their labels say (mastertune-v13): Level/Pan (0),
+ 	/// Cutoff/Res for pitch/beat (1, the drone's own), Attack/Release for the isochronic pulse (2), Sidechain/Reverb
+-	/// for the whole drone (4). The other buttons leave it as it is.
++	/// for the whole drone (4). mastertune-v15, for the whole drone too: Delay for life and its rate (3), ModFX for FM
++	/// (pressed: its form) and the pulse width (5). The other buttons leave it as it is.
+ 	static constexpr int32_t kSectionLevelPan = 0;
+ 	static constexpr int32_t kSectionPitchBeat = 1;
+ 	static constexpr int32_t kSectionAttackRelease = 2;
++	static constexpr int32_t kSectionLifeRate = 3;
+ 	static constexpr int32_t kSectionSidechainReverb = 4;
++	static constexpr int32_t kSectionFmPulseWidth = 5;
+ 	int32_t section_ = kSectionPitchBeat;
+ 	[[nodiscard]] int32_t toneOnRow(int32_t yDisplay) const { return scroll_ + yDisplay; }
+ 
+diff --git a/src/deluge/model/song/song.cpp b/src/deluge/model/song/song.cpp
+index 98992e84..8ad529cc 100644
+--- a/src/deluge/model/song/song.cpp
++++ b/src/deluge/model/song/song.cpp
+@@ -5992,7 +5992,7 @@ void Song::writeDroneToFile(Serializer& writer) {
+ 		anyTone = anyTone || !(tone == Settings::Tone{});
+ 	}
+ 	if (!anyTone && drone.volume == defaults.volume && drone.sidechain == defaults.sidechain
+-	    && drone.reverb == defaults.reverb) {
++	    && drone.reverb == defaults.reverb && drone.lifeIsDefault()) {
+ 		return;
+ 	}
+ 
+@@ -6004,6 +6004,8 @@ void Song::writeDroneToFile(Serializer& writer) {
+ 	writer.writeAttribute("attack", droneSidechain.attack);
+ 	writer.writeAttribute("release", droneSidechain.release);
+ 	writer.writeAbsoluteSyncLevelToFile(this, "syncLevel", droneSidechain.syncLevel, true);
++	// mastertune-v15: life, FM and the pulse width (older firmware ignores them: a steady drone, a Pulse tone as Rich)
++	drone.writeLifeAttributes([&](const char* name, int32_t value) { writer.writeAttribute(name, value); });
+ 	writer.writeOpeningTagEnd();
+ 
+ 	for (size_t i = 0; i < Settings::kNumTones; i++) {
+@@ -6068,6 +6070,11 @@ void Song::readDroneFromFile(Deserializer& reader) {
+ 			droneSidechain.syncLevel = (SyncLevel)std::min((uint8_t)droneSidechain.syncLevel, (uint8_t)9);
+ 			reader.exitTag("syncLevel");
+ 		}
++		else if (Settings::isLifeAttribute(tagName)) {
++			// mastertune-v15; a file without them keeps the defaults, a steady drone
++			drone.readLifeAttribute(tagName, reader.readTagOrAttributeValueInt());
++			reader.exitTag(tagName);
++		}
+ 		else if (!strcmp(tagName, "tone")) {
+ 			Settings::Tone tone;
+ 			int32_t index = -1;
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index 1f319eb4..d02f8cfb 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -925,6 +925,13 @@ void renderDrone(size_t numSamples) {
+ 		droneReverbSendLast = 0.f;
+ 		return;
+ 	}
++	// mastertune-v15: life's random courses start from the firmware's random generator (seeded from a timer at
++	// start-up), so they differ from one power-on to the next. Only read, it's left as it was for everything else.
++	static bool droneSeeded = false;
++	if (!droneSeeded) {
++		drone.seed(jcong);
++		droneSeeded = true;
++	}
+ 	deluge::dsp::DroneSettings& settings = currentSong->drone;
+ 	deluge::dsp::Drone::Context& context = droneContext;
+ 	context = deluge::dsp::Drone::Context{};
+-- 
+2.43.0
+

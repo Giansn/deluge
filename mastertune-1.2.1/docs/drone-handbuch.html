@@ -36,7 +36,7 @@
 
 <div class="cover">
   <h1>Frequenz-Drone</h1>
-  <div class="subtitle">Handbuch für den Deluge mit Firmware 1.2.1-mastertune v13 (v12: ohne Triolen, Attack/Release, Knopf-Sektionen und Reverb-Send; dort pulsieren die Pads)</div>
+  <div class="subtitle">Handbuch für den Deluge mit Firmware 1.2.1-mastertune v15 (v13 und v14: ohne Life, FM und Pulse; v12: zudem ohne Triolen, Attack/Release, Knopf-Sektionen und Reverb-Send, dort pulsieren die Pads)</div>
   <p>Der Drone spielt bis zu <b>16 Dauertöne</b> unter die Musik deines Songs. Jeder Ton kann ruhig stehen oder in einem Beat schweben: <b>binaural</b>, <b>monaural</b> oder <b>isochron</b>, frei in Hertz oder synchron zum Tempo, auch in Triolen. Die Tonhöhe stellst du in Hertz oder als Note ein, die dem Master Tune folgt. Isochrone Pulse haben Attack und Release. Der Drone duckt sich unter die Sidechain des Songs, kann ins Song-Reverb senden und wird mit dem Song gespeichert.</p>
   <ol class="toc">
     <li>Schnellstart</li>
@@ -134,11 +134,13 @@
   <tr><td>Level/Pan</td><td>oben: Pegel des gewählten Tons (0–50) · unten: Pan (−32 bis +32)</td></tr>
   <tr><td>Attack/Release</td><td>oben: Attack · unten: Release des isochronen Pulses des gewählten Tons (0–50, angezeigt als 0–100 %)</td></tr>
   <tr><td>Sidechain/Reverb</td><td>oben: Sidechain-Ducking des ganzen Drones (0–50) · unten: Reverb-Send des ganzen Drones (0–50)</td></tr>
+  <tr><td>Delay (v15)</td><td>oben: Life des ganzen Drones (0–50) · unten: Rate, wie schnell sich alles bewegt (0–50, 25 = Grundeinstellung)</td></tr>
+  <tr><td>ModFX (v15)</td><td>oben: FM des ganzen Drones (0–50), <b>drücken</b>: FM-Form Sine oder Saw · unten: Pulse width (5–50 %)</td></tr>
   <tr><td>andere Mod-Tasten</td><td>ohne Funktion; die Sektion bleibt</td></tr>
   <tr><td><span class="key">BACK</span>, <span class="key">SONG</span>, <span class="key">SCALE</span></td><td>zurück in den Song-View</td></tr>
   <tr><td><span class="key">PLAY</span>, <span class="key">RECORD</span>, Tempo, Speichern, Laden</td><td>wie gewohnt</td></tr>
 </table>
-<p class="small">Die LED der gewählten Mod-Taste leuchtet, die LED-Ringe der Knöpfe zeigen die Werte (bei Tonhöhe/Beat bleiben sie dunkel). Ein Druck auf die Goldknöpfe wirkt nur in der Sektion Cutoff/Resonance. Die gewählte Sektion bleibt, auch nach dem Menü. Die Goldknöpfe wirken in der Drone-Ansicht nur auf den Drone, nicht auf die Song-Parameter. Rückgängig machen (Undo) gibt es in der Drone-Ansicht nicht; Drone-Einstellungen gehören nicht zum Undo-Verlauf.</p>
+<p class="small">Die LED der gewählten Mod-Taste leuchtet, die LED-Ringe der Knöpfe zeigen die Werte (bei Tonhöhe/Beat bleiben sie dunkel). Ein Druck auf die Goldknöpfe wirkt nur in der Sektion Cutoff/Resonance und (oberer Knopf) in der Sektion ModFX. Die gewählte Sektion bleibt, auch nach dem Menü. Die Goldknöpfe wirken in der Drone-Ansicht nur auf den Drone, nicht auf die Song-Parameter. Rückgängig machen (Undo) gibt es in der Drone-Ansicht nicht; Drone-Einstellungen gehören nicht zum Undo-Verlauf.</p>
 
 <h2>4. Anzeige: OLED und 7-Segment</h2>
 <div class="grid2">
@@ -255,8 +257,24 @@
   <tr><td>Soft</td><td>weiche Obertöne 2–5, warm</td></tr>
   <tr><td>Organ</td><td>Oktaven wie bei Orgel-Zugriegeln</td></tr>
   <tr><td>Rich</td><td>Obertöne 2–8, sägezahnartig und hell</td></tr>
+  <tr><td>Pulse (v15)</td><td>Rechteck mit einstellbarer Breite (<i>Pulse width</i> 5–50 %, Standard 30): hohl und nasal bei schmaler, voll bei 50 %. Mit Life wandert die Breite langsam.</td></tr>
 </table>
-<p>Alle Klangfarben sind bandbegrenzt: Obertöne über 18 kHz fallen weg, damit bei hohen Tönen nichts spiegelt oder zirpt. Die Klangfarbe wählst du im Menü (<i>Timbre</i>).</p>
+<p>Alle Klangfarben sind bandbegrenzt: Obertöne über 18 kHz fallen weg, damit bei hohen Tönen nichts spiegelt oder zirpt. Die Klangfarbe wählst du im Menü (<i>Timbre</i>). Pulse gilt für den einzelnen Ton, die Breite für den ganzen Drone.</p>
+
+<h2>8a. Leben und FM (v15)</h2>
+<p>Ein Dauerton klingt schnell starr. Mit <b>Life</b> bewegt sich jeder Ton von selbst, wie von Hand gespielt; mit <b>FM</b> bekommt er eine Farbe, die aufblüht und wieder abklingt. Beides gilt für den ganzen Drone, jeder Ton bewegt sich aber auf eigenen Bahnen.</p>
+<table>
+  <tr><th style="width:18%">Einstellung</th><th>Wirkung</th></tr>
+  <tr><td>Life 0–50</td><td>Jeder Ton wandert auf langsamen Zufallsbahnen, die sich nie wiederholen. Bei 50: Tonhöhe ±6 Cent (Bahn um 0,08 Hz), Lautstärke ±3 dB («Atem»), Helligkeit und Stereo-Position («Schimmer»). Alles wächst gleichmässig mit Life. Bei einem schwebenden Ton wandern beide Seiten gemeinsam: Der Beat bleibt genau wie eingestellt.</td></tr>
+  <tr><td>Rate 0–50</td><td>Wie schnell Life und das Aufblühen der FM sich bewegen. 25 wie vorgesehen; je 12,5 Schritte doppelt bzw. halb so schnell.</td></tr>
+  <tr><td>FM 0–50</td><td>Ein Modulator auf der Frequenz des Tons plus 0,3 Hz färbt ihn. Die Tiefe blüht auf und klingt ab, jeder Ton auf seiner eigenen Bahn. Bei hohen Tönen wird sie begrenzt, damit nichts hörbar spiegelt.</td></tr>
+  <tr><td>FM form</td><td>Sine: weich, glockig · Saw: heller, blecherner. Der Wechsel blendet über.</td></tr>
+</table>
+<ul>
+  <li><b>Bei Life 0 und FM 0</b> (und ohne Pulse) klingt der Drone genau wie in v13 und v14.</li>
+  <li>Änderungen von Life, Rate und FM gleiten, es klickt nichts. Ein Wechsel zu oder von Pulse geht wie jeder Wechsel der Klangfarbe durch Stille.</li>
+  <li>Life bewegt nur, was der Drone selbst macht. Tempo-Sync, Sidechain und Master Tune gelten weiter wie eingestellt.</li>
+</ul>
 
 <h2>9. Pegel, Pan, Lautstärke und Mix</h2>
 <ul>
@@ -292,11 +310,16 @@
   <tr><td>SYNC</td><td>Off, 1/1, 1/1T bis 1/64, 1/64T</td><td>nicht bei Tone</td></tr>
   <tr><td>ATTACK</td><td>0–50 (angezeigt 0–100 %)</td><td>bei Isochronic</td></tr>
   <tr><td>RELEASE</td><td>0–50 (angezeigt 0–100 %)</td><td>bei Isochronic</td></tr>
-  <tr><td>Timbre</td><td>Sine, Soft, Organ, Rich</td><td>immer</td></tr>
+  <tr><td>Timbre</td><td>Sine, Soft, Organ, Rich, Pulse</td><td>immer</td></tr>
   <tr><td>Level</td><td>0–50</td><td>immer</td></tr>
   <tr><td>PAN</td><td>−32 bis +32</td><td>immer</td></tr>
   <tr><td>Volume</td><td>0–50, ganzer Drone</td><td>immer</td></tr>
   <tr><td>Reverb amount</td><td>0–50, Send des ganzen Drones</td><td>immer</td></tr>
+  <tr><td>Life</td><td>0–50, ganzer Drone (Kapitel 8a)</td><td>immer</td></tr>
+  <tr><td>Rate</td><td>0–50, ganzer Drone, 25 = Grundeinstellung</td><td>immer</td></tr>
+  <tr><td>FM</td><td>0–50, ganzer Drone</td><td>immer</td></tr>
+  <tr><td>FM form</td><td>Sine, Saw</td><td>immer</td></tr>
+  <tr><td>Pulse width</td><td>5–50 %, ganzer Drone</td><td>immer</td></tr>
   <tr><td>Sidechain</td><td>Untermenü (Kapitel 10), ganzer Drone</td><td>immer</td></tr>
 </table>
 <p>Mit <span class="key">BACK</span> verlässt du das Menü, zurück in die Drone-Ansicht.</p>
@@ -322,6 +345,9 @@
   <tr><td>Grundton-Fläche</td><td>Drei Töne als Note: Grundton, Quinte, Oktave; Timbre Organ, Modus Ton, Pegel 30–35. Die Töne folgen dem Master Tune.</td></tr>
   <tr><td>Schwebender Chor</td><td>Monaural, Soft, dieselbe Note auf zwei Tönen, Beat 0,3 und 0,5 Hz, Pan −20 und +20.</td></tr>
   <tr><td>Langsame Bewegung</td><td>Binaural oder Monaural mit Sync 1/1 oder 1/2: eine Schwebung pro Takt oder halbem Takt.</td></tr>
+  <tr><td>Atmende Fläche (v15)</td><td>Drei Töne Soft als Grundton, Quinte, Oktave; Life 25, Rate 20. Die Fläche bewegt sich langsam von selbst, jeder Ton ein wenig anders.</td></tr>
+  <tr><td>Glocken im Nebel (v15)</td><td>Monaural, Sine, zwei hohe Töne; FM 30 mit Form Sine, Life 15, Reverb amount 25.</td></tr>
+  <tr><td>Rauer Bass-Drone (v15)</td><td>Ton, Pulse, eine tiefe Note; Pulse width 15, FM 20 mit Form Saw, Life 10. Mit Sidechain unter die Kick legen.</td></tr>
 </table>
 
 <h2>15. Technische Daten und Grenzen</h2>
@@ -334,11 +360,12 @@
   <tr><td>Reverb-Send</td><td>0–50 für den ganzen Drone</td></tr>
   <tr><td>Pegel, Volume, Pan</td><td>0–50 (1 dB), 0–50 (1 dB), −32 bis +32</td></tr>
   <tr><td>Reinheit</td><td>Sinus: Nebenprodukte unter −108 dB</td></tr>
-  <tr><td>Rechenzeit (Cortex-A9, im Emulator gezählt)</td><td>1 Sinuston 0,35 %, 1 binauraler Ton 0,5 %, 16 binaurale Töne mit Obertönen 6,9 % der CPU</td></tr>
-  <tr><td>Speicher</td><td>Wellentabellen 27 KB internes RAM</td></tr>
+  <tr><td>Life, FM, Pulse (v15)</td><td>Life und FM 0–50 und Rate 0–50 für den ganzen Drone, FM-Form Sine oder Saw, Pulsbreite 5–50 %</td></tr>
+  <tr><td>Rechenzeit (Cortex-A9, im Emulator gezählt)</td><td>1 Sinuston 0,35 %, 1 binauraler Ton 0,5 %, 16 binaurale Töne mit Obertönen 6,9 % der CPU. Mit v15 je binauralem Ton: Life 0,7–1,0 %, FM 1,3 %, Pulse 1,0 %, alles zusammen 2,1 %; 16 Töne mit allem gut 30 %. Der Drone wird nie gekürzt wie Synth-Stimmen.</td></tr>
+  <tr><td>Speicher</td><td>Wellentabellen 27 KB internes RAM, mit v15 zusätzlich 14 KB (Sägezahn-Tabellen für Pulse und FM)</td></tr>
 </table>
 <ul>
-  <li><b>Getestet</b> im Emulator (46 Prüfpunkte auf PC und Cortex-A9) und auf dem Gerät mit v12. Die v13-Neuerungen sind auf dem Gerät noch nicht getestet.</li>
+  <li><b>Getestet</b> im Emulator (46 Prüfpunkte auf PC und Cortex-A9) und auf dem Gerät mit v12. Die Neuerungen von v13 und v15 sind auf dem Gerät noch nicht getestet; Life, FM und Pulse sind auf dem PC mit 116 Prüfpunkten geprüft.</li>
   <li>Der Drone sendet kein MIDI und nimmt keine Noten von Tastatur oder MIDI an.</li>
   <li>Automation oder Modulation der Drone-Werte gibt es nicht; Änderungen macht man von Hand.</li>
 </ul>
