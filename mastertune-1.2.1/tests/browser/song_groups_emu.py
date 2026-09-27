@@ -458,7 +458,7 @@ def run_oled(a, sd, out, check):
             f = b.frame(save, b.render_browser)
             if row(f, "TRACK 2"):
                 break
-    check("13. the save browser: TRACK, TRACK 2, TRACK 3 each a row of their own, no arrows",
+    check("13. the save browser: the versions each a row of their own, no arrows",
           [r["text"] for r in f] in (TRACKS[i:i + 3] for i in range(3)) and row(f, "TRACK 2")
           and not any(r["arrow"] or r["indent"] for r in f), b.show(f))
     b.close()
