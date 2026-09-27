@@ -1,0 +1,106 @@
+From f921ecabf59cf77f32985558033245f7cb24de68 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 11:07:53 +0000
+Subject: [PATCH 46/55] Drone tracks: drone rows keep sounding while their kit
+ is saved
+
+Kit::writeDataToFile() writes the drums with a NoteRow first and takes each out of firstDrum once written, putting
+them back in front of the rest when the kit is done. The audio runs meanwhile (XMLSerializer::write() services it
+every 256 characters, mastertune-v13), and Kit::renderGlobalEffectableForClip() renders the drone rows by walking
+firstDrum, so while a drone kit was written its rows dropped out one after another and came back out of phase: a gap
+at every save of a playing song (a kit of 16 drone rows is about 42 KB of XML).
+
+The drums written so far are now in a member, Kit::drumsWrittenToFile, instead of a local, and the render walks both
+lists. Nothing can run between the relinking steps at the end, so a drum is never in both. The file is the same byte
+for byte (sha256 of the saved song as before).
+
+tests/song drone_save_emu.py (run.sh's DRONE=1): a drone track of 16 rows saved again and again for half a bar while it
+plays, the DMA in real time: before, rows off by up to 25 dB in 46 ms windows; now every row within 0.003 dB, no
+underrun.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/model/instrument/kit.cpp | 33 +++++++++++++++++------------
+ src/deluge/model/instrument/kit.h   |  4 ++++
+ 2 files changed, 24 insertions(+), 13 deletions(-)
+
+diff --git a/src/deluge/model/instrument/kit.cpp b/src/deluge/model/instrument/kit.cpp
+index 55f62254..8fcf1a6b 100644
+--- a/src/deluge/model/instrument/kit.cpp
++++ b/src/deluge/model/instrument/kit.cpp
+@@ -130,8 +130,11 @@ bool Kit::writeDataToFile(Serializer& writer, Clip* clipForSavingOutputOnly, Son
+ 	int32_t selectedDrumIndex = -1;
+ 	int32_t drumIndex = 0;
+ 
+-	Drum* newFirstDrum = NULL;
+-	Drum** newLastDrum = &newFirstDrum;
++	// mastertune-v16: the drums written so far in a member, not a local: the audio runs while the file is written
++	// (XMLSerializer::write()), and renderGlobalEffectableForClip() renders the drone rows among them from there, or
++	// they would drop out until the kit is written
++	drumsWrittenToFile = NULL;
++	Drum** newLastDrum = &drumsWrittenToFile;
+ 
+ 	Clip* clipToTakeDrumOrderFrom = clipForSavingOutputOnly;
+ 	if (!clipToTakeDrumOrderFrom) {
+@@ -238,7 +241,8 @@ moveOn:
+ 	writer.writeClosingTag("soundSources");
+ 
+ 	*newLastDrum = firstDrum;
+-	firstDrum = newFirstDrum;
++	firstDrum = drumsWrittenToFile;
++	drumsWrittenToFile = NULL;
+ 
+ 	if (selectedDrumIndex != -1) {
+ 		writer.writeTag((char*)"selectedDrumIndex", selectedDrumIndex);
+@@ -581,19 +585,22 @@ bool Kit::renderGlobalEffectableForClip(ModelStackWithTimelineCounter* modelStac
+ 	}
+ 
+ 	// mastertune-v16: drone rows (DroneDrum), each while its gate is open or it fades out. Not in
+-	// drumsWithRenderingActive, which is for SoundDrums only.
++	// drumsWithRenderingActive, which is for SoundDrums only. While the kit is being written to a file, the drums
++	// already written are in drumsWrittenToFile.
+ 	bool haveDroneContext = false;
+ 	deluge::dsp::Drone::Context droneContext;
+-	for (Drum* thisDrum = firstDrum; thisDrum; thisDrum = thisDrum->next) {
+-		if (thisDrum->type != DrumType::DRONE || !((DroneDrum*)thisDrum)->isSounding()) {
+-			continue;
+-		}
+-		if (!haveDroneContext) {
+-			AudioEngine::getDroneContext(droneContext); // Tempo, position and master tune, once a block
+-			haveDroneContext = true;
++	for (Drum* list : {firstDrum, drumsWrittenToFile}) {
++		for (Drum* thisDrum = list; thisDrum; thisDrum = thisDrum->next) {
++			if (thisDrum->type != DrumType::DRONE || !((DroneDrum*)thisDrum)->isSounding()) {
++				continue;
++			}
++			if (!haveDroneContext) {
++				AudioEngine::getDroneContext(droneContext); // Tempo, position and master tune, once a block
++				haveDroneContext = true;
++			}
++			((DroneDrum*)thisDrum)->render({globalEffectableBuffer, (size_t)numSamples}, droneContext);
++			rendered = true;
+ 		}
+-		((DroneDrum*)thisDrum)->render({globalEffectableBuffer, (size_t)numSamples}, droneContext);
+-		rendered = true;
+ 	}
+ 
+ 	// Tick ParamManagers
+diff --git a/src/deluge/model/instrument/kit.h b/src/deluge/model/instrument/kit.h
+index 2134c4a5..3e854725 100644
+--- a/src/deluge/model/instrument/kit.h
++++ b/src/deluge/model/instrument/kit.h
+@@ -144,6 +144,10 @@ public:
+ 
+ 	OrderedResizeableArrayWith32bitKey drumsWithRenderingActive;
+ 
++	/// mastertune-v16: the drums writeDataToFile() has written so far, taken out of firstDrum until it puts them back
++	/// in front of the rest. The audio runs while the file is written, and drone rows are rendered from both lists.
++	Drum* drumsWrittenToFile = nullptr;
++
+ 	ModelStackWithAutoParam* getModelStackWithParam(ModelStackWithTimelineCounter* modelStack, Clip* clip,
+ 	                                                int32_t paramID, deluge::modulation::params::Kind paramKind,
+ 	                                                bool affectEntire, bool useMenuStack);
+-- 
+2.43.0
+

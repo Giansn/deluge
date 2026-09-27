@@ -1,0 +1,231 @@
+From 02355b816fb428f92c0c3c1049cdc9f3c76839b2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 12:23:48 +0000
+Subject: [PATCH 50/55] Drone tracks: a kit's drone rows saved after its other
+ rows, for firmware before v16
+
+A song's rows refer to their kit's drums by index in the file. Firmware before v16 skips
+<droneTone>, so a drone row's drum among the others moved every later row onto its
+neighbour's drum and left the last one without a drum (getDrumFromIndex() falls back to the
+first, a duplicate); saved there, for good.
+
+When saving a song, Kit::writeDataToFile() now writes the drums in two passes, the others
+first and the drone rows' last, each in the rows' order as before. The remaining drums (those
+without a row in the clip the order comes from) are taken out of the list as they're written
+as well, so the list is rebuilt in the file's order and v16's drumIndex stays consistent.
+Older firmware then loses only the drone rows. A kit preset has no rows referring to its
+drums and keeps the rows' order. Songs without drone rows save the same XML as before
+(tests/song SAVE=1: same sha256).
+
+Test: mastertune tests/song/drone_edit_emu.py (run.sh DRONE=1): a gate row between drone
+rows is saved first, each row still refers to its own drum.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/model/instrument/kit.cpp | 163 ++++++++++++++++------------
+ 1 file changed, 94 insertions(+), 69 deletions(-)
+
+diff --git a/src/deluge/model/instrument/kit.cpp b/src/deluge/model/instrument/kit.cpp
+index 582c5938..136c8a2b 100644
+--- a/src/deluge/model/instrument/kit.cpp
++++ b/src/deluge/model/instrument/kit.cpp
+@@ -143,101 +143,126 @@ bool Kit::writeDataToFile(Serializer& writer, Clip* clipForSavingOutputOnly, Son
+ 		clipToTakeDrumOrderFrom = song->getClipWithOutput(this, false, NULL);
+ 	}
+ 
+-	// If we have a Clip to take the Drum order from...
+-	if (clipToTakeDrumOrderFrom) {
+-		// First, write Drums in the order of their NoteRows. Remove these drums from our list - we'll re-add them in a
+-		// moment, at the start, i.e. in the same order they appear in the file
+-		for (int32_t i = 0; i < ((InstrumentClip*)clipToTakeDrumOrderFrom)->noteRows.getNumElements(); i++) {
+-			NoteRow* thisNoteRow = ((InstrumentClip*)clipToTakeDrumOrderFrom)->noteRows.getElement(i);
+-			if (thisNoteRow->drum) {
+-				Drum* drum = thisNoteRow->drum;
+-
+-				ParamManagerForTimeline* paramManagerForDrum = NULL;
+-
+-				// If saving Kit (not Song)
+-				if (clipForSavingOutputOnly) {
+-					paramManagerForDrum = &thisNoteRow->paramManager;
+-				}
+-				// Or if saving Song, we know there's a NoteRow, so no need to save the ParamManager
++	// mastertune-v16: in a song, the drone rows' drums after all the others. The song's rows refer to their drums by
++	// their index in the file, and firmware before v16 skips <droneTone>: a drone drum among the others would move
++	// each row after it onto its neighbour's drum (and saved there, for good); last, only the drone rows lose theirs.
++	// A kit preset has no rows referring to its drums, so it keeps the rows' order.
++	int32_t numPasses = clipForSavingOutputOnly ? 1 : 2;
++	for (int32_t pass = 0; pass < numPasses; pass++) {
++		auto isWrittenInThisPass = [&](Drum* drum) {
++			return numPasses == 1 || ((drum->type == DrumType::DRONE) == (pass == 1));
++		};
++
++		// If we have a Clip to take the Drum order from...
++		if (clipToTakeDrumOrderFrom) {
++			// First, write Drums in the order of their NoteRows. Remove these drums from our list - we'll re-add them
++			// in a moment, at the start, i.e. in the same order they appear in the file
++			for (int32_t i = 0; i < ((InstrumentClip*)clipToTakeDrumOrderFrom)->noteRows.getNumElements(); i++) {
++				NoteRow* thisNoteRow = ((InstrumentClip*)clipToTakeDrumOrderFrom)->noteRows.getElement(i);
++				if (thisNoteRow->drum && isWrittenInThisPass(thisNoteRow->drum)) {
++					Drum* drum = thisNoteRow->drum;
++
++					ParamManagerForTimeline* paramManagerForDrum = NULL;
++
++					// If saving Kit (not Song)
++					if (clipForSavingOutputOnly) {
++						paramManagerForDrum = &thisNoteRow->paramManager;
++					}
++					// Or if saving Song, we know there's a NoteRow, so no need to save the ParamManager
+ 
+-				writeDrumToFile(writer, drum, paramManagerForDrum, (clipForSavingOutputOnly == NULL),
+-				                &selectedDrumIndex, &drumIndex, song);
++					writeDrumToFile(writer, drum, paramManagerForDrum, (clipForSavingOutputOnly == NULL),
++					                &selectedDrumIndex, &drumIndex, song);
+ 
+-				removeDrumFromLinkedList(drum);
+-				drum->next = NULL;
+-				*newLastDrum = drum;
+-				newLastDrum = &drum->next;
++					removeDrumFromLinkedList(drum);
++					drum->next = NULL;
++					*newLastDrum = drum;
++					newLastDrum = &drum->next;
++				}
+ 			}
+ 		}
+-	}
+ 
+-	// Then, write remaining Drums (or all Drums in the case of saving Song) whose order we didn't take from a NoteRow
+-	Drum** prevPointer = &firstDrum;
+-	while (true) {
++		// Then, write remaining Drums (or all Drums in the case of saving Song) whose order we didn't take from a
++		// NoteRow
++		Drum** prevPointer = &firstDrum;
++		while (true) {
+ 
+-		Drum* thisDrum = *prevPointer;
+-		if (!thisDrum) {
+-			break;
+-		}
++			Drum* thisDrum = *prevPointer;
++			if (!thisDrum) {
++				break;
++			}
+ 
+-		ParamManager* paramManagerForDrum = NULL;
++			ParamManager* paramManagerForDrum = NULL;
+ 
+-		// If saving Kit (not song), only save Drums if some other NoteRow in the song has it - in which case, save as
+-		// "default" the params from that NoteRow
+-		if (clipForSavingOutputOnly) {
+-			D_PRINTLN("yup, clipForSavingOutputOnly");
+-			NoteRow* noteRow = song->findNoteRowForDrum(this, thisDrum);
+-			if (!noteRow) {
++			if (!isWrittenInThisPass(thisDrum)) {
+ 				goto moveOn;
+ 			}
+-			paramManagerForDrum =
+-			    &noteRow->paramManager; // Of course there won't be one if it's a NonAudioDrum, but that's fine
+-		}
+ 
+-		// Or if saving song...
+-		else {
+-			// If no activeClip, this means we want to store all Drums
+-			// - and for SoundDrums, save as "default" any backedUpParamManagers (if none for a SoundDrum, definitely
+-			// skip it)
+-			if (!activeClip) {
+-				D_PRINTLN("nah, !activeClip");
+-				if (thisDrum->type == DrumType::SOUND) {
+-					paramManagerForDrum = song->getBackedUpParamManagerPreferablyWithClip((SoundDrum*)thisDrum, NULL);
+-					if (!paramManagerForDrum) {
+-						goto moveOn;
+-					}
++			// If saving Kit (not song), only save Drums if some other NoteRow in the song has it - in which case, save
++			// as "default" the params from that NoteRow
++			if (clipForSavingOutputOnly) {
++				D_PRINTLN("yup, clipForSavingOutputOnly");
++				NoteRow* noteRow = song->findNoteRowForDrum(this, thisDrum);
++				if (!noteRow) {
++					goto moveOn;
+ 				}
++				paramManagerForDrum =
++				    &noteRow->paramManager; // Of course there won't be one if it's a NonAudioDrum, but that's fine
+ 			}
+ 
+-			// Otherwise, if some Clip does have this Kit, then yes do save this Drum - with no ParamManager though
++			// Or if saving song...
+ 			else {
++				// If no activeClip, this means we want to store all Drums
++				// - and for SoundDrums, save as "default" any backedUpParamManagers (if none for a SoundDrum,
++				// definitely skip it)
++				if (!activeClip) {
++					D_PRINTLN("nah, !activeClip");
++					if (thisDrum->type == DrumType::SOUND) {
++						paramManagerForDrum =
++						    song->getBackedUpParamManagerPreferablyWithClip((SoundDrum*)thisDrum, NULL);
++						if (!paramManagerForDrum) {
++							goto moveOn;
++						}
++					}
++				}
+ 
+-				// ... but, if no NoteRow has this Drum, we actually want to delete it now, so that its existence
+-				// doesn't affect drumIndexes!
+-				if (!song->findNoteRowForDrum(this, thisDrum)) {
++				// Otherwise, if some Clip does have this Kit, then yes do save this Drum - with no ParamManager though
++				else {
+ 
+-					*prevPointer = thisDrum->next;
++					// ... but, if no NoteRow has this Drum, we actually want to delete it now, so that its existence
++					// doesn't affect drumIndexes!
++					if (!song->findNoteRowForDrum(this, thisDrum)) {
+ 
+-					if (thisDrum->type == DrumType::SOUND) {
+-						song->deleteBackedUpParamManagersForModControllable((SoundDrum*)thisDrum);
+-					}
++						*prevPointer = thisDrum->next;
+ 
+-					drumRemoved(thisDrum);
++						if (thisDrum->type == DrumType::SOUND) {
++							song->deleteBackedUpParamManagersForModControllable((SoundDrum*)thisDrum);
++						}
+ 
+-					void* toDealloc = dynamic_cast<void*>(thisDrum);
+-					thisDrum->~Drum();
+-					delugeDealloc(toDealloc);
++						drumRemoved(thisDrum);
+ 
+-					continue;
++						void* toDealloc = dynamic_cast<void*>(thisDrum);
++						thisDrum->~Drum();
++						delugeDealloc(toDealloc);
++
++						continue;
++					}
+ 				}
+ 			}
+-		}
+ 
+-		writeDrumToFile(writer, thisDrum, paramManagerForDrum, clipForSavingOutputOnly == NULL, &selectedDrumIndex,
+-		                &drumIndex, song);
++			writeDrumToFile(writer, thisDrum, paramManagerForDrum, clipForSavingOutputOnly == NULL, &selectedDrumIndex,
++			                &drumIndex, song);
++
++			// mastertune-v16: taken out of the list as well, as the rows' drums above, so the list ends up in the
++			// file's order (the drums not written after them), for the rows' drumIndex
++			*prevPointer = thisDrum->next;
++			thisDrum->next = NULL;
++			*newLastDrum = thisDrum;
++			newLastDrum = &thisDrum->next;
++			continue;
+ 
+ moveOn:
+-		prevPointer = &thisDrum->next;
++			prevPointer = &thisDrum->next;
++		}
+ 	}
+ 
+ 	writer.writeClosingTag("soundSources");
+-- 
+2.43.0
+

@@ -139,7 +139,7 @@ v7 enthält v6 unverändert und dazu den Dateizugriff über USB-MIDI aus Communi
 
 v8 enthält v7 unverändert. Neu kann der Deluge sein Ausgangssignal über USB an den Computer schicken. Er erscheint dort als Audio-Eingang (Stereo, 24 Bit, 44,1 kHz) neben dem gewohnten MIDI. Am Computer kommt genau das an, was an den Ausgängen des Deluge anliegt: dasselbe Signal, das der Deluge beim Resampling aufnimmt, mit Master-Lautstärke und Eingangs-Monitoring.
 
-**Einschalten:** Settings → Community features → **USB audio** (7-Segment: `UAUD`) auf an und den Deluge neu starten. Die Einstellung wirkt nur beim Start und nur, wenn der Deluge als USB-Gerät am Computer hängt, nicht als USB-Host. Ist sie aus (Grundeinstellung), verhält sich der Deluge exakt wie v7.
+**Einschalten:** Settings → Community features → **USB audio** (7-Segment: `UAUD`) auf an, **das Menü mit Back verlassen** und den Deluge neu starten (bis v15 speichert der Deluge die Einstellung erst beim Verlassen des Menüs, ab v16 sofort). Die Einstellung wirkt nur beim Start und nur, wenn der Deluge als USB-Gerät am Computer hängt, nicht als USB-Host. Ist sie aus (Grundeinstellung), verhält sich der Deluge exakt wie v7.
 
 **Am Computer** (ohne Treiber, USB Audio Class 1.0):
 - macOS: Audio-MIDI-Setup zeigt «Deluge» mit 2 Eingängen.

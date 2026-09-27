@@ -1,0 +1,48 @@
+From f50646f1fcbb79be051fbd1e15dfa9fd51bf1687 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 12:31:40 +0000
+Subject: [PATCH 54/55] Profiler: a sample's weight counted from a reference in
+ step with the timer
+
+After a late sample (interrupts were disabled) the next one comes on time, less than a period later; counting from
+when the last sample was taken rounded that to a weight of 1 on top of the late one's, so the weights added up to
+more than the time. Now the reference moves on by whole periods, as the timer does, so they add up exactly (the
+emulator: 4365 for 4400 ms, the rest still in the ring). A stall of over 31 periods gives 31 and starts afresh.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/processing/engines/profiler.cpp | 17 ++++++++++++++---
+ 1 file changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/src/deluge/processing/engines/profiler.cpp b/src/deluge/processing/engines/profiler.cpp
+index 4ff37a1e..9208abcd 100644
+--- a/src/deluge/processing/engines/profiler.cpp
++++ b/src/deluge/processing/engines/profiler.cpp
+@@ -232,9 +232,20 @@ extern "C" void profilerTimerInterrupt(uint32_t sense) {
+ 	uint32_t address = top[-1];             // irq_handler: lr - 4, the instruction to resume at, pushed first
+ 	uint32_t spsr = top[-2];                // Then SPSR
+ 	bool otherMode = (spsr & 0x1F) != 0x1F; // Not System mode, the main program's
+-	// How many periods this sample stands for: more than one if interrupts were disabled for longer
++	// How many timer periods this sample stands for: more than one if interrupts were disabled for longer. Counted
++	// from a reference that moves on by whole periods, in step with the timer, not from when the last sample was
++	// taken: after a late sample the next comes on time, less than a period later, and must still count one
+ 	uint32_t now = getTimerValue(0);
+-	uint32_t weight = (now - lastSampleTicks + kPeriodTicks / 2) / kPeriodTicks;
+-	lastSampleTicks = now;
++	uint32_t weight = (now - lastSampleTicks + kPeriodTicks / 4) / kPeriodTicks;
++	if (weight < 1) {
++		weight = 1;
++	}
++	if (weight > 31) { // A stall of over 31 ms: the most a sample can say; start counting afresh
++		weight = 31;
++		lastSampleTicks = now;
++	}
++	else {
++		lastSampleTicks += weight * kPeriodTicks;
++	}
+ 	ring.push({address, packContext(currentTask, inAudioRoutine, otherMode, currentOutput, weight)});
+ }
+-- 
+2.43.0
+

@@ -1,0 +1,920 @@
+From 9ed5be07d6e0d958ad377f6cbefb4c021d3aa2fb Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 12:15:31 +0000
+Subject: [PATCH 53/55] Sampling profiler: Settings > CPU monitor > Profile
+ sends where the CPU spends its time to the computer
+
+A measurement version's tool for the question "what takes the CPU in a big song" on the device itself, with its
+caches, which the emulator doesn't model (the emulator showed the idle 87 % is the audio routine filling free time
+with blocks of 4-8 samples; the device's per-call cost is unknown).
+
+- OS timer 1 (unused so far) interrupts 1000 times a second at the lowest priority (30), so it's never taken inside
+  another interrupt's handler, only from the main program: then irq_handler has pushed the interrupted address and
+  SPSR onto the empty IRQ stack, and the handler reads them at irq_stack_end - 4 and - 8. No change to the interrupt
+  entry.
+- Each sample: that address and what the CPU was doing, from stores the firmware makes anyway: the task
+  (TaskManager::runTask(), nesting through yield()), inside AudioEngine::routine(), which output renders
+  (Song::renderAudio()). A weight counts the timer periods since the last sample: renderOutput() runs with interrupts
+  disabled, so the samples of that time come where they're enabled again, and stand for all of it.
+- Because of that, each output's render time is also measured exactly around renderOutput() (OS timer 0) while
+  profiling, and sent once a second.
+- The samples go into a ring of 1024 (one writer, one reader, no locks) and out from the CPU monitor's task as SysEx
+  on USB MIDI port 3, like the CPU monitor's numbers, only while the buffer keeps 1 KB free for notes: 32 samples a
+  message (~8 KB/s), the tasks' and outputs' names every 2 s, the output times each second. Formats in
+  profiler_core.h (host-testable: ring and encoders).
+- Settings > CPU monitor: Off, On, Alerts, Profile (Profile = On plus the profiler).
+- Off, it costs the context stores and a flag test per output; on, ~150 cycles a sample and two timer reads per
+  output.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/OSLikeStuff/task_scheduler.cpp            |  17 ++
+ src/OSLikeStuff/task_scheduler.h              |   3 +
+ src/deluge/gui/menu_item/cpu_monitor_mode.h   |   6 +-
+ src/deluge/model/song/song.cpp                |  16 +-
+ .../processing/engines/audio_engine.cpp       |  10 +-
+ src/deluge/processing/engines/cpu_stats.cpp   |  18 +-
+ src/deluge/processing/engines/cpu_stats.h     |   9 +-
+ src/deluge/processing/engines/profiler.cpp    | 240 ++++++++++++++++++
+ src/deluge/processing/engines/profiler.h      |  54 ++++
+ .../processing/engines/profiler_core.cpp      | 166 ++++++++++++
+ src/deluge/processing/engines/profiler_core.h | 127 +++++++++
+ 11 files changed, 652 insertions(+), 14 deletions(-)
+ create mode 100644 src/deluge/processing/engines/profiler.cpp
+ create mode 100644 src/deluge/processing/engines/profiler.h
+ create mode 100644 src/deluge/processing/engines/profiler_core.cpp
+ create mode 100644 src/deluge/processing/engines/profiler_core.h
+
+diff --git a/src/OSLikeStuff/task_scheduler.cpp b/src/OSLikeStuff/task_scheduler.cpp
+index 6da0a3bb..c37f0bb9 100644
+--- a/src/OSLikeStuff/task_scheduler.cpp
++++ b/src/OSLikeStuff/task_scheduler.cpp
+@@ -29,6 +29,7 @@
+ extern "C" {
+ #include "RZA1/ostm/ostm.h"
+ }
++#include "processing/engines/profiler_core.h"
+ 
+ #define SCHEDULER_DETAILED_STATS (0 && ENABLE_TEXT_OUTPUT)
+ 
+@@ -315,7 +316,11 @@ void TaskManager::runTask(TaskID id) {
+ 	currentID = id;
+ 	auto currentTask = &list[currentID];
+ 
++	// mastertune-v15-prof: what the sampling profiler tags its samples with (tasks run inside yield() nest)
++	uint8_t profiledBefore = profiler::currentTask;
++	profiler::currentTask = (uint8_t)id;
+ 	currentTask->handle();
++	profiler::currentTask = profiledBefore;
+ 	timeNow = getSecondsFromStart();
+ 	double runtime = (timeNow - startTime);
+ 	cpuTime += runtime;
+@@ -558,3 +563,15 @@ void removeTask(TaskID id) {
+ double getSystemTime() {
+ 	return taskManager.getSecondsFromStart();
+ }
++
++// mastertune-v15-prof: the tasks' names for the sampling profiler
++const char* getTaskName(TaskID id) {
++	if (id < 0 || id >= kMaxTasks || taskManager.list[id].handle == nullptr) {
++		return nullptr;
++	}
++	return taskManager.list[id].name;
++}
++
++int32_t getNumTaskSlots() {
++	return kMaxTasks;
++}
+diff --git a/src/OSLikeStuff/task_scheduler.h b/src/OSLikeStuff/task_scheduler.h
+index 60d64e5f..ecdc0233 100644
+--- a/src/OSLikeStuff/task_scheduler.h
++++ b/src/OSLikeStuff/task_scheduler.h
+@@ -69,6 +69,9 @@ void yield(RunCondition until);
+ bool yieldWithTimeout(RunCondition until, double timeout);
+ /// start the task scheduler
+ void startTaskManager();
++/// mastertune-v15-prof: the name of the task in slot id (0 to getNumTaskSlots() - 1), nullptr if the slot is empty
++const char* getTaskName(TaskID id);
++int32_t getNumTaskSlots();
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/src/deluge/gui/menu_item/cpu_monitor_mode.h b/src/deluge/gui/menu_item/cpu_monitor_mode.h
+index 711edb42..9d131900 100644
+--- a/src/deluge/gui/menu_item/cpu_monitor_mode.h
++++ b/src/deluge/gui/menu_item/cpu_monitor_mode.h
+@@ -22,8 +22,8 @@
+ 
+ namespace deluge::gui::menu_item {
+ /// Settings > CPU monitor (mastertune-v13): Off, On (the line along the top of the OLED, a popup on the 7-segment
+-/// display, the SysEx), Alerts (only the warnings, when voices are cut or the quality is lowered). Off after every
+-/// power-up
++/// display, the SysEx), Alerts (only the warnings, when voices are cut or the quality is lowered), Profile
++/// (mastertune-v15-prof: as On, and the sampling profiler, see processing/engines/profiler.h). Off after every power-up
+ class CpuMonitorMode final : public Selection {
+ public:
+ 	using Selection::Selection;
+@@ -31,7 +31,7 @@ public:
+ 	void writeCurrentValue() override { cpu_stats::setMode(this->getValue()); }
+ 	deluge::vector<std::string_view> getOptions() override {
+ 		using enum l10n::String;
+-		return {l10n::getView(STRING_FOR_OFF), l10n::getView(STRING_FOR_ON), "Alerts"};
++		return {l10n::getView(STRING_FOR_OFF), l10n::getView(STRING_FOR_ON), "Alerts", "Profile"};
+ 	}
+ };
+ } // namespace deluge::gui::menu_item
+diff --git a/src/deluge/model/song/song.cpp b/src/deluge/model/song/song.cpp
+index cf56af42..9662adfd 100644
+--- a/src/deluge/model/song/song.cpp
++++ b/src/deluge/model/song/song.cpp
+@@ -54,6 +54,7 @@
+ #include "processing/audio_output.h"
+ #include "processing/engines/audio_engine.h"
+ #include "processing/engines/cv_engine.h"
++#include "processing/engines/profiler_core.h"
+ #include "processing/sound/sound_instrument.h"
+ #include "processing/stem_export/stem_export.h"
+ #include "storage/storage_manager.h"
+@@ -62,7 +63,9 @@
+ #include <new>
+ #include <stdint.h>
+ 
+-extern "C" {}
++extern "C" {
++#include "RZA1/ostm/ostm.h" // mastertune-v15-prof: getTimerValue()
++}
+ 
+ namespace params = deluge::modulation::params;
+ 
+@@ -2418,7 +2421,12 @@ void Song::renderAudio(StereoSample* outputBuffer, int32_t numSamples, int32_t*
+ 	ModelStack* modelStack = setupModelStackWithSong(modelStackMemory, this);
+ 
+ 	AudioEngine::logAction("Start output render");
++	// mastertune-v15-prof: which output renders, for the sampling profiler, and while it profiles each one's time
++	uint8_t nextOutputIndex = 0;
+ 	for (Output* output = firstOutput; output; output = output->next) {
++		uint8_t outputIndex = nextOutputIndex;
++		nextOutputIndex += (nextOutputIndex < profiler::kNoOutput - 1);
++		profiler::currentOutput = outputIndex;
+ 		if (!output->inValidState) {
+ 			continue;
+ 		}
+@@ -2426,10 +2434,14 @@ void Song::renderAudio(StereoSample* outputBuffer, int32_t numSamples, int32_t*
+ 		bool isClipActiveNow =
+ 		    (output->getActiveClip() && isClipActive(output->getActiveClip()->getClipBeingRecordedFrom()));
+ 		DISABLE_ALL_INTERRUPTS();
++		uint32_t renderStart = profiler::timingOutputs ? getTimerValue(0) : 0;
+ 		if (output->shouldRenderInSong()) {
+ 			output->renderOutput(modelStack, outputBuffer, outputBuffer + numSamples, numSamples, reverbBuffer,
+ 			                     volumePostFX >> 1, sideChainHitPending, !isClipActiveNow, isClipActiveNow);
+ 		}
++		if (profiler::timingOutputs) [[unlikely]] {
++			profiler::outputTicks[outputIndex] += getTimerValue(0) - renderStart;
++		}
+ 		ENABLE_INTERRUPTS();
+ #if DO_AUDIO_LOG
+ 		char buf[64];
+@@ -2438,6 +2450,8 @@ void Song::renderAudio(StereoSample* outputBuffer, int32_t numSamples, int32_t*
+ #endif
+ 	}
+ 
++	profiler::currentOutput = profiler::kNoOutput;
++
+ 	// If recording the "MIX", this is the place where we want to grab it - before any master FX or volume applied
+ 	// Go through each SampleRecorder, feeding them audio
+ 	for (SampleRecorder* recorder = AudioEngine::firstRecorder; recorder; recorder = recorder->next) {
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index 103da37d..d3779bab 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -48,6 +48,7 @@
+ #include "processing/audio_output.h"
+ #include "processing/engines/cpu_stats.h"
+ #include "processing/engines/cv_engine.h"
++#include "processing/engines/profiler_core.h"
+ #include "processing/live/live_input_buffer.h"
+ #include "processing/metronome/metronome.h"
+ #include "processing/sound/sound.h"
+@@ -1248,14 +1249,19 @@ void scheduleMidiGateOutISR(uint32_t saddrPosAtStart, int32_t unadjustedNumSampl
+ void routine() {
+ 	// mastertune-diag: Settings > CPU monitor measures each call. Not calls from inside a call, which return at once,
+ 	// and not the offline stem export, which renders as fast as it can.
++	// mastertune-v15-prof: the sampling profiler's context (a call from inside a call returns at once)
++	bool wasInAudioRoutine = profiler::inAudioRoutine;
++	profiler::inAudioRoutine = true;
+ 	if (cpu_stats::enabled && !audioRoutineLocked && !(stemExport.processStarted && stemExport.renderOffline))
+ 	    [[unlikely]] {
+ 		cpu_stats::routineStart();
+ 		routineUnmeasured();
+ 		cpu_stats::routineDone();
+-		return;
+ 	}
+-	routineUnmeasured();
++	else {
++		routineUnmeasured();
++	}
++	profiler::inAudioRoutine = wasInAudioRoutine;
+ }
+ 
+ int32_t getNumSamplesLeftToOutputFromPreviousRender() {
+diff --git a/src/deluge/processing/engines/cpu_stats.cpp b/src/deluge/processing/engines/cpu_stats.cpp
+index 61727da2..3f2be82f 100644
+--- a/src/deluge/processing/engines/cpu_stats.cpp
++++ b/src/deluge/processing/engines/cpu_stats.cpp
+@@ -23,6 +23,7 @@
+ #include "io/midi/sysex.h"
+ #include "lib/printf.h" // Not stdio: the firmware's snprintf, which doesn't allocate
+ #include "processing/engines/audio_engine.h"
++#include "processing/engines/profiler.h"
+ 
+ extern "C" {
+ #include "RZA1/ostm/ostm.h"
+@@ -37,8 +38,14 @@ bool enabled = false;
+ Collector collector;
+ 
+ void setMode(uint8_t newMode) {
+-	mode = (newMode <= ALERTS) ? newMode : OFF;
++	mode = (newMode <= PROFILE) ? newMode : OFF;
+ 	enabled = (mode != OFF);
++	if (mode == PROFILE) {
++		profiler::start();
++	}
++	else {
++		profiler::stop();
++	}
+ }
+ 
+ namespace {
+@@ -115,6 +122,8 @@ void routine() {
+ 		return;
+ 	}
+ 
++	profiler::send(); // Mode Profile: the samples collected since the last call (else nothing)
++
+ 	Window window;
+ 	if (!wasEnabled) {
+ 		wasEnabled = true;
+@@ -143,7 +152,8 @@ void routine() {
+ 		blinkOff = cutting && !blinkOff;
+ 		if (display->haveOLED()) {
+ 			// VC blinks while voices are cut (and 2 s after the last cut)
+-			formatCorner(summary, mode == ON, summary.direMax > 0, cutting && !blinkOff, line, sizeof(line));
++			formatCorner(summary, mode == ON || mode == PROFILE, summary.direMax > 0, cutting && !blinkOff, line,
++			             sizeof(line));
+ 			deluge::hid::display::OLED::markChanged();
+ 		}
+ 		else {
+@@ -155,7 +165,7 @@ void routine() {
+ 	// another one: "CUT" while voices are cut, else the CPU (mode On)
+ 	if (collector.readSecond(window, lastSecondSeq)) {
+ 		Summary summary = summarize(window);
+-		if (mode == ON) {
++		if (mode == ON || mode == PROFILE) {
+ 			sendSysex(summary);
+ 		}
+ 		if (!display->haveOLED() && (secondsSeen++ & 1) == 0 && !display->hasPopup()) {
+@@ -163,7 +173,7 @@ void routine() {
+ 			if (cutHoldHalves > 0) {
+ 				snprintf(text, sizeof(text), "CUT");
+ 			}
+-			else if (mode == ON) {
++			else if (mode == ON || mode == PROFILE) {
+ 				formatSevenSegment(summary, text, sizeof(text));
+ 			}
+ 			else {
+diff --git a/src/deluge/processing/engines/cpu_stats.h b/src/deluge/processing/engines/cpu_stats.h
+index 3b3f9339..25937814 100644
+--- a/src/deluge/processing/engines/cpu_stats.h
++++ b/src/deluge/processing/engines/cpu_stats.h
+@@ -28,11 +28,12 @@
+ 
+ namespace cpu_stats {
+ 
+-/// Settings > CPU monitor (mastertune-v13: Off, On, Alerts)
++/// Settings > CPU monitor (mastertune-v13: Off, On, Alerts; mastertune-v15-prof: Profile)
+ enum Mode : uint8_t {
+-	OFF,    ///< Nothing measured
+-	ON,     ///< The line on the OLED (a popup on the 7-segment display) and the SysEx
+-	ALERTS, ///< Only the warnings, when voices are cut or the quality is lowered
++	OFF,     ///< Nothing measured
++	ON,      ///< The line on the OLED (a popup on the 7-segment display) and the SysEx
++	ALERTS,  ///< Only the warnings, when voices are cut or the quality is lowered
++	PROFILE, ///< As On, and the sampling profiler's samples to the computer (profiler.h)
+ };
+ extern uint8_t mode;
+ void setMode(uint8_t newMode);
+diff --git a/src/deluge/processing/engines/profiler.cpp b/src/deluge/processing/engines/profiler.cpp
+new file mode 100644
+index 00000000..4ff37a1e
+--- /dev/null
++++ b/src/deluge/processing/engines/profiler.cpp
+@@ -0,0 +1,240 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "processing/engines/profiler.h"
++#include "OSLikeStuff/task_scheduler.h"
++#include "io/midi/midi_device.h"
++#include "io/midi/midi_device_manager.h"
++#include "model/output.h"
++#include "model/song/song.h"
++#include "processing/engines/cpu_stats.h"
++
++extern "C" {
++#include "OSLikeStuff/timers_interrupts/timers_interrupts.h"
++#include "RZA1/intc/devdrv_intc.h"
++#include "RZA1/ostm/ostm.h"
++
++/// The top of the IRQ mode stack (linker script)
++extern char irq_stack_end[];
++}
++
++namespace profiler {
++
++namespace {
++
++constexpr int kTimer = 1;                  // OS timer 1: OS timer 0 is the task scheduler's clock
++constexpr uint8_t kLowestPriority = 30;    // The interrupt controller's mask lets 0 to 30 through
++constexpr int32_t kMinUsbSendSpace = 1024; // As the CPU monitor: room that stays free for notes and clock
++constexpr double kNamesInterval = 2.0;     // Seconds
++constexpr size_t kNamesPerMessage = 16;
++constexpr uint32_t kPeriodTicks = DELUGE_CLOCKS_PER / kSampleRate;
++constexpr uint32_t kOutputTimesWindow = DELUGE_CLOCKS_PER; // 1 s
++
++Ring ring;
++bool running = false;
++uint32_t seq = 0;
++uint32_t droppedReported = 0;
++double lastNamesTime = -1e9;
++uint32_t lastSampleTicks = 0; // The interrupt's, for the weights
++uint32_t windowStartTicks = 0;
++uint32_t windowTicks[kMaxOutputs]; // A window's output times, while they're sent
++uint32_t windowLength = 0;
++uint8_t windowNumber = 0;
++size_t windowNext = kMaxOutputs; // Where sending them has got to (kMaxOutputs: all sent)
++Sample batch[kMaxSamplesPerMessage];
++uint8_t message[kMaxNamesMessageLength]; // Big enough for any kind
++
++MIDIDeviceUSBUpstream& port() {
++	return MIDIDeviceManager::upstreamUSBMIDIDevice_port3;
++}
++
++bool roomFor(size_t length) {
++	return port().sendBufferSpace() >= kMinUsbSendSpace + (int32_t)length;
++}
++
++char outputPrefix(OutputType type) {
++	switch (type) {
++	case OutputType::SYNTH:
++		return 'S';
++	case OutputType::KIT:
++		return 'K';
++	case OutputType::MIDI_OUT:
++		return 'M';
++	case OutputType::CV:
++		return 'C';
++	case OutputType::AUDIO:
++		return 'A';
++	default:
++		return '?';
++	}
++}
++
++/// One kind of names, in messages of kNamesPerMessage. False if the USB MIDI buffer had no room (then all again later)
++bool sendNames(uint8_t kind) {
++	static char text[kNamesPerMessage][kMaxNameLength + 1];
++	const char* names[kNamesPerMessage];
++	uint8_t indices[kNamesPerMessage];
++	size_t n = 0;
++	auto flush = [&]() {
++		if (n == 0) {
++			return true;
++		}
++		size_t length = encodeNames(kind, names, indices, n, message, sizeof(message));
++		if (!roomFor(length)) {
++			return false;
++		}
++		port().sendSysex(message, (int32_t)length);
++		n = 0;
++		return true;
++	};
++	auto add = [&](uint8_t index, char prefix, const char* name) {
++		char* t = text[n];
++		size_t i = 0;
++		if (prefix) {
++			t[i++] = prefix;
++			t[i++] = ' ';
++		}
++		for (const char* c = name; *c && i < kMaxNameLength; c++) {
++			t[i++] = *c;
++		}
++		t[i] = 0;
++		names[n] = t;
++		indices[n] = index;
++		n++;
++		return (n < kNamesPerMessage) || flush();
++	};
++
++	if (kind == 0) {
++		for (int32_t id = 0; id < getNumTaskSlots(); id++) {
++			const char* name = getTaskName((TaskID)id);
++			if (name != nullptr && !add((uint8_t)id, 0, name)) {
++				return false;
++			}
++		}
++	}
++	else if (currentSong != nullptr) {
++		uint8_t index = 0;
++		for (Output* output = currentSong->firstOutput; output != nullptr && index < kNoOutput; output = output->next) {
++			if (!add(index, outputPrefix(output->type), output->name.get())) {
++				return false;
++			}
++			index++;
++		}
++	}
++	return flush();
++}
++
++} // namespace
++
++void start() {
++	if (running) {
++		return;
++	}
++	ring.clear();
++	droppedReported = ring.droppedTotal();
++	lastNamesTime = -1e9;
++	for (uint32_t& t : outputTicks) {
++		t = 0;
++	}
++	windowNext = kMaxOutputs;
++	windowStartTicks = getTimerValue(0);
++	lastSampleTicks = windowStartTicks;
++	timingOutputs = true;
++	// Interval timer: loads the compare value when started and counts down, an interrupt and a reload at each
++	// underflow, so every compare value + 1 cycles of P0 (33.33 MHz)
++	setOperatingMode(kTimer, TIMER, false);
++	setTimerValue(kTimer, DELUGE_CLOCKS_PER / kSampleRate - 1);
++	setupAndEnableInterrupt(profilerTimerInterrupt, INTC_ID_OSTM1TINT, kLowestPriority);
++	enableTimer(kTimer);
++	running = true;
++}
++
++void stop() {
++	if (!running) {
++		return;
++	}
++	disableTimer(kTimer);
++	R_INTC_Disable(INTC_ID_OSTM1TINT);
++	timingOutputs = false;
++	running = false;
++}
++
++bool isRunning() {
++	return running;
++}
++
++void send() {
++	if (!running) {
++		return;
++	}
++	double now = getSystemTime();
++	if (now - lastNamesTime >= kNamesInterval && sendNames(0) && sendNames(1)) {
++		lastNamesTime = now;
++	}
++
++	// Each second, the outputs' render times: taken out of outputTicks (only the audio routine adds to it, and it
++	// doesn't run inside this task), then sent as the USB MIDI buffer has room
++	uint32_t ticksNow = getTimerValue(0);
++	if (windowNext >= kMaxOutputs && ticksNow - windowStartTicks >= kOutputTimesWindow) {
++		for (size_t i = 0; i < kMaxOutputs; i++) {
++			windowTicks[i] = outputTicks[i];
++			outputTicks[i] = 0;
++		}
++		windowLength = ticksNow - windowStartTicks;
++		windowStartTicks = ticksNow;
++		windowNumber = (windowNumber + 1) & 0x7F;
++		windowNext = 0;
++	}
++	while (windowNext < kMaxOutputs) {
++		size_t next = windowNext;
++		size_t length =
++		    encodeOutputTimes(windowNumber, windowLength, windowTicks, &next, message, kMaxOutputTimesMessageLength);
++		if (!roomFor(length)) {
++			break;
++		}
++		port().sendSysex(message, (int32_t)length);
++		windowNext = next;
++	}
++	while (ring.size() > 0) {
++		constexpr size_t kFullLength = kSamplesHeaderLength + kMaxSamplesPerMessage * kBytesPerSample + 1;
++		if (!roomFor(kFullLength)) {
++			return; // Later; if the ring fills meanwhile, the interrupt counts what it drops
++		}
++		size_t n = ring.pop(batch, kMaxSamplesPerMessage);
++		uint32_t droppedTotal = ring.droppedTotal();
++		size_t length = encodeSamples(batch, n, seq++, droppedTotal - droppedReported, message);
++		droppedReported = droppedTotal;
++		port().sendSysex(message, (int32_t)length);
++	}
++}
++
++} // namespace profiler
++
++/// The timer's interrupt: one sample. See profiler.h for why the interrupted address is at the IRQ stack's top
++extern "C" void profilerTimerInterrupt(uint32_t sense) {
++	(void)sense;
++	using namespace profiler;
++	auto const* top = reinterpret_cast<uint32_t const*>(irq_stack_end);
++	uint32_t address = top[-1];             // irq_handler: lr - 4, the instruction to resume at, pushed first
++	uint32_t spsr = top[-2];                // Then SPSR
++	bool otherMode = (spsr & 0x1F) != 0x1F; // Not System mode, the main program's
++	// How many periods this sample stands for: more than one if interrupts were disabled for longer
++	uint32_t now = getTimerValue(0);
++	uint32_t weight = (now - lastSampleTicks + kPeriodTicks / 2) / kPeriodTicks;
++	lastSampleTicks = now;
++	ring.push({address, packContext(currentTask, inAudioRoutine, otherMode, currentOutput, weight)});
++}
+diff --git a/src/deluge/processing/engines/profiler.h b/src/deluge/processing/engines/profiler.h
+new file mode 100644
+index 00000000..1dc33dd1
+--- /dev/null
++++ b/src/deluge/processing/engines/profiler.h
+@@ -0,0 +1,54 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++// Sampling profiler (mastertune-v15-prof): Settings > CPU monitor > Profile. OS timer 1 interrupts kSampleRate times
++// a second; each time the address the CPU was at goes into a ring with what it was doing (the task, whether inside
++// the audio routine, which output of the song was rendering). The CPU monitor's task sends the samples to the computer
++// over USB MIDI (port 3, as the CPU monitor's numbers), where tools/profiler.html or tools/deluge_profiler.py name the
++// functions from the firmware's symbols. So the share of time each function, task and track takes shows on the device
++// itself, with its caches, which the emulator doesn't model.
++//
++// The timer's interrupt has the lowest priority there is (30), so it's never taken inside another interrupt's
++// handler, only from the main program: then irq_handler (irqfiq_handler.S) has just pushed the interrupted address and
++// its SPSR onto the empty IRQ stack, at its top. Time in other interrupts' handlers isn't sampled (they're short).
++// Code running with interrupts disabled is sampled where it enables them again, with a weight for the periods it
++// took. That includes each output's renderOutput() (Song::renderAudio() disables interrupts around it), so samples
++// can't tell which functions inside a track take the time; for that each output's render time is measured exactly
++// (OS timer 0) and sent once a second, and the emulator's profile (tests/song) names the functions.
++//
++// Off, it costs nothing but the context stores and a flag test per output (profiler_core.h). On, about 150 cycles per
++// sample (0.04 % CPU), two timer reads per output rendered and ~8 KB/s of USB MIDI.
++
++#include "processing/engines/profiler_core.h"
++
++namespace profiler {
++
++constexpr uint32_t kSampleRate = 1000;
++
++void start();
++void stop();
++bool isRunning();
++
++/// From the CPU monitor's task: sends the samples collected, as many messages as the USB MIDI buffer has room for, and
++/// every 2 s the names of the tasks and of the song's outputs
++void send();
++
++} // namespace profiler
++
++extern "C" void profilerTimerInterrupt(uint32_t sense);
+diff --git a/src/deluge/processing/engines/profiler_core.cpp b/src/deluge/processing/engines/profiler_core.cpp
+new file mode 100644
+index 00000000..07c1feb5
+--- /dev/null
++++ b/src/deluge/processing/engines/profiler_core.cpp
+@@ -0,0 +1,166 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "processing/engines/profiler_core.h"
++#include <atomic>
++
++namespace profiler {
++
++namespace {
++
++constexpr uint8_t kHeader[] = {0xF0, 0x00, 0x21, 0x7B, 0x01};
++
++/// The order of the loads and stores around the index updates, for the compiler (one core: no hardware barrier)
++void compilerBarrier() {
++	std::atomic_signal_fence(std::memory_order_seq_cst);
++}
++
++uint8_t* putBits(uint8_t* out, uint32_t value, int bytes) {
++	for (int i = 0; i < bytes; i++) {
++		*out++ = (uint8_t)(value & 0x7F);
++		value >>= 7;
++	}
++	return out;
++}
++
++} // namespace
++
++bool Ring::push(Sample sample) {
++	uint32_t head = head_;
++	if (head - tail_ >= kSize) {
++		dropped_ = dropped_ + 1;
++		return false;
++	}
++	buffer_[head & (kSize - 1)] = sample;
++	compilerBarrier(); // The sample is in before the reader can see it
++	head_ = head + 1;
++	return true;
++}
++
++size_t Ring::pop(Sample* out, size_t max) {
++	uint32_t tail = tail_;
++	uint32_t available = head_ - tail;
++	compilerBarrier(); // Read the samples only after seeing the head
++	size_t n = (available < max) ? available : max;
++	for (size_t i = 0; i < n; i++) {
++		out[i] = buffer_[(tail + i) & (kSize - 1)];
++	}
++	compilerBarrier(); // Done with them before the writer may reuse their slots
++	tail_ = tail + (uint32_t)n;
++	return n;
++}
++
++void Ring::clear() {
++	tail_ = head_;
++}
++
++size_t encodeSamples(const Sample* samples, size_t n, uint32_t seq, uint32_t dropped, uint8_t* out) {
++	if (n > kMaxSamplesPerMessage) {
++		n = kMaxSamplesPerMessage;
++	}
++	uint8_t* p = out;
++	for (uint8_t b : kHeader) {
++		*p++ = b;
++	}
++	*p++ = kSysexSamples;
++	p = putBits(p, seq & 0x3FFF, 2);
++	p = putBits(p, (dropped > 0x1FFFFF) ? 0x1FFFFF : dropped, 3);
++	*p++ = (uint8_t)n;
++	for (size_t i = 0; i < n; i++) {
++		p = putBits(p, samples[i].address, 5);
++		p = putBits(p, samples[i].context & 0x1FFFFF, 3);
++	}
++	*p++ = 0xF7;
++	return (size_t)(p - out);
++}
++
++size_t encodeNames(uint8_t kind, const char* const* names, const uint8_t* indices, size_t count, uint8_t* out,
++                   size_t size) {
++	constexpr size_t kFixed = 5 + 1 + 1 + 1 + 1; // Header, command, kind, count, F7
++	if (size < kFixed) {
++		return 0;
++	}
++	uint8_t* p = out;
++	for (uint8_t b : kHeader) {
++		*p++ = b;
++	}
++	*p++ = kSysexNames;
++	*p++ = kind & 0x7F;
++	uint8_t* countPos = p++;
++	uint8_t* end = out + size - 1; // Room for F7
++	uint8_t written = 0;
++	for (size_t i = 0; i < count && written < 127; i++) {
++		const char* name = names[i];
++		if (name == nullptr) {
++			continue;
++		}
++		size_t length = 0;
++		while (name[length] != 0 && length < kMaxNameLength) {
++			length++;
++		}
++		if ((size_t)(end - p) < length + 3) {
++			break;
++		}
++		p = putBits(p, indices[i], 2);
++		for (size_t c = 0; c < length; c++) {
++			char ch = name[c];
++			*p++ = (ch >= 0x20 && ch <= 0x7E) ? (uint8_t)ch : (uint8_t)'?';
++		}
++		*p++ = 0;
++		written++;
++	}
++	*countPos = written;
++	*p++ = 0xF7;
++	return (size_t)(p - out);
++}
++
++size_t encodeOutputTimes(uint8_t windowNumber, uint32_t window, const uint32_t* ticks, size_t* next, uint8_t* out,
++                         size_t size) {
++	constexpr size_t kFixed = 5 + 1 + 1 + 5 + 1 + 1; // Header, command, window number and length, count, F7
++	constexpr size_t kPerOutput = 2 + 5;
++	if (size < kFixed) {
++		return 0;
++	}
++	uint8_t* p = out;
++	for (uint8_t b : kHeader) {
++		*p++ = b;
++	}
++	*p++ = kSysexOutputTimes;
++	*p++ = windowNumber & 0x7F;
++	p = putBits(p, window, 5);
++	uint8_t* countPos = p++;
++	uint8_t* end = out + size - 1; // Room for F7
++	uint8_t written = 0;
++	size_t i = *next;
++	for (; i < kMaxOutputs && written < 127; i++) {
++		if (ticks[i] == 0) {
++			continue;
++		}
++		if ((size_t)(end - p) < kPerOutput) {
++			break;
++		}
++		p = putBits(p, (uint32_t)i, 2);
++		p = putBits(p, ticks[i], 5);
++		written++;
++	}
++	*next = i;
++	*countPos = written;
++	*p++ = 0xF7;
++	return (size_t)(p - out);
++}
++
++} // namespace profiler
+diff --git a/src/deluge/processing/engines/profiler_core.h b/src/deluge/processing/engines/profiler_core.h
+new file mode 100644
+index 00000000..2270b4b8
+--- /dev/null
++++ b/src/deluge/processing/engines/profiler_core.h
+@@ -0,0 +1,127 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++// The sampling profiler's parts that don't touch hardware (mastertune-v15-prof), so a host test can check them: the
++// ring the timer interrupt fills and the SysEx messages the samples and the names go out in. See profiler.h.
++//
++// Samples message (the computer decodes it: tools/profiler.html, tools/deluge_profiler.py):
++//   F0 00 21 7B 01 11  seq (2 bytes, 14 bits)  dropped (3 bytes, 21 bits, saturating)  count (1 byte, <= 32)
++//   per sample: the address (5 bytes, 7 bits each, least significant first) and the context (3 bytes, same)  F7
++//   seq counts the messages (wrapping at 2^14), so the computer sees lost ones; dropped is the number of samples the
++//   ring had no room for since the last message.
++// Names message:
++//   F0 00 21 7B 01 12  kind (0 tasks, 1 outputs of the song)  count  per name: index (2 bytes, 7 bits each) the
++//   name's characters (printable ASCII, at most kMaxNameLength) 00  F7
++//
++// Output times message (once a second: each output's render time, measured exactly around its renderOutput(), which
++// runs with interrupts disabled, so samples can't look inside):
++//   F0 00 21 7B 01 13  window number (1 byte, wrapping at 128)  window (5 bytes: OS timer ticks, 33.33 MHz, the time
++//   the numbers cover)  count  per output that rendered: index (2 bytes) ticks (5 bytes)  F7
++//   (several messages for one window when there are many outputs; its number and length repeat in each)
++//
++// A sample's context (21 bits):
++//   bits 0-4   the task running (TaskManager's TaskID, 31 none: the scheduler itself, or before it runs)
++//   bit 5      inside AudioEngine::routine()
++//   bit 6      the interrupted code wasn't in System mode (the main program's), e.g. an abort or undefined handler
++//   bits 8-15  the output of the song being rendered, counted from the first (255 none)
++//   bits 16-20 weight: timer periods since the last sample, 1 to 31. More than 1 when interrupts were disabled for
++//              longer than a period (as while each output renders): the sample then stands for all that time and was
++//              taken where they were enabled again
++
++#include <cstddef>
++#include <cstdint>
++
++namespace profiler {
++
++constexpr uint8_t kSysexSamples = 0x11;
++constexpr uint8_t kSysexNames = 0x12;
++constexpr uint8_t kSysexOutputTimes = 0x13;
++
++constexpr uint8_t kNoTask = 31;
++constexpr uint8_t kNoOutput = 255;
++
++constexpr size_t kMaxSamplesPerMessage = 32;
++constexpr size_t kBytesPerSample = 8;
++constexpr size_t kSamplesHeaderLength = 6 + 2 + 3 + 1;
++constexpr size_t kMaxSamplesMessageLength = kSamplesHeaderLength + kMaxSamplesPerMessage * kBytesPerSample + 1;
++
++constexpr size_t kMaxNameLength = 24;
++constexpr size_t kMaxNamesMessageLength = 512;
++
++constexpr size_t kMaxOutputs = 255; // Output indices 0 to 254
++constexpr size_t kMaxOutputTimesMessageLength = 512;
++
++struct Sample {
++	uint32_t address;
++	uint32_t context;
++};
++
++/// What the CPU is doing, for the samples: set by the firmware as it goes, a store each, whether profiling or not
++inline volatile uint8_t currentTask = kNoTask;     ///< TaskManager::runTask()
++inline volatile uint8_t currentOutput = kNoOutput; ///< Song::renderAudio(): which output renders
++inline volatile bool inAudioRoutine = false;       ///< AudioEngine::routine()
++/// While profiling: Song::renderAudio() adds each output's render time (OS timer ticks) to outputTicks[its index]
++inline volatile bool timingOutputs = false;
++inline uint32_t outputTicks[kMaxOutputs];
++
++constexpr uint32_t packContext(uint8_t task, bool inAudioRoutine, bool otherMode, uint8_t output, uint32_t weight) {
++	return (uint32_t)(task & 31) | (inAudioRoutine ? 0x20u : 0u) | (otherMode ? 0x40u : 0u) | ((uint32_t)output << 8)
++	       | ((weight < 1    ? 1u
++	           : weight > 31 ? 31u
++	                         : weight)
++	          << 16);
++}
++
++/// Filled by the timer interrupt, emptied by the main program: one writer and one reader, so no locks. The interrupt
++/// only moves head_, the main program only tail_.
++class Ring {
++public:
++	static constexpr uint32_t kSize = 1024; // A power of two: 1 s of samples at 1 kHz
++
++	/// From the interrupt. False when full: the sample is counted as dropped
++	bool push(Sample sample);
++	/// From the main program: up to max samples, oldest first
++	size_t pop(Sample* out, size_t max);
++	/// Samples dropped so far (wraps; take differences)
++	uint32_t droppedTotal() const { return dropped_; }
++	/// From the main program, with the interrupt off
++	void clear();
++	size_t size() const { return head_ - tail_; }
++
++private:
++	Sample buffer_[kSize];
++	volatile uint32_t head_ = 0;
++	volatile uint32_t tail_ = 0;
++	volatile uint32_t dropped_ = 0;
++};
++
++/// A samples message into out (at least kMaxSamplesMessageLength bytes), n <= kMaxSamplesPerMessage. Returns its length
++size_t encodeSamples(const Sample* samples, size_t n, uint32_t seq, uint32_t dropped, uint8_t* out);
++
++/// A names message into out (size bytes): as many of the count names as fit. names[i] may be nullptr (then left out).
++/// Returns its length, 0 if not even an empty one fits
++size_t encodeNames(uint8_t kind, const char* const* names, const uint8_t* indices, size_t count, uint8_t* out,
++                   size_t size);
++
++/// An output times message into out (size bytes), for the outputs with ticks from *next on (ticks has kMaxOutputs
++/// entries); *next is left where it stopped (kMaxOutputs when all are in). Returns its length
++size_t encodeOutputTimes(uint8_t windowNumber, uint32_t window, const uint32_t* ticks, size_t* next, uint8_t* out,
++                         size_t size);
++
++} // namespace profiler
+-- 
+2.43.0
+

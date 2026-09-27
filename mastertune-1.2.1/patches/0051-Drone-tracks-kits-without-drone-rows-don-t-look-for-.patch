@@ -1,0 +1,111 @@
+From 2dc37e53f2ecfe4c8083a20a9b87dd68ce09f08e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 12:23:55 +0000
+Subject: [PATCH 51/55] Drone tracks: kits without drone rows don't look for
+ them; a drone row cut when the active clip has none for it
+
+- Kit::renderGlobalEffectableForClip() walked every kit's whole list of drums in every
+  audio block to find sounding drone rows, kits without any too: on the Deluge a cache miss
+  or two per drum and block for big kits. Kit::numDroneDrums counts them (addDrum(),
+  drumRemoved()), and a kit without any skips the walk.
+- A drone row held by a MIDI note kept sounding when another clip of the kit without that
+  row became active: receivedNoteForDrum() drops the note-off since the active clip has no
+  row for the drum, and nothing else closed the gate until stopAllAuditioning or a song
+  change. As a sound row is (the "used to be E255" case above it), a sounding drone row
+  whose drum has no row in the active clip is now cut.
+
+The song drone is untouched (tests/song: the demand run's sha256 is the same).
+
+Test: mastertune tests/song/drone_edit_emu.py (run.sh DRONE=1): the kit counts its drone
+rows; with a row's pad held, the kit's active clip made one without it: the row stops.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/model/instrument/kit.cpp | 40 +++++++++++++++++++----------
+ src/deluge/model/instrument/kit.h   |  3 +++
+ 2 files changed, 30 insertions(+), 13 deletions(-)
+
+diff --git a/src/deluge/model/instrument/kit.cpp b/src/deluge/model/instrument/kit.cpp
+index 136c8a2b..dd46849b 100644
+--- a/src/deluge/model/instrument/kit.cpp
++++ b/src/deluge/model/instrument/kit.cpp
+@@ -457,6 +457,9 @@ void Kit::addDrum(Drum* newDrum) {
+ 	*prevPointer = newDrum;
+ 
+ 	newDrum->kit = this;
++	if (newDrum->type == DrumType::DRONE) {
++		numDroneDrums++;
++	}
+ }
+ 
+ void Kit::removeDrumFromKitArpeggiator(int32_t drumIndex) {
+@@ -487,6 +490,9 @@ void Kit::drumRemoved(Drum* drum) {
+ 	if (selectedDrum == drum) {
+ 		selectedDrum = NULL;
+ 	}
++	if (drum->type == DrumType::DRONE && numDroneDrums > 0) {
++		numDroneDrums--;
++	}
+ 
+ #if ALPHA_OR_BETA_VERSION
+ 	int32_t i = drumsWithRenderingActive.searchExact((int32_t)drum);
+@@ -613,20 +619,28 @@ bool Kit::renderGlobalEffectableForClip(ModelStackWithTimelineCounter* modelStac
+ 
+ 	// mastertune-v16: drone rows (DroneDrum), each while its gate is open or it fades out. Not in
+ 	// drumsWithRenderingActive, which is for SoundDrums only. While the kit is being written to a file, the drums
+-	// already written are in drumsWrittenToFile.
+-	bool haveDroneContext = false;
+-	deluge::dsp::Drone::Context droneContext;
+-	for (Drum* list : {firstDrum, drumsWrittenToFile}) {
+-		for (Drum* thisDrum = list; thisDrum; thisDrum = thisDrum->next) {
+-			if (thisDrum->type != DrumType::DRONE || !((DroneDrum*)thisDrum)->isSounding()) {
+-				continue;
+-			}
+-			if (!haveDroneContext) {
+-				AudioEngine::getDroneContext(droneContext); // Tempo, position and master tune, once a block
+-				haveDroneContext = true;
++	// already written are in drumsWrittenToFile. A kit without drone rows doesn't look (numDroneDrums).
++	if (numDroneDrums > 0) {
++		bool haveDroneContext = false;
++		deluge::dsp::Drone::Context droneContext;
++		for (Drum* list : {firstDrum, drumsWrittenToFile}) {
++			for (Drum* thisDrum = list; thisDrum; thisDrum = thisDrum->next) {
++				if (thisDrum->type != DrumType::DRONE || !((DroneDrum*)thisDrum)->isSounding()) {
++					continue;
++				}
++				// A clip of the kit launched without this row while its gate was open (a MIDI note's note-off goes
++				// only to the active clip's rows, so it would never close): cut, as for a sound row above
++				if (activeClip && !((InstrumentClip*)activeClip)->getNoteRowForDrum(thisDrum)) {
++					thisDrum->unassignAllVoices();
++					continue;
++				}
++				if (!haveDroneContext) {
++					AudioEngine::getDroneContext(droneContext); // Tempo, position and master tune, once a block
++					haveDroneContext = true;
++				}
++				((DroneDrum*)thisDrum)->render({globalEffectableBuffer, (size_t)numSamples}, droneContext);
++				rendered = true;
+ 			}
+-			((DroneDrum*)thisDrum)->render({globalEffectableBuffer, (size_t)numSamples}, droneContext);
+-			rendered = true;
+ 		}
+ 	}
+ 
+diff --git a/src/deluge/model/instrument/kit.h b/src/deluge/model/instrument/kit.h
+index 3e854725..2817d414 100644
+--- a/src/deluge/model/instrument/kit.h
++++ b/src/deluge/model/instrument/kit.h
+@@ -147,6 +147,9 @@ public:
+ 	/// mastertune-v16: the drums writeDataToFile() has written so far, taken out of firstDrum until it puts them back
+ 	/// in front of the rest. The audio runs while the file is written, and drone rows are rendered from both lists.
+ 	Drum* drumsWrittenToFile = nullptr;
++	/// mastertune-v16: how many of the drums are drone rows (DroneDrum; addDrum() and drumRemoved() count them), so a
++	/// kit without any doesn't walk its drums for them every block
++	int32_t numDroneDrums = 0;
+ 
+ 	ModelStackWithAutoParam* getModelStackWithParam(ModelStackWithTimelineCounter* modelStack, Clip* clip,
+ 	                                                int32_t paramID, deluge::modulation::params::Kind paramKind,
+-- 
+2.43.0
+

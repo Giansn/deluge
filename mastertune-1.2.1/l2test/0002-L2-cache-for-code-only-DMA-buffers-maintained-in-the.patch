@@ -1,4 +1,4 @@
-From 9c3a2c71ea733978434c7f03169ac16f29ce55cd Mon Sep 17 00:00:00 2001
+From 0186f612123517e53669461a7be22298378032dd Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 26 Sep 2026 23:51:52 +0000
 Subject: [PATCH 2/3] L2 cache for code only: DMA buffers maintained in the L2

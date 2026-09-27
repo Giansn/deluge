@@ -1,0 +1,597 @@
+From c7557e974e8e8a47234491a0936e9025971d0a95 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 10:23:35 +0000
+Subject: [PATCH 43/55] Drone tracks: a drone tone as a kit row (DroneDrum),
+ with its notes as the gate and an Hz lane
+
+A kit of drone rows is a drone track: its clips launch in Song view and sit in the arranger like any kit's, so
+drones can be placed deliberately and overlap, each track with the kit's effects, volume and sidechain.
+
+- DroneDrum (DrumType::DRONE, a NonAudioDrum like MIDI and gate rows, so their casts stay valid): a Tone and a
+  Drone::Voice of its own. Its notes open its gate through its arpeggiator as a gate row's do (with the arp on, it
+  gates the tone in rhythm); the tone fades in and out as the song's drone's tones do. allowNoteTails and
+  hasAnyVoices (the gate) as for gate rows: a note as long as the clip holds across the loop point.
+- Its pitch: the tone's own, with the row's Hz lane on top: the NoteRow's expression X (pitch bend), in cents
+  (DroneTrackPitch). So an empty lane changes nothing, and saving (expressionData), cloning, recording to the
+  arranger and undo work as for any automation. It plays through ExpressionParamSet ->
+  polyphonicExpressionEventOnChannelOrNote(); noteOn() takes the lane's full 32 bits where the note starts. Between
+  nodes it steps (expression isn't interpolated) and the voice glides there in about 15 ms.
+- changePitch(): with REC on, the clock running and the clip armed, the new pitch goes into the lane at the play
+  position as a gold knob records (AutoParam::setCurrentValueInResponseToUserInput(): a node, latched until the next
+  turn; into the clone while recording to the arranger). Otherwise the tone's own frequency changes, which moves the
+  lane with it.
+- Kit::renderGlobalEffectableForClip() walks the kit's drums and renders the sounding drone rows into the kit's
+  buffer (not drumsWithRenderingActive, which is for SoundDrums: that caused the E253/E321 freezes). The block's
+  context once per kit and block, only when a drone row sounds.
+- Level: a row in a new kit (volume 3/4 up) sounds as loud as a tone of the song's drone at the same level with the
+  drone's volume at its default (40): measured in the emulator, the kit's stages put it 6.71 dB lower, kGain makes up
+  for it.
+- NoteRow::clearMPEUpUntilNextNote() leaves a drone row's lane alone: adding or deleting a note would otherwise
+  erase it.
+- File: <droneTone mode timbre byNote note cents frequency beat sync triplet pulseAttack pulseRelease level pan>
+  (the song's drone's tone attributes), its arpeggiator and, in songs, MIDI commands; Kit::readFromFile() and
+  StorageManager::createNewDrum() know it. The lane stays in the song's noteRow. Older firmware skips the tag, so the
+  kit's later rows shift.
+- The drone's tone menu edits a drone row's tone when drone::trackTone points at it (set by the clip view's menu,
+  next commit); a deleted row clears it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/definitions_cxx.hpp                |   1 +
+ src/deluge/gui/menu_item/drone/items.h |   6 +
+ src/deluge/model/drum/drone_drum.cpp   | 281 +++++++++++++++++++++++++
+ src/deluge/model/drum/drone_drum.h     | 108 ++++++++++
+ src/deluge/model/instrument/kit.cpp    |  27 ++-
+ src/deluge/model/note/note_row.cpp     |   4 +
+ src/deluge/storage/storage_manager.cpp |   6 +
+ 7 files changed, 431 insertions(+), 2 deletions(-)
+ create mode 100644 src/deluge/model/drum/drone_drum.cpp
+ create mode 100644 src/deluge/model/drum/drone_drum.h
+
+diff --git a/src/definitions_cxx.hpp b/src/definitions_cxx.hpp
+index ccbbaa33..3641d6a7 100644
+--- a/src/definitions_cxx.hpp
++++ b/src/definitions_cxx.hpp
+@@ -701,6 +701,7 @@ enum class DrumType {
+ 	SOUND,
+ 	MIDI,
+ 	GATE,
++	DRONE, ///< mastertune-v16: a drone tone (DroneDrum), a row of a drone track
+ };
+ 
+ enum class PgmChangeSend {
+diff --git a/src/deluge/gui/menu_item/drone/items.h b/src/deluge/gui/menu_item/drone/items.h
+index c2f0d925..40ad04d3 100644
+--- a/src/deluge/gui/menu_item/drone/items.h
++++ b/src/deluge/gui/menu_item/drone/items.h
+@@ -39,7 +39,13 @@ using Settings = deluge::dsp::DroneSettings;
+ 
+ /// The tone the drone view has selected, which the tone items edit
+ inline int32_t currentTone = 0;
++/// mastertune-v16: a drone track's row (DroneDrum) whose tone the tone items edit instead, when the clip view opened
++/// them (SoundEditor::setup()); null for the song's drone
++inline Settings::Tone* trackTone = nullptr;
+ inline Settings::Tone& tone() {
++	if (trackTone != nullptr) {
++		return *trackTone;
++	}
+ 	return currentSong->drone.tones[std::clamp(currentTone, (int32_t)0, (int32_t)Settings::kNumTones - 1)];
+ }
+ 
+diff --git a/src/deluge/model/drum/drone_drum.cpp b/src/deluge/model/drum/drone_drum.cpp
+new file mode 100644
+index 00000000..a850fd96
+--- /dev/null
++++ b/src/deluge/model/drum/drone_drum.cpp
+@@ -0,0 +1,281 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute
++ * it and/or modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation, either version 3 of the License,
++ * or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++ * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
++ * details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program. If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "model/drum/drone_drum.h"
++#include "gui/menu_item/drone/items.h"
++#include "lib/printf.h" // Not stdio: the firmware's snprintf, which doesn't allocate
++#include "model/clip/instrument_clip.h"
++#include "model/model_stack.h"
++#include "model/note/note_row.h"
++#include "model/tuning/master_tune.h"
++#include "modulation/automation/auto_param.h"
++#include "modulation/params/param_manager.h"
++#include "modulation/params/param_set.h"
++#include "playback/playback_handler.h"
++#include "processing/engines/audio_engine.h"
++#include "storage/storage_manager.h"
++#include "util/functions.h"
++#include <algorithm>
++#include <cmath>
++
++using Settings = deluge::dsp::DroneSettings;
++using Pitch = deluge::dsp::DroneTrackPitch;
++
++namespace {
++float masterTuneA4() {
++	return (float)MasterTune::getTenthsHz() * 0.1f;
++}
++} // namespace
++
++DroneDrum::DroneDrum() : NonAudioDrum(DrumType::DRONE) {
++	tone.active = true;
++	arpSettings.numOctaves = 1;
++}
++
++DroneDrum::~DroneDrum() {
++	// The tone menu mustn't be left editing a tone that's gone
++	if (deluge::gui::menu_item::drone::trackTone == &tone) {
++		deluge::gui::menu_item::drone::trackTone = nullptr;
++	}
++}
++
++void DroneDrum::noteOn(ModelStackWithThreeMainThings* modelStack, uint8_t velocity, Kit* kit, int16_t const* mpeValues,
++                       int32_t fromMIDIChannel, uint32_t sampleSyncLength, int32_t ticksLate, uint32_t samplesLate) {
++	// The lane where the note starts (the 16 bits of mpeValues are too coarse for it)
++	if (modelStack != nullptr && modelStack->paramManager != nullptr) {
++		ExpressionParamSet* expressionParams = modelStack->paramManager->getExpressionParamSet();
++		if (expressionParams != nullptr) {
++			pitchOffset = expressionParams->params[X_PITCH_BEND].getCurrentValue();
++		}
++	}
++	lastVelocity = velocity;
++	ArpReturnInstruction instruction;
++	// Through the row's arpeggiator, as a gate row's: with it on, it gates the tone in its rhythm
++	arpeggiator.noteOn(&arpSettings, kNoteForDrum, velocity, &instruction, fromMIDIChannel, mpeValues);
++	if (instruction.arpNoteOn != nullptr) {
++		for (int32_t n = 0; n < ARP_MAX_INSTRUCTION_NOTES; n++) {
++			if (instruction.arpNoteOn->noteCodeOnPostArp[n] == ARP_NOTE_NONE) {
++				break;
++			}
++			noteOnPostArp(instruction.arpNoteOn->noteCodeOnPostArp[n], instruction.arpNoteOn, n);
++			instruction.arpNoteOn->noteStatus[n] = ArpNoteStatus::PLAYING;
++		}
++	}
++}
++
++void DroneDrum::noteOff(ModelStackWithThreeMainThings* modelStack, int32_t velocity) {
++	ArpReturnInstruction instruction;
++	arpeggiator.noteOff(&arpSettings, kNoteForDrum, &instruction);
++	for (int32_t n = 0; n < ARP_MAX_INSTRUCTION_NOTES; n++) {
++		if (instruction.glideNoteCodeOffPostArp[n] == ARP_NOTE_NONE) {
++			break;
++		}
++		noteOffPostArp(instruction.glideNoteCodeOffPostArp[n]);
++	}
++	for (int32_t n = 0; n < ARP_MAX_INSTRUCTION_NOTES; n++) {
++		if (instruction.noteCodeOffPostArp[n] == ARP_NOTE_NONE) {
++			break;
++		}
++		noteOffPostArp(instruction.noteCodeOffPostArp[n]);
++	}
++}
++
++void DroneDrum::noteOnPostArp(int32_t noteCodePostArp, ArpNote* arpNote, int32_t noteIndex) {
++	NonAudioDrum::noteOnPostArp(noteCodePostArp, arpNote, noteIndex); // The gate opens
++}
++
++void DroneDrum::noteOffPostArp(int32_t noteCodePostArp) {
++	NonAudioDrum::noteOffPostArp(noteCodePostArp); // The gate closes: the tone fades out
++}
++
++void DroneDrum::unassignAllVoices() {
++	NonAudioDrum::unassignAllVoices();
++	voice_ = {}; // Cut, as a sound's voices are
++}
++
++void DroneDrum::polyphonicExpressionEventOnChannelOrNote(int32_t newValue, int32_t whichExpressionDimension,
++                                                         int32_t channelOrNoteNumber,
++                                                         MIDICharacteristic whichCharacteristic) {
++	if (whichExpressionDimension == X_PITCH_BEND) {
++		pitchOffset = newValue; // The voice glides there (about 15 ms)
++	}
++}
++
++float DroneDrum::baseHz(float a4Hz) const {
++	return Pitch::baseHz(tone, a4Hz);
++}
++
++float DroneDrum::currentHz(float a4Hz) const {
++	return Pitch::hz(tone, pitchOffset, a4Hz);
++}
++
++void DroneDrum::render(std::span<StereoSample> buffer, const deluge::dsp::Drone::Context& context) {
++	// The song's drone renders it: its scratch buffers, none of its tones
++	AudioEngine::drone.renderTone(voice_, Pitch::sounding(tone, state, pitchOffset, context.a4Hz), buffer, context,
++	                              kGain);
++}
++
++void DroneDrum::changePitch(ModelStackWithTimelineCounter* modelStack, int32_t offset, PitchStep step) {
++	if (offset == 0) {
++		return;
++	}
++	float a4 = masterTuneA4();
++
++	// Recording: into the lane at the play position, as cents from the tone's own pitch
++	InstrumentClip* clip = (InstrumentClip*)modelStack->getTimelineCounterAllowNull();
++	bool recording = clip != nullptr && playbackHandler.isEitherClockActive() && !playbackHandler.ticksLeftInCountIn
++	                 && playbackHandler.recording != RecordingMode::OFF && clip->armedForRecording
++	                 && clip->isPlayingAutomationNow();
++	if (recording) {
++		if (clip->possiblyCloneForArrangementRecording(modelStack)) {
++			clip = (InstrumentClip*)modelStack->getTimelineCounter(); // The arranger's clone
++		}
++		ModelStackWithNoteRow* modelStackWithNoteRow = clip->getNoteRowForDrum(modelStack, this);
++		NoteRow* noteRow = modelStackWithNoteRow->getNoteRowAllowNull();
++		ExpressionParamSet* expressionParams =
++		    (noteRow != nullptr) ? noteRow->paramManager.getOrCreateExpressionParamSet(true) : nullptr;
++		if (expressionParams != nullptr) {
++			int32_t value;
++			if (tone.byNote) {
++				bool semitones = (step == PitchStep::NORMAL || step == PitchStep::QUICK);
++				value = Pitch::valuePlusCents(pitchOffset, (float)offset * (semitones ? 100.f : 1.f));
++			}
++			else {
++				value = Pitch::valueForHz(tone, currentHz(a4) + (float)offset * stepHz(step), a4);
++			}
++
++			AutoParam* param = &expressionParams->params[X_PITCH_BEND];
++			ModelStackWithAutoParam* modelStackWithParam =
++			    modelStackWithNoteRow->addOtherTwoThingsAutomaticallyGivenNoteRow()->addParam(
++			        expressionParams, noteRow->paramManager.getExpressionParamSetSummary(), X_PITCH_BEND, param);
++			// As a gold knob records: a node here, and the lane held at it until the next one (Shift deletes the
++			// lane, as for any automation while recording). It tells us the new value
++			// (polyphonicExpressionEventOnChannelOrNote()).
++			param->setCurrentValueInResponseToUserInput(value, modelStackWithParam);
++			return;
++		}
++	}
++
++	// Otherwise the tone's own pitch, and the lane with it
++	if (tone.byNote) {
++		if (step == PitchStep::FINE || step == PitchStep::TENTH) {
++			tone.cents = std::clamp(tone.cents + offset, -Settings::kMaxCents, Settings::kMaxCents);
++		}
++		else {
++			tone.note = std::clamp(tone.note + offset, (int32_t)0, (int32_t)127);
++		}
++	}
++	else {
++		int32_t stepHundredths = (int32_t)std::lround(stepHz(step) * 100.f);
++		tone.frequency =
++		    std::clamp(tone.frequency + offset * stepHundredths, Settings::kMinFrequency, Settings::kMaxFrequency);
++	}
++}
++
++float DroneDrum::stepHz(PitchStep step) {
++	switch (step) {
++	case PitchStep::QUICK:
++		return 10.f;
++	case PitchStep::TENTH:
++		return 0.1f;
++	case PitchStep::FINE:
++		return 0.01f;
++	default:
++		return 1.f;
++	}
++}
++
++namespace {
++const char* modeName(Settings::Mode mode) {
++	using enum deluge::l10n::String;
++	switch (mode) {
++	case Settings::Mode::BINAURAL:
++		return deluge::l10n::get(STRING_FOR_BINAURAL);
++	case Settings::Mode::MONAURAL:
++		return deluge::l10n::get(STRING_FOR_MONAURAL);
++	case Settings::Mode::ISOCHRONIC:
++		return deluge::l10n::get(STRING_FOR_ISOCHRONIC);
++	default:
++		return deluge::l10n::get(STRING_FOR_DRONE_STEADY);
++	}
++}
++} // namespace
++
++void DroneDrum::getDisplayName(char* buffer, size_t size) const {
++	if (tone.byNote && pitchOffset == 0) {
++		char name[8];
++		noteCodeToString(tone.note, name);
++		if (tone.cents != 0) {
++			snprintf(buffer, size, "%s\n%s %+dc", modeName(tone.mode), name, (int)tone.cents);
++		}
++		else {
++			snprintf(buffer, size, "%s\n%s", modeName(tone.mode), name);
++		}
++		return;
++	}
++	int32_t hundredths = (int32_t)std::lround(currentHz(masterTuneA4()) * 100.f);
++	snprintf(buffer, size, "%s\n%d.%02d Hz", modeName(tone.mode), (int)(hundredths / 100), (int)(hundredths % 100));
++}
++
++// The 7-segment display: the frequency in four digits, as the drone view shows it (55.25, 440.0, 1200), or the note
++void DroneDrum::getName(char* buffer) {
++	if (tone.byNote && pitchOffset == 0) {
++		noteCodeToString(tone.note, buffer);
++		return;
++	}
++	int32_t hundredths = (int32_t)std::lround(currentHz(masterTuneA4()) * 100.f);
++	if (hundredths < 10000) {
++		snprintf(buffer, 6, "%d.%02d", (int)(hundredths / 100), (int)(hundredths % 100));
++	}
++	else if (hundredths < 100000) {
++		snprintf(buffer, 6, "%d.%d", (int)(hundredths / 100), (int)((hundredths / 10) % 10));
++	}
++	else {
++		snprintf(buffer, 6, "%d", (int)(hundredths / 100));
++	}
++}
++
++void DroneDrum::writeToFile(Serializer& writer, bool savingSong, ParamManager* paramManager) {
++	writer.writeOpeningTagBeginning("droneTone");
++	tone.writeAttributes([&](const char* name, int32_t value) { writer.writeAttribute(name, value); });
++	writer.writeOpeningTagEnd();
++
++	writeArpeggiatorToFile(writer);
++
++	if (savingSong) {
++		Drum::writeMIDICommandsToFile(writer);
++	}
++	writer.writeClosingTag("droneTone");
++}
++
++Error DroneDrum::readFromFile(Deserializer& reader, Song* song, Clip* clip, int32_t readAutomationUpToPos) {
++	char const* tagName;
++	while (*(tagName = reader.readNextTagOrAttributeName())) {
++		if (NonAudioDrum::readDrumTagFromFile(reader, tagName)) {}
++		else if (Tone::isAttribute(tagName)) {
++			tone.readAttribute(tagName, reader.readTagOrAttributeValueInt());
++			reader.exitTag(tagName);
++		}
++		else {
++			reader.exitTag(tagName);
++		}
++	}
++	tone.active = true;
++	return Error::NONE;
++}
+diff --git a/src/deluge/model/drum/drone_drum.h b/src/deluge/model/drum/drone_drum.h
+new file mode 100644
+index 00000000..10170747
+--- /dev/null
++++ b/src/deluge/model/drum/drone_drum.h
+@@ -0,0 +1,108 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute
++ * it and/or modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation, either version 3 of the License,
++ * or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++ * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
++ * details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program. If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++
++#include "dsp/drone/drone.h"
++#include "model/drum/non_audio_drum.h"
++#include <cstdint>
++#include <span>
++
++class ModelStackWithTimelineCounter;
++
++/// mastertune-v16: a drone tone as a row of a kit, a "drone track". Its clips launch in Song view and sit in the
++/// arranger like any kit's, so drones can be placed and overlap. The row's notes open its gate (the tone fades in and
++/// out as the song's drone does); a note as long as the clip holds across the loop point.
++///
++/// Its pitch: the tone's own frequency (or note), and the row's Hz lane on top, in cents. The lane is the row's
++/// expression X (pitch bend, as MIDI rows have it), 2^31 for +9600 cents: 0, an empty lane, changes nothing, and it's
++/// saved, cloned, recorded to the arranger and undone like any automation. Turning the pitch while recording
++/// (changePitch()) writes the lane; otherwise it sets the tone's frequency, which moves the whole lane with it.
++///
++/// Rendered by the Drone's own code (Drone::renderTone()), into the kit's buffer
++/// (Kit::renderGlobalEffectableForClip()), so the kit's effects, volume and sidechain apply. Without life and FM, which
++/// belong to the song's drone.
++class DroneDrum final : public NonAudioDrum {
++public:
++	using Tone = deluge::dsp::DroneSettings::Tone;
++
++	DroneDrum();
++	~DroneDrum() override;
++
++	void noteOn(ModelStackWithThreeMainThings* modelStack, uint8_t velocity, Kit* kit, int16_t const* mpeValues,
++	            int32_t fromMIDIChannel = MIDI_CHANNEL_NONE, uint32_t sampleSyncLength = 0, int32_t ticksLate = 0,
++	            uint32_t samplesLate = 0) override;
++	void noteOff(ModelStackWithThreeMainThings* modelStack, int32_t velocity = kDefaultLiftValue) override;
++	void noteOnPostArp(int32_t noteCodePostArp, ArpNote* arpNote, int32_t noteIndex) override;
++	void noteOffPostArp(int32_t noteCodePostArp) override;
++	void unassignAllVoices() override;
++	void writeToFile(Serializer& writer, bool savingSong, ParamManager* paramManager) override;
++	Error readFromFile(Deserializer& reader, Song* song, Clip* clip, int32_t readAutomationUpToPos) override;
++	void getName(char* buffer) override;
++	int32_t getNumChannels() override { return 1; }
++	int8_t modEncoderAction(ModelStackWithThreeMainThings* modelStack, int8_t offset,
++	                        uint8_t whichModEncoder) override {
++		return -64; // No channel to change (the clip view gives the gold knobs to changePitch() and the level)
++	}
++
++	/// The Hz lane (expression X) as it plays or is recorded
++	void polyphonicExpressionEventOnChannelOrNote(int32_t newValue, int32_t whichExpressionDimension,
++	                                              int32_t channelOrNoteNumber,
++	                                              MIDICharacteristic whichCharacteristic) override;
++
++	/// Whether render() has anything to do: the gate open, or the tone still fading out
++	[[nodiscard]] bool isSounding() const { return state || voice_.started; }
++	/// Adds the tone to the kit's buffer
++	void render(std::span<StereoSample> buffer, const deluge::dsp::Drone::Context& context);
++
++	/// The frequency it plays at now, in hertz: the tone's with the lane's offset
++	[[nodiscard]] float currentHz(float a4Hz) const;
++	/// The tone's own frequency, before the lane
++	[[nodiscard]] float baseHz(float a4Hz) const;
++
++	/// How far the pitch goes for one click
++	enum class PitchStep : uint8_t {
++		NORMAL, ///< 1 Hz, or a semitone for a tone set by note
++		QUICK,  ///< 10 Hz (a quick turn), or a semitone
++		TENTH,  ///< 0.1 Hz, or a cent
++		FINE,   ///< 0.01 Hz, or a cent
++	};
++	[[nodiscard]] static float stepHz(PitchStep step);
++	/// Turns the pitch by offset clicks (select encoder, upper gold knob). While the clip plays and records (REC, the
++	/// clip armed), into the Hz lane at the play position, latching as a knob does; in the arranger's recording, into
++	/// the clone it records. Otherwise the tone's own frequency. modelStack: the clip (its timeline counter may change
++	/// to the clone).
++	void changePitch(ModelStackWithTimelineCounter* modelStack, int32_t offset, PitchStep step);
++
++	/// Name for the OLED: its mode and pitch, as "Binaural\n220.00 Hz", the lane's pitch if it's moved it
++	void getDisplayName(char* buffer, size_t size) const;
++
++	Tone tone; ///< What sounds; tone.active isn't used (the gate is)
++
++	/// The Hz lane's value (expression X), as DroneTrackPitch has it: 2^31 is +9600 cents
++	int32_t pitchOffset = 0;
++
++	/// Level against the song's drone: a row at a level in a new kit (its volume 3/4 of the way up) sounds as loud as
++	/// a tone of the song's drone at that level with the drone's volume at its default (40), so a drone made a drone
++	/// track keeps its level. Measured in the emulator: the kit's stages put a row 6.71 dB below the drone's tone, this
++	/// makes up for it (tests/song, run.sh's DRONE=1 checks it within 1 dB).
++	static constexpr float kGain = 2.166f;
++
++private:
++	deluge::dsp::Drone::Voice voice_{};
++};
+diff --git a/src/deluge/model/instrument/kit.cpp b/src/deluge/model/instrument/kit.cpp
+index 853302a8..55f62254 100644
+--- a/src/deluge/model/instrument/kit.cpp
++++ b/src/deluge/model/instrument/kit.cpp
+@@ -28,6 +28,7 @@
+ #include "io/midi/midi_engine.h"
+ #include "memory/general_memory_allocator.h"
+ #include "model/clip/instrument_clip.h"
++#include "model/drum/drone_drum.h"
+ #include "model/drum/drum.h"
+ #include "model/drum/gate_drum.h"
+ #include "model/drum/midi_drum.h"
+@@ -286,6 +287,10 @@ doReadDrum:
+ 					drumType = DrumType::GATE;
+ 					goto doReadDrum;
+ 				}
++				else if (!strcmp(tagName, "droneTone")) { // mastertune-v16
++					drumType = DrumType::DRONE;
++					goto doReadDrum;
++				}
+ 				else {
+ 					reader.exitTag(tagName);
+ 				}
+@@ -575,6 +580,22 @@ bool Kit::renderGlobalEffectableForClip(ModelStackWithTimelineCounter* modelStac
+ 		rendered = true;
+ 	}
+ 
++	// mastertune-v16: drone rows (DroneDrum), each while its gate is open or it fades out. Not in
++	// drumsWithRenderingActive, which is for SoundDrums only.
++	bool haveDroneContext = false;
++	deluge::dsp::Drone::Context droneContext;
++	for (Drum* thisDrum = firstDrum; thisDrum; thisDrum = thisDrum->next) {
++		if (thisDrum->type != DrumType::DRONE || !((DroneDrum*)thisDrum)->isSounding()) {
++			continue;
++		}
++		if (!haveDroneContext) {
++			AudioEngine::getDroneContext(droneContext); // Tempo, position and master tune, once a block
++			haveDroneContext = true;
++		}
++		((DroneDrum*)thisDrum)->render({globalEffectableBuffer, (size_t)numSamples}, droneContext);
++		rendered = true;
++	}
++
+ 	// Tick ParamManagers
+ 	if (playbackHandler.isEitherClockActive() && !playbackHandler.ticksLeftInCountIn && isClipActive) {
+ 
+@@ -795,7 +816,8 @@ void Kit::renderNonAudioArpPostOutput(int32_t numSamples) {
+ 	InstrumentClip* clip = (InstrumentClip*)activeClip;
+ 	for (int32_t i = 0; i < clip->noteRows.getNumElements(); i++) {
+ 		Drum* drum = clip->noteRows.getElement(i)->drum;
+-		if (drum == nullptr || (drum->type != DrumType::MIDI && drum->type != DrumType::GATE)) {
++		if (drum == nullptr
++		    || (drum->type != DrumType::MIDI && drum->type != DrumType::GATE && drum->type != DrumType::DRONE)) {
+ 			continue;
+ 		}
+ 		NonAudioDrum* nonAudioDrum = (NonAudioDrum*)drum;
+@@ -1191,7 +1213,8 @@ int32_t Kit::doTickForwardForArp(ModelStack* modelStack, int32_t currentPos) {
+ 		ModelStackWithNoteRow* modelStackWithNoteRow = modelStackWithTimelineCounter->addNoteRow(i, thisNoteRow);
+ 
+ 		bool shouldUseIndependentPlayPos = (clipIsActive && thisNoteRow->hasIndependentPlayPos());
+-		int32_t currentPosThisRow = shouldUseIndependentPlayPos ? thisNoteRow->lastProcessedPosIfIndependent : currentPos;
++		int32_t currentPosThisRow =
++		    shouldUseIndependentPlayPos ? thisNoteRow->lastProcessedPosIfIndependent : currentPos;
+ 
+ 		bool reversed = (clipIsActive && modelStackWithNoteRow->isCurrentlyPlayingReversed());
+ 
+diff --git a/src/deluge/model/note/note_row.cpp b/src/deluge/model/note/note_row.cpp
+index f6595e8b..a648d1fa 100644
+--- a/src/deluge/model/note/note_row.cpp
++++ b/src/deluge/model/note/note_row.cpp
+@@ -4199,6 +4199,10 @@ void NoteRow::getMPEValues(ModelStackWithNoteRow* modelStack, int16_t* mpeValues
+ // that square - for each "screen"! Or something like that...
+ void NoteRow::clearMPEUpUntilNextNote(ModelStackWithNoteRow* modelStack, int32_t pos, int32_t wrapEditLevel,
+                                       bool shouldJustDeleteNodes) {
++	// mastertune-v16: a drone row's expression is its Hz lane, not its notes' MPE: adding or deleting a note keeps it
++	if (drum && drum->type == DrumType::DRONE) {
++		return;
++	}
+ 
+ 	ParamCollectionSummary* mpeParamsSummary = paramManager.getExpressionParamSetSummary();
+ 	ExpressionParamSet* mpeParams = (ExpressionParamSet*)mpeParamsSummary->paramCollection;
+diff --git a/src/deluge/storage/storage_manager.cpp b/src/deluge/storage/storage_manager.cpp
+index 41450305..987faa43 100644
+--- a/src/deluge/storage/storage_manager.cpp
++++ b/src/deluge/storage/storage_manager.cpp
+@@ -25,6 +25,7 @@
+ #include "io/debug/log.h"
+ #include "memory/general_memory_allocator.h"
+ #include "model/clip/instrument_clip.h"
++#include "model/drum/drone_drum.h"
+ #include "model/drum/gate_drum.h"
+ #include "model/drum/midi_drum.h"
+ #include "model/instrument/cv_instrument.h"
+@@ -560,6 +561,9 @@ Drum* StorageManager::createNewDrum(DrumType drumType) {
+ 	else if (drumType == DrumType::GATE) {
+ 		memorySize = sizeof(GateDrum);
+ 	}
++	else if (drumType == DrumType::DRONE) {
++		memorySize = sizeof(DroneDrum);
++	}
+ 
+ 	void* drumMemory = GeneralMemoryAllocator::get().allocMaxSpeed(memorySize);
+ 	if (!drumMemory) {
+@@ -573,6 +577,8 @@ Drum* StorageManager::createNewDrum(DrumType drumType) {
+ 		newDrum = new (drumMemory) MIDIDrum();
+ 	else if (drumType == DrumType::GATE)
+ 		newDrum = new (drumMemory) GateDrum();
++	else if (drumType == DrumType::DRONE)
++		newDrum = new (drumMemory) DroneDrum();
+ 
+ 	return newDrum;
+ }
+-- 
+2.43.0
+

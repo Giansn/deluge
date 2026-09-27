@@ -1,0 +1,63 @@
+From 4474ebd7293eaabd5d9d232c441304e95f594f15 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 12:23:40 +0000
+Subject: [PATCH 49/55] Drone tracks: MIDI pitch bend on a drone row within the
+ row's bend range
+
+Kit::receivedPitchBendForDrum() passed the wheel's value unscaled into a drone row's X,
+whose full scale is 9600 cents (so the Select encoder and knob reach 8 octaves): a quarter
+turn up gave +2400 cents, full scale 8 octaves, one MIDI step 1.17 cents, and under REC
+that went into the lane as it was. For drone rows the value is now scaled by the row's bend
+range over 96 semitones: the finger-level range of the row's ExpressionParamSet (drums use
+it for both kinds of bend), or the default bend range if the row has none yet. The lane
+stays in cents, and Select and the knob keep their range.
+
+Test: mastertune tests/song/drone_edit_emu.py (run.sh DRONE=1): a quarter up with the
+default 2 semitones is +50 cents, heard as such.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/model/instrument/kit.cpp | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/src/deluge/model/instrument/kit.cpp b/src/deluge/model/instrument/kit.cpp
+index 8fcf1a6b..582c5938 100644
+--- a/src/deluge/model/instrument/kit.cpp
++++ b/src/deluge/model/instrument/kit.cpp
+@@ -44,7 +44,9 @@
+ #include "processing/sound/sound_drum.h"
+ #include "processing/stem_export/stem_export.h"
+ #include "storage/audio/audio_file_manager.h"
++#include "storage/flash_storage.h"
+ #include "storage/storage_manager.h"
++#include <algorithm>
+ #include <cstring>
+ 
+ namespace params = deluge::modulation::params;
+@@ -1533,6 +1535,22 @@ void Kit::receivedPitchBendForDrum(ModelStackWithTimelineCounter* modelStackWith
+ 		level = BEND_RANGE_MAIN;
+ 	}
+ 	int16_t value16 = (((uint32_t)data1 | ((uint32_t)data2 << 7)) - 8192) << 2;
++	// mastertune-v16: a drone row's X is its Hz lane, whose full scale is 9600 cents (96 semitones) for the select
++	// encoder and knob to reach: the wheel within the row's bend range, as for a synth (drums take their finger-level
++	// range for both kinds of bend), so the lane stays in cents
++	if (thisDrum->type == DrumType::DRONE) {
++		int32_t bendRange = FlashStorage::defaultBendRange[BEND_RANGE_MAIN];
++		if (modelStackWithTimelineCounter->timelineCounterIsSet()) {
++			NoteRow* noteRow =
++			    ((InstrumentClip*)modelStackWithTimelineCounter->getTimelineCounter())->getNoteRowForDrum(thisDrum);
++			ExpressionParamSet* expressionParams =
++			    (noteRow != nullptr) ? noteRow->paramManager.getExpressionParamSet() : nullptr;
++			if (expressionParams != nullptr) {
++				bendRange = expressionParams->bendRanges[BEND_RANGE_FINGER_LEVEL];
++			}
++		}
++		value16 = (int16_t)((int32_t)value16 * std::min(bendRange, (int32_t)96) / 96);
++	}
+ 	thisDrum->expressionEventPossiblyToRecord(modelStackWithTimelineCounter, value16, X_PITCH_BEND, level);
+ }
+ 
+-- 
+2.43.0
+

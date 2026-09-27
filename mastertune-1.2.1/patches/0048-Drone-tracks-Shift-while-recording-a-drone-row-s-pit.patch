@@ -1,0 +1,211 @@
+From 24275e2230c3129de29b37f13674b031a03f7804 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 12:23:24 +0000
+Subject: [PATCH 48/55] Drone tracks: Shift while recording a drone row's
+ pitch: Select's fine steps, the knob deletes the lane cleanly
+
+Turning a drone row's pitch while recording went through AutoParam's Shift branch, which
+deletes the automation: Shift + Select (0.1 Hz steps otherwise) and Shift + the upper gold
+knob deleted the whole Hz lane, and the lane's last value stayed on as the expression's
+current value. noteOn() kept reading it and the song saved it as a constant, so the row
+played detuned for good, with no lane and nothing in its frequency menu to show why.
+
+Now, while recording:
+- Shift + Select records its 0.1 Hz (or 1 cent) steps into the lane like any other turn.
+  AutoParam::setCurrentValueInResponseToUserInput() takes shiftDeletesAutomation for that;
+  its default keeps every other caller as it was.
+- Shift + the upper gold knob deletes the lane, as Shift and a gold knob delete any
+  automation while recording, and sets the value back to 0: the row returns to its tone's
+  own pitch at once and is saved without an offset. The popup says the automation was
+  deleted.
+
+Test: mastertune tests/song/drone_edit_emu.py (run.sh DRONE=1).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/views/instrument_clip_view.cpp |  8 ++--
+ src/deluge/model/drum/drone_drum.cpp          | 45 ++++++++++++++-----
+ src/deluge/model/drum/drone_drum.h            | 10 +++--
+ .../modulation/automation/auto_param.cpp      |  5 ++-
+ src/deluge/modulation/automation/auto_param.h |  5 ++-
+ 5 files changed, 52 insertions(+), 21 deletions(-)
+
+diff --git a/src/deluge/gui/views/instrument_clip_view.cpp b/src/deluge/gui/views/instrument_clip_view.cpp
+index f8c19a3d..09c346c4 100644
+--- a/src/deluge/gui/views/instrument_clip_view.cpp
++++ b/src/deluge/gui/views/instrument_clip_view.cpp
+@@ -5773,7 +5773,8 @@ DroneDrum* InstrumentClipView::getSelectedDroneDrum() {
+ 
+ /// mastertune-v16: a drone row's pitch, from the select encoder (1 Hz a click, with Shift 0.1 Hz) or the upper gold
+ /// knob (1 Hz, turned quickly 10 Hz, with Shift 0.01 Hz); for a tone set by note, semitones, with Shift cents. While
+-/// the clip records, into its Hz lane (where Shift, as for any automation, deletes the lane instead).
++/// the clip records, into its Hz lane in the same steps; there Shift and the knob delete the lane instead, as for any
++/// automation, and the row goes back to its own pitch (the select encoder with Shift still takes its fine steps).
+ void InstrumentClipView::droneDrumPitchAction(DroneDrum* drum, int32_t offset, bool selectEncoder) {
+ 	using Step = DroneDrum::PitchStep;
+ 	Step step;
+@@ -5791,8 +5792,9 @@ void InstrumentClipView::droneDrumPitchAction(DroneDrum* drum, int32_t offset, b
+ 	}
+ 	char modelStackMemory[MODEL_STACK_MAX_SIZE];
+ 	ModelStackWithTimelineCounter* modelStack = currentSong->setupModelStackWithCurrentClip(modelStackMemory);
+-	drum->changePitch(modelStack, offset, step);
+-	drawDrumName(drum, true);
++	if (drum->changePitch(modelStack, offset, step, !selectEncoder)) {
++		drawDrumName(drum, true);
++	} // Or it deleted the lane, and its popup says so
+ }
+ 
+ void InstrumentClipView::modEncoderAction(int32_t whichModEncoder, int32_t offset) {
+diff --git a/src/deluge/model/drum/drone_drum.cpp b/src/deluge/model/drum/drone_drum.cpp
+index dfe1849b..8314a8e1 100644
+--- a/src/deluge/model/drum/drone_drum.cpp
++++ b/src/deluge/model/drum/drone_drum.cpp
+@@ -18,8 +18,12 @@
+  */
+ 
+ #include "model/drum/drone_drum.h"
++#include "gui/l10n/l10n.h"
+ #include "gui/menu_item/drone/items.h"
++#include "hid/buttons.h"
++#include "hid/display/display.h"
+ #include "lib/printf.h" // Not stdio: the firmware's snprintf, which doesn't allocate
++#include "model/action/action_logger.h"
+ #include "model/clip/instrument_clip.h"
+ #include "model/model_stack.h"
+ #include "model/note/note_row.h"
+@@ -133,9 +137,10 @@ void DroneDrum::render(std::span<StereoSample> buffer, const deluge::dsp::Drone:
+ 	                              kGain);
+ }
+ 
+-void DroneDrum::changePitch(ModelStackWithTimelineCounter* modelStack, int32_t offset, PitchStep step) {
++bool DroneDrum::changePitch(ModelStackWithTimelineCounter* modelStack, int32_t offset, PitchStep step,
++                            bool shiftDeletesLane) {
+ 	if (offset == 0) {
+-		return;
++		return true;
+ 	}
+ 	float a4 = masterTuneA4();
+ 
+@@ -153,6 +158,27 @@ void DroneDrum::changePitch(ModelStackWithTimelineCounter* modelStack, int32_t o
+ 		ExpressionParamSet* expressionParams =
+ 		    (noteRow != nullptr) ? noteRow->paramManager.getOrCreateExpressionParamSet(true) : nullptr;
+ 		if (expressionParams != nullptr) {
++			AutoParam* param = &expressionParams->params[X_PITCH_BEND];
++			ModelStackWithAutoParam* modelStackWithParam =
++			    modelStackWithNoteRow->addOtherTwoThingsAutomaticallyGivenNoteRow()->addParam(
++			        expressionParams, noteRow->paramManager.getExpressionParamSetSummary(), X_PITCH_BEND, param);
++
++			// Shift and the knob: the lane deleted, as Shift and a gold knob delete any automation while recording,
++			// and the row back at its tone's own pitch (the lane's last value would otherwise stay on as a constant
++			// offset, heard and saved, with no lane and nothing in the frequency's menu to show it)
++			if (shiftDeletesLane && Buttons::isShiftButtonPressed()) {
++				bool deleted = param->isAutomated();
++				if (deleted) {
++					Action* action =
++					    actionLogger.getNewAction(ActionType::AUTOMATION_DELETE, ActionAddition::NOT_ALLOWED);
++					param->deleteAutomation(action, modelStackWithParam);
++					display->displayPopup(
++					    deluge::l10n::get(deluge::l10n::String::STRING_FOR_PARAMETER_AUTOMATION_DELETED));
++				}
++				param->setCurrentValueWithNoReversionOrRecording(modelStackWithParam, 0); // Tells us: pitchOffset 0
++				return !deleted;
++			}
++
+ 			int32_t value;
+ 			if (tone.byNote) {
+ 				bool semitones = (step == PitchStep::NORMAL || step == PitchStep::QUICK);
+@@ -162,15 +188,11 @@ void DroneDrum::changePitch(ModelStackWithTimelineCounter* modelStack, int32_t o
+ 				value = Pitch::valueForHz(tone, currentHz(a4) + (float)offset * stepHz(step), a4);
+ 			}
+ 
+-			AutoParam* param = &expressionParams->params[X_PITCH_BEND];
+-			ModelStackWithAutoParam* modelStackWithParam =
+-			    modelStackWithNoteRow->addOtherTwoThingsAutomaticallyGivenNoteRow()->addParam(
+-			        expressionParams, noteRow->paramManager.getExpressionParamSetSummary(), X_PITCH_BEND, param);
+-			// As a gold knob records: a node here, and the lane held at it until the next one (Shift deletes the
+-			// lane, as for any automation while recording). It tells us the new value
+-			// (polyphonicExpressionEventOnChannelOrNote()).
+-			param->setCurrentValueInResponseToUserInput(value, modelStackWithParam);
+-			return;
++			// As a gold knob records: a node here, and the lane held at it until the next one. In the step asked
++			// for, Shift's fine one too: not AutoParam's Shift, which would delete the lane (shiftDeletesAutomation
++			// false). It tells us the new value (polyphonicExpressionEventOnChannelOrNote()).
++			param->setCurrentValueInResponseToUserInput(value, modelStackWithParam, true, -1, true, false, false);
++			return true;
+ 		}
+ 	}
+ 
+@@ -188,6 +210,7 @@ void DroneDrum::changePitch(ModelStackWithTimelineCounter* modelStack, int32_t o
+ 		tone.frequency =
+ 		    std::clamp(tone.frequency + offset * stepHundredths, Settings::kMinFrequency, Settings::kMaxFrequency);
+ 	}
++	return true;
+ }
+ 
+ float DroneDrum::stepHz(PitchStep step) {
+diff --git a/src/deluge/model/drum/drone_drum.h b/src/deluge/model/drum/drone_drum.h
+index 10170747..d3918e3d 100644
+--- a/src/deluge/model/drum/drone_drum.h
++++ b/src/deluge/model/drum/drone_drum.h
+@@ -84,10 +84,12 @@ public:
+ 	};
+ 	[[nodiscard]] static float stepHz(PitchStep step);
+ 	/// Turns the pitch by offset clicks (select encoder, upper gold knob). While the clip plays and records (REC, the
+-	/// clip armed), into the Hz lane at the play position, latching as a knob does; in the arranger's recording, into
+-	/// the clone it records. Otherwise the tone's own frequency. modelStack: the clip (its timeline counter may change
+-	/// to the clone).
+-	void changePitch(ModelStackWithTimelineCounter* modelStack, int32_t offset, PitchStep step);
++	/// clip armed), into the Hz lane at the play position, latching as a knob does, in the same steps (Shift's fine
++	/// ones too); in the arranger's recording, into the clone it records. Otherwise the tone's own frequency.
++	/// shiftDeletesLane (the upper gold knob): Shift held while recording deletes the lane instead, as Shift and a gold
++	/// knob delete any automation while recording, and the row goes back to its tone's own pitch. modelStack: the clip
++	/// (its timeline counter may change to the clone). Returns false if it deleted the lane (its popup says so).
++	bool changePitch(ModelStackWithTimelineCounter* modelStack, int32_t offset, PitchStep step, bool shiftDeletesLane);
+ 
+ 	/// Name for the OLED: its mode and pitch, as "Binaural\n220.00 Hz", the lane's pitch if it's moved it
+ 	void getDisplayName(char* buffer, size_t size) const;
+diff --git a/src/deluge/modulation/automation/auto_param.cpp b/src/deluge/modulation/automation/auto_param.cpp
+index 092a7468..c3584fb8 100644
+--- a/src/deluge/modulation/automation/auto_param.cpp
++++ b/src/deluge/modulation/automation/auto_param.cpp
+@@ -98,7 +98,8 @@ void AutoParam::setCurrentValueWithNoReversionOrRecording(ModelStackWithAutoPara
+ // possible in case they later switch it from Synth to MIDI output.
+ void AutoParam::setCurrentValueInResponseToUserInput(int32_t value, ModelStackWithAutoParam const* modelStack,
+                                                      bool shouldLogAction, int32_t livePos,
+-                                                     bool mayDeleteNodesInLinearRun, bool doMPEMode) {
++                                                     bool mayDeleteNodesInLinearRun, bool doMPEMode,
++                                                     bool shiftDeletesAutomation) {
+ 	int32_t oldValue = currentValue;
+ 	bool automatedBefore = isAutomated();
+ 	bool automationChanged = false;
+@@ -115,7 +116,7 @@ void AutoParam::setCurrentValueInResponseToUserInput(int32_t value, ModelStackWi
+ 		    && modelStack->getTimelineCounter()->armedForRecording) {
+ 
+ 			// If in record mode and shift button held down, delete automation
+-			if (Buttons::isShiftButtonPressed()) {
++			if (shiftDeletesAutomation && Buttons::isShiftButtonPressed()) {
+ 
+ 				if (isAutomated()) {
+ 					Action* action =
+diff --git a/src/deluge/modulation/automation/auto_param.h b/src/deluge/modulation/automation/auto_param.h
+index 9a149d58..79a5f904 100644
+--- a/src/deluge/modulation/automation/auto_param.h
++++ b/src/deluge/modulation/automation/auto_param.h
+@@ -46,9 +46,12 @@ public:
+ 	AutoParam();
+ 	void init();
+ 
++	/// shiftDeletesAutomation false (mastertune-v16, a drone row's pitch): Shift held while recording doesn't delete
++	/// the automation, the value is recorded as without it
+ 	void setCurrentValueInResponseToUserInput(int32_t value, ModelStackWithAutoParam const* modelStack,
+ 	                                          bool shouldLogAction = true, int32_t livePos = -1,
+-	                                          bool mayDeleteNodesInLinearRun = true, bool isMPE = false);
++	                                          bool mayDeleteNodesInLinearRun = true, bool isMPE = false,
++	                                          bool shiftDeletesAutomation = true);
+ 	int32_t processCurrentPos(ModelStackWithAutoParam const* modelStack, bool reversed, bool didPinpong,
+ 	                          bool mayInterpolate = true, bool mustUpdateValueAtEveryNode = false);
+ 	void setValueForRegion(uint32_t pos, uint32_t length, int32_t value, ModelStackWithAutoParam const* modelStack,
+-- 
+2.43.0
+

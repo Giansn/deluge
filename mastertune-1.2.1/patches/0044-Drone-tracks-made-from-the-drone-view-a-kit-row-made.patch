@@ -1,0 +1,546 @@
+From 50bb968165ff9c44daa6dd6e4d8f84e2101b5643 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 10:24:24 +0000
+Subject: [PATCH 44/55] Drone tracks: made from the drone view, a kit row made
+ a drone row, pitch recorded from the clip view
+
+How drone tracks are made, placed and played with:
+
+- Drone view, Shift + Kit: a drone track of the drone (SessionView::createNewDroneTrack()): a new kit (DRONE1,
+  DRONE2...) of 16 drone rows with the drone's tones, in a new clip at the end of Song view, not launched; the tones
+  that are on get a note as long as the clip, so launching it plays them as the drone does, at the same level. Then
+  Song view. The song's drone stays as it is. The clips launch in Song view and go into the arranger like any kit's.
+- Clip view of a kit, holding a row's audition pad (or adding a row), Kit: the row becomes a drone row
+  (200 Hz, as MIDI and CV make MIDI and gate rows).
+- Clip view, a drone row selected (Affect Entire off): the select encoder turns its pitch, 1 Hz a click (Shift
+  0.1 Hz), in place of changing the kit; the upper gold knob too, 1 Hz, 10 Hz turned quickly (Shift 0.01 Hz); a tone
+  set by note in semitones (Shift cents). With REC on and the song playing, the turns are recorded into the row's Hz
+  lane (DroneDrum::changePitch()) and play back; Shift + turn then deletes the lane, as for any automation. The lower
+  gold knob sets its level. The pitch shows as the row's name: its mode and Hz (OLED), or the Hz in four digits.
+- Select pressed on a drone row: the drone's tone menu for that row (droneTrackToneMenu: mode, pitch, beat, sync,
+  pulse, timbre, level, pan; drone::trackTone). The menu's shortcut pads give the row's arpeggiator, as a gate row's.
+- The automation view's editor treats a drone row as a MIDI or gate row (it has no params of its own).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/l10n/english.json              |  1 +
+ src/deluge/gui/l10n/g_english.cpp             |  1 +
+ src/deluge/gui/l10n/g_seven_segment.cpp       |  1 +
+ src/deluge/gui/l10n/seven_segment.json        |  1 +
+ src/deluge/gui/l10n/strings.h                 |  3 +
+ src/deluge/gui/ui/menus.cpp                   | 18 ++++
+ src/deluge/gui/ui/menus.h                     |  1 +
+ src/deluge/gui/ui/sound_editor.cpp            | 30 ++++++-
+ src/deluge/gui/views/automation_view.cpp      |  4 +-
+ src/deluge/gui/views/drone_view.cpp           | 17 ++++
+ src/deluge/gui/views/instrument_clip_view.cpp | 74 ++++++++++++++++
+ src/deluge/gui/views/instrument_clip_view.h   |  5 ++
+ src/deluge/gui/views/session_view.cpp         | 88 +++++++++++++++++++
+ src/deluge/gui/views/session_view.h           |  3 +
+ 14 files changed, 242 insertions(+), 5 deletions(-)
+
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index 5f8ec334..21b58cc2 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -953,6 +953,7 @@
+         "STRING_FOR_DRONE_RATE": "Rate",
+         "STRING_FOR_FM_FORM": "FM form",
+         "STRING_FOR_DRONE_PULSE_WIDTH": "Pulse width",
++        "STRING_FOR_DRONE_TRACK_CREATED": "Drone track created",
+         "STRING_FOR_CPU_MONITOR": "CPU monitor",
+         "STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING": "Flicker-free dimming",
+         "STRING_FOR_TIME_CHANGE": "Time change",
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index 81b41ad6..ac054f24 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -881,6 +881,7 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_DRONE_RATE, "Rate"},
+         {STRING_FOR_FM_FORM, "FM form"},
+         {STRING_FOR_DRONE_PULSE_WIDTH, "Pulse width"},
++        {STRING_FOR_DRONE_TRACK_CREATED, "Drone track created"},
+         {STRING_FOR_CPU_MONITOR, "CPU monitor"},
+         {STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING, "Flicker-free dimming"},
+         {STRING_FOR_TIME_CHANGE, "Time change"},
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index c38eb82b..dd04ca80 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -522,6 +522,7 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_DRONE_RATE, "RATE"},
+         {STRING_FOR_FM_FORM, "FORM"},
+         {STRING_FOR_DRONE_PULSE_WIDTH, "PW"},
++        {STRING_FOR_DRONE_TRACK_CREATED, "DRON"},
+         {STRING_FOR_CPU_MONITOR, "CPU"},
+         {STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING, "DIMM"},
+         {STRING_FOR_TIME_CHANGE, "TIME"},
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index 9ccf9883..834a7d9f 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -557,6 +557,7 @@
+         "STRING_FOR_DRONE_RATE": "RATE",
+         "STRING_FOR_FM_FORM": "FORM",
+         "STRING_FOR_DRONE_PULSE_WIDTH": "PW",
++        "STRING_FOR_DRONE_TRACK_CREATED": "DRON",
+         "STRING_FOR_CPU_MONITOR": "CPU",
+         "STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING": "DIMM",
+         "STRING_FOR_TIME_CHANGE": "TIME",
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index 7d047361..b290d06a 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -1002,6 +1002,9 @@ enum class String : size_t {
+ 	STRING_FOR_FM_FORM,
+ 	STRING_FOR_DRONE_PULSE_WIDTH,
+ 
++	// drone tracks (mastertune-v16)
++	STRING_FOR_DRONE_TRACK_CREATED,
++
+ 	// CPU monitor (mastertune-diag)
+ 	STRING_FOR_CPU_MONITOR,
+ 
+diff --git a/src/deluge/gui/ui/menus.cpp b/src/deluge/gui/ui/menus.cpp
+index a6c6b906..6209e05b 100644
+--- a/src/deluge/gui/ui/menus.cpp
++++ b/src/deluge/gui/ui/menus.cpp
+@@ -1477,6 +1477,24 @@ menu_item::Submenu droneToneMenu{
+     },
+ };
+ drone_menu::OpenView droneViewMenu{STRING_FOR_DRONE};
++// mastertune-v16: a drone track's row, from the clip view's Select: its tone alone (drone::trackTone)
++menu_item::Submenu droneTrackToneMenu{
++    STRING_FOR_DRONE_TONE_MENU_TITLE,
++    {
++        &droneModeMenu,
++        &dronePitchByMenu,
++        &droneFrequencyMenu,
++        &droneNoteMenu,
++        &droneCentsMenu,
++        &droneBeatMenu,
++        &droneSyncMenu,
++        &dronePulseAttackMenu,
++        &dronePulseReleaseMenu,
++        &droneTimbreMenu,
++        &droneLevelMenu,
++        &dronePanMenu,
++    },
++};
+ 
+ // Root menu for Song View
+ menu_item::Submenu soundEditorRootMenuSongView{
+diff --git a/src/deluge/gui/ui/menus.h b/src/deluge/gui/ui/menus.h
+index 13b430b1..03f62d7c 100644
+--- a/src/deluge/gui/ui/menus.h
++++ b/src/deluge/gui/ui/menus.h
+@@ -26,6 +26,7 @@ extern DrumName drumNameMenu;
+ extern deluge::gui::menu_item::Submenu dxMenu;
+ extern deluge::gui::menu_item::Submenu stemExportMenu;
+ extern deluge::gui::menu_item::Submenu droneToneMenu;
++extern deluge::gui::menu_item::Submenu droneTrackToneMenu;
+ extern deluge::gui::menu_item::stem_export::Start startStemExportMenu;
+ 
+ extern deluge::gui::menu_item::firmware::Version firmwareVersionMenu;
+diff --git a/src/deluge/gui/ui/sound_editor.cpp b/src/deluge/gui/ui/sound_editor.cpp
+index 8027ceaf..bb9cafe7 100644
+--- a/src/deluge/gui/ui/sound_editor.cpp
++++ b/src/deluge/gui/ui/sound_editor.cpp
+@@ -3,6 +3,7 @@
+ #include "definitions_cxx.hpp"
+ #include "extern.h"
+ #include "gui/l10n/strings.h"
++#include "gui/menu_item/drone/items.h"
+ #include "gui/menu_item/dx/param.h"
+ #include "gui/menu_item/file_selector.h"
+ #include "gui/menu_item/menu_item.h"
+@@ -37,6 +38,7 @@
+ #include "model/clip/audio_clip.h"
+ #include "model/clip/instrument_clip.h"
+ #include "model/clip/instrument_clip_minder.h"
++#include "model/drum/drone_drum.h"
+ #include "model/drum/non_audio_drum.h"
+ #include "model/instrument/kit.h"
+ #include "model/model_stack.h"
+@@ -162,7 +164,7 @@ bool SoundEditor::editingNonAudioDrumRow() {
+ 		return false;
+ 	}
+ 	DrumType type = selectedDrumTypeOr(DrumType::SOUND);
+-	return type == DrumType::MIDI || type == DrumType::GATE;
++	return type == DrumType::MIDI || type == DrumType::GATE || type == DrumType::DRONE;
+ }
+ 
+ bool SoundEditor::editingMidiDrumRow() {
+@@ -170,7 +172,9 @@ bool SoundEditor::editingMidiDrumRow() {
+ }
+ 
+ bool SoundEditor::editingGateDrumRow() {
+-	return !setupKitGlobalFXMenu && selectedDrumTypeOr(DrumType::SOUND) == DrumType::GATE;
++	// mastertune-v16: a drone row's arpeggiator gates its tone as a gate row's does its output
++	DrumType type = selectedDrumTypeOr(DrumType::SOUND);
++	return !setupKitGlobalFXMenu && (type == DrumType::GATE || type == DrumType::DRONE);
+ }
+ 
+ bool SoundEditor::getGreyoutColsAndRows(uint32_t* cols, uint32_t* rows) {
+@@ -1383,12 +1387,17 @@ bool SoundEditor::setup(Clip* clip, const MenuItem* item, int32_t sourceIndex) {
+ 						newArpSettings = &((SoundDrum*)selectedDrum)->arpSettings;
+ 					}
+ 					else {
+-						// MIDI and gate rows have no sound to edit, but they do have an arpeggiator
++						// MIDI, gate and drone rows have no sound to edit, but they do have an arpeggiator (and a
++						// drone row its tone, droneTrackToneMenu)
+ 						newArpSettings = &((NonAudioDrum*)selectedDrum)->arpSettings;
+-						if (item != &sequenceDirectionMenu && item != nullptr && !isNonAudioDrumShortcut(item)) {
++						if (item != &sequenceDirectionMenu && item != nullptr && !isNonAudioDrumShortcut(item)
++						    && item != &droneTrackToneMenu) {
+ 							if (selectedDrum->type == DrumType::MIDI) {
+ 								indicator_leds::indicateAlertOnLed(IndicatorLED::MIDI);
+ 							}
++							else if (selectedDrum->type == DrumType::DRONE) {
++								indicator_leds::indicateAlertOnLed(IndicatorLED::KIT);
++							}
+ 							else { // GATE
+ 								indicator_leds::indicateAlertOnLed(IndicatorLED::CV);
+ 							}
+@@ -1431,6 +1440,13 @@ bool SoundEditor::setup(Clip* clip, const MenuItem* item, int32_t sourceIndex) {
+ 
+ 	MenuItem* newItem;
+ 
++	// mastertune-v16: the drone's tone items edit a drone row's tone from the clip view, the song's drone's otherwise
++	deluge::gui::menu_item::drone::trackTone = nullptr;
++	if (instrumentClip != nullptr && outputType == OutputType::KIT && !setupKitGlobalFXMenu
++	    && ((Kit*)output)->selectedDrum != nullptr && ((Kit*)output)->selectedDrum->type == DrumType::DRONE) {
++		deluge::gui::menu_item::drone::trackTone = &((DroneDrum*)((Kit*)output)->selectedDrum)->tone;
++	}
++
+ 	if (item) {
+ 		newItem = (MenuItem*)item;
+ 	}
+@@ -1463,6 +1479,12 @@ doMIDIOrCV:
+ 					newItem = &soundEditorRootMenuGateDrum;
+ 				}
+ 
++				// mastertune-v16: a drone row, its tone
++				else if (outputType == OutputType::KIT && ((Kit*)output)->selectedDrum != nullptr
++				         && ((Kit*)output)->selectedDrum->type == DrumType::DRONE) {
++					newItem = &droneTrackToneMenu;
++				}
++
+ 				else {
+ 					newItem = &soundEditorRootMenu;
+ 				}
+diff --git a/src/deluge/gui/views/automation_view.cpp b/src/deluge/gui/views/automation_view.cpp
+index 74be5225..d7c7d175 100644
+--- a/src/deluge/gui/views/automation_view.cpp
++++ b/src/deluge/gui/views/automation_view.cpp
+@@ -755,9 +755,11 @@ void AutomationView::performActualRender(RGB image[][kDisplayWidth + kSideBarWid
+ 		if (onArrangerView || !(outputType == OutputType::KIT && !getAffectEntire() && !((Kit*)output)->selectedDrum)) {
+ 			bool isMIDICVDrum = false;
+ 			if (outputType == OutputType::KIT && !getAffectEntire()) {
++				// mastertune-v16: a drone row neither (no params of its own, its Hz lane is its expression)
+ 				isMIDICVDrum = (((Kit*)output)->selectedDrum
+ 				                && ((((Kit*)output)->selectedDrum->type == DrumType::MIDI)
+-				                    || (((Kit*)output)->selectedDrum->type == DrumType::GATE)));
++				                    || (((Kit*)output)->selectedDrum->type == DrumType::GATE)
++				                    || (((Kit*)output)->selectedDrum->type == DrumType::DRONE)));
+ 			}
+ 
+ 			// if parameter has been selected, show Automation Editor
+diff --git a/src/deluge/gui/views/drone_view.cpp b/src/deluge/gui/views/drone_view.cpp
+index 45a72469..26f7c016 100644
+--- a/src/deluge/gui/views/drone_view.cpp
++++ b/src/deluge/gui/views/drone_view.cpp
+@@ -350,6 +350,23 @@ ActionResult DroneView::buttonAction(deluge::hid::Button b, bool on, bool inCard
+ 		return ActionResult::DEALT_WITH;
+ 	}
+ 
++	// mastertune-v16: Shift + Kit makes a drone track of the drone, a kit of 16 drone rows in a new clip in Song view
++	// (see SessionView::createNewDroneTrack()), and goes there
++	if (b == KIT && Buttons::isShiftButtonPressed()) {
++		if (on && currentUIMode == UI_MODE_NONE) {
++			if (inCardRoutine) {
++				return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
++			}
++			if (sessionView.createNewDroneTrack(currentSong->drone) == nullptr) {
++				display->displayError(Error::INSUFFICIENT_RAM);
++				return ActionResult::DEALT_WITH;
++			}
++			display->displayPopup(deluge::l10n::get(deluge::l10n::String::STRING_FOR_DRONE_TRACK_CREATED));
++			exitToSongView();
++		}
++		return ActionResult::DEALT_WITH;
++	}
++
+ 	// The selected tone's mode, one button each
+ 	if (b == SYNTH || b == KIT || b == MIDI || b == CV) {
+ 		if (on && currentUIMode == UI_MODE_NONE) {
+diff --git a/src/deluge/gui/views/instrument_clip_view.cpp b/src/deluge/gui/views/instrument_clip_view.cpp
+index 5f5a928b..3dee0291 100644
+--- a/src/deluge/gui/views/instrument_clip_view.cpp
++++ b/src/deluge/gui/views/instrument_clip_view.cpp
+@@ -60,6 +60,7 @@
+ #include "model/consequence/consequence_note_row_horizontal_shift.h"
+ #include "model/consequence/consequence_note_row_length.h"
+ #include "model/consequence/consequence_note_row_mute.h"
++#include "model/drum/drone_drum.h"
+ #include "model/drum/drum.h"
+ #include "model/drum/midi_drum.h"
+ #include "model/instrument/kit.h"
+@@ -525,6 +526,18 @@ doOther:
+ 		}
+ 	}
+ 
++	// mastertune-v16: a kit row held (or one being added), Kit makes it a drone row, as MIDI and CV make MIDI and
++	// gate rows
++	else if (b == KIT && (currentUIMode == UI_MODE_ADDING_DRUM_NOTEROW || currentUIMode == UI_MODE_AUDITIONING)
++	         && getCurrentOutputType() == OutputType::KIT) {
++		if (on) {
++			if (inCardRoutine) {
++				return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
++			}
++			createDrumForAuditionedNoteRow(DrumType::DRONE);
++		}
++	}
++
+ 	// Kit button. Unlike the other instrument-type buttons, whose code is in InstrumentClipMinder, this one is only
+ 	// allowed in the InstrumentClipView
+ 	else if (b == KIT && currentUIMode == UI_MODE_NONE) {
+@@ -1398,6 +1411,11 @@ void InstrumentClipView::selectEncoderAction(int8_t offset) {
+ 	else if (currentUIMode == UI_MODE_NOTES_PRESSED) {
+ 		adjustProbability(offset);
+ 	}
++	// mastertune-v16: a drone row selected, its pitch (in place of changing the kit)
++	else if (DroneDrum* droneDrum = getSelectedDroneDrum()) {
++		droneDrumPitchAction(droneDrum, offset, true);
++	}
++
+ 	// Or, normal option - trying to change Instrument presets
+ 	else {
+ 		InstrumentClipMinder::selectEncoderAction(offset);
+@@ -4205,6 +4223,11 @@ void InstrumentClipView::getDrumName(Drum* drum, StringBuf& drumName) {
+ 				drumName.append("Gate channel ");
+ 				drumName.appendInt(((GateDrum*)drum)->channel + 1);
+ 			}
++			else if (drum->type == DrumType::DRONE) { // mastertune-v16: its mode and pitch
++				char buffer[40];
++				((DroneDrum*)drum)->getDisplayName(buffer, sizeof(buffer));
++				drumName.append(buffer);
++			}
+ 			else { // MIDI
+ 				drumName.append("CH: ");
+ 				drumName.appendInt(((MIDIDrum*)drum)->channel + 1);
+@@ -5732,9 +5755,60 @@ void InstrumentClipView::dontDeleteNotesOnDepress() {
+ 	}
+ }
+ 
++DroneDrum* InstrumentClipView::getSelectedDroneDrum() {
++	InstrumentClip* clip = getCurrentInstrumentClip();
++	if (clip == nullptr || clip->output->type != OutputType::KIT || clip->affectEntire) {
++		return nullptr;
++	}
++	Drum* drum = ((Kit*)clip->output)->selectedDrum;
++	if (drum == nullptr || drum->type != DrumType::DRONE || clip->getNoteRowForDrum(drum) == nullptr) {
++		return nullptr;
++	}
++	return (DroneDrum*)drum;
++}
++
++/// mastertune-v16: a drone row's pitch, from the select encoder (1 Hz a click, with Shift 0.1 Hz) or the upper gold
++/// knob (1 Hz, turned quickly 10 Hz, with Shift 0.01 Hz); for a tone set by note, semitones, with Shift cents. While
++/// the clip records, into its Hz lane (where Shift, as for any automation, deletes the lane instead).
++void InstrumentClipView::droneDrumPitchAction(DroneDrum* drum, int32_t offset, bool selectEncoder) {
++	using Step = DroneDrum::PitchStep;
++	Step step;
++	if (Buttons::isShiftButtonPressed()) {
++		step = selectEncoder ? Step::TENTH : Step::FINE;
++	}
++	else if (selectEncoder) {
++		step = Step::NORMAL;
++	}
++	else {
++		uint32_t now = AudioEngine::audioSampleTimer;
++		bool quick = (now - timeLastDronePitchTurn_) < (uint32_t)(kSampleRate / 16); // Under 60 ms apart
++		timeLastDronePitchTurn_ = now;
++		step = quick ? Step::QUICK : Step::NORMAL;
++	}
++	char modelStackMemory[MODEL_STACK_MAX_SIZE];
++	ModelStackWithTimelineCounter* modelStack = currentSong->setupModelStackWithCurrentClip(modelStackMemory);
++	drum->changePitch(modelStack, offset, step);
++	drawDrumName(drum, true);
++}
++
+ void InstrumentClipView::modEncoderAction(int32_t whichModEncoder, int32_t offset) {
+ 	dontDeleteNotesOnDepress();
+ 
++	// mastertune-v16: a drone row selected: the upper gold knob its pitch, the lower its level
++	if (DroneDrum* droneDrum = getSelectedDroneDrum()) {
++		if (whichModEncoder == 1) {
++			droneDrumPitchAction(droneDrum, offset, false);
++		}
++		else {
++			int32_t& level = droneDrum->tone.level;
++			level = std::clamp(level + offset, (int32_t)0, deluge::dsp::DroneSettings::kMaxLevel);
++			char buffer[16];
++			snprintf(buffer, sizeof(buffer), display->haveOLED() ? "Level %d" : "%d", (int)level);
++			display->displayPopup(buffer);
++		}
++		return;
++	}
++
+ 	InstrumentClip* clip = getCurrentInstrumentClip();
+ 
+ 	char modelStackMemory[MODEL_STACK_MAX_SIZE];
+diff --git a/src/deluge/gui/views/instrument_clip_view.h b/src/deluge/gui/views/instrument_clip_view.h
+index 5773112e..f40f6b1a 100644
+--- a/src/deluge/gui/views/instrument_clip_view.h
++++ b/src/deluge/gui/views/instrument_clip_view.h
+@@ -34,6 +34,7 @@ class Sound;
+ class ModControllable;
+ class Kit;
+ class Drum;
++class DroneDrum;
+ class SoundDrum;
+ class ParamManagerForTimeline;
+ class Action;
+@@ -261,6 +262,10 @@ private:
+ 	void deleteCopiedNoteRows();
+ 
+ 	void createDrumForAuditionedNoteRow(DrumType drumType);
++	/// mastertune-v16: the selected row of a kit clip if it's a drone row (and Affect Entire is off), or null
++	DroneDrum* getSelectedDroneDrum();
++	void droneDrumPitchAction(DroneDrum* drum, int32_t offset, bool selectEncoder);
++	uint32_t timeLastDronePitchTurn_ = 0;
+ 	void nudgeNotes(int32_t offset);
+ 
+ 	bool isRowAuditionedByInstrument(int32_t yDisplay);
+diff --git a/src/deluge/gui/views/session_view.cpp b/src/deluge/gui/views/session_view.cpp
+index 3a8a61db..99fd9732 100644
+--- a/src/deluge/gui/views/session_view.cpp
++++ b/src/deluge/gui/views/session_view.cpp
+@@ -59,6 +59,7 @@
+ #include "model/clip/clip_instance.h"
+ #include "model/clip/instrument_clip.h"
+ #include "model/clip/instrument_clip_minder.h"
++#include "model/drum/drone_drum.h"
+ #include "model/instrument/instrument.h"
+ #include "model/instrument/melodic_instrument.h"
+ #include "model/note/note_row.h"
+@@ -1711,6 +1712,93 @@ Clip* SessionView::createNewInstrumentClip(OutputType outputType, int32_t yDispl
+ 	return newClip;
+ }
+ 
++// mastertune-v16: a new kit of 16 drone rows (DroneDrum) with the drone's tones, in a new clip at the end of Song view,
++// not launched: launched, it plays the tones that are on in the drone, each a note as long as the clip. The song's
++// drone stays as it is.
++InstrumentClip* SessionView::createNewDroneTrack(const deluge::dsp::DroneSettings& drone) {
++	actionLogger.deleteAllLogs();
++
++	ParamManagerForTimeline newParamManager;
++	Kit* kit = (Kit*)storageManager.createNewInstrument(OutputType::KIT, &newParamManager);
++	if (kit == nullptr) {
++		return nullptr;
++	}
++	// Named DRONE1, DRONE2... as the song has none of that name yet
++	char name[12];
++	for (int32_t n = 1; n < 1000; n++) {
++		snprintf(name, sizeof(name), "DRONE%d", (int)n);
++		if (currentSong->getInstrumentFromPresetSlot(OutputType::KIT, 0, -1, name, getInstrumentFolder(OutputType::KIT),
++		                                             true, true)
++		    == nullptr) {
++			break;
++		}
++	}
++	std::array<DroneDrum*, deluge::dsp::DroneSettings::kNumTones> drums{};
++	bool ok =
++	    (kit->dirPath.set(getInstrumentFolder(OutputType::KIT)) == Error::NONE) && (kit->name.set(name) == Error::NONE);
++	for (size_t i = 0; ok && i < drums.size(); i++) {
++		drums[i] = (DroneDrum*)storageManager.createNewDrum(DrumType::DRONE);
++		if (drums[i] == nullptr) {
++			ok = false;
++			break;
++		}
++		drums[i]->tone = drone.tones[i];
++		drums[i]->tone.active = true;
++		kit->addDrum(drums[i]);
++	}
++	void* clipMemory = ok ? GeneralMemoryAllocator::get().allocMaxSpeed(sizeof(InstrumentClip)) : nullptr;
++	if (clipMemory == nullptr || !currentSong->sessionClips.ensureEnoughSpaceAllocated(1)) {
++		if (clipMemory != nullptr) {
++			delugeDealloc(clipMemory);
++		}
++		kit->~Kit(); // And its drums
++		delugeDealloc(kit);
++		return nullptr;
++	}
++
++	InstrumentClip* clip = new (clipMemory) InstrumentClip(currentSong);
++	char modelStackMemory[MODEL_STACK_MAX_SIZE];
++	ModelStackWithTimelineCounter* modelStack =
++	    setupModelStackWithSong(modelStackMemory, currentSong)->addTimelineCounter(clip);
++	if (clip->setAudioInstrument(kit, currentSong, true, &newParamManager) != Error::NONE) {
++		clip->~InstrumentClip();
++		delugeDealloc(clipMemory);
++		kit->~Kit();
++		delugeDealloc(kit);
++		return nullptr;
++	}
++	clip->setupAsNewKitClipIfNecessary(modelStack); // A row for each drum, in their order
++	kit->editedByUser = true;
++	kit->existsOnCard = false;
++	currentSong->addOutput(kit);
++	((Output*)kit)->setActiveClip(modelStack);
++
++	setupNewClip(clip);
++	clip->activeIfNoSolo = false; // Launched when wanted
++
++	// The drone's tones that are on, each a note as long as the clip (held across the loop point)
++	for (size_t i = 0; i < drums.size(); i++) {
++		if (!drone.tones[i].active) {
++			continue;
++		}
++		ModelStackWithNoteRow* modelStackWithNoteRow = clip->getNoteRowForDrum(modelStack, drums[i]);
++		NoteRow* noteRow = modelStackWithNoteRow->getNoteRowAllowNull();
++		if (noteRow != nullptr) {
++			noteRow->attemptNoteAdd(0, clip->loopLength, kit->defaultVelocity, kNumProbabilityValues,
++			                        modelStackWithNoteRow, nullptr);
++		}
++	}
++
++	// At the end of Song view
++	int32_t index = currentSong->sessionClips.getNumElements();
++	if (index > 0) {
++		clip->section = currentSong->sessionClips.getClipAtIndex(index - 1)->section;
++	}
++	currentSong->sessionClips.insertClipAtIndex(clip, index); // Space allocated above
++	resyncNewClip(clip, modelStack);
++	return clip;
++}
++
+ bool SessionView::insertAndResyncNewClip(Clip* newClip, int32_t yDisplay) {
+ 	// insert clip at index
+ 	int32_t index = yDisplay + currentSong->songViewYScroll;
+diff --git a/src/deluge/gui/views/session_view.h b/src/deluge/gui/views/session_view.h
+index 0828e70c..4238415b 100644
+--- a/src/deluge/gui/views/session_view.h
++++ b/src/deluge/gui/views/session_view.h
+@@ -18,6 +18,7 @@
+ #pragma once
+ 
+ #include "definitions_cxx.hpp"
++#include "dsp/drone/drone.h"
+ #include "gui/views/clip_navigation_timeline_view.h"
+ #include "hid/button.h"
+ #include "model/song/song.h"
+@@ -131,6 +132,8 @@ public:
+ 	UIType getUIType() { return UIType::SESSION; }
+ 
+ 	Clip* createNewClip(OutputType outputType, int32_t yDisplay);
++	/// mastertune-v16: a drone track made from the song's drone (the drone view's Shift + Kit). Null if out of RAM.
++	InstrumentClip* createNewDroneTrack(const deluge::dsp::DroneSettings& drone);
+ 	bool createClip{false};
+ 	OutputType lastTypeCreated{OutputType::NONE};
+ 
+-- 
+2.43.0
+

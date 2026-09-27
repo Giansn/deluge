@@ -1,0 +1,146 @@
+From ef6c65470629c2b990f9d5fa169f2069f53b51a3 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 10:58:20 +0000
+Subject: [PATCH 45/55] Drone tracks: Shift + Kit makes a held kit row a drone
+ row; a row without a lane at its own pitch; a new track's row selected; the
+ arpeggiator in a row's menu
+
+Fixes and gaps found reviewing the previous two commits against the plan, checked in the emulator (tests/song,
+run.sh's DRONE=1: drone_rec_emu.py presses the pads and buttons as the user does, InstrumentClipView::padAction()
+and Buttons::buttonAction()):
+
+- Making a kit row a drone row never worked: the previous commit put the Kit button's new case (a row's audition pad
+  held, or an empty row's pad held to add one) after the two cases that already take Kit with a pad held (the row's
+  sample browser, the drum creator), so it was never reached. Now it is Shift + Kit, checked ahead of them; Kit alone
+  opens the sample browser as it always has. In the emulator: a gate row and a row being added made drone rows, each
+  sounding its 200 Hz while its pad is held, at the drone's level (+0.02 dB), the clip view staying, and saved as
+  droneTone rows.
+- DroneDrum::noteOn(): a row without an Hz lane starts at its tone's own pitch. The drum's lane offset is one for all
+  clips of the kit, so after a clip whose lane had moved the pitch, a note in another clip of the kit (a new one made
+  in Song view, say) kept that offset.
+- SessionView::createNewDroneTrack(): the first row whose tone is on (else the first row) is the new kit's selected
+  row. A new kit has none, and the clip view's select encoder then changes the kit instead of turning a row's pitch.
+- droneTrackToneMenu: the arpeggiator and randomizer submenus, as a gate row's menu has them; before, only the sound
+  editor's shortcut pads reached a drone row's arpeggiator.
+
+Checked: tests/drone 150 checks passed (renderTone() bit for bit the drone's tone); tests/song demand run
+(EMU_OPTS="--init-sounds --seed 1") measured.wav 87a7df29 as v14/v15; DRONE=1 all checks passed.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/ui/menus.cpp                   |  5 +++-
+ src/deluge/gui/views/instrument_clip_view.cpp | 25 ++++++++++---------
+ src/deluge/gui/views/session_view.cpp         | 10 +++++++-
+ src/deluge/model/drum/drone_drum.cpp          |  4 ++-
+ 4 files changed, 29 insertions(+), 15 deletions(-)
+
+diff --git a/src/deluge/gui/ui/menus.cpp b/src/deluge/gui/ui/menus.cpp
+index 6209e05b..8ddd6525 100644
+--- a/src/deluge/gui/ui/menus.cpp
++++ b/src/deluge/gui/ui/menus.cpp
+@@ -1477,7 +1477,8 @@ menu_item::Submenu droneToneMenu{
+     },
+ };
+ drone_menu::OpenView droneViewMenu{STRING_FOR_DRONE};
+-// mastertune-v16: a drone track's row, from the clip view's Select: its tone alone (drone::trackTone)
++// mastertune-v16: a drone track's row, from the clip view's Select: its tone alone (drone::trackTone), and its
++// arpeggiator and randomizer as a gate row's menu has them (the arpeggiator gates the tone in its rhythm)
+ menu_item::Submenu droneTrackToneMenu{
+     STRING_FOR_DRONE_TONE_MENU_TITLE,
+     {
+@@ -1493,6 +1494,8 @@ menu_item::Submenu droneTrackToneMenu{
+         &droneTimbreMenu,
+         &droneLevelMenu,
+         &dronePanMenu,
++        &arpMenu,
++        &randomizerMenu,
+     },
+ };
+ 
+diff --git a/src/deluge/gui/views/instrument_clip_view.cpp b/src/deluge/gui/views/instrument_clip_view.cpp
+index 3dee0291..dd3f9705 100644
+--- a/src/deluge/gui/views/instrument_clip_view.cpp
++++ b/src/deluge/gui/views/instrument_clip_view.cpp
+@@ -458,6 +458,19 @@ doOther:
+ 		}
+ 	}
+ 
++	// mastertune-v16: a kit row's audition pad held (or one being added), Shift + Kit makes it a drone row, as MIDI and
++	// CV make MIDI and gate rows. Ahead of the two below: Kit alone opens the row's sample browser, as ever.
++	else if (b == KIT && Buttons::isShiftButtonPressed()
++	         && (currentUIMode == UI_MODE_ADDING_DRUM_NOTEROW || currentUIMode == UI_MODE_AUDITIONING)
++	         && getCurrentOutputType() == OutputType::KIT) {
++		if (on) {
++			if (inCardRoutine) {
++				return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
++			}
++			createDrumForAuditionedNoteRow(DrumType::DRONE);
++		}
++	}
++
+ 	// Load / Kit button if creating new NoteRow for Drum
+ 	else if (currentUIMode == UI_MODE_ADDING_DRUM_NOTEROW && ((b == LOAD) || (b == KIT))) {
+ 		if (on) {
+@@ -526,18 +539,6 @@ doOther:
+ 		}
+ 	}
+ 
+-	// mastertune-v16: a kit row held (or one being added), Kit makes it a drone row, as MIDI and CV make MIDI and
+-	// gate rows
+-	else if (b == KIT && (currentUIMode == UI_MODE_ADDING_DRUM_NOTEROW || currentUIMode == UI_MODE_AUDITIONING)
+-	         && getCurrentOutputType() == OutputType::KIT) {
+-		if (on) {
+-			if (inCardRoutine) {
+-				return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
+-			}
+-			createDrumForAuditionedNoteRow(DrumType::DRONE);
+-		}
+-	}
+-
+ 	// Kit button. Unlike the other instrument-type buttons, whose code is in InstrumentClipMinder, this one is only
+ 	// allowed in the InstrumentClipView
+ 	else if (b == KIT && currentUIMode == UI_MODE_NONE) {
+diff --git a/src/deluge/gui/views/session_view.cpp b/src/deluge/gui/views/session_view.cpp
+index 99fd9732..44657967 100644
+--- a/src/deluge/gui/views/session_view.cpp
++++ b/src/deluge/gui/views/session_view.cpp
+@@ -1776,11 +1776,19 @@ InstrumentClip* SessionView::createNewDroneTrack(const deluge::dsp::DroneSetting
+ 	setupNewClip(clip);
+ 	clip->activeIfNoSolo = false; // Launched when wanted
+ 
+-	// The drone's tones that are on, each a note as long as the clip (held across the loop point)
++	// The drone's tones that are on, each a note as long as the clip (held across the loop point). The first of them
++	// (or the first row) selected: in the clip view the select encoder and the gold knobs turn its pitch straight away
++	// (Affect Entire is off in a new kit clip), instead of the select encoder changing the kit.
++	kit->selectedDrum = drums[0];
++	bool selected = false;
+ 	for (size_t i = 0; i < drums.size(); i++) {
+ 		if (!drone.tones[i].active) {
+ 			continue;
+ 		}
++		if (!selected) {
++			kit->selectedDrum = drums[i];
++			selected = true;
++		}
+ 		ModelStackWithNoteRow* modelStackWithNoteRow = clip->getNoteRowForDrum(modelStack, drums[i]);
+ 		NoteRow* noteRow = modelStackWithNoteRow->getNoteRowAllowNull();
+ 		if (noteRow != nullptr) {
+diff --git a/src/deluge/model/drum/drone_drum.cpp b/src/deluge/model/drum/drone_drum.cpp
+index a850fd96..dfe1849b 100644
+--- a/src/deluge/model/drum/drone_drum.cpp
++++ b/src/deluge/model/drum/drone_drum.cpp
+@@ -57,7 +57,9 @@ DroneDrum::~DroneDrum() {
+ 
+ void DroneDrum::noteOn(ModelStackWithThreeMainThings* modelStack, uint8_t velocity, Kit* kit, int16_t const* mpeValues,
+                        int32_t fromMIDIChannel, uint32_t sampleSyncLength, int32_t ticksLate, uint32_t samplesLate) {
+-	// The lane where the note starts (the 16 bits of mpeValues are too coarse for it)
++	// The lane where the note starts (the 16 bits of mpeValues are too coarse for it); a row without one (e.g. in
++	// another clip of the kit than the one whose lane played last) at the tone's own pitch
++	pitchOffset = 0;
+ 	if (modelStack != nullptr && modelStack->paramManager != nullptr) {
+ 		ExpressionParamSet* expressionParams = modelStack->paramManager->getExpressionParamSet();
+ 		if (expressionParams != nullptr) {
+-- 
+2.43.0
+

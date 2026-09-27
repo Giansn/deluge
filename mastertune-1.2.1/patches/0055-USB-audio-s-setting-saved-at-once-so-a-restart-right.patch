@@ -1,0 +1,54 @@
+From c610417f1704826660024ea59022346c3aa6a829 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 13:32:31 +0000
+Subject: [PATCH 55/55] USB audio's setting saved at once, so a restart right
+ from the menu keeps it
+
+The Settings menu saves its values to the card only when it's left (SoundEditor::exitCompletely()), and USB audio
+(mastertune-v8) says "restart to apply" when it changes: restarting from there, as the popup invites, lost the setting
+and the tick was gone again. UsbAudioSetting::writeCurrentValue() now writes CommunityFeatures.XML at once, unless the
+card is busy (a select press waits for that anyway; then, as ever, when the menu is left).
+
+Test: mastertune tests/settings/usb_audio_setting_emu.py: switched on and the Deluge booted again without leaving the
+menu, the file says usbAudio 1 and the menu shows it on; the build before: the file isn't there, off again.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/menu_item/runtime_feature/setting.cpp | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/src/deluge/gui/menu_item/runtime_feature/setting.cpp b/src/deluge/gui/menu_item/runtime_feature/setting.cpp
+index 61be1745..d035f600 100644
+--- a/src/deluge/gui/menu_item/runtime_feature/setting.cpp
++++ b/src/deluge/gui/menu_item/runtime_feature/setting.cpp
+@@ -16,11 +16,13 @@
+  */
+ 
+ #include "setting.h"
++#include "extern.h"
+ #include "gui/l10n/l10n.h"
+ #include "gui/menu_item/runtime_feature/setting.h"
+ #include "hid/display/display.h"
+ #include "hid/led/pad_leds.h"
+ #include "model/settings/runtime_feature_settings.h"
++#include "storage/storage_manager.h"
+ 
+ namespace deluge::gui::menu_item::runtime_feature {
+ 
+@@ -46,6 +48,12 @@ void Setting::writeCurrentValue() {
+ 
+ void UsbAudioSetting::writeCurrentValue() {
+ 	Setting::writeCurrentValue();
++	// mastertune-v16: saved to the card at once. The Settings menu saves only when it's left, and this setting asks for
++	// a restart, which people do right from here: then it was lost. Not while the card is busy (a select press waits
++	// for that anyway); then, as ever, when the menu is left.
++	if (!sdRoutineLock) {
++		runtimeFeatureSettings.writeSettingsToFile(storageManager);
++	}
+ 	display->displayPopup(l10n::get(l10n::String::STRING_FOR_RESTART_TO_APPLY));
+ }
+ 
+-- 
+2.43.0
+

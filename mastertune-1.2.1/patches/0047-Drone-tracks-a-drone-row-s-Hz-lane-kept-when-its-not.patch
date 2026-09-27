@@ -1,0 +1,141 @@
+From b522f1fbe9faca630f46adc59f470094f3734240 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 12:23:17 +0000
+Subject: [PATCH 47/55] Drone tracks: a drone row's Hz lane kept when its notes
+ are recorded, moved or made Euclidean
+
+A drone row's expression X is its Hz lane, not the MPE of its notes (the notes are only the
+row's gate). Note edits still treated it as the notes' MPE:
+
+- Recording a note under PLAY + REC (audition pad, MIDI, keyboard, the automation view's
+  note editor): InstrumentClip::recordNoteOn() wrote the note's MPE values (0 for a pad) into
+  X from the note to the next one, or over the whole lane for the row's only note. The new
+  note played at the tone's own pitch and the lane's later nodes were gone (only undoing the
+  whole recording brought them back).
+- The Euclidean edit (audition pad held, vertical encoder pressed and turned) deleted all
+  of X.
+- A held note moved to another row (vertical encoder) took the lane's nodes from the note to
+  the next one along and put them into the other row: the lane moved with the note, and a
+  note moved onto a drone row cleared that row's lane where it landed.
+
+NoteRow::expressionIsHzLane() says which rows these are. recordNoteOn(),
+clearMPEUpUntilNextNote(), editNumEuclideanEvents(), the note move in scrollVertical() and
+the MPE note editing at a MIDI note-off (reportNoteOffForMPEEditing()) leave such a lane
+alone.
+
+Test: mastertune tests/song/drone_edit_emu.py (run.sh DRONE=1).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/views/instrument_clip_view.cpp | 14 +++++++++-----
+ src/deluge/model/clip/instrument_clip.cpp     |  7 +++++++
+ src/deluge/model/note/note_row.cpp            |  7 +++++--
+ src/deluge/model/note/note_row.h              |  4 ++++
+ 4 files changed, 25 insertions(+), 7 deletions(-)
+
+diff --git a/src/deluge/gui/views/instrument_clip_view.cpp b/src/deluge/gui/views/instrument_clip_view.cpp
+index dd3f9705..f8c19a3d 100644
+--- a/src/deluge/gui/views/instrument_clip_view.cpp
++++ b/src/deluge/gui/views/instrument_clip_view.cpp
+@@ -2889,7 +2889,8 @@ ActionResult InstrumentClipView::scrollVertical(int32_t scrollAmount, bool inCar
+ 						ParamCollectionSummary* mpeParamsSummary =
+ 						    thisNoteRow->paramManager.getExpressionParamSetSummary();
+ 						ExpressionParamSet* mpeParams = (ExpressionParamSet*)mpeParamsSummary->paramCollection;
+-						if (mpeParams) {
++						// mastertune-v16: a drone row's Hz lane stays with the row, not the note (nothing taken)
++						if (mpeParams && !thisNoteRow->expressionIsHzLane()) {
+ 							int32_t distanceToNextNote = thisNoteRow->getDistanceToNextNote(pos, modelStackWithNoteRow);
+ 							int32_t loopLength = modelStackWithNoteRow->getLoopLength();
+ 							ModelStackWithParamCollection* modelStackWithParamCollection =
+@@ -3066,7 +3067,9 @@ cancelPress:
+ 				editPadPresses[i].deleteOnScroll = success;
+ 
+ 				if (success) {
+-					if (editPadPresses[i].mpeCachedYet) {
++					// mastertune-v16: nor does a note's MPE go into a drone row's Hz lane (the note keeps it for the
++					// next row it's moved to)
++					if (editPadPresses[i].mpeCachedYet && !noteRow->expressionIsHzLane()) {
+ 						int32_t anyActualNodes = 0;
+ 						for (int32_t m = 0; m < kNumExpressionDimensions; m++) {
+ 							anyActualNodes += editPadPresses[i].stolenMPE[m].num;
+@@ -5955,7 +5958,8 @@ justDisplayOldNumNotes:
+ 					// that we do next, below.
+ 					ParamCollectionSummary* mpeParamsSummary = noteRow->paramManager.getExpressionParamSetSummary();
+ 					ExpressionParamSet* mpeParams = (ExpressionParamSet*)mpeParamsSummary->paramCollection;
+-					if (mpeParams) {
++					// mastertune-v16: not a drone row's Hz lane, which isn't its notes'
++					if (mpeParams && !noteRow->expressionIsHzLane()) {
+ 						ModelStackWithParamCollection* modelStackWithParamCollection =
+ 						    modelStack->addOtherTwoThingsAutomaticallyGivenNoteRow()->addParamCollection(
+ 						        mpeParams, mpeParamsSummary);
+@@ -6304,8 +6308,8 @@ void InstrumentClipView::reportNoteOffForMPEEditing(ModelStackWithNoteRow* model
+ 	NoteRow* noteRow = modelStack->getNoteRow();
+ 
+ 	// MPE stuff for note off - if they're still "editing" a note, they'll want the values from half a second ago,
+-	// or the values from when they pressed hardest.
+-	if (view.modLength && modelStack->noteRowId == view.modNoteRowId
++	// or the values from when they pressed hardest. (mastertune-v16: not into a drone row's Hz lane)
++	if (view.modLength && !noteRow->expressionIsHzLane() && modelStack->noteRowId == view.modNoteRowId
+ 	    && modelStack->getTimelineCounter() == view.activeModControllableModelStack.getTimelineCounterAllowNull()) {
+ 
+ 		ParamCollectionSummary* mpeParamsSummary = noteRow->paramManager.getExpressionParamSetSummary();
+diff --git a/src/deluge/model/clip/instrument_clip.cpp b/src/deluge/model/clip/instrument_clip.cpp
+index 06149131..1a90a35b 100644
+--- a/src/deluge/model/clip/instrument_clip.cpp
++++ b/src/deluge/model/clip/instrument_clip.cpp
+@@ -4528,6 +4528,13 @@ doNormal: // Wrap it back to the start.
+ 		return;
+ 	}
+ 
++	// mastertune-v16: a drone row's expression is its Hz lane, not the MPE of its notes: a note recorded (an audition
++	// pad, MIDI, the keyboard) leaves it as it is, rather than set to the note's values (0 for a pad) from here to the
++	// next note, or all of it for the row's only note
++	if (noteRow->expressionIsHzLane()) {
++		return;
++	}
++
+ 	// If we're doing MPE, we'll want to place a node here at the Note's start, so it's got the correct stuff
+ 	// to sound during its note-on when we play back.
+ 
+diff --git a/src/deluge/model/note/note_row.cpp b/src/deluge/model/note/note_row.cpp
+index a648d1fa..1c4d75f4 100644
+--- a/src/deluge/model/note/note_row.cpp
++++ b/src/deluge/model/note/note_row.cpp
+@@ -4194,13 +4194,16 @@ void NoteRow::getMPEValues(ModelStackWithNoteRow* modelStack, int16_t* mpeValues
+ 	}
+ }
+ 
++bool NoteRow::expressionIsHzLane() const {
++	return drum != nullptr && drum->type == DrumType::DRONE;
++}
++
+ // This is obviously very inefficient, doing deletions for every "screen", sequentially.
+ // Also, pos is provided as the squareStart, but in a perfect world, we'd actually use the pos of the first note within
+ // that square - for each "screen"! Or something like that...
+ void NoteRow::clearMPEUpUntilNextNote(ModelStackWithNoteRow* modelStack, int32_t pos, int32_t wrapEditLevel,
+                                       bool shouldJustDeleteNodes) {
+-	// mastertune-v16: a drone row's expression is its Hz lane, not its notes' MPE: adding or deleting a note keeps it
+-	if (drum && drum->type == DrumType::DRONE) {
++	if (expressionIsHzLane()) { // mastertune-v16: a drone row's lane, not its notes' MPE
+ 		return;
+ 	}
+ 
+diff --git a/src/deluge/model/note/note_row.h b/src/deluge/model/note/note_row.h
+index 59d221d0..33d282dd 100644
+--- a/src/deluge/model/note/note_row.h
++++ b/src/deluge/model/note/note_row.h
+@@ -220,6 +220,10 @@ public:
+ 	void getMPEValues(ModelStackWithNoteRow* modelStack, int16_t* mpeValues);
+ 	void clearMPEUpUntilNextNote(ModelStackWithNoteRow* modelStack, int32_t pos, int32_t wrapEditLevel,
+ 	                             bool shouldJustDeleteNodes = false);
++	/// mastertune-v16: whether the row's expression is a drone row's Hz lane (DroneDrum), which its notes (the gate)
++	/// don't carry: notes added, recorded, deleted, moved to another row or made Euclidean leave it as it is, and no
++	/// note's MPE goes into it
++	[[nodiscard]] bool expressionIsHzLane() const;
+ 	SequenceDirection getEffectiveSequenceDirectionMode(ModelStackWithNoteRow const* modelStack);
+ 	bool recordPolyphonicExpressionEvent(ModelStackWithNoteRow* modelStackWithNoteRow, int32_t newValueBig,
+ 	                                     int32_t whichExpressionDimension, bool forDrum);
+-- 
+2.43.0
+

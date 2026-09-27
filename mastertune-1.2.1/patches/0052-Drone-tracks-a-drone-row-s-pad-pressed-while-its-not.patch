@@ -1,0 +1,46 @@
+From 50519ca834bce10fae5eae1b461075d123058954 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 12:35:38 +0000
+Subject: [PATCH 52/55] Drone tracks: a drone row's pad pressed while its note
+ plays only selects it
+
+Pressed during a sequenced note, a pad does a "silent" audition: InstrumentClipView::startAuditioningRow() still sent
+the audition note-on first and reassessAllAuditionStatus() the note-off at once. A sound drum shrugs that off; a drone
+row has one gate, which that closed, so the row went silent until its next note, just as one presses its pad to select
+it and turn its pitch. For drone rows the note-on isn't sent then, so nothing is closed (found in the fix round of the
+review; drone_edit_emu.py: row 0 still at its lane's 300 Hz after its pad, the build before: silent).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/views/instrument_clip_view.cpp | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/src/deluge/gui/views/instrument_clip_view.cpp b/src/deluge/gui/views/instrument_clip_view.cpp
+index 09c346c4..22d93e7e 100644
+--- a/src/deluge/gui/views/instrument_clip_view.cpp
++++ b/src/deluge/gui/views/instrument_clip_view.cpp
+@@ -3912,6 +3912,11 @@ bool InstrumentClipView::startAuditioningRow(int32_t velocity, int32_t yDisplay,
+ 		}
+ 	}
+ 
++	// mastertune-v16: a drone row playing from the sequence is only selected (to turn its pitch, say). Its one gate
++	// isn't opened for the audition and closed again right away by the silent audition below, which silenced the row
++	// until its next note
++	bool sequencedDrone = doSilentAudition && isKit && drum != nullptr && drum->type == DrumType::DRONE;
++
+ 	// If won't be actually sounding Instrument...
+ 	if (shiftButtonDown || Buttons::isButtonPressed(deluge::hid::button::Y_ENC)) {
+ 
+@@ -3920,7 +3925,7 @@ bool InstrumentClipView::startAuditioningRow(int32_t velocity, int32_t yDisplay,
+ 		doSilentAudition = true;
+ 	}
+ 	else {
+-		if (!auditioningSilently) {
++		if (!auditioningSilently && !sequencedDrone) {
+ 
+ 			fileBrowserShouldNotPreview = false;
+ 
+-- 
+2.43.0
+

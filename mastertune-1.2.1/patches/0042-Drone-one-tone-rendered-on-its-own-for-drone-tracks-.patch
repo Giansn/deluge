@@ -1,0 +1,434 @@
+From 68d40d27a9b5099f31a5d7e87b704eb3d7995606 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 10:23:21 +0000
+Subject: [PATCH 42/55] Drone: one tone rendered on its own, for drone tracks;
+ tone attributes and the block's context shared
+
+Groundwork for drone tracks (kits of drone rows, next commits), without changing the song's drone:
+
+- Drone::renderTone() renders one tone with a Voice of the caller's (Drone::Voice is public now), through the
+  existing renderVoice() and renderLivelyVoice() (a Pulse tone, at the drone's default width), as render() does for a
+  tone of the drone, with a gain in place of the drone's volume and without life and FM. Both functions are
+  untouched: their machine code is the same as v15's (renderVoice() and render() instruction for instruction,
+  renderLivelyVoice() apart from the addresses of static data), and the song test's measured.wav is still v14's
+  (87a7df29, EMU_OPTS="--init-sounds --seed 1"). tests/drone: renderTone() is render()'s tone bit for bit in every
+  mode, a Pulse, glides, mode changes and off/on, in blocks of 128 and 37.
+- DroneTrackPitch: a drone row's pitch, its tone's own with an Hz lane on top in cents (2^31 is +9600 cents, as MIDI
+  pitch bend reaches 8 octaves; 0 changes nothing), what renderTone() gets for a gate and a lane value (the frequency
+  to a hundredth of a hertz once the lane has moved it), and the lane's value for a frequency or a step in cents.
+- Tone::writeAttributes()/readAttribute(): the tone's attributes in a file, shared by the song's drone and drone
+  rows. The song's drone writes them in the same order as before, so its XML is unchanged.
+- AudioEngine::getDroneContext(): tempo, song position and master tune for the block, taken out of renderDrone() so
+  drone rows render by the same clock (synced beats lock to the grid).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/drone/drone.cpp                | 126 ++++++++++++++++++
+ src/deluge/dsp/drone/drone.h                  |  54 ++++++++
+ src/deluge/model/song/song.cpp                |  55 +-------
+ .../processing/engines/audio_engine.cpp       |  45 ++++---
+ src/deluge/processing/engines/audio_engine.h  |   7 +-
+ 5 files changed, 211 insertions(+), 76 deletions(-)
+
+diff --git a/src/deluge/dsp/drone/drone.cpp b/src/deluge/dsp/drone/drone.cpp
+index 61e3d7d9..c4bb3426 100644
+--- a/src/deluge/dsp/drone/drone.cpp
++++ b/src/deluge/dsp/drone/drone.cpp
+@@ -334,6 +334,94 @@ void DroneSettings::readLifeAttribute(const char* name, int32_t value) {
+ 	}
+ }
+ 
++bool DroneSettings::Tone::readAttribute(const char* name, int32_t value) {
++	if (!strcmp(name, "mode")) {
++		mode = (Mode)std::clamp(value, (int32_t)0, kNumModes - 1);
++	}
++	else if (!strcmp(name, "timbre")) {
++		timbre = (Timbre)std::clamp(value, (int32_t)0, kNumTimbres - 1);
++	}
++	else if (!strcmp(name, "byNote")) {
++		byNote = (value != 0);
++	}
++	else if (!strcmp(name, "note")) {
++		note = std::clamp(value, (int32_t)0, (int32_t)127);
++	}
++	else if (!strcmp(name, "cents")) {
++		cents = std::clamp(value, -kMaxCents, kMaxCents);
++	}
++	else if (!strcmp(name, "frequency")) {
++		frequency = std::clamp(value, kMinFrequency, kMaxFrequency);
++	}
++	else if (!strcmp(name, "beat")) {
++		beat = std::clamp(value, (int32_t)0, kMaxBeat);
++	}
++	else if (!strcmp(name, "sync")) {
++		sync = std::clamp(value, (int32_t)0, kMaxSync);
++	}
++	else if (!strcmp(name, "triplet")) {
++		triplet = (value != 0);
++	}
++	else if (!strcmp(name, "pulseAttack")) {
++		pulseAttack = std::clamp(value, (int32_t)0, kMaxPulseEdge);
++	}
++	else if (!strcmp(name, "pulseRelease")) {
++		pulseRelease = std::clamp(value, (int32_t)0, kMaxPulseEdge);
++	}
++	else if (!strcmp(name, "level")) {
++		level = std::clamp(value, (int32_t)0, kMaxLevel);
++	}
++	else if (!strcmp(name, "pan")) {
++		pan = std::clamp(value, -kMaxPan, kMaxPan);
++	}
++	else {
++		return false;
++	}
++	return true;
++}
++
++float DroneTrackPitch::baseHz(const Tone& tone, float a4Hz) {
++	if (tone.byNote) {
++		return Drone::noteToHz(tone.note, tone.cents, a4Hz);
++	}
++	return (float)std::clamp(tone.frequency, S::kMinFrequency, S::kMaxFrequency) * 0.01f;
++}
++
++float DroneTrackPitch::hz(const Tone& tone, int32_t value, float a4Hz) {
++	float frequency = baseHz(tone, a4Hz);
++	if (value != 0) {
++		frequency *= std::exp2((float)value * (kCentsPerValue / 1200.f));
++	}
++	return std::clamp(frequency, (float)S::kMinFrequency * 0.01f, (float)S::kMaxFrequency * 0.01f);
++}
++
++int32_t DroneTrackPitch::valuePlusCents(int32_t value, float cents) {
++	float total = std::clamp((float)value * kCentsPerValue + cents, -kMaxCents, kMaxCents);
++	// Within int32_t before rounding (the float next below 2^31)
++	return (int32_t)std::lround(std::clamp(total / kCentsPerValue, -2147483520.f, 2147483520.f));
++}
++
++int32_t DroneTrackPitch::valueForHz(const Tone& tone, float hz, float a4Hz) {
++	hz = std::clamp(hz, (float)S::kMinFrequency * 0.01f, (float)S::kMaxFrequency * 0.01f);
++	return valuePlusCents(0, 1200.f * std::log2(hz / baseHz(tone, a4Hz)));
++}
++
++DroneSettings::Tone DroneTrackPitch::sounding(const Tone& tone, bool gate, int32_t value, float a4Hz) {
++	Tone result = tone;
++	result.active = gate;
++	if (value != 0) {
++		result.byNote = false;
++		result.frequency =
++		    std::clamp((int32_t)std::lround(hz(tone, value, a4Hz) * 100.f), S::kMinFrequency, S::kMaxFrequency);
++	}
++	return result;
++}
++
++bool DroneSettings::Tone::isAttribute(const char* name) {
++	Tone scratch;
++	return scratch.readAttribute(name, 0);
++}
++
+ bool DroneSettings::lifeIsDefault() const {
+ 	const DroneSettings defaults{};
+ 	return life == defaults.life && lifeRate == defaults.lifeRate && fm == defaults.fm && fmForm == defaults.fmForm
+@@ -513,6 +601,44 @@ void Drone::render(std::span<StereoSample> buffer, const Settings& settings, con
+ 	}
+ }
+ 
++void Drone::renderTone(Voice& voice, const Tone& tone, std::span<StereoSample> buffer, const Context& context,
++                       float gain) {
++	if (!tablesReady()) {
++		return;
++	}
++	float volumeGain = gain * context.volume * kFullScale;
++	Lively lively; // Life and FM off
++	lively.width = (float)S{}.pulseWidth * (1.f / 100.f);
++
++	Context chunkContext = context;
++	for (size_t start = 0; start < buffer.size(); start += kChunk) {
++		if (!voice.started && !tone.active) {
++			return;
++		}
++		std::span<StereoSample> chunk = buffer.subspan(start, std::min(kChunk, buffer.size() - start));
++		std::array<float, 2 * kChunk> mix{};
++		std::span<float> mixSpan{mix.data(), 2 * chunk.size()};
++
++		// As render() does for a tone of the drone: a pulse, or until it's come to rest, the lively way
++		Timbre timbre = voice.started ? voice.timbre : tone.timbre;
++		if (voice.lively || timbre == Timbre::PULSE) {
++			renderLivelyVoice(voice, tone, mixSpan, chunkContext, volumeGain, lively);
++		}
++		else {
++			renderVoice(voice, tone, mixSpan, chunkContext, volumeGain);
++		}
++
++		for (size_t s = 0; s < chunk.size(); s++) {
++			chunk[s].l += (int32_t)mix[2 * s];
++			chunk[s].r += (int32_t)mix[2 * s + 1];
++		}
++
++		if (chunkContext.position >= 0.) {
++			chunkContext.position += (double)chunk.size() * (double)context.quarterNotesPerSecond / (double)kSampleRate;
++		}
++	}
++}
++
+ void Drone::updatePanGains(Voice& voice, int32_t pan) {
+ 	if (pan != voice.gainsForPan) {
+ 		voice.gainsForPan = pan;
+diff --git a/src/deluge/dsp/drone/drone.h b/src/deluge/dsp/drone/drone.h
+index 50435920..0e1d2c57 100644
+--- a/src/deluge/dsp/drone/drone.h
++++ b/src/deluge/dsp/drone/drone.h
+@@ -99,6 +99,30 @@ struct DroneSettings {
+ 		int32_t pan = 0;
+ 
+ 		bool operator==(const Tone&) const = default;
++
++		/// File (the song's drone, a drone track's row, mastertune-v16): everything but whether it's on, each as its
++		/// name and value, in the order the song's drone has always written them
++		template <typename Write>
++		void writeAttributes(Write&& write) const {
++			write("mode", (int32_t)mode);
++			write("timbre", (int32_t)timbre);
++			write("byNote", byNote ? 1 : 0);
++			write("note", note);
++			write("cents", cents);
++			write("frequency", frequency);
++			write("beat", beat);
++			write("sync", sync);
++			// mastertune-v13 (older firmware ignores these: straight divisions, its fixed pulse edges)
++			write("triplet", triplet ? 1 : 0);
++			write("pulseAttack", pulseAttack);
++			write("pulseRelease", pulseRelease);
++			write("level", level);
++			write("pan", pan);
++		}
++		/// Takes one of them from a file, within its range; whether it was one
++		bool readAttribute(const char* name, int32_t value);
++		/// Whether a name is one of them
++		[[nodiscard]] static bool isAttribute(const char* name);
+ 	};
+ 
+ 	std::array<Tone, kNumTones> tones{};
+@@ -164,6 +188,26 @@ struct DroneSettings {
+ 	}
+ };
+ 
++/// mastertune-v16: the pitch of a drone track's row (DroneDrum): its tone's own, with the row's Hz lane on top. The
++/// lane's value is in cents: 2^31 is +9600 cents (8 octaves, as far as MIDI pitch bend reaches), 0 the tone's own.
++struct DroneTrackPitch {
++	using Tone = DroneSettings::Tone;
++	static constexpr float kCentsPerValue = 9600.f / 2147483648.f;
++	static constexpr float kMaxCents = 9600.f;
++
++	/// The tone's own frequency in hertz
++	[[nodiscard]] static float baseHz(const Tone& tone, float a4Hz);
++	/// With the lane's value on top, within the drone's range
++	[[nodiscard]] static float hz(const Tone& tone, int32_t value, float a4Hz);
++	/// The lane's value that gives a frequency (within +-9600 cents)
++	[[nodiscard]] static int32_t valueForHz(const Tone& tone, float hz, float a4Hz);
++	/// The lane's value moved by some cents
++	[[nodiscard]] static int32_t valuePlusCents(int32_t value, float cents);
++	/// What Drone::renderTone() gets: on while the gate's open, and once the lane has moved the pitch, the frequency
++	/// it gives, to a hundredth of a hertz
++	[[nodiscard]] static Tone sounding(const Tone& tone, bool gate, int32_t value, float a4Hz);
++};
++
+ class Drone {
+ public:
+ 	using Settings = DroneSettings;
+@@ -279,6 +323,9 @@ private:
+ 	                       const Oscillator& oscillator);
+ 	static SideFunction sideFunction(FmKind fm, bool pulse, bool shimmer);
+ 
++public:
++	/// What's sounding of one tone, from block to block: the drone has one for each of its tones, a drone track's row
++	/// (DroneDrum, mastertune-v16) one of its own
+ 	struct Voice {
+ 		uint32_t carrierPhase = 0;
+ 		uint32_t halfBeatPhase = 0;   ///< Runs at half the beat; the two tones sit
+@@ -319,6 +366,13 @@ private:
+ 		float dcShare = 0.f;         ///< How much of the DC blocker is in, at the end of the last block
+ 	};
+ 
++	/// One tone on its own (mastertune-v16, for a drone track's row, see DroneDrum): as render() renders a tone of the
++	/// drone, by the same code, with gain in place of the drone's volume (1 for 0 dB), without life and FM (a Pulse
++	/// tone at the drone's default width). Uses this Drone's scratch buffers only, nothing of its own tones. The tone
++	/// fades out as the drone's do once it's off, until the voice is at rest (!voice.started).
++	void renderTone(Voice& voice, const Tone& tone, std::span<StereoSample> buffer, const Context& context, float gain);
++
++private:
+ 	const float* tableFor(Timbre timbre, float highestFrequencyHz) const;
+ 	/// The saw with the most harmonics, up to mostHarmonics, that stay below kHighestHarmonicHz (mastertune-v15)
+ 	static const float* sawTableFor(float highestFrequencyHz, int32_t mostHarmonics);
+diff --git a/src/deluge/model/song/song.cpp b/src/deluge/model/song/song.cpp
+index 8ad529cc..cf56af42 100644
+--- a/src/deluge/model/song/song.cpp
++++ b/src/deluge/model/song/song.cpp
+@@ -6016,20 +6016,7 @@ void Song::writeDroneToFile(Serializer& writer) {
+ 		writer.writeOpeningTagBeginning("tone");
+ 		writer.writeAttribute("index", (int32_t)i);
+ 		writer.writeAttribute("active", tone.active ? 1 : 0);
+-		writer.writeAttribute("mode", (int32_t)tone.mode);
+-		writer.writeAttribute("timbre", (int32_t)tone.timbre);
+-		writer.writeAttribute("byNote", tone.byNote ? 1 : 0);
+-		writer.writeAttribute("note", tone.note);
+-		writer.writeAttribute("cents", tone.cents);
+-		writer.writeAttribute("frequency", tone.frequency);
+-		writer.writeAttribute("beat", tone.beat);
+-		writer.writeAttribute("sync", tone.sync);
+-		// mastertune-v13 (older firmware ignores these: straight divisions, its fixed pulse edges)
+-		writer.writeAttribute("triplet", tone.triplet ? 1 : 0);
+-		writer.writeAttribute("pulseAttack", tone.pulseAttack);
+-		writer.writeAttribute("pulseRelease", tone.pulseRelease);
+-		writer.writeAttribute("level", tone.level);
+-		writer.writeAttribute("pan", tone.pan);
++		tone.writeAttributes([&](const char* name, int32_t value) { writer.writeAttribute(name, value); });
+ 		writer.closeTag();
+ 	}
+ 
+@@ -6086,44 +6073,8 @@ void Song::readDroneFromFile(Deserializer& reader) {
+ 				else if (!strcmp(tagName, "active")) {
+ 					tone.active = (value != 0);
+ 				}
+-				else if (!strcmp(tagName, "mode")) {
+-					tone.mode = (Settings::Mode)std::clamp(value, (int32_t)0, Settings::kNumModes - 1);
+-				}
+-				else if (!strcmp(tagName, "timbre")) {
+-					tone.timbre = (Settings::Timbre)std::clamp(value, (int32_t)0, Settings::kNumTimbres - 1);
+-				}
+-				else if (!strcmp(tagName, "byNote")) {
+-					tone.byNote = (value != 0);
+-				}
+-				else if (!strcmp(tagName, "note")) {
+-					tone.note = std::clamp(value, (int32_t)0, (int32_t)127);
+-				}
+-				else if (!strcmp(tagName, "cents")) {
+-					tone.cents = std::clamp(value, -Settings::kMaxCents, Settings::kMaxCents);
+-				}
+-				else if (!strcmp(tagName, "frequency")) {
+-					tone.frequency = std::clamp(value, Settings::kMinFrequency, Settings::kMaxFrequency);
+-				}
+-				else if (!strcmp(tagName, "beat")) {
+-					tone.beat = std::clamp(value, (int32_t)0, Settings::kMaxBeat);
+-				}
+-				else if (!strcmp(tagName, "sync")) {
+-					tone.sync = std::clamp(value, (int32_t)0, Settings::kMaxSync);
+-				}
+-				else if (!strcmp(tagName, "triplet")) {
+-					tone.triplet = (value != 0);
+-				}
+-				else if (!strcmp(tagName, "pulseAttack")) {
+-					tone.pulseAttack = std::clamp(value, (int32_t)0, Settings::kMaxPulseEdge);
+-				}
+-				else if (!strcmp(tagName, "pulseRelease")) {
+-					tone.pulseRelease = std::clamp(value, (int32_t)0, Settings::kMaxPulseEdge);
+-				}
+-				else if (!strcmp(tagName, "level")) {
+-					tone.level = std::clamp(value, (int32_t)0, Settings::kMaxLevel);
+-				}
+-				else if (!strcmp(tagName, "pan")) {
+-					tone.pan = std::clamp(value, -Settings::kMaxPan, Settings::kMaxPan);
++				else {
++					tone.readAttribute(tagName, value); // Mode, pitch, beat, level and pan (mastertune-v16: shared)
+ 				}
+ 				reader.exitTag(tagName);
+ 			}
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index d02f8cfb..103da37d 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -910,6 +910,29 @@ float droneReverbSendLast = 0.f; ///< The send gain the last block ended at, to
+ constexpr float kDroneReverbSendMax = 0.25f;
+ } // namespace
+ 
++void getDroneContext(deluge::dsp::Drone::Context& context) {
++	// Tempo and position both in the song's quarter notes, as the metronome counts them
++	float timePerTick = playbackHandler.getTimePerInternalTickFloat();
++	double quarterNoteLength = (double)currentSong->getQuarterNoteLength();
++	if (timePerTick > 0.f) {
++		context.quarterNotesPerSecond = (float)((double)kSampleRate / ((double)timePerTick * quarterNoteLength));
++	}
++	if (playbackHandler.isEitherClockActive()) {
++		double tick;
++		if (playbackHandler.isExternalClockActive()) {
++			// Following the clock between its ticks (getCurrentInternalTickCount() only has whole ticks for it)
++			tick = playbackHandler.getCurrentInternalTickFloatFollowingExternalClock();
++		}
++		else {
++			uint32_t timeSinceLastTick = 0;
++			int64_t ticks = playbackHandler.getCurrentInternalTickCount(&timeSinceLastTick);
++			tick = (double)ticks + (timePerTick > 0.f ? (double)timeSinceLastTick / (double)timePerTick : 0.);
++		}
++		context.position = std::max(tick, 0.) / quarterNoteLength;
++	}
++	context.a4Hz = (float)MasterTune::getTenthsHz() * 0.1f;
++}
++
+ void renderDrone(size_t numSamples) {
+ 	droneThisBlock = DroneThisBlock::NONE;
+ 	if (!currentSong) {
+@@ -935,26 +958,7 @@ void renderDrone(size_t numSamples) {
+ 	deluge::dsp::DroneSettings& settings = currentSong->drone;
+ 	deluge::dsp::Drone::Context& context = droneContext;
+ 	context = deluge::dsp::Drone::Context{};
+-
+-	// Tempo and position both in the song's quarter notes, as the metronome counts them
+-	float timePerTick = playbackHandler.getTimePerInternalTickFloat();
+-	double quarterNoteLength = (double)currentSong->getQuarterNoteLength();
+-	if (timePerTick > 0.f) {
+-		context.quarterNotesPerSecond = (float)((double)kSampleRate / ((double)timePerTick * quarterNoteLength));
+-	}
+-	if (playbackHandler.isEitherClockActive()) {
+-		double tick;
+-		if (playbackHandler.isExternalClockActive()) {
+-			// Following the clock between its ticks (getCurrentInternalTickCount() only has whole ticks for it)
+-			tick = playbackHandler.getCurrentInternalTickFloatFollowingExternalClock();
+-		}
+-		else {
+-			uint32_t timeSinceLastTick = 0;
+-			int64_t ticks = playbackHandler.getCurrentInternalTickCount(&timeSinceLastTick);
+-			tick = (double)ticks + (timePerTick > 0.f ? (double)timeSinceLastTick / (double)timePerTick : 0.);
+-		}
+-		context.position = std::max(tick, 0.) / quarterNoteLength;
+-	}
++	getDroneContext(context);
+ 
+ 	// The song's volume, as the metronome follows it (1 at the song's neutral volume)
+ 	int32_t songVolume =
+@@ -963,7 +967,6 @@ void renderDrone(size_t numSamples) {
+ 	                       currentSong->paramManager.getUnpatchedParamSet()->getValue(params::UNPATCHED_VOLUME)))
+ 	    >> 1;
+ 	context.volume = (float)songVolume * (1.f / 67108864.f);
+-	context.a4Hz = (float)MasterTune::getTenthsHz() * 0.1f;
+ 
+ 	if (settings.sidechain > 0) {
+ 		if (sideChainHitPending != 0) {
+diff --git a/src/deluge/processing/engines/audio_engine.h b/src/deluge/processing/engines/audio_engine.h
+index 0e1c8e29..6157d08a 100644
+--- a/src/deluge/processing/engines/audio_engine.h
++++ b/src/deluge/processing/engines/audio_engine.h
+@@ -128,9 +128,7 @@ class Reverb;
+ /// For advanced debugging printouts.
+ #define DO_AUDIO_LOG 0
+ 
+-namespace deluge::dsp {
+-class Drone;
+-}
++#include "dsp/drone/drone.h"
+ 
+ namespace AudioEngine {
+ void routine();
+@@ -218,6 +216,9 @@ extern int32_t reverbPan;
+ extern SampleRecorder* firstRecorder;
+ extern Metronome metronome;
+ extern deluge::dsp::Drone drone;
++/// mastertune-v16: tempo, song position and master tune for this block, as the song's drone and drone tracks
++/// (DroneDrum) render by them; the song's volume and the ducking left at 1
++void getDroneContext(deluge::dsp::Drone::Context& context);
+ extern RMSFeedbackCompressor mastercompressor;
+ extern uint32_t timeLastSideChainHit;
+ extern int32_t sizeLastSideChainHit;
+-- 
+2.43.0
+
