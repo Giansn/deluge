@@ -363,9 +363,16 @@ Result runCase(bool original, const Context& ctx, const Mode& mode, double resDi
 			if (lpfOn) {
 				int extra = ctx.global ? 2 : 1;
 				if (ctx.stereo) {
-					os[0].render(buf, buf + 2 * kBlock, oc, mode.orig, 2, extra, 1);
-					os[1].render(buf + 1, buf + 2 * kBlock, oc, mode.orig, 2, extra, 1);
+					// Each channel takes every other noise draw, as in the firmware's stereo loops since community
+					// #304. The original ran the left channel's block, then the right one's (consecutive draws): that
+					// moves the tone by ~0.1 %, which near the top (cutoff 47, ~19.7 kHz) decides whether a ladder
+					// just keeps going. Not the arithmetic this compares, so the original gets the firmware's order
+					for (int i = 0; i < kBlock; i++) {
+						os[0].render(buf + 2 * i, buf + 2 * i + 1, oc, mode.orig, 1, extra, 1);
+						os[1].render(buf + 2 * i + 1, buf + 2 * i + 2, oc, mode.orig, 1, extra, 1);
+					}
 				}
+
 				else {
 					os[0].render(buf, buf + kBlock, oc, mode.orig, 1, extra, 1);
 				}
