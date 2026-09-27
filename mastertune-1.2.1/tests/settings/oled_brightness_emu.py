@@ -15,7 +15,8 @@ in order; the OLED's messages among them (247-251, told from pad data by where t
 the ELF's debug info: setupOLED(), oledMainInit(), oledRoutine(), sendOledCommand()) set D/C and the chip select, and
 248-251 are echoed into the PIC's receive ring (the firmware waits for 248/249's echo). The image's DMA: each start
 (CHCTRL SETEN) is logged with the PIC's state then, and oledTransferComplete() runs as the DMA's interrupt 614 us later
-(768 bytes at 10 MHz; 20 ms in step 4, to hold it in flight).
+(768 bytes at 10 MHz; 20 ms in step 4, to hold it in flight). The CV DAC shares the queue and RSPI0: its 32-bit
+messages get their receive interrupt (cvSPITransferComplete()) 3.2 us later.
 
 Checks (a card without CommunityFeatures.XML, the song DEFAULT.XML):
 1. boot with the OLED: oledMainInit()'s 0x81 0xFF; no other contrast command; the menu on 10 and shown (isRelevant())
@@ -24,7 +25,8 @@ Checks (a card without CommunityFeatures.XML, the song DEFAULT.XML):
 3. Settings open, the encoder (Integer::selectEncoderAction()) from 10 down by 7: level 3, the OLED gets 0x81 14 with
    D/C low, selected, no DMA running; the PIC got D/C low before the selection, D/C high before the deselection;
    images after it with D/C high. Three quick turns (-1, -1, +4, the tasks not run between): 0x81 4, 0x81 1, 0x81 51
-4. a turn while an image's DMA runs: nothing written until it's done, then 0x81 79 (and back to 51)
+4. up to level 6 (0x81 79); a new image, and while its DMA runs a turn back to 5: nothing written until it's done,
+   then 0x81 51
 5. the menu left: CommunityFeatures.XML says oledContrast 51
 6. restart: oledMainInit()'s 0x81 0xFF, then (the file read) 0x81 51 through the queue, D/C low; the menu on 5;
    images as in 2
@@ -51,7 +53,9 @@ MENU_VALUE_OFFSET = 12  # Integer's value_ (OledBrightness::readCurrentValue(): 
 CONTRAST = [1, 4, 14, 29, 51, 79, 114, 155, 202, 255]  # Per level 1-10
 IMAGE_BYTES = 128 * 48 // 8
 DMA_US = IMAGE_BYTES * 8 / 10e6 * 1e6  # 614 us at the SPI's 10 MHz
-OLED_WRITERS = ("setupOLED", "oledMainInit", "oledRoutine", "sendOledCommand")
+# The OLED's code (oled.c, oled_low_level.c; the line info is thin there, the inline chain's names are enough)
+OLED_WRITERS = ("setupOLED", "oledMainInit", "oledRoutine", "sendOledCommand", "oledSelectingComplete",
+                "oledLowLevelTimerCallback")
 DESELECT, SELECT, DC_LOW, DC_HIGH = 249, 248, 250, 251
 
 failures = 0
@@ -68,14 +72,14 @@ def check(what, ok, detail=""):
 class OledSide:
     """The OLED, its PIC-driven D/C and chip select, and the image's DMA, as the firmware sees them."""
 
-    def __init__(self, emu):
+    def __init__(self, emu, oled=True):
         self.emu = emu
         sym = emu.sym
         uc = emu.uc
-        # An OLED Deluge: the OLED DMA channel's CHCFG as deluge_main() checks it (0b1101000 | channel)
         self.dma_base = dma = se.dmac_channel_base(se.OLED_SPI_DMA_CHANNEL)
-        for i, b in enumerate(struct.pack("<I", 0x68 | se.OLED_SPI_DMA_CHANNEL)):
-            emu.mmio[dma + 0x2C + i] = b
+        if oled:  # An OLED Deluge: the OLED DMA channel's CHCFG as deluge_main() checks it (0b1101000 | channel)
+            for i, b in enumerate(struct.pack("<I", 0x68 | se.OLED_SPI_DMA_CHANNEL)):
+                emu.mmio[dma + 0x2C + i] = b
         # RSPI0's SPSR: TEND too (R_RSPI_WaitEnd()), besides SPTEF and SPRF
         emu.readers[se.RSPI0 + 3] = lambda size: 0x60 | (0x80 if emu.spi_rx_full else 0)
         spdr_write = emu.writers[se.RSPI0 + 4]
@@ -84,6 +88,9 @@ class OledSide:
             spdr_write(size, value)
             if size == 1:  # 8-bit: the OLED's commands (the CV DAC's are 32-bit)
                 self.spi.append((emu.now(), value & 0xFF, self.dc, self.cs, self.busy))
+            elif size == 4:  # The CV DAC's message (sendCVTransfer()): its receive interrupt 32 bits at 10 MHz later
+                self.cv += 1
+                self.ints.schedule("cv_spi", emu.now() + 3.2e-6 * se.CPU_HZ, self.cv_complete)
         emu.writers[se.RSPI0 + 4] = spi_write
         emu.writers[dma + 0x28] = self.on_chctrl
         self.spi = []  # (time, byte, D/C, selected, DMA running)
@@ -99,6 +106,8 @@ class OledSide:
                 self.canvases[a] = n
         self.ints = se.Interrupts(emu)
         self.complete = sym["oledTransferComplete"]
+        self.cv_complete = sym["cvSPITransferComplete"]
+        self.cv = 0  # CV DAC messages
         # The PIC: its ring, where the PIC reads next, what was written where and by which code
         self.tx, self.tx_size = sym.by_name["picTxBuffer"]
         self.items = sym["uartItems"]
@@ -202,16 +211,7 @@ class OledSide:
 class Deluge:
     def __init__(self, elf, sd, tools, oled=True):
         self.emu = emu = se.Emulator(elf, sd, tools, os.environ.get("BLOCKCOUNT_DIR", HERE), lambda s: None)
-        self.side = OledSide(emu) if oled else None
-        if not oled:  # The 7-segment Deluge: the SPI's 8-bit writes counted all the same
-            self.spi = []
-            spdr_write = emu.writers[se.RSPI0 + 4]
-
-            def spi_write(size, value):
-                spdr_write(size, value)
-                if size == 1:
-                    self.spi.append(value & 0xFF)
-            emu.writers[se.RSPI0 + 4] = spi_write
+        self.side = OledSide(emu, oled)  # Without the OLED: the SPI, the CV DAC and the PIC all the same
         se.setup_sd(emu)
         se.boot(emu)
         se.load_startup_song(emu)
@@ -353,8 +353,12 @@ def main():
     print(f"  (the PIC's OLED messages since step 3: {len(stream)}, D/C low {stream.count(DC_LOW)} times)")
 
     print("== 4. a turn while an image's DMA runs", flush=True)
+    d.turn(+1)  # Level 6: 0x81 79
+    d.run(0.2)
     side.dma_us = 20000  # Held in flight for 20 ms
-    d.turn(+1)  # Level 6: a new image to send
+    sym = d.sym
+    d.emu.uc.mem_write(sym["_ZN6deluge3hid7display4OLED12needsSendingE"], b"\x01")
+    d.emu.call(sym["_ZN6deluge3hid7display4OLED13sendMainImageEv"])  # A new image to send
     started = len(side.dmas)
     for _ in range(200):
         d.run(0.001)
@@ -406,12 +410,16 @@ def main():
     check("no OLED; the item not shown; 51 read", not d.have_oled() and not d.relevant() and d.contrast() == 51,
           f"OLED {d.have_oled()}, relevant {d.relevant()}, {d.contrast()}")
     d.open_settings()
-    spi, q = len(d.spi), d.queue()
-    d.set_level(8)
     d.run(0.1)
-    check("level 8: nothing sent (no SPI byte, nothing queued), the contrast kept as 155",
-          len(d.spi) == spi and d.queue()[1] == q[1] and d.contrast() == 155,
-          f"{len(d.spi) - spi} bytes, queue {q} -> {d.queue()}, {d.contrast()}")
+    side = d.side
+    spi, dmas, q = len(side.spi), len(side.dmas), d.queue()
+    d.set_level(8)
+    queued = [d.emu.u8(d.sym["spiTransferQueue"] + 8 * (i % 32)) for i in range(q[1], q[1] + (d.queue()[1] - q[1]) % 32)]
+    d.run(0.1)
+    check("level 8: nothing sent (no SPI byte, no image, nothing for the OLED queued), the contrast kept as 155",
+          len(side.spi) == spi and len(side.dmas) == dmas and not [x for x in queued if x != 1]
+          and d.contrast() == 155, f"{len(side.spi) - spi} bytes, {len(side.dmas) - dmas} images, queued "
+          f"destinations {queued}, {d.contrast()}")
     d.leave()
     check("CommunityFeatures.XML: oledContrast 155", saved(sd) == 155, f"{saved(sd)}")
     d.close()
