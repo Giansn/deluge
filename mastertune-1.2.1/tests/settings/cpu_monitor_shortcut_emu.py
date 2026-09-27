@@ -8,18 +8,20 @@ messages call it, inCardRoutine = sdRoutineLock). The mode is saved as the entry
 at once by the shortcut (while the card is busy, by cpu_stats::routine() once it's free), by the menu when it's left
 (SoundEditor::exitCompletely()), and read at boot (Profile as On).
 
-One card without CommunityFeatures.XML, booted four times:
-1. boot: the monitor off
+One card without CommunityFeatures.XML, the song opening in its first synth's clip view, booted four times (the
+emulated Deluge has the 7-segment display; from 5. on the OLED is swapped in, as Settings > Emulated display does):
+1. boot: the monitor off; Song view (SESSION_VIEW)
 2. Song view, stopped: LEARN, TEMPO pressed and let go, LEARN let go: On, its popup, the UI mode back to none, no tempo
    popup, the clock-out scale untouched; the card says cpuMonitor 1
 3. the clip view (CLIP_VIEW), playing (the task manager with the DMA in real time): Off, then On; the audio goes on
    while it saves; the card says 0, then 1
 4. the same press while the card is busy (sdRoutineLock): Off at once, the card unchanged while it stays busy; once free,
    cpu_stats::routine() saves it (0); the shortcut again: On
-5. restart: On, the monitor's line (OLED) and its SysEx on USB
+5. restart: On; the OLED swapped in, playing: the monitor's line and its SysEx on USB
 6. Settings > CPU monitor > Alerts, the menu left: the card says 2; the shortcut: Off, then Alerts again; restart:
    Alerts. The menu on Profile, left: the card says 3; restart: On, the profiler not running
-7. the keyboard (clip view, KEYBOARD) and the drone view (Song view, SCALE): the shortcut toggles, no voice sounds,
+7. restart: On, the profiler not running; the keyboard (KEYBOARD from the clip view) and the drone view (SCALE in Song
+   view): the shortcut toggles, no voice sounds,
    the UI mode back to none after LEARN
 Usage: cpu_monitor_shortcut_emu.py <deluge.elf> [--tools PREFIX] [--out DIR]   (BLOCKCOUNT_DIR: where blockcount.so is)
 Exit status 0 when every check passes."""
@@ -186,6 +188,11 @@ class Deluge:
         emu.call(sym["_ZN11SoundEditor14exitCompletelyEv"], editor)
         return opened, running
 
+    def oled_display(self):
+        """The OLED in place of the 7-segment display (deluge::hid::display::swapDisplayType())"""
+        self.emu.call(self.sym["_ZN6deluge3hid7display15swapDisplayTypeEv"])
+        self.oled = True
+
     def close(self):
         if self.dma:
             self.dma.close()
@@ -206,12 +213,16 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     sd = os.path.join(a.out, "cpumonitor.img")
     files, lengths = make_sd.samples()
-    files["SONGS/DEFAULT.XML"] = make_sd.song_xml(lengths, 1, 2).encode()
+    # The song opens in its first synth's clip view
+    xml = make_sd.song_xml(lengths, 1, 2).replace("<instrumentClip", '<instrumentClip\n\t\t\tbeingEdited="1"', 1)
+    files["SONGS/DEFAULT.XML"] = xml.encode()
     make_sd.fat32.build(sd, files)
 
     print("== 1. boot, a card without CommunityFeatures.XML", flush=True)
     d = Deluge(a.elf, sd, tools)
     check("the monitor off", d.mode() == OFF, NAMES[d.mode()])
+    check("the song opens in the clip view", d.root() == d.sym["instrumentClipView"], f"root UI {d.root():#x}")
+    d.press(SESSION_VIEW)
     check("Song view", d.root() == d.sym["sessionView"], f"root UI {d.root():#x}")
 
     print("== 2. Song view, stopped: the shortcut", flush=True)
@@ -261,10 +272,11 @@ def main():
     print("== 5. restart", flush=True)
     d = Deluge(a.elf, sd, tools)
     check("On", d.mode() == ON, NAMES[d.mode()])
+    d.oled_display()
     d.play()
     d.run(1.6)
     text = d.string(d.sym.find("_ZN9cpu_stats12_GLOBAL__N_14lineE"))  # What cpu_stats::oledInfo() gives the OLED
-    check("its line on the OLED" if d.oled else "(no OLED: no line)", bool(text) == bool(d.oled), repr(text))
+    check("its line on the OLED", d.oled and text.startswith("CPU"), repr(text))
     stats = [m for m in d.sysex if len(m) > 5 and m[5] == SYSEX_COMMAND]
     check("its SysEx on USB", len(stats) >= 1, f"{len(stats)} messages")
 
@@ -293,7 +305,6 @@ def main():
     d = Deluge(a.elf, sd, tools)
     check("On, the profiler not running", d.mode() == ON and not d.profiler_running(),
           f"{NAMES[d.mode()]}, profiler {'on' if d.profiler_running() else 'off'}")
-    d.press(CLIP_VIEW)
     d.press(KEYBOARD)
     keyboard = d.root() == d.sym["keyboardScreen"]
     popups = d.shortcut()

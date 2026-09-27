@@ -23,6 +23,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import warnings
 import wave
 from fractions import Fraction
 
@@ -35,6 +36,7 @@ sys.path.insert(0, HERE)
 from tone import cents, firmware_wav_view, tone_frequency  # noqa: E402
 
 TOOL = os.path.join(HERE, "..", "..", "tools", "retune_library.py")
+warnings.simplefilter("ignore", scipy.io.wavfile.WavFileWarning)  # scipy skips the chunks it doesn't know (mtun...)
 TARGET = 4320
 failures = 0
 stats = dict(pitch=[], pitch_keep=[])

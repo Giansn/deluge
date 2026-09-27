@@ -585,13 +585,17 @@ def report(results, ana, work, log):
         # Position markers: the KICK's zone start and end, the file ends of the one-shots, the loop's wraps (a slow
         # ramp's middle is no marker), the length-kept notes (Rubber Band's own timing: within ~1.4 ms). The synths'
         # notes start at the file's start and end at note-off: only reported
-        limit = 60 if name in KEEP_LENGTH else 4
+        # Resampled: 4 samples. Length kept (Rubber Band R3): ends within 60 samples; onsets within 250 (5.7 ms): a note
+        # that repeats the pitch of the one still sounding gets its attack softened by up to about 4 ms (its 50 %
+        # crossing), other attacks move by less than 1 ms (tests/retune/pc_test.py)
+        limit_on, limit_off = (250, 60) if name in KEEP_LENGTH else (4, 4)
         if not name.startswith(("SMP", "MULTI")):
             # The one-shots' onsets are their note-ons (they start at the file's start), not a position: only the
             # KICK's (zone start 50 ms into it) and the length-kept notes' count
             onsets_count = name in ("KICK",) + KEEP_LENGTH
-            worst_marker = max(on.max() if on.size and onsets_count else 0, off.max() if off.size else 0)
-            check(worst_marker <= limit, f"{name}: markers moved by {worst_marker:.1f} samples (limit {limit})")
+            w_on, w_off = (on.max() if on.size and onsets_count else 0), (off.max() if off.size else 0)
+            check(w_on <= limit_on and w_off <= limit_off,
+                  f"{name}: markers moved by {w_on:.1f} (onsets) / {w_off:.1f} (ends) samples")
     lo, lc = ana["LOOPROW"]["loop_period_orig432"], ana["LOOPROW"]["loop_period_conv432"]  # 850 cycles
     log(f"  LOOPROW loop period (median of {ana['LOOPROW']['loop_periods_conv432']} wraps): original {lo:.2f} samples "
         f"(11025 * 440/432 = {11025 / TUNE:.2f}), converted {lc:.2f} (11229: "
