@@ -8,6 +8,11 @@
 #   With a tree, it takes build/Release/deluge.elf and the tree's toolchain (gdb); with an ELF, TOOLS (the toolchain
 #   prefix, .../arm-none-eabi-) or the toolchain two directories up from it.
 # Results: <out>/ref/ and <out>/new/ (measured.wav, measured.npy, result.json, song.xml). About 1 minute.
+# mastertune-v16 (f50646f1) against silent-v17 (fa20a339): the same output, sample for sample; 131,111 -> 129,489
+#   instructions per 128 samples (-1.2 %); 16,044 early returns (KDLY 2,066, KMOD 1,416, KSTUT 3,808, LREV 2,932, LNEW
+#   1,715, DRN 4,107). It catches what the early return must keep: without the sidechain in it, the output differs
+#   from bar 7.5 on (LREV starting again, 266 samples); without the filter mode check (FilterSet::keepsModes()),
+#   LREV's filter, turned off and on again while silent, misses its reset (44,098 samples).
 # Needs: python3 with unicorn 2 and numpy, a C compiler (for ../song/blockcount.c).
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)

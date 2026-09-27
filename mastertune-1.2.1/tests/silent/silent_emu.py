@@ -18,7 +18,9 @@ starts them again, so any difference between the check before and the check afte
   KSTUT  a kit, notes in bar 0 of its 4-bar clip, stuttered from bar 0.6 to 1.3 (into its silence) and again from 3.2
          to 3.6 while silent (the stutter knob pressed and released, modKnobMode 6)
   LREV   an audio track (the 2-bar loop), reverb send, delay, sidechain ducking; stopped at bar 1.4 (at once, its
-         tails ring on), its LPF knob turned down at bar 2.9 while silent (a mode change), started again at bar 4.5
+         tails ring on), its LPF knob turned down at bar 2.9 while silent (a mode change), started again at bar 4.5;
+         stopped at bar 5.75, its LPF knob turned up (the filter off) at 7 and down again at 7.25 while silent (off and
+         on again: reset with a fade, where going by the mode at the restart would find no change), started at 7.5
   LNEW   an audio track whose clip doesn't play at first, launched at bar 2.5 (instantly, a late start)
   DRN    a drone track: a 300 Hz drone row whose note starts at bar 4 and ends at bar 6 of its 8-bar clip, ducked
 Knob and stutter as the user does them in the song view, the clip's pad held (SessionView::padAction(),
@@ -190,7 +192,7 @@ def song():
                  dict(reverbAmount=knob(0), stutterRate=knob(30), _lpf=open_lpf),
                  extra_attrs=dict(activeModFunction=6)),
         audio_part("LREV", True, dict(reverbAmount=knob(30), sidechainCompressorVolume=knob(40),
-                                      _delay=dict(rate=knob(20), feedback=knob(12)), _lpf=open_lpf), mod_function=1),
+                                      _delay=dict(rate=knob(25), feedback=knob(8)), _lpf=open_lpf), mod_function=1),
         audio_part("LNEW", False, dict(reverbAmount=knob(10), _lpf=open_lpf)),
         drone_part(),
     ]
@@ -310,6 +312,12 @@ def main():
         (3.2, "KSTUT stutter on (silent)", hold("KSTUT", 1) + [(button, (sv, 1, 1))]),
         (3.6, "KSTUT stutter off", [(button, (sv, 1, 0))] + hold("KSTUT", 0)),
         (4.5, "LREV started again (Shift + status pad)", status_with_shift("LREV")),
+        (5.75, "LREV stopped again", status_with_shift("LREV")),
+        (7.0, "LREV LPF knob +20 (silent: its filter goes off)",
+         hold("LREV", 1) + [(knob_turn, (sv, 1, 20))] + hold("LREV", 0)),
+        (7.25, "LREV LPF knob -20 (silent: on again, which resets it with a fade)",
+         hold("LREV", 1) + [(knob_turn, (sv, 1, -20))] + hold("LREV", 0)),
+        (7.5, "LREV started again", status_with_shift("LREV")),
     ]
     player = song_emu.Player(emu)
     player.start()
