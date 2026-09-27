@@ -29,7 +29,8 @@ Scenarios:
          in RAM, what deluge.cpp:584 means: its integer 16 / 44100 is 0, which keeps that task always due, and while
          it is backed off the scheduler's fallback runs whatever is past its own back-off, the audio routine (10 us)
          first. --lines: then, for 0.02 s more, the distinct 32-byte lines (the Cortex-A9's L1 line) of SDRAM and
-         internal RAM each audio routine call touches (data only), against the L1 data cache's 1,024 lines.
+         internal RAM each audio routine call touches (data only), against the L1 data cache's 1,024 lines; the calls
+         that render nothing apart (--lines also after play: the song still playing, the card instant from then on).
   play   loads, then plays (PlaybackHandler::playButtonPressed()) for --seconds with the task manager as for --idle,
          the card instant or, with --sd-latency, taking time (song_emu.SdModel; --sd-wait yield, the default, as the
          firmware built with USE_TASK_MANAGER waits: routineForSD() once, then the driver's waits yield to the task
@@ -53,7 +54,9 @@ import bisect
 import collections
 import json
 import os
+import re
 import struct
+import subprocess
 import sys
 import time
 
@@ -496,11 +499,13 @@ class Run:
         return r
 
     def lines(self, seconds=0.02):
-        """Distinct 32-byte lines of SDRAM and internal RAM touched by each audio routine call (data accesses)."""
+        """Distinct 32-byte lines of SDRAM and internal RAM touched by each audio routine call (data accesses); the
+        calls that render nothing apart."""
         emu = self.emu
         dma = se.RealTimeDma(emu)
         cur = [None]
         per_call = []
+        empty = []
         union = [set(), set()]
 
         def on_mem(uc, access, address, size, value, _):
@@ -512,31 +517,46 @@ class Run:
                  for b, size in ((se.SDRAM, se.SDRAM_SIZE), (se.SDRAM + se.UNCACHED_MIRROR_OFFSET, se.SDRAM_SIZE),
                                  (se.INTERNAL_RAM, se.INTERNAL_RAM_SIZE))]
         timer = emu.sym["_ZN11AudioEngine16audioSampleTimerE"]
-        depth = [0, 0]
-        regions = se.Regions(emu, [("_ZN11AudioEngine7routineEv", "lines")], "other")
+        depth = [0, 0, 0]  # Calls in progress; audioSampleTimer and instructions at the outer one's entry
+        # routine() left at its return instructions (from the toolchain's objdump), all hooked before the translated
+        # code is dropped: se.Regions' return hooks, added as return addresses show up, drop translated code while
+        # it runs, which with the memory hooks here crashed the emulation while playing (the audio routine called
+        # from several places)
+        name = "_ZN11AudioEngine7routineEv"
+        out = subprocess.run([emu.tool_prefix + "objdump", "-d", f"--disassemble={name}", emu.elf],
+                             capture_output=True, text=True).stdout
+        returns = sorted({int(m.group(1), 16) for m in re.finditer(
+            r"^\s*([0-9a-f]+):\s.*\t(?:(?:ldmia\.w\s+sp!,|pop(?:\.w)?\s).*\bpc\}|bx\s+lr)", out, re.M)})
+        if not returns:
+            raise SystemExit(f"no return instructions found in {name}")
 
-        def enter(e, back):
+        def enter(e):
             depth[0] += 1
             if depth[0] == 1:
                 cur[0] = (set(), set())
                 depth[1] = e.u32(timer)
+                depth[2] = e.bc.bc_total()
             return None
 
-        def leave(e, extra, n):
+        def leave(uc, address, size, _):
             depth[0] -= 1
             if depth[0] == 0 and cur[0] is not None:
-                samples = (e.u32(timer) - depth[1]) & 0xFFFFFFFF
+                samples = (emu.u32(timer) - depth[1]) & 0xFFFFFFFF
+                n = emu.bc.bc_total() - depth[2]
                 if samples:
                     per_call.append((len(cur[0][0]), len(cur[0][1]), samples, n))
                     union[0].update(cur[0][0])
                     union[1].update(cur[0][1])
+                else:
+                    empty.append((len(cur[0][0]), len(cur[0][1]), n))
                 cur[0] = None
-        regions.on_enter["lines"] = enter
-        regions.on_exit["lines"] = leave
+        hooks.append(emu.intercept(emu.sym.find(name), enter))
+        hooks += [emu.uc.hook_add(se.UC_HOOK_CODE, leave, begin=r, end=r) for r in returns]
         emu.uc.ctl_flush_tb()
         se.run_task_manager(emu, seconds)
         for h in hooks:
             emu.uc.hook_del(h)
+        emu.uc.ctl_flush_tb()
         dma.close()
         if not per_call:
             return None
@@ -544,12 +564,15 @@ class Run:
         r = dict(calls=len(per_call), sdram_lines_mean=float(a[:, 0].mean()), sdram_lines_max=int(a[:, 0].max()),
                  internal_lines_mean=float(a[:, 1].mean()), samples_mean=float(a[:, 2].mean()),
                  instructions_mean=float(a[:, 3].mean()), sdram_lines_all_calls=len(union[0]),
-                 internal_lines_all_calls=len(union[1]), l1_data_lines=1024)
+                 internal_lines_all_calls=len(union[1]), l1_data_lines=1024, empty_calls=len(empty),
+                 empty_sdram_lines_mean=float(np.mean([e[0] for e in empty])) if empty else 0.0,
+                 empty_instructions_mean=float(np.mean([e[2] for e in empty])) if empty else 0.0, seconds=seconds)
         log(f"lines touched per rendering audio routine call ({r['calls']} calls, {r['samples_mean']:.1f} samples, "
             f"{r['instructions_mean']:,.0f} instructions each): SDRAM {r['sdram_lines_mean']:,.0f} (max "
             f"{r['sdram_lines_max']:,}), internal RAM {r['internal_lines_mean']:,.0f}; all calls together SDRAM "
             f"{r['sdram_lines_all_calls']:,}, internal {r['internal_lines_all_calls']:,} (L1 data cache: 1,024 lines "
-            f"of 32 bytes)")
+            f"of 32 bytes); {r['empty_calls']} calls rendering nothing, SDRAM {r['empty_sdram_lines_mean']:,.0f} lines "
+            f"and {r['empty_instructions_mean']:,.0f} instructions each")
         return r
 
     # --- the song browser
@@ -681,6 +704,9 @@ def main():
         res["play"] = run.run_tasks(args.seconds, f"playing {args.seconds:g} s, card "
                                     + (f"model {args.sd_latency}, wait {args.sd_wait}" if args.sd_latency
                                        else "instant"))
+        if args.lines:  # The card instant from here on (a wait in progress ends as modelled)
+            run.emu.sd_model = None
+            res["lines"] = run.lines()
     if args.scenario == "browse":
         res["browse"] = run.browse(args.steps, args.settle_ms / 1e3)
     path = os.path.join(args.out, (args.name or args.scenario) + ".json")

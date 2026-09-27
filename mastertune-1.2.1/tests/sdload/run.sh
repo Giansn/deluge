@@ -87,7 +87,7 @@ for s in $SCENARIOS; do
 			typical) lat=(--sd-latency 1000,42.67) ;;
 			slow) lat=(--sd-latency 3000,85.33) ;;
 			esac
-			emu "$OUT/s4-$m.img" "s4-$m" play --seconds "${PLAY_S:-4}" "${lat[@]}"
+			emu "$OUT/s4-$m.img" "s4-$m" play --seconds "${PLAY_S:-4}" "${lat[@]}" --lines
 		done ;;
 	s4ipc)
 		image s4ipc s4 && emu "$OUT/s4ipc.img" s4-typical-ipc0.5 play --seconds "${PLAY_S:-4}" --sd-latency 1000,42.67 \

@@ -23,15 +23,22 @@ starts them again, so any difference between the check before and the check afte
          on again: reset with a fade, where going by the mode at the restart would find no change), started at 7.5
   LNEW   an audio track whose clip doesn't play at first, launched at bar 2.5 (instantly, a late start)
   DRN    a drone track: a 300 Hz drone row whose note starts at bar 4 and ends at bar 6 of its 8-bar clip, ducked
+  KARP   the kit arp stepping across silence: RIM and HATC (0.1 s, cut at the note's end) held from bar 0 to 3 and 5 to 7
+         of its 8-bar clip, played by the kit arp in quarters; between the steps the kit is silent long enough for
+         the early return, and each step must bring it back
+  KMIDI  a kit of a MIDI row (channel 2, note 60, its arp over 2 octaves in 16ths, held from bar 0.5 to 2.5) and a
+         gate row (gate 1, its arp in 8ths, held from bar 1 to 3) of its 4-bar clip: their own arpeggiators
+         (Kit::renderNonAudioArpPostOutput()) step while the kit, with no audio at all, takes the early return
 Knob and stutter as the user does them in the song view, the clip's pad held (SessionView::padAction(),
 modEncoderAction(), modEncoderButtonAction()); clips started and stopped at once with Shift + the status pad. Played
 from the start for --bars (default 8) bars, one AudioEngine::routine() window at a time (song_emu.Player, no culling),
 --init-sounds and seed 1 as tests/song/run.sh's bit-exact recipe. With a build that has the early return, it counts
 its calls by track and half bar (each calls advanceWithNothingToRender() once): where they stop and start again shows
-the events above reaching the tracks.
+the events above reaching the tracks. The arpeggiators' notes are logged with the window they come in (the kit arp's
+steps, Kit::kitArpNoteToRow(); the MIDI and gate rows', MIDIDrum/GateDrum::noteOnPostArp()).
 Results: <out>/measured.wav (what the codec gets, as song_emu's), <out>/measured.npy (the same before its 16 bits:
 the render buffer times the master volume, float64), <out>/result.json (instructions per window, the
-early return's calls by track where the ELF has it, RMS per half bar).
+early return's calls by track where the ELF has it, RMS per half bar, the arpeggiators' notes).
 """
 import argparse
 import json
@@ -65,8 +72,10 @@ def automation(initial, nodes):
     return out
 
 
-def kit_part(name, rows, bars, notes_by_row, params, extra_attrs=None, row_params=None):
-    """A kit (make_sd.kit()'s rows and settings) with some of make_sd.KIT_ROWS, its clip of `bars` bars"""
+def kit_part(name, rows, bars, notes_by_row, params, extra_attrs=None, row_params=None, arp=None, loop_mode=1):
+    """A kit (make_sd.kit()'s rows and settings) with some of make_sd.KIT_ROWS, its clip of `bars` bars; a note is its
+    position (a 16th long) or (position, length); arp: the clip's <arpeggiator> (the kit arp); loop_mode: the samples'
+    (1 play once; 0 cut at the note's end, which the kit arp needs: it passes rows without note tails by)"""
     k = dict(presetName=name, presetFolder="KITS", defaultVelocity=64, isArmedForRecording=0, activeModFunction=0,
              colour=0, lpfMode="24dB", hpfMode="HPLadder", filterRoute="H2L", modFXType="none")
     k.update(extra_attrs or {})
@@ -84,7 +93,7 @@ def kit_part(name, rows, bars, notes_by_row, params, extra_attrs=None, row_param
         if row == "KICK":
             s["sideChainSend"] = 2147483647
         out += f"\t\t\t\t<sound{attrs(s, 5)}>\n"
-        osc = dict(type="sample", transpose=transpose, cents=0, loopMode=1, reversed=0, timeStretchEnable=0,
+        osc = dict(type="sample", transpose=transpose, cents=0, loopMode=loop_mode, reversed=0, timeStretchEnable=0,
                    timeStretchAmount=0, fileName=f"SAMPLES/{row}.WAV")
         out += f"\t\t\t\t\t<osc1{attrs(osc, 6)}>\n"
         out += f'\t\t\t\t\t\t<zone startSamplePos="0" endSamplePos="{LENGTHS[row]}" />\n'
@@ -106,7 +115,8 @@ def kit_part(name, rows, bars, notes_by_row, params, extra_attrs=None, row_param
         row_env1 = dict(attack=knob(0), decay=knob(25), sustain=knob(50), release=knob(0))
         block = make_sd.sound_params_block("soundParams", p, row_env1, make_sd.PAD_ENV2, [("velocity", "volume", 25)],
                                            5)
-        clip_rows.append(("drumIndex", index, [(pos, STEP, velocity) for pos in notes_by_row[row]], block))
+        clip_rows.append(("drumIndex", index, [(pos, STEP, velocity) if isinstance(pos, int) else (*pos, velocity)
+                                               for pos in notes_by_row[row]], block))
     out += "\t\t\t</soundSources>\n"
     out += "\t\t\t<selectedDrumIndex>0</selectedDrumIndex>\n"
     out += "\t\t</kit>\n"
@@ -116,6 +126,29 @@ def kit_part(name, rows, bars, notes_by_row, params, extra_attrs=None, row_param
     for tag, value in kit_params.items():  # _delay, _lpf, _hpf: the child tags' attributes
         if tag.startswith("_"):
             block = replace_child(block, tag[1:], value)
+    clip = instrument_clip(name, "KITS", bars * TBAR, clip_rows, params_block=block, arp=arp, kit=True)
+    clip = clip.replace("<instrumentClip", '<instrumentClip\n\t\t\taffectEntire="1"', 1)
+    return out, clip
+
+
+def non_audio_kit_part(name, bars, rows):
+    """A kit of MIDI and gate rows only, each with its own arpeggiator: rows are (the row's tag with its attributes,
+    its <arpeggiator>'s attributes, notes as (position, length))"""
+    out = f"\t\t<kit{attrs(dict(presetName=name, presetFolder='KITS', defaultVelocity=64, isArmedForRecording=0, activeModFunction=0, colour=0, lpfMode='24dB', hpfMode='HPLadder', filterRoute='H2L', modFXType='none'), 3)}>\n"
+    out += '\t\t\t<delay pingPong="1" analog="0" syncLevel="7" syncType="0" />\n'
+    out += '\t\t\t<sidechain attack="327244" release="936" syncLevel="6" syncType="0" />\n'
+    out += '\t\t\t<audioCompressor attack="83886080" release="83886080" thresh="0" ratio="1073741824" ' \
+           'compHPF="0" compBlend="2147483647" />\n'
+    out += "\t\t\t<soundSources>\n"
+    clip_rows = []
+    for index, (tag, arp, notes) in enumerate(rows):
+        element = tag.split()[0]
+        out += f"\t\t\t\t<{tag}>\n\t\t\t\t\t<arpeggiator{attrs(arp, 6)} />\n\t\t\t\t</{element}>\n"
+        clip_rows.append(("drumIndex", index, [(pos, length, 100) for pos, length in notes], None))
+    out += "\t\t\t</soundSources>\n"
+    out += "\t\t\t<selectedDrumIndex>0</selectedDrumIndex>\n"
+    out += "\t\t</kit>\n"
+    block = global_params_block("kitParams", make_sd.KIT_PARAMS, 3)
     clip = instrument_clip(name, "KITS", bars * TBAR, clip_rows, params_block=block, kit=True)
     clip = clip.replace("<instrumentClip", '<instrumentClip\n\t\t\taffectEntire="1"', 1)
     return out, clip
@@ -195,6 +228,23 @@ def song():
                                       _delay=dict(rate=knob(25), feedback=knob(8)), _lpf=open_lpf), mod_function=1),
         audio_part("LNEW", False, dict(reverbAmount=knob(10), _lpf=open_lpf)),
         drone_part(),
+        # The kit arp stepping across silence: RIM and HATC (0.1 s each) held for 3 bars from bar 0 and for 2 from
+        # bar 5 go through the kit arp in quarters; between its steps the kit is silent for 0.4 s, so it takes the
+        # early return and must come back for the next step
+        kit_part("KARP", ["RIM", "HATC"], 8, {"RIM": [(0, 3 * TBAR), (5 * TBAR, 2 * TBAR)],
+                                              "HATC": [(0, 3 * TBAR), (5 * TBAR, 2 * TBAR)]},
+                 dict(reverbAmount=knob(10), sidechainCompressorVolume=knob(0), arpeggiatorGate=knob(25),
+                      arpeggiatorRate=knob(25), _lpf=open_lpf),
+                 arp=dict(arpMode="arp", syncLevel=4, numOctaves=1), loop_mode=0),
+        # MIDI and gate rows' own arpeggiators (Kit::renderNonAudioArpPostOutput()), in a kit that renders no audio at
+        # all and takes the early return all the time: a MIDI row (channel 2, note 60) arpeggiated over 2 octaves in
+        # 16ths, held from bar 0.5 to 2.5, and a gate row (gate 1) in 8ths, held from bar 1 to 3
+        non_audio_kit_part("KMIDI", 4, [
+            ('midiOutput channel="1" note="60"', dict(arpMode="arp", noteMode="up", octaveMode="up", numOctaves=2,
+                                                      syncLevel=6, syncType=0, rate=0, gate=0),
+             [(TBAR // 2, 2 * TBAR)]),
+            ('gateOutput channel="0"', dict(arpMode="arp", noteMode="up", octaveMode="up", numOctaves=1, syncLevel=5,
+                                            syncType=0, rate=0, gate=0), [(TBAR, 2 * TBAR)])]),
     ]
     xml = make_sd.song_xml(LENGTHS, 1, num_synths=0).replace('yScrollSongView="-7"', 'yScrollSongView="0"', 1)
     # The parts above instead of make_sd's, and no song drone
@@ -260,8 +310,8 @@ def main():
     song_emu.load_startup_song(emu)
     print(f"--init-sounds: {emu.sounds_initialised} Sounds constructed; seed 1", flush=True)
 
-    names = ["KICKK", "KDLY", "KMOD", "KSTUT", "LREV", "LNEW", "DRN"]
-    lengths = [1, 8, 7, 4, 2, 2, 8]
+    names = ["KICKK", "KDLY", "KMOD", "KSTUT", "LREV", "LNEW", "DRN", "KARP", "KMIDI"]
+    lengths = [1, 8, 7, 4, 2, 2, 8, 8, 4]
     clips = clips_of_song(emu)
     got = [c[2] // TBAR for c in clips]
     if got != lengths:
@@ -283,6 +333,24 @@ def main():
         window_calls[-1] += 1
     for address in early:
         emu.intercept(address, count)
+
+    # The arpeggiators' notes: the kit arp's steps (Kit::kitArpNoteToRow(), on: r3; its row: r2; the first note of a
+    # chord comes from Kit::noteOnPreKitArp() instead) and the MIDI and gate rows' (noteOnPostArp(): the note in r1),
+    # with the window's first sample: the same in both builds, and several, so the arps really step
+    arp_notes = []
+
+    def arp_note(kind):
+        def on(e):
+            r1, r2, r3 = (e.uc.reg_read(r) for r in (song_emu.UC_ARM_REG_R1, song_emu.UC_ARM_REG_R2,
+                                                      song_emu.UC_ARM_REG_R3))
+            if kind != "kit arp":
+                arp_notes.append([position[0], kind, r1])
+            elif r3 & 0xFF:
+                arp_notes.append([position[0], kind, r2])
+        return on
+    for prefix, kind in (("_ZN3Kit15kitArpNoteToRow", "kit arp"), ("_ZN8MIDIDrum13noteOnPostArp", "MIDI row"),
+                         ("_ZN8GateDrum13noteOnPostArp", "gate row")):
+        emu.intercept(sym.find(prefix), arp_note(kind))
 
     # As the user does it in the song view (rows layout, clip i on row i): a clip's pad held (SessionView::padAction(),
     # x 0), the gold knob turned or the stutter knob pressed and released, the pad let go; a clip's status pad (x 16)
@@ -367,10 +435,17 @@ def main():
                   early_returns=sum(map(sum, calls.values())),
                   early_returns_by_track={k: sum(v) for k, v in by_track.items()},
                   early_returns_by_track_per_half_bar=by_track, rms_db_per_half_bar=rms,
+                  arp_notes_fields=["first sample of the window", "arp", "row (kit arp) or note"], arp_notes=arp_notes,
                   window_log_fields=["instructions", "samples", "voices", "early returns"], window_log=log)
     json.dump(result, open(os.path.join(args.out, "result.json"), "w"), indent=1)
     print(f"per 128 samples: {result['instructions_per_128']:,.0f} instructions; output RMS per half bar (dB): "
           + " ".join(f"{r:.0f}" for r in rms), flush=True)
+    kinds = {}
+    for pos, kind, what in arp_notes:
+        kinds.setdefault(kind, []).append(f"{pos / BAR:.2f}:{what}")
+    for kind, notes in kinds.items():
+        print(f"{kind}: {len(notes)} notes (bar:row or note) " + " ".join(notes[:6]) + (" ..." if len(notes) > 6 else ""),
+              flush=True)
     if early:
         print(f"early returns: {result['early_returns']:,}; by track, per half bar (of {BAR // 256} windows of 128):",
               flush=True)
