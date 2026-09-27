@@ -4,7 +4,8 @@
 Covers the WAV writer (byte for byte, header, header during the take, 4 GB split, stop, quit, disk error), ARM with
 pre-roll (to the frame), file numbering, the meter (dBFS, pads, bit depth), the choice of the input (Windows WASAPI
 exclusive first and the fallbacks, macOS, Linux), the monitor (its buffer, the outputs offered, never the Deluge,
-the choice of the output and its menu), --demo and the version. Needs only numpy.
+the choice of the output and its menu, no clicks), VOL (the samples, the pads, the fader, the keys), the boxes on
+the panel, --demo and the version. Needs only numpy.
 """
 import contextlib
 import importlib.util
@@ -190,6 +191,47 @@ class Writer(EngineCase):
         self.assertEqual(self.take(e, [samples24(10)]).parent, self.dir / "ok")
 
 
+class Volume(EngineCase):
+    def test_samples(self):
+        """VOL: at 0 dB the block itself (bit-exact); below, 24-bit samples scaled and rounded; a change ramps over one
+        block; back at 0 dB bit-exact again."""
+        e, x = self.engine(), samples24(1000)
+        self.assertIs(e.apply_volume(x), x)
+        e.volume_db, g = -6, 10 ** (-6 / 20)
+
+        def scaled(gains):
+            y = np.rint((x.astype(np.int64) >> 8) * np.asarray(gains)[:, None] if np.ndim(gains) else
+                        (x.astype(np.int64) >> 8) * gains)
+            return (np.clip(y, -2 ** 23, 2 ** 23 - 1).astype(np.int64) << 8).astype(np.int32)
+        ramp = 1 + (g - 1) * np.arange(1, 1001) / 1000
+        self.assertTrue(np.array_equal(e.apply_volume(x), scaled(ramp)))  # From 1 to g over the block
+        y = e.apply_volume(x)
+        self.assertTrue(np.array_equal(y, scaled(g)))
+        self.assertEqual((y.dtype, int(np.bitwise_or.reduce(y & 0xFF, axis=None))), (np.int32, 0))  # Still 24 bits
+        e.volume_db = 0
+        self.assertTrue(np.array_equal(e.apply_volume(x), scaled(g + (1 - g) * np.arange(1, 1001) / 1000)))
+        self.assertIs(e.apply_volume(x), x)
+
+    def test_take_levels_and_clip(self):
+        """The take and the pads get the level after VOL; the bit depth and the clip are what the Deluge sends."""
+        e = self.engine()
+        e.volume_db, e.gain = -20, 0.1  # Already there: no ramp
+        full = np.full((1024, 2), -2 ** 31, np.int32)
+        full[:, 1] = -2 ** 30  # Half of full scale on the right
+        full[5, 1] += 1 << 8  # The lowest of 24 bits set once: 24 bits arrive
+        path = self.take(e, [full])
+        _, _, size, data = parse_wav(path)
+        got = np.frombuffer(data, np.uint8).reshape(-1, 6)
+        left = int.from_bytes(bytes(got[0, :3]), "little", signed=True)
+        self.assertEqual(left, round(-2 ** 23 * 0.1))
+        levels = e.take_levels()
+        self.assertAlmostEqual(levels[0], -20, places=3)
+        self.assertAlmostEqual(levels[1], -26.02, places=1)
+        self.assertTrue(e.take_clipped())  # The Deluge's output was at full scale
+        self.assertFalse(e.take_clipped())
+        self.assertEqual(e.take_bits(), 24)
+
+
 class Numbering(EngineCase):
     def test_next_number_and_no_overwrite(self):
         for name in ("USB00007.WAV", "usb00003.wav", "USB12.WAV", "REC00050.WAV", "USB00009.WAV.tmp"):
@@ -300,14 +342,14 @@ class FakeTk(types.ModuleType):
 
     def __init__(self):
         super().__init__("tkinter")
-        items = {}
+        items, binds = {}, {}
 
         class Canvas:
             def __init__(self, *a, **kw):
-                self.items = items
+                self.items, self.binds = items, binds
 
             def _new(self, *a, **kw):
-                items[len(items) + 1] = dict(kw)
+                items[len(items) + 1] = dict(kw, xy=a)
                 return len(items)
             create_rectangle = create_oval = create_line = create_image = _new
 
@@ -315,7 +357,7 @@ class FakeTk(types.ModuleType):
                 items[item].update(kw)
 
             def pack(self, *a, **kw): pass
-            def tag_bind(self, *a, **kw): pass
+            def tag_bind(self, item, event, f): binds[(item, event)] = f
             def configure(self, *a, **kw): pass
             def coords(self, *a, **kw): pass
             def delete(self, *a, **kw): pass
@@ -398,6 +440,65 @@ class Gui(EngineCase):
         app.quit()
         self.assertTrue(root.destroyed)
 
+    def test_vol_fader_and_keys(self):
+        """VOL: up/down 1 dB (THRESH on + -), the fader by click or drag (0 dB at the top, VOL_MIN at the bottom), the
+        wheel over it, a double-click back to 0 dB; the pads show the level after VOL, the last pad blinks when the
+        Deluge's own output is at full scale."""
+        e = self.engine()
+        root = self.tk.Tk()
+        app = dr.App(root, e, 1.0)
+        app.boot_until = 0
+        root.bindings["<Down>"](None)
+        root.bindings["<Down>"](None)
+        root.bindings["<Up>"](None)
+        self.assertEqual((e.volume_db, e.threshold_db), (-1, -40))
+        root.bindings["<plus>"](None)
+        self.assertEqual((e.volume_db, e.threshold_db), (-1, -38))
+        app.grab_fader(types.SimpleNamespace(y=app.fader_bottom + 50))
+        self.assertEqual(e.volume_db, dr.VOL_MIN)
+        app.grab_fader(types.SimpleNamespace(y=(app.fader_top + app.fader_bottom) / 2))
+        self.assertEqual(e.volume_db, dr.VOL_MIN // 2)
+        app.wheel(types.SimpleNamespace(x=app.fader_x, y=app.fader_top), 1)
+        self.assertEqual(e.volume_db, dr.VOL_MIN // 2 + 1)
+        cap = app.c.items[app.fader_cap]["xy"]
+        app.c.binds[(app.fader_cap, "<Double-Button-1>")](None)
+        self.assertEqual(e.volume_db, 0)
+        for _ in range(3):
+            root.bindings["<Up>"](None)
+        self.assertEqual(e.volume_db, 0)  # Not above 0 dB
+        e.volume_db, e.gain = -20, 0.1
+
+        def lit(ch):
+            return [i for i, item in enumerate(app.pads[ch]) if app.c.items[item]["fill"] == dr.PAD_COLOURS[i]]
+        e.connected, e.last_cb = True, time.monotonic()
+        block = np.zeros((1024, 2), np.int32)
+        block[0] = [round(dr.FULL_SCALE * 10 ** (-9 / 20)), -2 ** 31]
+        feed(e, [block])
+        app.tick()
+        self.assertEqual(lit(0), list(range(6)))  # -9 dBFS - 20 dB = -29 dBFS: up to the pad for -30
+        self.assertGreater(app.clip_until, time.monotonic())  # The right channel arrived at full scale
+        app.quit()
+
+    def test_boxes(self):
+        """A box around each control: the six buttons, VOL and THRESH, none touching another, all on the plate, each
+        button's name inside its box (OUT and FOLDER no longer run together)."""
+        e = self.engine()
+        root = self.tk.Tk()
+        app = dr.App(root, e, 1.0)
+        boxes = [v["xy"] for v in app.c.items.values() if v.get("fill") == dr.BOX]
+        self.assertEqual(len(boxes), 8)
+        for i, a in enumerate(boxes):
+            self.assertTrue(8 < a[0] < a[2] < app.W - 8 and 8 < a[1] < a[3] < app.H - 8, a)
+            for b in boxes[i + 1:]:
+                apart = a[2] + 4 <= b[0] or b[2] + 4 <= a[0] or a[3] + 4 <= b[1] or b[3] + 4 <= a[1]
+                self.assertTrue(apart, (a, b))
+        oled_right = 68 + 384 + 6
+        self.assertTrue(all(b[0] > oled_right or b[1] > 52 + 144 + 6 for b in boxes))  # Clear of the OLED
+        pads_bottom = max(v["xy"][3] for k, v in app.c.items.items() if k in sum(app.pads, []))
+        self.assertTrue(all(b[0] > oled_right or b[1] > pads_bottom for b in boxes))  # Clear of the pads
+        self.assertAlmostEqual(app.W / app.H, 305 / 208, delta=0.01)  # The Deluge's proportions
+        app.quit()
+
     def test_version(self):
         """The version: listed under Versions (1 to VERSION, one line each), in the title, on the display at start and
         with --version."""
@@ -472,7 +573,7 @@ class FakeSd(types.ModuleType):
         return [{"name": a, "default_output_device": next(
             (i for i, d in enumerate(self.devices) if d["hostapi"] == k and d["max_output_channels"]), -1)}
             for k, a in enumerate(self.apis)]
-    def _terminate(self): pass
+    def _terminate(self): self.open_at_terminate = [o for o in self.outputs_opened if not o.closed]
     def _initialize(self): pass
 
 
@@ -574,9 +675,10 @@ class Monitoring(EngineCase):
         sys.modules.pop("sounddevice", None)
 
     def test_buffer_exact_and_bounded(self):
-        """What arrives plays exactly (24 bits in float32), after MONITOR_TARGET frames; at most MONITOR_LIMIT behind;
-        run dry, silence until MONITOR_TARGET frames are there again."""
-        b = dr.MonitorBuffer()
+        """What arrives plays after MONITOR_TARGET frames: a fade-in, then exactly (24 bits in float32), a fade-out
+        where it runs dry; at most MONITOR_LIMIT behind; run dry, silence until MONITOR_TARGET frames are there
+        again."""
+        b, fade = dr.MonitorBuffer(), dr.MONITOR_FADE
         x = samples24(dr.MONITOR_TARGET + 1000)
         out = np.ones((500, 2), np.float32)
         b.push(x[:1000])
@@ -588,9 +690,14 @@ class Monitoring(EngineCase):
             o = np.empty((n, 2), np.float32)
             b.pull(o)
             got.append(o)
-        got = np.concatenate(got)
-        self.assertTrue(np.array_equal(got[:len(x)], x.astype(np.float64) / 2 ** 31))
-        self.assertTrue(np.array_equal((got[:len(x)].astype(np.float64) * 2 ** 31).astype(np.int64), x))
+        got, want = np.concatenate(got).astype(np.float64), x.astype(np.float64) / 2 ** 31
+        mid = slice(fade, len(x) - fade)
+        self.assertTrue(np.array_equal(got[mid], want[mid]))
+        self.assertTrue(np.array_equal((got[mid] * 2 ** 31).astype(np.int64), x[mid]))
+        ramp = (np.arange(1, fade + 1) / fade)[:, None]
+        self.assertTrue(np.allclose(got[:fade], want[:fade] * ramp, rtol=1e-6, atol=0))  # Fading in
+        self.assertTrue(np.allclose(got[len(x) - fade:len(x)], want[len(x) - fade:] * ramp[::-1] * fade / (fade + 1),
+                                    rtol=1e-6, atol=0))  # Fading out
         self.assertFalse(got[len(x):].any())  # Run dry: silence
         self.assertEqual(b.underruns, 1)
         o = np.ones((100, 2), np.float32)
@@ -653,10 +760,69 @@ class Monitoring(EngineCase):
         self.assertEqual(e.monitor.buffer.written, 2048)
         out = np.empty((2048, 2), np.float32)
         e.monitor.play(out, 2048, None, None)
-        self.assertTrue(np.array_equal(out, np.concatenate(blocks).astype(np.float64) / 2 ** 31))
+        want, fade = np.concatenate(blocks).astype(np.float64) / 2 ** 31, dr.MONITOR_FADE
+        self.assertTrue(np.array_equal(out[fade:], want[fade:]))  # Exact after the fade-in
+        self.assertTrue(np.allclose(out[:fade], want[:fade] * (np.arange(1, fade + 1) / fade)[:, None], rtol=1e-6,
+                                    atol=0))
         self.sd.outputs_opened[-1].active = False  # Headphones unplugged
         self.assertTrue(e.monitor.lost())
         self.assertFalse(e.monitor.on)
+        settle(e)
+
+    def test_no_clicks(self):
+        """A sine through the monitor: it fades in, skips ahead crossfaded when too far behind, fades out when run dry
+        and fades in again. Nowhere a step larger than the sine's own (a click)."""
+        b, pos, got = dr.MonitorBuffer(), 0, []
+        sine = np.round(np.sin(2 * np.pi * 440 * np.arange(dr.RATE) / dr.RATE) * 2 ** 22).astype(np.int64) << 8
+        x = np.repeat(sine[:, None], 2, axis=1).astype(np.int32)  # Half of full scale
+
+        def push(n):
+            nonlocal pos
+            b.push(x[pos:pos + n])
+            pos += n
+
+        def pull(n):
+            o = np.empty((n, 2), np.float32)
+            b.pull(o)
+            got.append(o[:, 0])
+
+        push(dr.MONITOR_TARGET)
+        for _ in range(4):
+            pull(441)
+            push(441)
+        push(dr.MONITOR_LIMIT)  # A burst: too far behind
+        self.assertIsNotNone(b.skip_to)
+        for _ in range(4):
+            pull(441)
+            push(441)
+        pull(3 * dr.MONITOR_LIMIT)  # Run dry
+        push(dr.MONITOR_TARGET)
+        for _ in range(4):
+            pull(441)
+        y = np.concatenate(got).astype(np.float64)
+        self.assertEqual((b.drops, b.underruns), (1, 1))
+        self.assertGreater(np.abs(y).max(), 0.49)
+        self.assertLess(np.abs(np.diff(y)).max(), 1.1 * np.pi * 440 / dr.RATE)  # The sine's largest step: 0.031
+
+    def test_the_monitor_opens_and_closes_with_the_input(self):
+        """PortAudio restarts when the input opens (so a Deluge plugged in later shows up): the monitor's output is
+        closed then and opens again after it. When the Deluge goes, the output closes and MON stays on."""
+        e = self.engine()
+        e.connected, m = False, e.monitor
+        self.assertTrue(m.start())
+        self.assertTrue(e.connect())
+        self.assertEqual(self.sd.open_at_terminate, [])  # Nothing open while PortAudio restarted
+        self.assertEqual(len(self.sd.outputs_opened), 2)  # Closed before, opened again after
+        self.assertTrue(m.on and m.stream is self.sd.outputs_opened[-1] and not m.stream.closed)
+        self.assertIn("MON SPEAKERS (REALTEK(R) AUDIO)", e.events)
+        e.disconnect()
+        self.assertTrue(m.on)
+        self.assertIsNone(m.stream)
+        self.assertTrue(all(o.closed for o in self.sd.outputs_opened))
+        feed(e, [samples24(1024)])
+        self.assertEqual(m.buffer.written, 0)  # Nothing piles up without an output
+        self.assertTrue(e.connect())
+        self.assertFalse(m.stream.closed)
         settle(e)
 
     def test_menu_and_keys(self):
@@ -685,7 +851,8 @@ class Monitoring(EngineCase):
             root.bindings["<Return>"](None)
             self.assertEqual((e.monitor.output, e.monitor.on), ("Speakers (Realtek(R) Audio)", True))
             self.assertEqual(json.loads((self.dir / "settings.json").read_text()),
-                             {"output": "Speakers (Realtek(R) Audio)", "monitor": True, "threshold": -40})
+                             {"output": "Speakers (Realtek(R) Audio)", "monitor": True, "threshold": -40,
+                              "volume": 0})
             app.tick()
             app.press("mon")
             self.assertFalse(e.monitor.on)
@@ -694,6 +861,13 @@ class Monitoring(EngineCase):
             app.press("out")
             app.grab_knob(types.SimpleNamespace(y=0))  # A click on the knob chooses
             self.assertIsNone(app.menu)
+            e.disconnect()
+            app.press("mon")
+            app.press("mon")  # On without the Deluge: MON waits for it
+            self.assertTrue(e.monitor.on)
+            self.assertIsNone(e.monitor.stream)
+            self.assertTrue(e.connect())  # The Deluge is there: the output opens
+            self.assertIsNotNone(e.monitor.stream)
             app.quit()
             self.assertFalse(e.monitor.on)
         finally:

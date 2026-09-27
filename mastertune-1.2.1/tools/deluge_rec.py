@@ -16,12 +16,21 @@ Controls (mouse or keys):
   OUT     O              choose the monitor's output: up/down, mouse wheel or the knob, then Enter (or OUT, or a
                          click on the knob); Esc leaves the list as it was
   FOLDER  F              open the recordings folder
-  Knob    mouse wheel, drag, up/down, + -    ARM threshold, -60 to -12 dBFS
+  VOL     up/down, mouse wheel or drag on the fader: the level of the take, the pads and the monitor, 0 dB
+          (bit-exact) down to -30 dB; a double-click on the fader: back to 0 dB
+  THRESH  + -, mouse wheel or drag on the knob: the ARM threshold, -60 to -12 dBFS
 The files are called USB00001.WAV, USB00002.WAV ... like the Deluge's own recordings (REC00001.WAV). Default
-folder: Music/Deluge USB in the user's folder. The output, monitor on or off and the threshold are remembered.
+folder: Music/Deluge USB in the user's folder. The output, monitor on or off, the threshold and VOL are remembered.
 
 Monitoring plays what arrives, about 50 ms later, on the chosen output (or the system's default output); a device
-with "Deluge" in its name is never offered. The recording is not affected by it.
+with "Deluge" in its name is never offered. The recording is not affected by it. The monitor fades in and out
+(10 ms) where it starts, runs dry or skips ahead, so it does not click; its output is open while the Deluge's input
+is. Its loudness is the computer's volume.
+
+The Deluge's VOLUME knob is analog, after its converter: like resampling, the USB signal does not follow it. To keep
+the pads out of the red, turn down the song's volume on the Deluge, or VOL here (below 0 dB the take is no longer
+bit-exact). VOL cannot undo what the Deluge itself clipped: the last pad blinks red whenever the Deluge's own output
+reaches full scale, whatever VOL is.
 
 Top right shows the audio path: WASAPI EXCL (Windows, exclusive, bit-exact), WASAPI SHARED, CORE AUDIO, ALSA ...
 The display shows the bit depth that actually arrives: 24B means bit-exact. 16B or 32B point to a conversion, on
@@ -33,6 +42,7 @@ Versions (the number is in the window's title and on the display at start, --ver
   1  the first build: REC, ARM with pre-roll, the pads, the bit depth that arrives
   2  reviewed (7 fixes): no take lost on STOP, quit, a disk error or at 4 GB; the pre-roll exact to the frame
   3  the monitor with a choice of output, everything in English, the version number, the Deluge's rain as icon
+  4  VOL, a fader against the red; a box around each control; the monitor without clicks (fades in and out)
 """
 import argparse
 import collections
@@ -52,7 +62,7 @@ from pathlib import Path
 
 import numpy as np
 
-VERSION = 3                     # One more with every change of the program, and a line under Versions above
+VERSION = 4                     # One more with every change of the program, and a line under Versions above
 RATE = 44100
 CHANNELS = 2
 FULL_SCALE = 2 ** 31            # The 24-bit samples arrive left-justified in int32
@@ -60,13 +70,17 @@ PREROLL = round(0.3 * RATE)     # ARM: the frames kept before the first sample o
 MAX_DATA_BYTES = 4_000_000_000  # WAV sizes are 32-bit: after 4 GB (about 4 h 11 min) a take goes on in the next file
 HEADER_EVERY = 2 * RATE         # The WAV header is brought up to date every 2 s: a crash leaves a readable file
 THRESH_MIN, THRESH_MAX = -60, -12
+VOL_MIN = -30                   # VOL: the fader goes from 0 dB (the take bit-exact) down to this
+CLIP = FULL_SCALE * 10 ** (-0.1 / 20)  # From here the last pad blinks: full scale
 MONITOR_TARGET = 2048           # Monitor: frames buffered before it plays (46 ms), and again after it ran dry
 MONITOR_LIMIT = 6144            # More than this (139 ms, the two clocks drifting apart): back to MONITOR_TARGET
+MONITOR_FADE = 441              # Monitor: 10 ms fades where it starts, runs dry or skips ahead, so it does not click
 NOT_OUTPUTS = ("microsoft sound mapper", "primary sound driver")  # Windows' aliases of the default output
 
 # --- the look: panel, OLED, pads (the Deluge's colours), lettering
 
 PANEL, PLATE, EDGE, BEZEL, LABEL, SMALL = "#0e0e10", "#18181b", "#26262b", "#050506", "#d8d8de", "#8c8c96"
+BOX, BOX_EDGE = "#1d1d21", "#35353d"  # The box around each control
 OLED_ON, OLED_OFF = (226, 238, 255), (7, 9, 13)
 PAD_COLOURS = ["#2fdc6e"] * 9 + ["#b8e636", "#f2d22e", "#f2d22e", "#ff9f1c", "#ff7a1c", "#ff5a1f", "#ff2d2d"]
 # 64 x 64: the Deluge's rain of squares in the meter's colours and the REC dot (made by deluge_rec_icon.py)
@@ -279,8 +293,9 @@ class DemoInput:
 
 class MonitorBuffer:
     """The frames on their way from the Deluge's input to the monitor's output: a ring between two clocks. It plays
-    once MONITOR_TARGET frames are there; over MONITOR_LIMIT the oldest go (back to MONITOR_TARGET); run dry, the
-    output gets silence until MONITOR_TARGET frames are there again. 24-bit samples stay exact in float32."""
+    once MONITOR_TARGET frames are there, fading in; over MONITOR_LIMIT it skips ahead to the newest MONITOR_TARGET
+    frames, crossfaded; run dry, it fades out and plays silence until MONITOR_TARGET frames are there again. Each fade
+    is MONITOR_FADE frames: no clicks. Between the fades, 24-bit samples stay exact in float32."""
 
     def __init__(self, size=RATE):
         self.buf = np.zeros((size, CHANNELS), np.float32)
@@ -291,7 +306,7 @@ class MonitorBuffer:
     def reset(self):
         with self.lock:
             self.written = self.read = 0  # Frames so far, both ends
-            self.priming = True
+            self.priming, self.faded_in, self.skip_to = True, 0, None
             self.underruns = self.drops = 0
 
     def push(self, block):
@@ -302,26 +317,48 @@ class MonitorBuffer:
             self.buf[i:i + first] = x[:first]
             self.buf[:len(x) - first] = x[first:]
             self.written += len(x)
-            if self.written - self.read > MONITOR_LIMIT:
-                self.read = self.written - MONITOR_TARGET
+            behind = self.written - self.read
+            if behind > self.size - MONITOR_FADE:  # The output stalled: what it would play next is gone
+                self.read, self.priming, self.skip_to = self.written - MONITOR_TARGET, True, None
                 self.drops += 1
+            elif behind > MONITOR_LIMIT and self.skip_to is None:
+                if self.priming:
+                    self.read = self.written - MONITOR_TARGET
+                else:
+                    self.skip_to = self.written - MONITOR_TARGET  # pull() crossfades there
+                self.drops += 1
+
+    def frames(self, pos, n):
+        i = pos % self.size
+        return self.buf[i:i + n] if i + n <= self.size else np.concatenate((self.buf[i:], self.buf[:i + n - self.size]))
 
     def pull(self, out):
         n = len(out)
         with self.lock:
-            available = self.written - self.read
-            if self.priming and available < MONITOR_TARGET:
-                out.fill(0)
-                return
-            self.priming = False
-            k = min(n, available)
-            i = self.read % self.size
-            first = min(k, self.size - i)
-            out[:first] = self.buf[i:i + first]
-            out[first:k] = self.buf[:k - first]
+            if self.priming:
+                if self.written - self.read < MONITOR_TARGET:
+                    out.fill(0)
+                    return
+                self.priming, self.faded_in = False, 0
+            done = 0
+            if self.skip_to is not None:  # Too far behind: on to the newest MONITOR_TARGET frames, crossfaded
+                done = min(MONITOR_FADE, n)
+                r = ((np.arange(done, dtype=np.float32) + 0.5) / done)[:, None]
+                out[:done] = self.frames(self.read, done) * (1 - r) + self.frames(self.skip_to, done) * r
+                self.read, self.skip_to = self.skip_to + done, None
+            k = min(n - done, self.written - self.read)
+            out[done:done + k] = self.frames(self.read, k)
             self.read += k
-            if k < n:
-                out[k:] = 0
+            played = done + k
+            if self.faded_in < MONITOR_FADE:  # Fading in after priming
+                m = min(played, MONITOR_FADE - self.faded_in)
+                gain = np.arange(self.faded_in + 1, self.faded_in + m + 1, dtype=np.float32) / MONITOR_FADE
+                out[:m] *= gain[:, None]
+                self.faded_in += m
+            if played < n:  # Run dry: what there was fades out, then silence until MONITOR_TARGET frames are there
+                t = min(played, MONITOR_FADE)
+                out[played - t:played] *= (np.arange(t, 0, -1, dtype=np.float32) / (t + 1))[:, None]
+                out[played:] = 0
                 self.underruns += 1
                 self.priming = True
 
@@ -415,17 +452,22 @@ class Monitor:
         self.error = "NO OUTPUT DEVICE"
         return False
 
-    def stop(self):
-        stream, self.stream, self.on = self.stream, None, False
+    def close(self):
+        """Closes the output but leaves MON on: it opens again with the Deluge's input (Engine.open_monitor)."""
+        stream, self.stream = self.stream, None
         if stream is not None:
             try:
                 stream.close()
             except Exception:
                 pass
 
+    def stop(self):
+        self.close()
+        self.on = False
+
     def feed(self, block):
         """From the input's callback."""
-        if self.on:
+        if self.stream is not None:
             self.buffer.push(block)
 
     def play(self, outdata, frames, time_info, status):
@@ -453,6 +495,9 @@ class Engine:
     def __init__(self, out_dir, device=None, shared=False, demo=False, threshold=-40):
         self.out_dir, self.device, self.shared, self.demo = Path(out_dir), device, shared, demo
         self.threshold_db = threshold
+        self.volume_db = 0             # VOL; below 0 dB the take, the pads, ARM and the monitor get the lower level
+        self.gain = 1.0                # The gain the last block ended with: a change ramps over the next block
+        self.clipped = False           # The Deluge's own output reached full scale (VOL cannot undo that)
         self.stream, self.api, self.connected, self.last_cb = None, "", False, 0.0
         self.state = "idle"            # idle, armed, rec
         self.q, self.cmd = queue.SimpleQueue(), queue.SimpleQueue()
@@ -485,15 +530,18 @@ class Engine:
         return sorted(found)
 
     def connect(self):
-        """Tries to open the Deluge's input; True once it is open."""
+        """Tries to open the Deluge's input; True once it is open. The monitor's output opens with it (if MON is on)
+        and closes with it: PortAudio restarts here, and no stream may be open then."""
         if self.connected:
             return True
         if self.demo:
             self.stream, self.api = DemoInput(self.callback), "DEMO"
             self.stream.start()
             self.connected, self.last_cb = True, time.monotonic()
+            self.open_monitor()
             return True
         import sounddevice as sd
+        self.monitor.close()
         try:
             sd._terminate()  # PortAudio lists the devices only when it starts: a Deluge plugged in later shows up so
             sd._initialize()
@@ -520,13 +568,29 @@ class Engine:
                 self.api = {"Windows WASAPI": "WASAPI " + ("EXCL" if exclusive else "SHARED"),
                             "Windows DirectSound": "DSOUND", "Windows WDM-KS": "WDM-KS"}.get(api, api.upper())
                 self.connected, self.last_cb = True, time.monotonic()
+                self.open_monitor()
                 return True
         return False
 
+    def open_monitor(self):
+        """MON on: its output opens once the Deluge's input is there."""
+        m = self.monitor
+        if not (m.on and self.connected) or m.stream is not None:
+            return
+        try:
+            ok = m.start()
+        except Exception:
+            ok, m.on, m.error = False, False, "OUTPUT FAILED"
+        self.events.append("MON " + m.name.upper() if ok else m.error or "OUTPUT FAILED")
+        if ok:
+            print(f"monitor: {m.name} ({m.api})", flush=True)
+
     def disconnect(self):
-        """The Deluge went away, or the program ends: a take in progress is finished and saved."""
+        """The Deluge went away, or the program ends: a take in progress is finished and saved. The monitor's output
+        closes too (MON stays on)."""
         if self.state != "idle":
             self.command("stop")
+        self.monitor.close()
         stream, self.stream, self.connected = self.stream, None, False
         if stream is not None:
             try:
@@ -540,14 +604,37 @@ class Engine:
         if status is not None and status.input_overflow:  # PortAudio lost samples before this block
             self.overflows += 1
             self.gaps += 1
-        block = np.array(indata, dtype=np.int32, copy=True)
-        self.peak = np.maximum(self.peak, np.abs(block.astype(np.int64)).max(axis=0))
-        self.or_bits |= int(np.bitwise_or.reduce(block, axis=None)) & 0xFFFFFFFF
+        raw = np.array(indata, dtype=np.int32, copy=True)
+        self.or_bits |= int(np.bitwise_or.reduce(raw, axis=None)) & 0xFFFFFFFF  # What arrives, before VOL
+        peak = np.abs(raw.astype(np.int64)).max(axis=0)
+        if peak.max() >= CLIP:
+            self.clipped = True
+        block = self.apply_volume(raw)
+        if block is not raw:
+            peak = np.abs(block.astype(np.int64)).max(axis=0)
+        self.peak = np.maximum(self.peak, peak)
         self.last_cb = time.monotonic()
         self.monitor.feed(block)
         self.q.put(block)
 
+    def apply_volume(self, raw):
+        """VOL on a block: at 0 dB the block itself (bit-exact); below, the 24-bit samples scaled and rounded, a change
+        ramped over the block so it does not click."""
+        g = 10 ** (self.volume_db / 20) if self.volume_db < 0 else 1.0
+        g0, self.gain = self.gain, g
+        if g == 1.0 and g0 == 1.0:
+            return raw
+        n = len(raw)
+        gains = np.full(n, g) if g == g0 else g0 + (g - g0) * np.arange(1, n + 1) / n
+        y = np.rint((raw.astype(np.int64) >> 8) * gains[:, None])
+        return (np.clip(y, -2 ** 23, 2 ** 23 - 1).astype(np.int64) << 8).astype(np.int32)
+
     # --- for the display
+
+    def take_clipped(self):
+        """Whether the Deluge's own output reached full scale since the last call."""
+        clipped, self.clipped = self.clipped, False
+        return clipped
 
     def take_levels(self):
         peak, self.peak = self.peak, np.zeros(CHANNELS, np.int64)
@@ -698,7 +785,7 @@ class App:
         self.warned_import = False
         self.menu = None  # The output list on the OLED: {"items": [...], "sel": i}
 
-        self.W, self.H = Z(520), Z(366)
+        self.W, self.H = Z(572), Z(390)  # The Deluge's own proportions: 305 x 208 mm
         root.title(f"DELUGE USB REC v{VERSION}")
         self.icon = tk.PhotoImage(data=ICON_PNG)
         root.iconphoto(True, self.icon)
@@ -716,7 +803,7 @@ class App:
         c.create_image(ox, oy, image=self.img, anchor="nw")
         # Pads: the level of the left and right channel
         self.pads = []
-        py = Z(214)
+        py = Z(222)
         for ch, name in enumerate("LR"):
             self.label(Z(50), py + ch * Z(26) + Z(3), name, Z(2))
             row = []
@@ -725,14 +812,17 @@ class App:
                 row.append(c.create_rectangle(x, y, x + Z(20), y + Z(20), fill=self.dim(PAD_COLOURS[i]),
                                               outline="#0a0a0c", width=Z(1)))
             self.pads.append(row)
-        # Round buttons with their LEDs, and the gold knob
-        by = Z(304)
+        # Round buttons with their LEDs, each in its box
+        top, bottom = Z(284), Z(368)
+        by = top + Z(28)
         self.buttons = {}
-        for key, x, colour, text, letter in (("rec", 48, "#ff2d2d", "REC", "R"), ("arm", 110, "#ffae1c", "ARM", "A"),
-                                             ("stop", 172, "#e8e8f0", "STOP", "S"), ("mon", 234, "#2fdc6e", "MON", "M"),
-                                             ("out", 296, "#35d4e8", "OUT", "O"),
-                                             ("folder", 362, "#3d8bff", "FOLDER", "F")):
-            cx = Z(x)
+        x = Z(26)
+        for key, colour, text, letter in (("rec", "#ff2d2d", "REC", "R"), ("arm", "#ffae1c", "ARM", "A"),
+                                          ("stop", "#e8e8f0", "STOP", "S"), ("mon", "#2fdc6e", "MON", "M"),
+                                          ("out", "#35d4e8", "OUT", "O"), ("folder", "#3d8bff", "FOLDER", "F")):
+            w = max(self.label_width(text, Z(2)), Z(44)) + Z(14)
+            self.box(x, top, x + w, bottom)
+            cx, x = x + w // 2, x + w + Z(8)
             ring = c.create_oval(cx - Z(17), by - Z(17), cx + Z(17), by + Z(17), fill="#26262a", outline="#3c3c42",
                                  width=Z(2))
             led = c.create_oval(cx - Z(6), by - Z(6), cx + Z(6), by + Z(6), fill=self.dim(colour, 0.22), outline="")
@@ -744,7 +834,29 @@ class App:
                 c.tag_bind(item, "<Enter>", lambda e: c.configure(cursor="hand2"))
                 c.tag_bind(item, "<Leave>", lambda e: c.configure(cursor=""))
             self.buttons[key] = (led, colour)
-        kx = Z(462)
+        # On the right, one above the other: the VOL fader and the gold THRESH knob, each in its box
+        cx = self.W - Z(58)
+        self.vol_box = (cx - Z(41), Z(46), cx + Z(41), top - Z(8))
+        self.box(*self.vol_box)
+        self.box(cx - Z(41), top, cx + Z(41), bottom)
+        self.label(cx - self.label_width("VOL", Z(2)) // 2, Z(56), "VOL", Z(2))
+        self.fader_x, self.fader_top, self.fader_bottom = cx, Z(86), top - Z(46)
+        fader_items = [c.create_rectangle(cx - Z(3), self.fader_top - Z(6), cx + Z(3), self.fader_bottom + Z(6),
+                                          fill=BEZEL, outline=EDGE, width=Z(1))]
+        for db in range(0, VOL_MIN - 1, -6):  # A tick every 6 dB
+            y = self.fader_y(db)
+            fader_items += [c.create_line(cx + d * Z(9), y, cx + d * Z(14), y, fill=SMALL, width=Z(1)) for d in (-1, 1)]
+        self.fader_cap = c.create_rectangle(0, 0, 0, 0, fill="#c8c8d0", outline="#f0f0f4", width=Z(1))
+        self.fader_mark = c.create_line(0, 0, 0, 0, fill="#18181b", width=Z(2))
+        fader_items += [self.fader_cap, self.fader_mark]
+        for item in fader_items:
+            c.tag_bind(item, "<Button-1>", self.grab_fader)
+            c.tag_bind(item, "<B1-Motion>", self.grab_fader)
+            c.tag_bind(item, "<Double-Button-1>", lambda e: self.set_volume(0))
+            c.tag_bind(item, "<Enter>", lambda e: c.configure(cursor="sb_v_double_arrow"))
+            c.tag_bind(item, "<Leave>", lambda e: c.configure(cursor=""))
+        self.update_fader()
+        kx = cx
         self.knob = (kx, by)
         knob_items = [c.create_oval(kx - Z(22), by - Z(22), kx + Z(22), by + Z(22), fill="#8a6a28", outline="#4e3b14",
                                     width=Z(2)),
@@ -767,18 +879,18 @@ class App:
         root.bind("<Escape>", lambda e: self.escape())
         for k in ("<Return>", "<KP_Enter>"):
             root.bind(k, lambda e: self.choose() if self.menu else None)
-        for k in ("<plus>", "<KP_Add>", "<Up>"):
+        for k in ("<plus>", "<KP_Add>"):
             root.bind(k, lambda e: self.turn(1))
-        for k in ("<minus>", "<KP_Subtract>", "<Down>"):
+        for k in ("<minus>", "<KP_Subtract>"):
             root.bind(k, lambda e: self.turn(-1))
+        for k, step in (("<Up>", 1), ("<Down>", -1)):  # VOL, or through the output list while it is open
+            root.bind(k, lambda e, s=step: self.turn(s) if self.menu else self.set_volume(self.engine.volume_db + s))
         root.bind("<MouseWheel>", lambda e: self.wheel(e, 1 if e.delta > 0 else -1))
         root.bind("<Button-4>", lambda e: self.wheel(e, 1))
         root.bind("<Button-5>", lambda e: self.wheel(e, -1))
         root.protocol("WM_DELETE_WINDOW", self.quit)
         print(f"recordings: {engine.out_dir}", flush=True)
-        if engine.monitor.on:  # Switched on from the settings or --monitor: open it now
-            engine.monitor.on = False
-            self.root.after(300, self.start_monitor)
+        engine.open_monitor()  # MON on from the settings or --monitor: its output opens with the Deluge's input
         self.tick()
 
     # --- drawing helpers
@@ -791,6 +903,21 @@ class App:
                 self.c.create_rectangle(x + col * p, y + r * p, x + (col + 1) * p, y + (r + 1) * p, fill=fill,
                                         width=0, tags=tag)
             x += 6 * p
+
+    def box(self, x0, y0, x1, y1):
+        """The box around one control on the panel."""
+        self.c.create_rectangle(x0, y0, x1, y1, fill=BOX, outline=BOX_EDGE, width=self.Z(1))
+
+    def fader_y(self, db):
+        return self.fader_top + (self.fader_bottom - self.fader_top) * db / VOL_MIN
+
+    def update_fader(self):
+        x, y, Z = self.fader_x, self.fader_y(self.engine.volume_db), self.Z
+        self.c.coords(self.fader_cap, x - Z(15), y - Z(6), x + Z(15), y + Z(6))
+        self.c.coords(self.fader_mark, x - Z(11), y, x + Z(11), y)
+        self.c.delete("vol")
+        text = f"{self.engine.volume_db} DB"
+        self.label(x - self.label_width(text, Z(1)) // 2, self.vol_box[3] - Z(18), text, Z(1), SMALL, "vol")
 
     @staticmethod
     def label_width(s, p):
@@ -855,6 +982,20 @@ class App:
         self.say(f"ARM LEVEL {e.threshold_db} DB")
         self.save()
 
+    def set_volume(self, db):
+        """VOL, 0 dB (bit-exact) down to VOL_MIN."""
+        e = self.engine
+        db = int(min(0, max(VOL_MIN, db)))
+        if db == e.volume_db:
+            return
+        e.volume_db = db
+        self.update_fader()
+        self.say("VOL 0 DB: BIT-EXACT" if db == 0 else f"VOL {db} DB")
+        self.save()
+
+    def grab_fader(self, event):
+        self.set_volume(round(VOL_MIN * (event.y - self.fader_top) / (self.fader_bottom - self.fader_top)))
+
     def escape(self):
         if self.menu:
             self.menu = None
@@ -883,6 +1024,11 @@ class App:
 
     def start_monitor(self):
         m = self.engine.monitor
+        if not self.engine.connected:  # Its output opens with the Deluge's input
+            m.on = True
+            self.say("MONITOR ON", 2.2)
+            self.save()
+            return
         try:
             ok = m.start()
         except ImportError:
@@ -898,14 +1044,15 @@ class App:
         self.save()
 
     def save(self):
-        """The output, monitor on or off and the threshold, for the next start."""
+        """The output, monitor on or off, the threshold and VOL, for the next start."""
         if self.settings is None:
             return
         m = self.engine.monitor
         try:
             self.settings.parent.mkdir(parents=True, exist_ok=True)
             self.settings.write_text(json.dumps({"output": m.output, "monitor": m.on,
-                                                 "threshold": self.engine.threshold_db}))
+                                                 "threshold": self.engine.threshold_db,
+                                                 "volume": self.engine.volume_db}))
         except Exception:
             pass
 
@@ -913,6 +1060,8 @@ class App:
         kx, ky = self.knob
         if (event.x - kx) ** 2 + (event.y - ky) ** 2 <= self.Z(30) ** 2:
             self.turn(step)
+        elif self.vol_box[0] <= event.x <= self.vol_box[2] and self.vol_box[1] <= event.y <= self.vol_box[3]:
+            self.set_volume(self.engine.volume_db + step)
 
     def grab_knob(self, event):
         if self.menu:  # A click on the knob chooses, as its press does on the Deluge
@@ -959,6 +1108,8 @@ class App:
 
         # Levels: fast attack, 24 dB/s release, the peak held for 1.5 s
         new = e.take_levels() if e.connected else [-math.inf] * CHANNELS
+        if e.take_clipped():  # The Deluge's own output at full scale, whatever VOL is
+            self.clip_until = now + 1.0
         for ch in range(CHANNELS):
             self.levels[ch] = max(new[ch], self.levels[ch] - 24 * 0.04)
             hold, at = self.holds[ch]
@@ -1122,8 +1273,13 @@ def main():
     settings = None if args.selftest else settings_path()
     saved = load_settings(settings) if settings else {}
     threshold = args.threshold if args.threshold is not None else saved.get("threshold", -40)
+    try:
+        volume = int(min(0, max(VOL_MIN, saved.get("volume", 0))))
+    except (TypeError, ValueError):
+        volume = 0
     engine = Engine(output_dir(args.out), args.device, args.shared, args.demo or bool(args.selftest),
                     min(THRESH_MAX, max(THRESH_MIN, int(threshold))))
+    engine.volume_db = volume
     m = engine.monitor
     m.output = saved.get("output")
     if args.output:  # Part of a name: the first output that has it
