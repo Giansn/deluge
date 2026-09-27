@@ -232,9 +232,9 @@ def _read_aiff(fh, info, form):
     return info
 
 
-def decode(info):
-    """Audio as float64, shape (frames, channels), full scale 1.0."""
-    raw, bits, e = info.data, info.bits, ">" if info.big_endian else "<"
+def decode(raw, info):
+    """Audio data in the file's format (whole frames) as float64, shape (frames, channels), full scale 1.0."""
+    bits, e = info.bits, ">" if info.big_endian else "<"
     if info.float:
         x = np.frombuffer(raw, f"{e}f{bits // 8}").astype(np.float64)
     elif bits == 8:
@@ -275,17 +275,19 @@ def over_full_scale(x, bits):
     return int(np.count_nonzero((y > scale - 1) | (y < -scale)))
 
 
-def headroom_gain(x, bits):
-    """The gain (<= 1) that brings x just into the integer format of bits: the positive peak to the largest code
-    (scale - 1), the negative one to -scale."""
+def headroom_gain(hi, lo, bits):
+    """The gain (<= 1) that brings audio whose highest sample is hi and lowest lo just into the integer format of
+    bits: the positive peak to the largest code (scale - 1), the negative one to -scale. Only these two samples count:
+    scaling by a positive gain and rounding keep the order of the samples, so no other one can go over first (the
+    same gain as checking every sample, without holding them)."""
     scale = 2 ** (bits - 1)
-    hi, lo = float(np.max(x)), float(np.min(x))
     g = 1.0
     if hi > 0:
         g = min(g, (scale - 1) / (scale * hi))
     if lo < 0:
         g = min(g, 1 / -lo)
-    while over_full_scale(x * g, bits):  # Only float rounding could leave one
+    peaks = np.array([hi, lo])
+    while over_full_scale(peaks * g, bits):  # Only float rounding could leave one
         g *= 1 - 2 ** -40
     return g
 

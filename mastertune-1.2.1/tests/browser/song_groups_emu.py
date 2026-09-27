@@ -108,6 +108,11 @@ NEW_NAMES = (["New Drum Idea", "New Drum Idea 2"] + SITAR + ["SONG1", "SONG1 2",
              "TRACK 2", "TRACK 2 FINAL", "TRACK 3", "TRACK 4", "TRACK FINAL"])
 NEW_KNOBS = {"New Sitar Grii 9": 38, "New Sitar Grii 10": 40, "TRACK FINAL": 42, "TRACK 4": 44, LONG + " 2": 46,
              "New Drum Idea": 48}
+OLD = NEW + "/OLD"  # A folder in NEW (BACK from it goes up to NEW)
+OLD_NAMES = ["Idea", "Idea 2", "Solo"]
+MANY = "MANY"  # More groups than the browser keeps folded out (LoadSongUI::kMaxOpenGroups)
+MANY_GROUPS = [f"G{c}" for c in "abcdefghi"]
+MANY_NAMES = [n for g in MANY_GROUPS for n in (g, g + " 2")]
 DIR_AT = NAME_AT + 0x100
 # The keyboard (qwerty_ui.cpp keyboardChars, QWERTY): row r at pad y = kQwertyHomeRow (3) + 2 - r, column c at x = c + 3
 KEYS = ["1234567890-", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM,.", "__" + " " * 6]
@@ -131,6 +136,8 @@ def build_sd(path):
     files["SONGS/TRACK DEMOS/DEMO.XML"] = song(FILLER)
     files.update({f"{VERS}/{n}.XML": song(KNOBS.get(n, FILLER)) for n in VERS_NAMES})
     files.update({f"{NEW}/{n}.XML": song(NEW_KNOBS.get(n, FILLER)) for n in NEW_NAMES})
+    files.update({f"{OLD}/{n}.XML": song(FILLER) for n in OLD_NAMES})
+    files.update({f"{MANY}/{n}.XML": song(FILLER) for n in MANY_NAMES})
     fat32.build(path, files)
     return len(files), sum(len(d) for d in files.values())
 
@@ -149,9 +156,11 @@ class Browser:
                               "print (int)&((Song*)0)->dirPath", emu.elf], capture_output=True, text=True).stdout
         self.dir_path = int(re.findall(r"^\$\d+ = (\d+)$", out, re.M)[0])  # Song::dirPath (Song in its context)
         try:
-            self.group_off, = song_emu.gdb_values(emu, ["(int)&loadSongUI.openGroup - (int)&loadSongUI"])
+            self.group_off, self.num_groups_off, self.max_groups = song_emu.gdb_values(
+                emu, ["(int)&loadSongUI.openGroups - (int)&loadSongUI",
+                      "(int)&loadSongUI.numOpenGroups - (int)&loadSongUI", "sizeof(loadSongUI.openGroups) / 4"])
         except SystemExit:
-            self.group_off = None  # A build without the grouping
+            self.group_off = None  # A build without the grouping (or with v17's one group)
         self.v = {n: sym[n] for n in ("_ZN8QwertyUI11enteredTextE", "_ZN7Browser17fileIndexSelectedE",
                                       "_ZN7Browser26numFileItemsDeletedAtStartE", "_Z12getCurrentUIv", "saveSongUI",
                                       "_ZN6deluge3hid7display4OLED16submenuArrowIconE",
@@ -192,11 +201,19 @@ class Browser:
         p = self.emu.u32(address + self.string_memory)
         return self.emu.ram_str(p, 128) if p else ""
 
+    def groups(self):
+        """The groups folded out (LoadSongUI::openGroups), the one the selection was last in at the end."""
+        if self.group_off is None:
+            return None
+        n = self.emu.u32(self.ui + self.num_groups_off)
+        return [self.string(self.ui + self.group_off + 4 * k) for k in range(min(n, self.max_groups))]
+
     def state(self):
+        groups = self.groups()
         return dict(sel=struct.unpack("<i", self.emu.uc.mem_read(self.v["_ZN7Browser17fileIndexSelectedE"], 4))[0],
                     name=self.string(self.v["_ZN8QwertyUI11enteredTextE"]),
                     deleted=self.emu.u32(self.v["_ZN7Browser26numFileItemsDeletedAtStartE"]),
-                    group=self.string(self.ui + self.group_off) if self.group_off is not None else None)
+                    group=(groups[-1] if groups else "") if groups is not None else None, groups=groups)
 
     def name(self):
         return self.state()["name"]
@@ -396,22 +413,26 @@ def run_oled(a, sd, out, check):
     f4 = b.frame()
     folder = b.turn(1)
     f = b.frame()
-    r = row(f, "TRACK")
-    check("4. +1 x4: TRACK 2, TRACK 3, track 4, TRACK 10; +1: the folder, the group folded in",
-          names == TRACKS[1:] and folder == "TRACK DEMOS" and b.group() == "" and r and r["arrow"]
-          and not any(row(f, t) for t in TRACKS[1:]), f"{names}, {folder}; at TRACK 10: {b.show(f4)}; then "
-          f"{b.show(f)}")
-    b.turn(-1)
-    b.press(BUTTON_SELECT)
-    b.turn(1)
-    at2 = b.name()
+    r = row(f, "TRACK 10")
+    check("4. +1 x4: TRACK 2, TRACK 3, track 4, TRACK 10; +1: the folder, the group stays folded out (TRACK 10 "
+          "indented above it)",
+          names == TRACKS[1:] and folder == "TRACK DEMOS" and b.state()["groups"] == ["TRACK"] and r and r["indent"]
+          and not r["arrow"] and not any(x["arrow"] for x in f), f"{names}, {folder}; at TRACK 10: {b.show(f4)}; "
+          f"then {b.show(f)}")
+    back_up = [b.turn(-1) for _ in range(4)]
     b.back()
     f = b.frame()
-    check("5. -1, pressed, +1: TRACK 2; BACK: folded in, TRACK selected, the browser still open",
-          at2 == "TRACK 2" and b.is_open() and b.name() == "TRACK" and b.group() == "" and f and row(f, "TRACK")
-          and row(f, "TRACK")["arrow"] and row(f, "TRACK")["sel"], f"{at2}, then {b.name()}: {b.show(f)}")
+    check("5. -1 x4 from the folder: TRACK 10, track 4, TRACK 3, TRACK 2 (the versions still shown); BACK on TRACK 2: "
+          "folded in, TRACK selected, the browser still open",
+          back_up == TRACKS[:0:-1] and b.is_open() and b.name() == "TRACK" and b.state()["groups"] == [] and f
+          and row(f, "TRACK") and row(f, "TRACK")["arrow"] and row(f, "TRACK")["sel"],
+          f"{back_up}, then {b.name()}: {b.show(f)}")
+    b.press(BUTTON_SELECT)
+    b.turn(-1)
+    at = (b.name(), b.state()["groups"])
     b.back()
-    check("5. BACK again (no group open): the browser closes, as before", not b.is_open())
+    check("5. TRACK pressed, -1: OTHER (TRACK stays folded out); BACK there: the browser closes, as before",
+          at == ("OTHER", ["TRACK"]) and not b.is_open(), f"{at}, browser open {b.is_open()}")
 
     # 6-8: loading a version, stopped and while playing
     b.open("OTHER")
@@ -485,14 +506,18 @@ def run_oled(a, sd, out, check):
     at_end = b.state()
     out_of = b.turn(1)
     after = b.state()
-    check(f"10. BIG 1 pressed, +1 x{BIG - 1}: BIG 2..BIG {BIG} in order; +1: DEFAULT, folded in",
+    check(f"10. BIG 1 pressed, +1 x{BIG - 1}: BIG 2..BIG {BIG} in order; +1: DEFAULT, the group still folded out",
           names == [f"BIG {n}" for n in range(2, BIG + 1)] and at_end["group"] == "BIG" and out_of == "DEFAULT"
-          and after["group"] == "", f"{names[:3]}..{names[-2:]}, group {at_end['group']!r}; then {out_of!r}, group "
-          f"{after['group']!r}")
+          and after["groups"] == ["BIG"], f"{names[:3]}..{names[-2:]}, group {at_end['group']!r}; then {out_of!r}, "
+          f"groups {after['groups']}")
     b.turn(-1)
+    s4, f4 = b.state(), b.frame()
+    b.back()
     f = b.frame()
-    check("10. -1 from DEFAULT: BIG 1 (the group's top, across the window), folded", b.name() == "BIG 1"
-          and b.group() == "" and row(f, "BIG") and row(f, "BIG")["sel"] and row(f, "BIG")["arrow"], b.show(f))
+    check(f"10. -1 from DEFAULT: BIG {BIG} (folded out); BACK: BIG 1 (the group's top, across the window), folded",
+          s4["name"] == f"BIG {BIG}" and row(f4, f"BIG {BIG}") and row(f4, f"BIG {BIG}")["indent"]
+          and b.name() == "BIG 1" and b.state()["groups"] == [] and row(f, "BIG") and row(f, "BIG")["sel"]
+          and row(f, "BIG")["arrow"], f"{b.show(f4)}; BACK: {b.show(f)}")
 
     # 11: opened on a version at the other end of a group larger than the window
     last = f"BIG {BIG}"
@@ -633,7 +658,177 @@ def run_oled(a, sd, out, check):
           f"+1: {s0}, {b.show(f0)}; typed: {s1}, {b.show(f1)}; pressed: browser open {b.is_open()}, group "
           f"{b.group()!r}, loaded: LPF knob {knob}, name {name!r}")
     b.close()
+    run_new(b, check)
     b.open("DEFAULT")  # The song's folder SONGS again
+    b.close()
+
+
+def sel_row(f):
+    return next((r for r in f if r["sel"]), None)
+
+
+def run_new(b, check):
+    """19-26: the folder NEW (the group: the whole name without its number), groups staying folded out."""
+    d = b.d
+    # 19: the rows
+    b.open("New Drum Idea", folder=NEW)
+    rows = []
+    for i in range(10):
+        r = sel_row(b.frame())
+        rows.append((r["text"], r["arrow"], r["indent"]) if r else None)
+        if i < 9:
+            b.turn(1)
+    expected = [("New Drum Idea", True), ("New Sitar Grii", True), ("OLD", False), ("SONG1", True), ("SONG2", False),
+                (LONG, True), ("TRACK", True), ("TRACK 2 FINAL", False), ("TRACK", True), ("TRACK FINAL", False)]
+    check("19. NEW: the rows New Drum Idea >, New Sitar Grii > (2, 9, 10), OLD, SONG1 > (SONG1 2; SONG2 a song of its "
+          "own), SONG2, the long name > (the whole name), TRACK > (TRACK 2), TRACK 2 FINAL (splits the group), TRACK > "
+          "(TRACK 3, TRACK 4), TRACK FINAL (a song of its own)",
+          [r[:2] if r else None for r in rows] == expected and not any(r and r[2] for r in rows),
+          "; ".join(f"{r[0]}{' >' if r[1] else ''}" if r else "-" for r in rows))
+
+    # 20: folded out, the encoder moving on: the group stays folded out, a second one too
+    b.open("New Drum Idea", folder=NEW)
+    b.press(BUTTON_SELECT)
+    s0 = b.state()
+    at = [b.turn(1), b.turn(1)]
+    s1, f1 = b.state(), b.frame()
+    b.press(BUTTON_SELECT)
+    at += [b.turn(1) for _ in range(4)]
+    s2, f2 = b.state(), b.frame()
+    up = [b.turn(-1) for _ in range(5)]
+    f3 = b.frame()
+    ind = lambda f, t: bool(row(f, t) and row(f, t)["indent"] and not row(f, t)["arrow"])  # noqa: E731
+    check("20. New Drum Idea pressed: folded out; +1 +1: New Drum Idea 2, the row New Sitar Grii > (New Drum Idea "
+          "still folded out); pressed: both folded out; +1 x4: its versions, OLD; -1 x5: back through both groups' "
+          "versions to New Drum Idea 2",
+          s0["groups"] == ["New Drum Idea"] and at == ["New Drum Idea 2", "New Sitar Grii"] + SITAR[1:] + ["OLD"]
+          and s1["groups"] == ["New Drum Idea"] and ind(f1, "New Drum Idea 2") and row(f1, "New Sitar Grii")
+          and row(f1, "New Sitar Grii")["arrow"] and row(f1, "New Sitar Grii")["sel"]
+          and s2["groups"] == ["New Drum Idea", "New Sitar Grii"] and ind(f2, "New Sitar Grii 10")
+          and up == SITAR[::-1] + ["New Drum Idea 2"] and ind(f3, "New Drum Idea 2") and ind(f3, "New Sitar Grii"),
+          f"{at}; at New Sitar Grii: {s1['groups']}, {b.show(f1)}; at OLD: {s2['groups']}, {b.show(f2)}; -1 x5: {up}, "
+          f"{b.show(f3)}")
+
+    # 21: BACK on a version folds in its group only
+    b.back()
+    s4, f4 = b.state(), b.frame()
+    b.turn(1)
+    b.turn(1)
+    at5 = b.name()
+    b.back()
+    s5, f5 = b.state(), b.frame()
+    r4, r5 = row(f4, "New Drum Idea"), row(f5, "New Sitar Grii")
+    check("21. BACK on New Drum Idea 2: that group folded in, its row selected, New Sitar Grii still folded out; +1 +1, "
+          "BACK on New Sitar Grii 2: folded in too, the browser open",
+          b.is_open() and s4["name"] == "New Drum Idea" and s4["groups"] == ["New Sitar Grii"] and r4 and r4["arrow"]
+          and r4["sel"] and ind(f4, "New Sitar Grii") and at5 == "New Sitar Grii 2" and s5["name"] == "New Sitar Grii"
+          and s5["groups"] == [] and r5 and r5["arrow"] and r5["sel"] and not any(x["indent"] for x in f5),
+          f"{s4['groups']}: {b.show(f4)}; {at5}, BACK: {s5['groups']}: {b.show(f5)}")
+
+    # 22: BACK elsewhere: up a folder, or out
+    b.open("Solo", folder=OLD)
+    b.turn(-1)
+    b.press(BUTTON_SELECT)
+    at = [b.turn(1), b.turn(1)]
+    s6 = b.state()
+    b.back()
+    s7, f7, in_old = b.state(), b.frame(), b.is_open()
+    b.turn(-1)
+    b.press(BUTTON_SELECT)
+    at8 = [b.turn(1) for _ in range(4)]
+    s8 = b.state()
+    b.back()
+    check("22. BACK elsewhere: NEW/OLD, Idea pressed, +1 +1: Solo (Idea folded out); BACK: up to NEW, OLD selected; "
+          "-1, pressed, +1 x4: New Sitar Grii's versions, OLD (it folded out); BACK: the browser closes",
+          at == ["Idea 2", "Solo"] and s6["groups"] == ["Idea"] and in_old and s7["name"] == "OLD"
+          and s7["groups"] == [] and at8 == SITAR[1:] + ["OLD"] and s8["groups"] == ["New Sitar Grii"]
+          and not b.is_open(),
+          f"{at}, {s6['groups']}; BACK: {s7['name']!r}, {s7['groups']}, {b.show(f7)}; {at8}, {s8['groups']}; BACK: "
+          f"browser open {b.is_open()}")
+
+    # 23: loading a version with two groups folded out; opened on it
+    b.open("New Drum Idea", folder=NEW)
+    b.press(BUTTON_SELECT)
+    b.turn(1)
+    b.turn(1)
+    b.press(BUTTON_SELECT)
+    b.turn(1)
+    before = (b.turn(1), b.state()["groups"])
+    b.press(BUTTON_LOAD)
+    knob, name = b.loaded()
+    b.open(name or "New Sitar Grii 9", folder=NEW)
+    s9, f9 = b.state(), b.frame()
+    b.turn(1)
+    b.press(BUTTON_LOAD)
+    knob2, name2 = b.loaded()
+    check("23. both folded out, New Sitar Grii 9, LOAD: it loads; the browser opened on it: its group folded out, it "
+          "selected; +1, LOAD: New Sitar Grii 10 loads",
+          before == ("New Sitar Grii 9", ["New Drum Idea", "New Sitar Grii"]) and knob == NEW_KNOBS["New Sitar Grii 9"]
+          and name == "New Sitar Grii 9" and s9["name"] == "New Sitar Grii 9" and s9["groups"] == ["New Sitar Grii"]
+          and ind(f9, "New Sitar Grii 9") and row(f9, "New Sitar Grii 9")["sel"]
+          and knob2 == NEW_KNOBS["New Sitar Grii 10"] and name2 == "New Sitar Grii 10",
+          f"{before}: loaded LPF knob {knob}, {name!r}; opened: {s9['groups']}, {b.show(f9)}; loaded LPF knob "
+          f"{knob2}, {name2!r}")
+
+    # 24: typing
+    b.open("SONG2", folder=NEW)
+    b.type("TRACK F")
+    s10, f10 = b.state(), b.frame()
+    b.press(BUTTON_SELECT)
+    knob, name = b.loaded()
+    b.open("SONG2", folder=NEW)
+    b.type("TRACK 4")
+    s11, f11 = b.state(), b.frame()
+    b.press(BUTTON_SELECT)
+    knob2, name2 = b.loaded()
+    r10 = row(f10, "TRACK FINAL")
+    check("24. typed TRACK F: TRACK FINAL (a song of its own: no arrow, not indented), pressed: it loads; typed TRACK 4 "
+          "(a version): its group folded out, pressed: it loads",
+          s10["name"] == "TRACK FINAL" and r10 and not r10["arrow"] and not r10["indent"]
+          and knob == NEW_KNOBS["TRACK FINAL"] and name == "TRACK FINAL" and s11["name"] == "TRACK 4"
+          and s11["groups"] == ["TRACK"] and knob2 == NEW_KNOBS["TRACK 4"] and name2 == "TRACK 4",
+          f"{s10['name']!r}, {b.show(f10)}: loaded LPF knob {knob}, {name!r}; {s11['name']!r}, {s11['groups']}, "
+          f"{b.show(f11)}: loaded LPF knob {knob2}, {name2!r}")
+
+    # 25: delete refused on a folded row, as before on a version (another group folded out too)
+    b.open("New Drum Idea", folder=NEW)
+    b.press(BUTTON_SELECT)
+    for _ in range(5):
+        b.turn(1)
+    mark = len(d.events)
+    b.shift_save()
+    prompt = b.v["_ZN6deluge3gui12context_menu10deleteFileE"]
+    on_folded = (b.name(), b.is_open(), b.is_open(prompt), b.popups(mark))
+    b.press(BUTTON_SELECT)
+    b.turn(1)
+    b.shift_save()
+    on_version = (b.name(), b.is_open(prompt), b.state()["groups"])
+    d.button(BUTTON_BACK, True)  # The prompt closes, nothing deleted
+    d.button(BUTTON_BACK, False)
+    b.settle()
+    check("25. SHIFT+SAVE on the folded row of the long name: refused (a popup); pressed, +1: on its version 2, the "
+          "delete prompt (New Drum Idea folded out too); BACK: nothing deleted",
+          on_folded[0] == LONG and on_folded[1] and not on_folded[2] and on_folded[3]
+          and on_version == (LONG + " 2", True, ["New Drum Idea", LONG]) and b.is_open() and b.name() == LONG + " 2",
+          f"folded: {on_folded}; version: {on_version}; after BACK: {b.name()!r}")
+    b.close()
+
+    # 26: more groups than the browser keeps folded out
+    b.open(MANY_GROUPS[0], folder=MANY)
+    for i, _ in enumerate(MANY_GROUPS):
+        b.press(BUTTON_SELECT)
+        b.turn(1)
+        if i + 1 < len(MANY_GROUPS):
+            b.turn(1)
+    s12 = b.state()
+    up = [b.turn(-1) for _ in range(2 * len(MANY_GROUPS) - 2)]
+    f12 = b.frame()
+    r12 = row(f12, MANY_GROUPS[0])
+    check(f"26. {len(MANY_GROUPS)} groups folded out one after the other: the last {b.max_groups} stay so, the first "
+          "folds in (the one the selection was in longest ago)",
+          b.max_groups == len(MANY_GROUPS) - 1 and s12["groups"] == MANY_GROUPS[1:]
+          and up[-1] == MANY_GROUPS[0] and r12 and r12["arrow"] and r12["sel"] and ind(f12, MANY_GROUPS[1] + " 2"),
+          f"{s12['name']!r}, {s12['groups']}; -1 x{len(up)}: {up[-3:]}, {b.show(f12)}")
     b.close()
 
 
