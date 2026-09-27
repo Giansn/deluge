@@ -148,6 +148,31 @@ def knob_value(k):
 
 # --- the emulated Deluge with performLoad() pausing at its yields
 
+# Offsets of the members this test reads, from the ELF's debug info (they move when a struct before them grows)
+OFFSET_QUERIES = [
+    ("list Song::Song", [("song_name", "(int)&((Song*)0)->name"),
+                         ("song_global_effectable", "(int)&((Song*)0)->globalEffectable"),
+                         ("song_param_manager", "(int)&((Song*)0)->paramManager"),
+                         ("mod_knob_mode", "(int)&((GlobalEffectableForSong*)0)->modKnobMode")]),
+    ("list PlaybackHandler::PlaybackHandler", [("last_swung_tick", "(int)&((PlaybackHandler*)0)->lastSwungTickActioned")]),
+    ("list View::View", [("view_model_stack", "(int)&((View*)0)->activeModControllableModelStack")]),
+]
+
+
+def member_offsets(tools, elf):
+    args, names = [], []
+    for context, queries in OFFSET_QUERIES:
+        args += ["-ex", context]
+        for name, expression in queries:
+            args += ["-ex", f"print {expression}"]
+            names.append(name)
+    out = subprocess.run([tools + "gdb", "-batch", *args, elf], capture_output=True, text=True).stdout
+    values = [int(v) for v in re.findall(r"^\$\d+ = (\d+)$", out, re.M)]
+    if len(values) != len(names):
+        raise SystemExit(f"member offsets from gdb: {len(values)} of {len(names)}:\n{out[-800:]}")
+    return dict(zip(names, values))
+
+
 class Deluge:
     def __init__(self, elf, sd, tools, build, oled, out_dir):
         self.out_dir = out_dir
@@ -163,6 +188,7 @@ class Deluge:
         emu.w32(sym["jcong"], 1)
         song_emu.load_startup_song(emu)
         self.sym = sym
+        self.off = member_offsets(tools, elf)
         self.a = {n: sym.find(n) for n in (
             "_ZN11AudioEngine7routineEv", "_ZZ13registerTasksvENUlvE0_4_FUNEv", "_ZZ13registerTasksvENUlvE1_4_FUNEv",
             "_ZN14UITimerManager7routineEv", "_Z23doAnyPendingUIRenderingv", "_Z6openUIP2UI",
@@ -300,20 +326,20 @@ class Deluge:
         return struct.unpack("<q", struct.pack("<II", lo, hi))[0]
 
     def last_swung_tick(self):
-        return self.i64(self.var["playbackHandler"] + 208)
+        return self.i64(self.var["playbackHandler"] + self.off["last_swung_tick"])
 
     def song_param(self, song, param_id):
         """AutoParam::currentValue of the song's unpatched param (Song::paramManager at +4, summaries[0]
         .paramCollection, ParamSet::params (a pointer) at +16, sizeof(AutoParam) 64, currentValue at +52)."""
-        collection = self.u32(song + 4 + 4)
+        collection = self.u32(song + self.off["song_param_manager"] + 4)
         return self.i32(self.u32(collection + 16) + 64 * param_id + 52)
 
     def song_mod_section(self, song):
-        return self.emu.u8(song + 120 + 1328)  # Song::globalEffectable, GlobalEffectableForSong::modKnobMode
+        return self.emu.u8(song + self.off["song_global_effectable"] + self.off["mod_knob_mode"])
 
     def knobs_on(self):
         """view.activeModControllableModelStack (view + 20): song, timelineCounter, modControllable, paramManager."""
-        v = self.var["view"] + 20
+        v = self.var["view"] + self.off["view_model_stack"]
         return dict(song=self.u32(v), timeline=self.u32(v + 4), mod=self.u32(v + 16), params=self.u32(v + 20))
 
     def knob_levels(self):
@@ -405,8 +431,8 @@ class Deluge:
 
         def on_7seg_text(e):
             sp = e.uc.reg_read(UC_ARM_REG_SP)
-            blink = e.u8(sp + 4)
-            self.events.append((self.window_index, "7seg", dict(text=string_view(e), blink=blink)))
+            dot, blink = e.u8(sp), e.u8(sp + 4)  # setText(text, alignRight, drawDot, doBlink, ...)
+            self.events.append((self.window_index, "7seg", dict(text=string_view(e), blink=blink, dot=dot)))
 
         def on_7seg_popup(e):
             p = e.uc.reg_read(UC_ARM_REG_R1)
@@ -501,13 +527,15 @@ class Scenario:
         text = None
         for w, kind, e in d.events[since:]:
             if kind == "7seg":
-                text = (e["text"].strip(), e["blink"])
+                text = (e["text"].strip(), e["blink"], e["dot"])
         return text
 
     def matches(self, shown, expected):
         if self.oled:
             return shown == expected
-        return bool(shown and expected and shown[0] == str(expected[1]) and bool(shown[1]) == (expected[0] == "loops"))
+        # 7-segment: the number, blinking while it counts loops, a dot on the last digit while it counts beats
+        return bool(shown and expected and shown[0] == str(expected[1]) and bool(shown[1]) == (expected[0] == "loops")
+                    and (shown[2] == 3) == (expected[0] == "beats"))
 
     def run(self):
         a = self.args
@@ -526,13 +554,13 @@ class Scenario:
         knobs0 = d.knobs_on()
         self.synth_pm = knobs0["params"]
         self.check("before loading, in A's clip view: the knobs are on the synth, not the song",
-                   knobs0["params"] != song_a + 4, f"knobs on paramManager {knobs0['params']:#x}, song A's "
-                   f"{song_a + 4:#x}")
+                   knobs0["params"] != song_a + d.off["song_param_manager"],
+                   f"knobs on paramManager {knobs0['params']:#x}, song A's {song_a + d.off['song_param_manager']:#x}")
         # The browser, with song B selected (as if the user had scrolled to it): LoadSongUI::opened() looks for the
         # current song's name
         name = STOP + 0x200
         d.emu.uc.mem_write(name, b"SONGB\0")
-        d.call("_ZN6String3setEPKcl", song_a + 1812, name, -1)  # Song::name
+        d.call("_ZN6String3setEPKcl", song_a + d.off["song_name"], name, -1)  # Song::name
         d.drain_pic()
         ok = d.call("_Z6openUIP2UI", d.var["loadSongUI"]) & 0xFF
         self.play_until(d, lambda: d.mode() == UI_MODE_NONE, limit=2000)
@@ -550,8 +578,9 @@ class Scenario:
                    f"mode {d.mode()}, preLoadedSong {song_b:#x}")
         k = d.knobs_on()
         self.check("pending: gold knobs on song A's master FX (view's model stack: song A, its GlobalEffectable and "
-                   "paramManager)", k["timeline"] == song_a and k["params"] == song_a + 4 and
-                   k["mod"] == song_a + 120, f"{ {n: hex(v) for n, v in k.items()} }, song A {song_a:#x}")
+                   "paramManager)", k["timeline"] == song_a and k["params"] == song_a + d.off["song_param_manager"]
+                   and k["mod"] == song_a + d.off["song_global_effectable"],
+                   f"{ {n: hex(v) for n, v in k.items()} }, song A {song_a:#x}")
         self.check("pending: mod LEDs show A's song section (1, LPF), not the synth's (0)", d.mod_leds() == [1],
                    f"mod LEDs {d.mod_leds()}")
         lvl = d.knob_levels()
@@ -814,8 +843,8 @@ class Scenario:
             seen = [t for i, t in enumerate(texts) if i == 0 or t != texts[i - 1]]
             log(f"  1.2.1: popups / 7-segment texts from LOAD on: {seen[:40]}")
         if not self.oled:
-            blinks = [(e["text"].strip(), e["blink"]) for w, k, e in d.events if k == "7seg"]
-            log(f"  7-segment texts while armed (text, blink): {blinks[-16:]}")
+            blinks = [(e["text"].strip(), e["blink"], e["dot"]) for w, k, e in d.events if k == "7seg"]
+            log(f"  7-segment texts while armed (text, blink, dot): {blinks[-16:]}")
         self.check(f"countdown right in all {len(self.trace)} windows while armed (a change up to one graphics "
                    f"period late in {late})", not bad or self.baseline, f"wrong: {bad[:5]}")
 

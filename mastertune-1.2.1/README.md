@@ -452,7 +452,7 @@ v14 enthält v13 und bringt drei Neuerungen und zwei Korrekturen beim Lesen und 
   - Mit Modulation 50 klingt der Volllast-Song beim Mutable-Modell Bit für Bit wie v13.
   - Beim Digital-Modell weichen 176 von 705 792 Samples um 1 LSB ab, eine Rundungsfrage.
 - **Delay** (`tests/delay`): Tonhöhe, Artefakte, erstes Echo und Echo-Ende auf dem PC. Im Emulator zusätzlich die Wahl Fade/Tape für alte Songs.
-- **Song-Wechsel** (`tests/songchange`, Emulator): Countdown in rund 5000 Audio-Fenstern, höchstens 15 ms später als die Takt- und Beatgrenzen. Dazu kommen Swing, externe Clock mit 123 BPM, Stopp während des Wartens und die Regler auf dem laufenden Song. Ein Gegenprüfer fand zwei kleine Punkte, beide sind behoben (Punkt für Beats, hängendes Popup).
+- **Song-Wechsel** (`tests/songchange`, Emulator, auf dem fertigen v14-Build): Countdown in rund 5000 Audio-Fenstern, höchstens 15 ms später als die Takt- und Beatgrenzen. Dazu kommen Swing, externe Clock mit 123 BPM, Stopp während des Wartens, die Regler auf dem laufenden Song und der Punkt für Beats, zusammen 131 Prüfungen. Ein Gegenprüfer fand zwei kleine Punkte, beide sind behoben (Punkt für Beats, hängendes Popup).
 - **SD-Karte über USB** (`tests/smsysex`): Host-Test mit AddressSanitizer auf einer FAT32-RAM-Disk, alle Prüfungen bestanden.
 - **Build:** ohne neue Warnungen. Zwei komplette Neubauten ergeben dieselbe SHA-256 (je 465 neu übersetzte Dateien, `cb17bbb3…8e23e6e5`). Die Patches ergeben mit `git am` auf `release_1_2_1` genau diesen Stand.
 
