@@ -6,7 +6,8 @@ Die Aufnahmen von DelugeRec sollen den exakten Songnamen, das Datum und die Firm
 
 ## Warum es die Firmware braucht
 
-- **Datum:** kennt der PC. DelugeRec v5 schreibt es schon in den Namen und in die Datei.
+- **Datum:** kennt der PC. DelugeRec schreibt es schon in den Namen und in die Datei.
+- **Format, das der Nutzer will:** `Songname, tt.mm.yyyy - 1.2.1 v17`, zum Beispiel `Rescue 3, 28.09.2026 - 1.2.1 v17.WAV` (DelugeRec v6). Weitere Aufnahmen am selben Tag bekommen « (2)», « (3)». Ohne Meldung vom Deluge heisst die Datei heute `28.09.2026 00-17-26.WAV`, so beim Nutzer mit v17-l2d gesehen.
 - **Songname und Firmware:** USB-Audio trägt nur Samples, der Deluge muss beides selbst melden. Abfragen darf der PC nicht, denn der Nutzer will, dass er nichts an den Deluge sendet. Also meldet der Deluge es von sich aus, wie schon die CPU-Werte (SysEx 0x10) auf Port 3.
 
 ## Protokoll
@@ -24,7 +25,9 @@ Die Aufnahmen von DelugeRec sollen den exakten Songnamen, das Datum und die Firm
 
 ## Patch
 
-`2026-09-27-songinfo.patch` in diesem Ordner, auf v17 mit `patches/0001–0074`, sauber anwendbar mit `git am` (geprüft). Bitte in v18 unter der nächsten freien Nummer übernehmen.
+`2026-09-27-songinfo.patch` in diesem Ordner, auf v17 mit `patches/0001–0074`, sauber anwendbar mit `git am` (geprüft), auch zusammen mit `l2test/0001–0003`.
+
+- **Basis geprüft:** `release_1_2_1` plus `patches/0001–0074` plus `l2test/0001–0003`, gebaut mit dem Hash `b3385d83`, ergibt Byte für Byte die Datei, die auf dem Gerät läuft (`deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin`, SHA-256 `aad4d080…5ec32c4b`). Bitte in v18 unter der nächsten freien Nummer übernehmen.
 
 - **Neue Dateien:** `io/usb/usb_song_info.h` und `.cpp` (die Routine), `usb_song_info_message.cpp` (die Nachricht allein, ohne Hardware).
 - **Geänderte Dateien:**
@@ -55,7 +58,7 @@ Die Aufnahmen von DelugeRec sollen den exakten Songnamen, das Datum und die Firm
 
 ## Nicht geprüft
 
-- **Am Gerät:** Bitte mit DelugeRec v5 testen. Der Dateiname soll dann «Songname Datum Zeit v18.WAV» lauten, und das Display zeigt «SONG …».
+- **Am Gerät:** Bitte mit DelugeRec v6 testen. Der Dateiname soll dann `Songname, tt.mm.yyyy - 1.2.1 v18.WAV` lauten, und das Display zeigt «SONG …». Eine Testfirmware habe ich auf Wunsch des Nutzers nicht gebaut: Die Firmware kommt von der Haupt-Session.
 - **Im Emulator:** USB läuft dort nicht.
 
 ## Hinweise

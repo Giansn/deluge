@@ -283,11 +283,11 @@ class Naming(EngineCase):
         return e
 
     def test_song_date_firmware(self):
-        """The name: the song as the Deluge told it, the date and time, the firmware in short; inside, the INFO list
-        with the full firmware."""
+        """The name: the song as the Deluge told it, the date, the firmware in short ("Rescue 3, 27.09.2026 - 1.2.1
+        v17"); inside, the INFO list with the full firmware and the time."""
         e = self.engine_at("Rescue 3", "1.2.1-mastertune-v17-4e3d2075")
         path = self.take(e, [samples24(10)])
-        self.assertEqual(path.name, "Rescue 3 2026-09-27 21-30-05 v17.WAV")
+        self.assertEqual(path.name, "Rescue 3, 27.09.2026 - 1.2.1 v17.WAV")
         info = wav_info(path)
         self.assertEqual((info[b"INAM"], info[b"ICRD"], info[b"ISFT"]),
                          ("Rescue 3", "2026-09-27", f"DelugeRec v{dr.VERSION}"))
@@ -299,27 +299,31 @@ class Naming(EngineCase):
             self.assertEqual(w.getnframes(), 10)
 
     def test_without_the_deluge_telling(self):
-        """An older firmware tells nothing: the date and time alone; a new song not saved yet: no song."""
+        """A firmware that tells nothing: the date and the time; a new song not saved yet: "New song"."""
         e = self.engine_at()
-        self.assertEqual(self.take(e, [samples24(10)]).name, "2026-09-27 21-30-05.WAV")
+        self.assertEqual(self.take(e, [samples24(10)]).name, "27.09.2026 21-30-05.WAV")
         self.assertEqual(wav_info(self.dir / e.last_take[0])[b"INAM"], "Deluge USB audio")
         e.info.song, e.info.firmware = "", "1.2.1-mastertune-v18"
-        self.assertEqual(self.take(e, [samples24(10)]).name, "2026-09-27 21-30-05 v18.WAV")
+        self.assertEqual(self.take(e, [samples24(10)]).name, "New song, 27.09.2026 - 1.2.1 v18.WAV")
 
     def test_no_overwrite(self):
+        """More takes of the same song that day: " (2)", " (3)" ...; an existing file stays as it is."""
         e = self.engine_at("Rescue 3", "1.2.1-mastertune-v17-l2d-b3385d83")
-        (self.dir / "Rescue 3 2026-09-27 21-30-05 v17-l2d.WAV").write_bytes(b"keep")
-        self.assertEqual(self.take(e, [samples24(10)]).name, "Rescue 3 2026-09-27 21-30-05 v17-l2d (2).WAV")
-        self.assertEqual(self.take(e, [samples24(10)]).name, "Rescue 3 2026-09-27 21-30-05 v17-l2d (3).WAV")
-        self.assertEqual((self.dir / "Rescue 3 2026-09-27 21-30-05 v17-l2d.WAV").read_bytes(), b"keep")
+        (self.dir / "Rescue 3, 27.09.2026 - 1.2.1 v17.WAV").write_bytes(b"keep")
+        self.assertEqual(self.take(e, [samples24(10)]).name, "Rescue 3, 27.09.2026 - 1.2.1 v17 (2).WAV")
+        self.assertEqual(self.take(e, [samples24(10)]).name, "Rescue 3, 27.09.2026 - 1.2.1 v17 (3).WAV")
+        self.assertEqual((self.dir / "Rescue 3, 27.09.2026 - 1.2.1 v17.WAV").read_bytes(), b"keep")
 
     def test_names_safe_on_every_system(self):
         self.assertEqual(dr.clean_name('a<b>c:d"e/f\\g|h?i*j\x01. '), "a_b_c_d_e_f_g_h_i_j_")
         self.assertEqual(dr.clean_name("x" * 200), "x" * 80)
-        self.assertEqual(dr.short_firmware("1.2.1-mastertune-v16-l2d-dronefix-ba499a93"), "v16-l2d-dronefix")
+        self.assertEqual(dr.short_firmware("1.2.1-mastertune-v16-l2d-dronefix-ba499a93"), "1.2.1 v16")
+        self.assertEqual(dr.short_firmware("1.2.1-mastertune-v17-l2d-songinfo-8c1f9b34"), "1.2.1 v17")
+        self.assertEqual(dr.short_firmware("c1.2.1"), "1.2.1")
+        self.assertEqual(dr.short_firmware("my/firmware"), "my_firmware")
         self.assertEqual(dr.short_firmware(None), "")
         e = self.engine_at("Grüezi/../Welt", "c1.2.1")
-        self.assertEqual(self.take(e, [samples24(10)]).name, "Grüezi_.._Welt 2026-09-27 21-30-05 c1.2.1.WAV")
+        self.assertEqual(self.take(e, [samples24(10)]).name, "Grüezi_.._Welt, 27.09.2026 - 1.2.1.WAV")
 
 
 class SongInfo(unittest.TestCase):

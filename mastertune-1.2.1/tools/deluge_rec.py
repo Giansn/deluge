@@ -19,9 +19,10 @@ Controls (mouse or keys):
   VOL     up/down, mouse wheel or drag on the fader: the level of the take, the pads and the monitor, 0 dB
           (bit-exact) down to -30 dB; a double-click on the fader: back to 0 dB
   THRESH  + -, mouse wheel or drag on the knob: the ARM threshold, -60 to -12 dBFS
-The files are called by the song, the date and time and the firmware: "Rescue 3 2026-09-27 21-30-05 v17.WAV". The
-Deluge tells its song and firmware over USB MIDI port 3 (a firmware that sends SysEx 0x12, see DelugeInfo; the
-program only listens there); without that, the name is the date and time. Each file also carries them inside (RIFF
+The files are called by the song, the date and the firmware: "Rescue 3, 28.09.2026 - 1.2.1 v17.WAV", and " (2)",
+" (3)" ... for more takes that day. The Deluge tells its song and firmware over USB MIDI port 3 (a firmware that sends
+SysEx 0x12, see DelugeInfo; the program only listens there); without that, the name is the date and the time:
+"28.09.2026 00-17-26.WAV". Each file also carries them inside (RIFF
 INFO: title, date, software, and a comment with the full firmware and VOL). Default folder: Music/Deluge USB in the
 user's folder. The output, monitor on or off, the threshold and VOL are remembered.
 
@@ -47,6 +48,7 @@ Versions (the number is in the window's title and on the display at start, --ver
   3  the monitor with a choice of output, everything in English, the version number, the Deluge's rain as icon
   4  VOL, a fader against the red; a box around each control; the monitor without clicks (fades in and out)
   5  the files named by song, date and time and firmware, which the Deluge tells on MIDI port 3; RIFF INFO inside
+  6  the file name as "Rescue 3, 28.09.2026 - 1.2.1 v17" ((2), (3) ... for more takes that day)
 """
 import argparse
 import collections
@@ -66,7 +68,7 @@ from pathlib import Path
 
 import numpy as np
 
-VERSION = 5                     # One more with every change of the program, and a line under Versions above
+VERSION = 6                     # One more with every change of the program, and a line under Versions above
 RATE = 44100
 CHANNELS = 2
 FULL_SCALE = 2 ** 31            # The 24-bit samples arrive left-justified in int32
@@ -238,11 +240,14 @@ def clean_name(text, limit=80):
 
 
 def short_firmware(firmware):
-    """The firmware in a file name: "1.2.1-mastertune-v17-4e3d2075" becomes "v17", "...-v17-l2d-b3385d83" "v17-l2d"."""
+    """The firmware in a file name: "1.2.1-mastertune-v17-l2d-b3385d83" becomes "1.2.1 v17", the community's "c1.2.1"
+    "1.2.1", anything else stays (made safe). The whole name is in the file's INFO list."""
     if not firmware:
         return ""
-    m = re.search(r"-(v\d+(?:-[a-z0-9]+)*?)(?:-[0-9a-f]{8})?$", firmware)
-    return clean_name(m.group(1) if m else firmware, 24)
+    m = re.match(r"c?(\d+\.\d+\.\d+)(?:-mastertune-(v\d+))?", firmware)
+    if m:
+        return m.group(1) + (" " + m.group(2) if m.group(2) else "")
+    return clean_name(firmware, 24)
 
 
 def info_chunk(tags):
@@ -829,10 +834,14 @@ class Engine:
     # --- the writer thread
 
     def take_name(self, when):
-        """The song (if the Deluge told it), the date and time, the firmware in short: "Rescue 3 2026-09-27 21-30-05
-        v17"."""
-        stamp = time.strftime("%Y-%m-%d %H-%M-%S", time.localtime(when))
-        return " ".join(p for p in (clean_name(self.info.song or ""), stamp, short_firmware(self.info.firmware)) if p)
+        """"Rescue 3, 28.09.2026 - 1.2.1 v17": the song as the Deluge told it, the date, the firmware. A new song not
+        saved yet: "New song, ..."; nothing told (a firmware without it): the date and the time."""
+        date = time.strftime("%d.%m.%Y", time.localtime(when))
+        song, firmware = self.info.song, short_firmware(self.info.firmware)
+        if song is None and not firmware:
+            return f"{date} {time.strftime('%H-%M-%S', time.localtime(when))}"
+        name = f"{clean_name(song or '') or 'New song'}, {date}"
+        return f"{name} - {firmware}" if firmware else name
 
     def tags(self, when):
         song, firmware = self.info.song, self.info.firmware
