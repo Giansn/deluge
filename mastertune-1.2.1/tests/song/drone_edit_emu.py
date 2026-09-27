@@ -32,6 +32,7 @@ Playing (song_emu.Player, as drone_rec_emu.py), recording, with the pads and kno
   played back (bars 2 to 4): row 1's new note at its lane's 534 Hz and row 0's at 300 Hz (a note recorded doesn't set
   the lane to the note's MPE, 0 for a pad), row 6 at 1503 Hz where Shift + select turned it and at 2000 Hz in its
   second bar (the fine step recorded, the lane kept), row 5's moved note at its own lane's 4238 Hz
+  bar 6.3 row 0's pad pressed while its note plays and let go at 6.35: only selects it, the row still sounds at 6.6
   bar 3.95 row 6's pad pressed and let go after its note (selects it again); 4.25 REC on; 4.5 Shift + the upper gold
   knob: the lane deleted (as Shift and a gold knob delete automation while recording) and the row back at its own
   1000 Hz, at once and after (bars 6.5 and 7.5), rather than held at the lane's last value; 4.9 REC off
@@ -284,6 +285,10 @@ def recording(rig, player, out_dir):
         (4.25, record),
         (4.5, (rig.with_shift, rig.knob, rig.clip_view, 1, 1)),
         (4.9, record),
+        # Row 0's pad pressed while its note plays (bar 1 of the clip: song bars 6 to 7): only selects it, the row
+        # keeps sounding (mastertune-v16: its one gate isn't opened and closed by the silent audition)
+        (6.3, (rig.call, rig.pad, rig.clip_view, d.AUDITION_X, 0, 64)),
+        (6.35, (rig.call, rig.pad, rig.clip_view, d.AUDITION_X, 0, 0)),
     ]
     player.start()
     out = []
@@ -317,6 +322,7 @@ def recording(rig, player, out_dir):
         (4.75, 900, 1700, 1000.0, "row 6 at its own pitch once Shift + knob deleted its lane while recording"),
         (6.5, 900, 1700, 1000.0, "and played back without the lane"),
         (7.5, 900, 2200, 1000.0, "and in its second bar"),
+        (6.6, 250, 340, 200 * 2 ** (702 / 1200), "row 0 still sounding after its pad was pressed during its note"),
     ]
     for bar, lo, hi, hz, what in expect:
         got = hz_at(bar, lo, hi)
