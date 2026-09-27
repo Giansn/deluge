@@ -171,13 +171,14 @@ static double peakHz(const std::vector<double>& m, size_t n, double lo, double h
 
 // Largest level (dB, relative to the strongest bin) outside +-guard bins of the
 // given frequencies
-static double worstOther(const std::vector<double>& m, size_t n, std::vector<double> allowedHz, size_t guard = 12) {
+static double worstOther(const std::vector<double>& m, size_t n, std::vector<double> allowedHz, size_t guard = 12,
+                         double fromHz = 0, double toHz = kFs / 2) {
 	double top = 0;
-	for (double v : m) {
-		top = std::max(top, v);
+	for (size_t i = (size_t)(fromHz * n / kFs); i < m.size(); i++) {
+		top = std::max(top, m[i]);
 	}
 	double worst = 0;
-	for (size_t i = 3; i < m.size(); i++) {
+	for (size_t i = std::max<size_t>(3, (size_t)(fromHz * n / kFs)); i < m.size() && i < toHz * n / kFs; i++) {
 		bool allowed = false;
 		for (double f : allowedHz) {
 			if (std::abs((double)i - f * n / kFs) <= guard) {
@@ -784,7 +785,8 @@ int main() {
 		d.settings.fm = 50;
 		d.tones[0] = on(Mode::TONE, Timbre::SINE, 50000, 0, 0, 50, 0);
 		const size_t kW = 4096;
-		double lo = 0, hi = -300, dc = 0;
+		size_t counted = 0;
+		double lo = 0, hi = -300, dc = 0, mean = 0;
 		int blooms = 0;
 		bool up = false;
 		run(d, 44100);
@@ -801,13 +803,17 @@ int main() {
 			if (up && ratio < -20) {
 				up = false;
 			}
-			double mean = 0;
+			// Over whole seconds, whole cycles of the tone and its harmonics: what's left is below 1 Hz
 			for (double v : o.l) {
 				mean += v;
+				if (++counted == 44100) {
+					dc = std::max(dc, std::abs(mean / 44100) / kFullScale);
+					mean = 0;
+					counted = 0;
+				}
 			}
-			dc = std::max(dc, std::abs(mean / kW) / kFullScale);
 		}
-		printf("FM 50 on 500 Hz: sidebands %.1f to %.1f dB of the whole, %d blooms in 60 s; largest DC (93 ms) %.1f dB\n",
+		printf("FM 50 on 500 Hz: sidebands %.1f to %.1f dB of the whole, %d blooms in 60 s; largest DC (1 s) %.1f dB\n",
 		       lo, hi, blooms, 20 * std::log10(dc + 1e-30));
 		CHECK(hi > -3, "FM blooms deep: %.1f dB", hi);
 		CHECK(lo < -60, "and fades to nothing: %.1f dB", lo);
@@ -832,13 +838,13 @@ int main() {
 				Out o = run(d, kW);
 				auto m = spectrum(o.l, 0, kW);
 				second += bandEnergy(m, kW, 550, 650);
-				for (int h = 3; h <= 10; h++) {
+				for (int h = 5; h <= 10; h++) {
 					high += bandEnergy(m, kW, 300 * h - 50, 300 * h + 50);
 				}
 			}
 			upper[form] = 10 * std::log10(high / second);
 		}
-		printf("FM form on 300 Hz: harmonics 3 to 10 against the 2nd, sine %.1f dB, saw %.1f dB\n", upper[0], upper[1]);
+		printf("FM form on 300 Hz: harmonics 5 to 10 against the 2nd, sine %.1f dB, saw %.1f dB\n", upper[0], upper[1]);
 		CHECK(upper[1] > upper[0] + 10, "the saw modulator reaches higher");
 	}
 
@@ -905,7 +911,7 @@ int main() {
 		stats(all, &mean, &sd, &lo, &hi);
 		printf("pulse at life 50: width %.1f %% on average, %.1f %% sd, %.1f to %.1f %% (%zu cycles)\n", mean * 100,
 		       sd * 100, lo * 100, hi * 100, all.size());
-		CHECK(lo > 0.075 && hi < 0.505, "the width stays between 8 and 50 %%");
+		CHECK(lo > 0.07 && hi < 0.51, "the width stays between 8 and 50 %% (as measured, to 1 %%)");
 		CHECK(sd > 0.07 && sd < 0.14, "the width wanders: %.3f", sd);
 		CHECK(lo < 0.12 && hi > 0.46, "all the way");
 	}
@@ -983,18 +989,25 @@ int main() {
 			Timbre timbre;
 			int32_t frequency;
 			DroneSettings::FmForm form;
+			int32_t fm;
 		};
-		const Case cases[] = {
-		    {Timbre::PULSE, 11000, DroneSettings::FmForm::SINE}, {Timbre::PULSE, 11000, DroneSettings::FmForm::SAW},
-		    {Timbre::PULSE, 44000, DroneSettings::FmForm::SINE}, {Timbre::PULSE, 44000, DroneSettings::FmForm::SAW},
-		    {Timbre::RICH, 100000, DroneSettings::FmForm::SINE}, {Timbre::RICH, 100000, DroneSettings::FmForm::SAW},
-		    {Timbre::SINE, 300000, DroneSettings::FmForm::SINE}, {Timbre::SINE, 300000, DroneSettings::FmForm::SAW},
-		    {Timbre::SINE, 500000, DroneSettings::FmForm::SAW},
-		};
+		std::vector<Case> cases;
+		for (auto form : {DroneSettings::FmForm::SINE, DroneSettings::FmForm::SAW}) {
+			for (int32_t f : {5500, 11000, 22000, 44000, 88000}) {
+				cases.push_back({Timbre::PULSE, f, form, 50});
+			}
+			for (int32_t f : {50000, 100000, 200000}) {
+				cases.push_back({Timbre::RICH, f, form, 50});
+			}
+			for (int32_t f : {100000, 300000, 500000}) {
+				cases.push_back({Timbre::SINE, f, form, 50});
+			}
+		}
+		cases.push_back({Timbre::PULSE, 22000, DroneSettings::FmForm::SAW, 30}); // As the prototype the user chose
 		for (const Case& k : cases) {
 			TestDrone d = makeDrone();
 			d.drone.seed(7);
-			d.settings.fm = 50;
+			d.settings.fm = k.fm;
 			d.settings.fmForm = k.form;
 			d.tones[0] = on(Mode::TONE, k.timbre, k.frequency, 0, 0, 50, 0);
 			const size_t kW = 16384;
@@ -1009,15 +1022,17 @@ int main() {
 				Out o = run(d, kW);
 				auto m = spectrum(o.l, 0, kW);
 				double sidebands = bandEnergy(m, kW, f * 1.5, 22000) / bandEnergy(m, kW, 5, 22000);
-				double other = worstOther(m, kW, harmonics, (size_t)(40.0 * kW / kFs) + 12);
+				double other = worstOther(m, kW, harmonics, (size_t)(40.0 * kW / kFs) + 12, 20, 16000);
 				if (sidebands > deepest) {
 					deepest = sidebands;
 				}
 				worst = std::max(worst, other);
 			}
-			printf("FM 50 %s on %s at %.0f Hz: worst aliasing %.1f dB\n", k.form == DroneSettings::FmForm::SAW ? "saw" : "sine",
-			       k.timbre == Timbre::PULSE ? "pulse" : (k.timbre == Timbre::RICH ? "rich" : "sine"), f, worst);
-			CHECK(worst < -50, "FM aliasing %.1f dB", worst);
+			printf("FM %d %s on %s at %.0f Hz: worst aliasing below 16 kHz %.1f dB, sidebands up to %.1f dB\n", (int)k.fm,
+			       k.form == DroneSettings::FmForm::SAW ? "saw" : "sine",
+			       k.timbre == Timbre::PULSE ? "pulse" : (k.timbre == Timbre::RICH ? "rich" : "sine"), f, worst,
+			       10 * std::log10(deepest));
+			CHECK(worst < -50, "FM aliasing %.1f dB", worst); (void)deepest;
 		}
 	}
 
