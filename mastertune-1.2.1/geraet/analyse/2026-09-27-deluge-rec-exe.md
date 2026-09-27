@@ -18,7 +18,8 @@
 - **Nummerierung:** `VERSION` in `deluge_rec.py` ist eine ganze Zahl wie bei der Firmware (v16, v17). Jede Änderung am Programm zählt eins hoch und bekommt eine Zeile unter «Versions». Rückwirkend: v1 erster Build (`6dff8ff`), v2 geprüfter Stand (`e0bc3a7`), v3 Monitor, Englisch, Versionsnummer, Icon (`b20307b`).
 - **Wo sichtbar:** im Fenstertitel, beim Start auf dem Display («USB REC V3»), mit `--version`, im Selbsttest und in den Dateieigenschaften der .exe (Dateiversion 3.0.0.0).
 - **Releases:**
-  - Jede Version bekommt ein eigenes Release `deluge-rec-vN` mit `DelugeRec-vN.exe`. `deluge-rec` hat immer die neuste Version unter dem bisherigen Link.
+  - Die .exe heisst immer `DelugeRec-vN.exe`, im Build, im Artefakt und in beiden Releases.
+  - Jede Version bekommt ein eigenes Release `deluge-rec-vN`. `deluge-rec` (https://github.com/Giansn/deluge/releases/tag/deluge-rec) hat immer die neuste als einzige Datei. Der alte Direktlink auf `DelugeRec.exe` gilt nicht mehr, weil sich der Dateiname mit jeder Version ändert.
   - Eine veröffentlichte Version wird nie ersetzt. Ändern sich `deluge_rec.py` oder das Icon ohne neue Nummer, bricht der Build ab. Sonst baut und prüft er nur.
   - Das Tag `deluge-rec` bleibt auf dem ersten Build. Den genauen Stand zeigt das Tag `deluge-rec-vN`.
 - **Icon:** das Deluge-Logo (25 Quadrate in sieben Streifen) in den Farben der Pegelanzeige, von unten grün, gelb, rot, dazu der rote Aufnahmepunkt oben rechts. `tools/deluge_rec_icon.py` zeichnet es.
@@ -26,3 +27,4 @@
   - 32 Tests auf Windows ok.
   - Selbsttest der .exe: «version: v3», die Aufnahme mit 2 Kanälen, 24 Bit, 44'100 Hz und 194'040 Frames ok.
   - `DelugeRec.exe` mit 25'081'413 Bytes, SHA-256 `7fa4ecffbbb4f69b1e13bc4f52e43b5aa13f9c872db8f8be80fb4af7bf03a898`, im Release `deluge-rec-v3` (https://github.com/Giansn/deluge/releases/tag/deluge-rec-v3). Der bisherige Link liefert dieselbe Datei.
+- **Lauf 5** (https://github.com/Giansn/deluge/actions/runs/36347216300): alle Schritte grün. Der Build heisst jetzt `DelugeRec-v3.exe`. v3 war schon veröffentlicht und unverändert, deshalb gab es kein neues Release. `deluge-rec` hat die veröffentlichte Datei von v3 bekommen (gleiche SHA-256) und die alte `DelugeRec.exe` verloren.
