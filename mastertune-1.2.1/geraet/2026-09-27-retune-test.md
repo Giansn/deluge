@@ -65,6 +65,23 @@ Keine macOS-Begleitdateien und keine leeren Dateien. 10 Loop-Hinweise in `SAMPLE
 
 Nach der Korrektur mache ich die Umwandlung in einen neuen Ordner. Der Nutzer schreibt sie auf eine zweite Karte.
 
+## Umwandlung von `deluge topics`: Laptop eingefroren
+
+Lauf mit der korrigierten Fassung (`77e6d42`, `--tuning 432 --no-float`, Standard `--jobs` = 12 Kerne) ab 21:24.
+
+- Bis 5200 von 5658 Aufträgen lief alles. Dann fror der Laptop ein (15,7 GB RAM), der Nutzer musste ihn um 21:31 hart neu starten.
+- **Ursache: der Arbeitsspeicher.** Offen waren noch 464 Dateien mit 11,3 GB, darunter 22 über 100 MB. Die grössten: `PROJECTS/Fuego/Engeeinsle.WAV` 556 MB (etwa 35 min), `RESAMPLE/Simple Life 18/output_000.wav` 420 MB, `RESAMPLE/Elective Flow 24/jam nr2 elective flow.wav` 385 MB, `RESAMPLE/Idk Line Arranged 7/output_000.wav` 381 MB, weitere 250–290 MB.
+  - Ein Auftrag hält die ganze Datei im Speicher, mehrfach. Beim Dekodieren von 24 bit entsteht ein uint8-Feld, ein int32-Feld mit 4 Byte pro Byte der Datei, dann float64. Dazu kommen die soxr-Ausgabe, beim Kodieren round, clip und int64, und beim Längen-Erhalt die Rubber-Band-Felder.
+  - Das ergibt geschätzt 5–8 GB für eine Datei von 556 MB. 12 solche Aufträge gleichzeitig plus 3,4 GB Planung sprengen jeden Laptop.
+- Der Zielordner ist unvollständig (5202 Dateien, 10,6 GB, noch keine XML). Er bleibt liegen, bis der Nutzer entscheidet.
+
+**Bitte vor dem nächsten Lauf:**
+1. Grosse Dateien stückweise umrechnen (soxr `ResampleStream`, Rubber Band blockweise, Kodieren pro Block), damit ein Auftrag höchstens einige hundert MB braucht, egal wie lang die Datei ist.
+2. Gleichzeitige Aufträge nach dem freien Speicher begrenzen, nicht nur nach den Kernen.
+3. Wenn möglich: fortsetzen können (`--resume`: fertige Dateien überspringen), damit ein Abbruch nicht alles neu kostet.
+
+Bis dahin lasse ich die Umwandlung ruhen. Danach starte ich sie mit tiefer Prozess-Priorität und einem Wächter, der bei wenig freiem Speicher anhält.
+
 ## Für den Gerätetest
 
 - Eine Teil-Umwandlung darf nicht auf die Karte: Samples, die auch andere Songs benutzen, wären dort umgewandelt, deren Positionen aber nicht. Also immer die ganze Karte umwandeln und auf eine zweite Karte schreiben. Das Original bleibt unberührt.
