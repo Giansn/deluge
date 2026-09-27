@@ -1,4 +1,4 @@
-From 03ccaac540185daee7902fc19916e210a037c9b3 Mon Sep 17 00:00:00 2001
+From b3385d83e958a1f69062b50269d0958ac530fb35 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 26 Sep 2026 23:52:22 +0000
 Subject: [PATCH 3/3] L2 cache for data too (test version)
@@ -78,7 +78,7 @@ index 340fbc66..181860fe 100644
  void invalidate_range_all_caches(uintptr_t start, uintptr_t end);
  
 diff --git a/src/deluge/deluge.cpp b/src/deluge/deluge.cpp
-index 8259606d..18cc836f 100644
+index a4f3fee1..634d4d12 100644
 --- a/src/deluge/deluge.cpp
 +++ b/src/deluge/deluge.cpp
 @@ -17,6 +17,7 @@
@@ -89,7 +89,7 @@ index 8259606d..18cc836f 100644
  #include "RZA1/sdhi/inc/sdif.h"
  #include "definitions_cxx.hpp"
  #include "drivers/pic/pic.h"
-@@ -950,6 +951,7 @@ extern "C" int32_t deluge_main(void) {
+@@ -956,6 +957,7 @@ extern "C" int32_t deluge_main(void) {
  	uiTimerManager.setTimer(TimerName::GRAPHICS_ROUTINE, 50);
  
  	D_PRINTLN("going into main loop");

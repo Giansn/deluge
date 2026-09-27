@@ -1,0 +1,35 @@
+From 6a2402e012d1e44c905afca1793d506a695ac64d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 15:53:14 +0000
+Subject: [PATCH 62/64] CPU monitor: note that it reads a little low (a
+ comment)
+
+The calls of the audio routine that render nothing aren't counted as busy (fac1dfe7), but they take time: those that
+find too little due and those that only write out samples rendered ahead before. In the emulator (tests/sdload S2
+idle) about 2,200 such calls a second of a few hundred instructions each, ~0.3 % of the CPU the monitor doesn't show.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/processing/engines/cpu_stats_core.cpp | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/deluge/processing/engines/cpu_stats_core.cpp b/src/deluge/processing/engines/cpu_stats_core.cpp
+index e761f6cc..4977fa4d 100644
+--- a/src/deluge/processing/engines/cpu_stats_core.cpp
++++ b/src/deluge/processing/engines/cpu_stats_core.cpp
+@@ -134,7 +134,10 @@ void Collector::routineDone(uint32_t now, uint32_t sampleCounter, uint32_t voice
+ 	uint32_t samples = sampleCounter - routineSamplesStart_;
+ 	busyTotal_ += ticks; // Wraps, which is fine for differences
+ 	// mastertune-v17: a call that rendered nothing (nothing due yet, or less than the minimum window at light load, see
+-	// AudioEngine's kMinSamplesDue) isn't rendering: it doesn't count towards the load shown
++	// AudioEngine's kMinSamplesDue) isn't rendering: it doesn't count towards the load shown. Its time is still spent,
++	// though, and so are the calls that only write out samples rendered ahead before: the load shown reads a little low
++	// by those (a few hundred instructions each; in the emulator, tests/sdload S2 idle, ~2,200 such calls a second,
++	// ~0.3 % of the CPU)
+ 	if (samples != 0) {
+ 		acc_.busyTicks += ticks;
+ 	}
+-- 
+2.43.0
+

@@ -1,0 +1,165 @@
+From d9884ec42b87b2698800d680a13723dc685e0318 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 17:08:04 +0000
+Subject: [PATCH 68/74] Song browser: the audio serviced while its window is
+ sorted; fewer reads stepping up
+
+With a song playing, scrolling the song browser on the emulator (a typical
+card, 1 ms per command; a folder of 1,200 songs with a group of 120 versions;
+20 ms between steps) left the audio routine waiting up to 1.2 ms (v16:
+0.4 ms), the DMA up to 102 samples behind (v16: 57), over 64 samples 480
+times (v16: never): every cull while the folder is read sorts the window,
+100 file items instead of 20, 1 ms of strcmpspecial() without the audio
+routine. The sort now runs it before each partition of 24 items or more,
+only for a window larger than the other browsers' (the song browser's);
+stepping over a folded group's versions runs it every 16 steps.
+
+Stepping up read the folder twice every 3 steps: the read reaching back
+from the window's first item ended right after the selection, so the rows
+below it weren't in the window and were read again, which left the
+selection near the window's start again. That read now ends with the rows
+below the selection: 14 reads for 600 steps (was 201; v16: 180).
+
+Now across the group and back: 6 reads (v16: 68), the audio routine
+waiting at most 390 us (v16: 396), the DMA at most 39 samples behind (v16:
+57); across 300 files and back: 14 reads, 320 us, 48 samples (v16: 180,
+382 us, 55); no underruns in either.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/ui/browser/browser.cpp         |  4 +++-
+ src/deluge/gui/ui/load/load_song_ui.cpp       | 19 ++++++++++++++-----
+ .../util/container/array/c_string_array.cpp   | 14 +++++++++++++-
+ .../util/container/array/c_string_array.h     |  4 +++-
+ 4 files changed, 33 insertions(+), 8 deletions(-)
+
+diff --git a/src/deluge/gui/ui/browser/browser.cpp b/src/deluge/gui/ui/browser/browser.cpp
+index 4b98cdeb..02511063 100644
+--- a/src/deluge/gui/ui/browser/browser.cpp
++++ b/src/deluge/gui/ui/browser/browser.cpp
+@@ -1713,7 +1713,9 @@ void Browser::sortFileItems() {
+ 	shouldInterpretNoteNames = shouldInterpretNoteNamesForThisBrowser;
+ 	octaveStartsFromA = false;
+ 
+-	fileItems.sortForStrings();
++	// mastertune: a window larger than the other browsers' (the song browser's) takes longer to sort than the audio
++	// buffer lasts, at every cull while the folder is read: the audio routine runs during the sort
++	fileItems.sortForStrings(fileItemsWindow > FILE_ITEMS_MAX_NUM_ELEMENTS);
+ 
+ 	// If we're just wanting to look to one side or the other of a given filename, then delete everything in the other
+ 	// direction.
+diff --git a/src/deluge/gui/ui/load/load_song_ui.cpp b/src/deluge/gui/ui/load/load_song_ui.cpp
+index bd218e10..ca2044ba 100644
+--- a/src/deluge/gui/ui/load/load_song_ui.cpp
++++ b/src/deluge/gui/ui/load/load_song_ui.cpp
+@@ -63,6 +63,9 @@ namespace {
+ // mastertune: versions of a song grouped under its name (LoadSongUI::openGroup)
+ 
+ constexpr int32_t kMaxGroupSteps = 4096; // Only against a loop that doesn't end; a group can have any number
++// Steps over a folded group's versions between calls of the audio routine (while the folder is read, emptyFileItems()
++// calls it every 64 items)
++constexpr int32_t kStepsBetweenAudio = 16;
+ // The song browser's window of file items (Browser::fileItemsWindow; 20 in the other browsers). A folded group takes
+ // one row but all its versions' items, and the rows around it come from the window: 100 shows them for a group of up to
+ // about 40 versions (a larger one works the same, only a row next to it may be missing)
+@@ -843,6 +846,9 @@ void LoadSongUI::selectEncoderAction(int8_t offset) {
+ 				before.set(&selectedItem()->filename);
+ 				LoadUI::selectEncoderAction(direction);
+ 				skipped++;
++				if (!(skipped % kStepsBetweenAudio)) {
++					AudioEngine::routineWithClusterLoading(); // Many versions: as while the folder is read
++				}
+ 				if (selectionIs(before) || selectionIs(start)) {
+ 					break; // At the end (without wrapping), or all the way round
+ 				}
+@@ -1137,10 +1143,11 @@ void LoadSongUI::fixScrollPos(bool fillFromAbove) {
+ }
+ 
+ // The folder read again: a new window of file items (fileItemsWindow at most, about half of it at least, where the
+-// folder has them). towards 0: around the selected file; -1: reaching as far back as it can from the file after anchor
+-// (an index in the window); 1: as far on as it can from the file before it. Those neighbours stay for isHiddenVersion()
+-// and isFoldedHeader(): stepping over a group's versions takes fewer reads, and the rows get the files they show. The
+-// selected file and the top row stay, found by name (the top row as near as it can be if it's no longer in the window)
++// folder has them). towards 0: around the selected file; -1: reaching as far back as it can from kNumRows files after
++// anchor (an index in the window); 1: as far on as it can from the file before it. Those neighbours stay for
++// isHiddenVersion() and isFoldedHeader(): stepping over a group's versions takes fewer reads, and the rows get the
++// files they show. The selected file and the top row stay, found by name (the top row as near as it can be if it's no
++// longer in the window)
+ void LoadSongUI::readWindow(int32_t anchor, int32_t towards) {
+ 	FileItem* item = selectedItem();
+ 	if (!item) {
+@@ -1151,7 +1158,9 @@ void LoadSongUI::readWindow(int32_t anchor, int32_t towards) {
+ 	int32_t searchDirection = CATALOG_SEARCH_BOTH;
+ 	bool near = std::abs(fileIndexSelected - anchor) <= kWindowReach; // The selection stays in the window
+ 	if (towards < 0 && near && anchor + 2 < numItems) {
+-		limit = anchor + 2; // The window: the files before this one
++		// The window: the files before this one, which ends with the rows below anchor's (stepping up, anchor is the
++		// top row: its rows stay in the window, not read again for them)
++		limit = std::min<int32_t>(anchor + kNumRows + 1, numItems - 1);
+ 		searchDirection = CATALOG_SEARCH_LEFT;
+ 	}
+ 	else if (towards > 0 && near && anchor >= 2) {
+diff --git a/src/deluge/util/container/array/c_string_array.cpp b/src/deluge/util/container/array/c_string_array.cpp
+index 1dc46d24..14313dbc 100644
+--- a/src/deluge/util/container/array/c_string_array.cpp
++++ b/src/deluge/util/container/array/c_string_array.cpp
+@@ -24,6 +24,13 @@
+ 
+ int32_t workCount;
+ 
++namespace {
++bool sortServicesAudio = false; // sortForStrings(true)
++// With sortServicesAudio, ranges from this many elements on are partitioned right after the audio routine: between its
++// calls a partition of the whole array or the sort of a range below this (~150 comparisons, strcmpspecial())
++constexpr int32_t kSortElementsBetweenAudio = 24;
++} // namespace
++
+ // This uses Hoare's partitioning scheme, which has the advantage that it won't go slow if the elements are already
+ // sorted - which they often will be as filenames read off an SD card. You must set shouldInterpretNoteNames and
+ // octaveStartsFromA before calling this.
+@@ -54,6 +61,9 @@ int32_t CStringArray::partitionForStrings(int32_t low, int32_t high) {
+ // You must set shouldInterpretNoteNames and octaveStartsFromA before calling this.
+ void CStringArray::quickSortForStrings(int32_t low, int32_t high) {
+ 	while (low < high) {
++		if (sortServicesAudio && high - low >= kSortElementsBetweenAudio) {
++			AudioEngine::routineWithClusterLoading();
++		}
+ 		/* pi is partitioning index, arr[p] is now
+ 		at right place */
+ 		int32_t pi = partitionForStrings(low, high);
+@@ -78,13 +88,15 @@ void CStringArray::quickSortForStrings(int32_t low, int32_t high) {
+ }
+ 
+ // You must set shouldInterpretNoteNames and octaveStartsFromA before calling this.
+-void CStringArray::sortForStrings() {
++void CStringArray::sortForStrings(bool serviceAudio) {
+ 	if (numElements < 2) {
+ 		return;
+ 	}
+ 
+ 	workCount = 0;
++	sortServicesAudio = serviceAudio;
+ 	quickSortForStrings(0, numElements - 1);
++	sortServicesAudio = false;
+ }
+ 
+ // Array must be sorted before you call this.
+diff --git a/src/deluge/util/container/array/c_string_array.h b/src/deluge/util/container/array/c_string_array.h
+index faa5a0b7..9e38f44f 100644
+--- a/src/deluge/util/container/array/c_string_array.h
++++ b/src/deluge/util/container/array/c_string_array.h
+@@ -23,7 +23,9 @@
+ class CStringArray : public ResizeableArray {
+ public:
+ 	CStringArray(int32_t newElementSize) : ResizeableArray(newElementSize) {}
+-	void sortForStrings();
++	// mastertune: serviceAudio runs the audio routine (with cluster loading) before each partition of a larger range,
++	// for a sort that would take longer than the audio buffer lasts (the song browser's window of file items)
++	void sortForStrings(bool serviceAudio = false);
+ 	int32_t search(char const* searchString, bool* foundExact = NULL);
+ 
+ private:
+-- 
+2.43.0
+

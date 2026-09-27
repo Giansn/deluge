@@ -1,0 +1,44 @@
+From 0961445262e352f4c9a838d9b74557d9bcf512e8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 15:53:04 +0000
+Subject: [PATCH 61/64] Audio: routineWithClusterLoading()'s bypassCulling only
+ for its own render
+
+routineWithClusterLoading() sets bypassCulling before it calls routine(), and routine_() clears it at the end of a
+render. With the minimum window (ffdebd79) most of these calls render nothing at light load (less than the window
+due), and the flag stayed set, so the next render skipped culling: while clusters load, culling was mostly off.
+
+Now the flag goes back to what it was when that call rendered nothing: a flag set before it for the next render (a
+song swap, a sample browser action, ...) still applies, as upstream meant; only this call's own doesn't leak. The same
+for the calls that find nothing due, which left it set before the minimum window too.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/processing/engines/audio_engine.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index 07663bfa..c8e4f556 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -417,9 +417,16 @@ void routineWithClusterLoading(bool mayProcessUserActionsBetween) {
+ 	routineBeenCalled = false;
+ 	audioFileManager.loadAnyEnqueuedClusters(128, mayProcessUserActionsBetween);
+ 	if (!routineBeenCalled) {
++		// mastertune-v17: for this call's render only. If it rendered nothing (nothing due yet, or less than the
++		// minimum window: most calls at light load), the flag doesn't stay set for the next render, which would then
++		// skip culling; one set before (a song swap, ...) still applies to it
++		bool bypassCullingBefore = bypassCulling;
+ 		bypassCulling = true; // yolo?
+ 		logAction("from routineWithClusterLoading()");
+ 		routine(); // -----------------------------------
++		if (bypassCulling) {
++			bypassCulling = bypassCullingBefore; // Nothing rendered (routine_() clears it after a render)
++		}
+ 	}
+ }
+ 
+-- 
+2.43.0
+

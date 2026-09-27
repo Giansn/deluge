@@ -1,0 +1,79 @@
+From dfc9e18ecf16e6aae96e6e2c158bcdbd6c01897c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 17:21:22 +0000
+Subject: [PATCH 70/74] CPU monitor shortcut: keeps the startup song, so "Last
+ saved" still opens the song last saved
+
+The shortcut saved CommunityFeatures.XML with the song open as startupSong. In the startup song mode "Last saved" a
+song loaded but not saved (or a new one) then became the one the next boot opens (or, never saved, DEFAULT.XML), by a
+single press, also while performing. RuntimeFeatureSettings::writeSettingsToFile() takes updateStartupSong (default
+true: a song loaded or saved, the Settings menu left, as before) and keeps the startup song in memory as last written;
+the shortcut passes false and writes it back unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/model/settings/runtime_feature_settings.cpp | 8 ++++++--
+ src/deluge/model/settings/runtime_feature_settings.h   | 5 ++++-
+ src/deluge/processing/engines/cpu_stats.cpp            | 3 ++-
+ 3 files changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/src/deluge/model/settings/runtime_feature_settings.cpp b/src/deluge/model/settings/runtime_feature_settings.cpp
+index 27ca854f..f9315a3e 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.cpp
++++ b/src/deluge/model/settings/runtime_feature_settings.cpp
+@@ -283,7 +283,11 @@ void RuntimeFeatureSettings::readSettingsFromFile(StorageManager& bdsm) {
+ 	bdsm.closeFile();
+ }
+ 
+-void RuntimeFeatureSettings::writeSettingsToFile(StorageManager& bdsm) {
++void RuntimeFeatureSettings::writeSettingsToFile(StorageManager& bdsm, bool updateStartupSong) {
++	if (updateStartupSong) {
++		String path = currentSong->getSongFullPath();
++		startupSong.set(&path);
++	}
+ 	f_unlink(RUNTIME_FEATURE_SETTINGS_FILE); // May give error, but no real consequence from that.
+ 
+ 	Error error = bdsm.createXMLFile(RUNTIME_FEATURE_SETTINGS_FILE, smSerializer, true);
+@@ -294,7 +298,7 @@ void RuntimeFeatureSettings::writeSettingsToFile(StorageManager& bdsm) {
+ 	writer.writeOpeningTagBeginning(TAG_RUNTIME_FEATURE_SETTINGS);
+ 	writer.writeFirmwareVersion();
+ 	writer.writeEarliestCompatibleFirmwareVersion("4.1.3");
+-	writer.writeAttribute("startupSong", currentSong->getSongFullPath().get());
++	writer.writeAttribute("startupSong", startupSong.get());
+ 	writer.writeOpeningTagEnd();
+ 
+ 	for (auto& setting : settings) {
+diff --git a/src/deluge/model/settings/runtime_feature_settings.h b/src/deluge/model/settings/runtime_feature_settings.h
+index a329d818..ec9fc8dc 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.h
++++ b/src/deluge/model/settings/runtime_feature_settings.h
+@@ -110,7 +110,10 @@ public:
+ 	inline const char* getStartupSong() { return startupSong.get(); }
+ 	void init();
+ 	void readSettingsFromFile(StorageManager& bdsm);
+-	void writeSettingsToFile(StorageManager& bdsm);
++	/// updateStartupSong: the current song becomes the startup song (a song loaded or saved, the Settings menu left);
++	/// false keeps the one read or last written (the CPU monitor's shortcut, which mustn't make an unsaved song the
++	/// one the Deluge starts with in the startup song mode "Last saved")
++	void writeSettingsToFile(StorageManager& bdsm, bool updateStartupSong = true);
+ 
+ protected:
+ 	std::array<RuntimeFeatureSetting, RuntimeFeatureSettingType::MaxElement> settings = {};
+diff --git a/src/deluge/processing/engines/cpu_stats.cpp b/src/deluge/processing/engines/cpu_stats.cpp
+index 46d7fc32..0dec9d5e 100644
+--- a/src/deluge/processing/engines/cpu_stats.cpp
++++ b/src/deluge/processing/engines/cpu_stats.cpp
+@@ -49,7 +49,8 @@ void saveIfPending() {
+ 	// Not while the card is busy (a file being read or written), as the menu's USB audio setting
+ 	if (savePending && !sdRoutineLock) {
+ 		savePending = false;
+-		runtimeFeatureSettings.writeSettingsToFile(storageManager);
++		// The startup song as it was: a song loaded but not saved mustn't become the one of "Last saved"
++		runtimeFeatureSettings.writeSettingsToFile(storageManager, false);
+ 	}
+ }
+ } // namespace
+-- 
+2.43.0
+

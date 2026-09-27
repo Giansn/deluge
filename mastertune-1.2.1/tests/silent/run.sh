@@ -1,8 +1,9 @@
 #!/bin/sh
 # Silent kits and audio tracks (mastertune-v17): silent_emu.py's song (tracks that play, stop with long tails, are
 # changed while silent and start again; see its docstring) on two builds, compared sample for sample. The build
-# without the early return (the reference) and the one with it must give the same output; the latter's result.json
-# says how often each track took the early return.
+# without the early return (the reference) and the one with it must give the same output and the same arpeggiator
+# notes (the kit arp, a MIDI and a gate row's arps; each must step 8 times or more); the latter's result.json says how
+# often each track took the early return.
 #
 # Usage: ./run.sh <reference tree | deluge.elf> <tree | deluge.elf> [out dir]
 #   With a tree, it takes build/Release/deluge.elf and the tree's toolchain (gdb); with an ELF, TOOLS (the toolchain
@@ -13,6 +14,9 @@
 #   1,715, DRN 4,107). It catches what the early return must keep: without the sidechain in it, the output differs
 #   from bar 7.5 on (LREV starting again, 266 samples); without the filter mode check (FilterSet::keepsModes()),
 #   LREV's filter, turned off and on again while silent, misses its reset (44,098 samples).
+#   With KARP and KMIDI (the arps across silence), mastertune-v16 (c610417f) against mastertune-v17: the same output
+#   and the same 116 arp notes (kit arp 20, MIDI row 64, gate row 32, in the same windows); 135,565 -> 133,143
+#   instructions per 128 samples (-1.8 %); 26,037 early returns (KARP 4,270 between its steps, KMIDI 5,598).
 # Needs: python3 with unicorn 2 and numpy, a C compiler (for ../song/blockcount.c).
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -49,12 +53,22 @@ print(f"instructions per 128 samples: ref {r['instructions_per_128']:,.0f}, new 
 if n["early_return_symbol"]:
     print(f"new: early returns {n['early_returns']:,} "
           f"({', '.join(f'{k} {v:,}' for k, v in n['early_returns_by_track'].items())})")
+arps = {}
+for pos, kind, what in n["arp_notes"]:
+    arps[kind] = arps.get(kind, 0) + 1
+print("arp notes: " + ", ".join(f"{k} {v}" for k, v in arps.items()))
+arp_ok = r["arp_notes"] == n["arp_notes"] and all(arps.get(k, 0) >= 8 for k in ("kit arp", "MIDI row", "gate row"))
+if not arp_ok:
+    print(f"[FAIL] the arpeggiators' notes: ref {len(r['arp_notes'])}, new {len(n['arp_notes'])}, "
+          f"{'the same' if r['arp_notes'] == n['arp_notes'] else 'different'} (each arp must step 8 times or more)")
 peak = float(np.abs(a).max())
 print(f"peak {peak:.3f} of full scale" + (" (clipped: the 16 bits hide differences, measured.npy doesn't)"
                                           if peak >= 1 else ""))
 if a.shape == b.shape and np.array_equal(a, b) and wav[0] == wav[1]:
     print(f"[ok] the same output, sample for sample ({len(a):,} samples)")
-    sys.exit(0)
+    if arp_ok:
+        print(f"[ok] the same arpeggiator notes, in the same windows ({len(n['arp_notes'])})")
+    sys.exit(0 if arp_ok else 1)
 m = min(len(a), len(b))
 diff = np.nonzero((a[:m] != b[:m]).any(axis=1))[0]
 first = int(diff[0]) if len(diff) else m

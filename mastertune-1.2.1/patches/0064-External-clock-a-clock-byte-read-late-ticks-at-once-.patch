@@ -1,0 +1,76 @@
+From 5363ef006bcb73187731413bd2f3bb3dcbd1d495 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 15:53:45 +0000
+Subject: [PATCH 64/64] External clock: a clock byte read late ticks at once,
+ not 2.9 ms late, and samples rendered ahead don't delay it
+
+inputTick() placed the tick (time - i2sTXBufferPos) / 8 + 40 samples ahead, modulo the output buffer's 128: 168
+samples after the byte arrived, as long as the byte is read at the start of the audio routine, with nothing rendered
+ahead, and arrived at most 40 samples before the buffer was last filled (the non-task-manager build reads MIDI there).
+With the task manager the playback routine reads it in its own task: a byte that arrived longer before (it waited more
+than the samples due plus 40) wrapped to ~128 samples late, and the samples rendered ahead made every tick that much
+later. v17 made both more likely (the playback routine every 16 samples, e7eb4e34; renders of 60 samples, ffdebd79).
+
+Now an arrival past the DMA's current place counts as before the buffer was last filled, the samples rendered ahead
+come off, and a byte too late for its place ticks at once. Exact for a byte read within 128 samples of its arrival.
+
+tests/sdload clockin (new: 120 BPM clock bytes through the DIN MIDI input with the RZ/A1's timing capture, S4's song,
+typical card), tick placement error |latency - 168| in samples, mean / max / ticks over 64 late, of 190:
+  v16            0.5 / 4.6 / 0,    with UI 1.9 / 127.4 / 2
+  v17 before     3.2 / 127.4 / 2,  with UI 2.2 / 127.4 / 1
+  now            1.4 / 14.1 / 0,   with UI 1.5 / 21.6 / 0
+The rest: bytes read so late (up to 66 samples) that, with up to 29 samples rendered ahead, their place had gone.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/playback/playback_handler.cpp | 24 +++++++++++++++++++++---
+ 1 file changed, 21 insertions(+), 3 deletions(-)
+
+diff --git a/src/deluge/playback/playback_handler.cpp b/src/deluge/playback/playback_handler.cpp
+index fa946422..9c58f89d 100644
+--- a/src/deluge/playback/playback_handler.cpp
++++ b/src/deluge/playback/playback_handler.cpp
+@@ -81,6 +81,7 @@
+ extern "C" {
+ #include "RZA1/gpio/gpio.h"
+ #include "RZA1/uart/sio_char.h"
++#include "drivers/ssi/ssi.h"
+ }
+ 
+ PlaybackHandler playbackHandler{};
+@@ -1740,11 +1741,28 @@ void PlaybackHandler::inputTick(bool fromTriggerClock, uint32_t time) {
+ 
+ 	// The 40 here is a fine-tuned amount to stop everything wrapping wrong when CPU load heavy. 28 to 98 seemed to work
+ 	// correctly
++	// mastertune-v17: the tick plays 168 samples (these 40 and the output buffer's 128) after the byte arrived; `time`
++	// is where the output DMA read then. Upstream took that relative to where the next rendered sample goes into the
++	// buffer (i2sTXBufferPos), + 40, modulo the buffer's 128 samples: right as long as the byte is read at the start of
++	// the audio routine, with nothing rendered ahead, and arrived at most 40 samples before the buffer was last filled.
++	// With the task manager it's read in the playback routine's own task, any time: a byte that arrived longer before
++	// wrapped to ~128 samples (2.9 ms) late, and the samples rendered ahead (up to ~28 with the minimum window) made
++	// the tick that much later. Now an arrival past the DMA's current place is taken as before the buffer was last
++	// filled (the byte waited longer than the samples due), the samples rendered ahead come off, and a byte too late
++	// for its place ticks at once. Exact for a byte read within 128 samples of its arrival (the DMA's place can't tell
++	// longer).
+ 	if (time) {
+-		timeTilInputTick =
+-		    (((uint32_t)(time - (uint32_t)AudioEngine::i2sTXBufferPos) >> (2 + NUM_MONO_OUTPUT_CHANNELS_MAGNITUDE))
+-		     + 40)
++		uint32_t writePos = (uint32_t)AudioEngine::i2sTXBufferPos;
++		int32_t arrived =
++		    ((uint32_t)(time - writePos) >> (2 + NUM_MONO_OUTPUT_CHANNELS_MAGNITUDE)) & (SSI_TX_BUFFER_NUM_SAMPLES - 1);
++		int32_t due =
++		    ((uint32_t)((uint32_t)getTxBufferCurrentPlace() - writePos) >> (2 + NUM_MONO_OUTPUT_CHANNELS_MAGNITUDE))
+ 		    & (SSI_TX_BUFFER_NUM_SAMPLES - 1);
++		if (arrived > due) {
++			arrived -= SSI_TX_BUFFER_NUM_SAMPLES;
++		}
++		int32_t til = arrived + 40 - AudioEngine::getNumSamplesLeftToOutputFromPreviousRender();
++		timeTilInputTick = std::max<int32_t>(til, 0);
+ 	}
+ 	else {
+ 		timeTilInputTick = 0;
+-- 
+2.43.0
+

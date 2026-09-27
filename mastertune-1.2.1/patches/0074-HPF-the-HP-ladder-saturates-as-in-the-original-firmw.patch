@@ -1,0 +1,417 @@
+From 2cb5e31be3aacfcf4e2b2b98e486a8123adc5d95 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 17:47:35 +0000
+Subject: [PATCH 74/74] HPF: the HP ladder saturates as in the original
+ firmware again, so its self-oscillation no longer drowns out the music
+
+A user on v16 heard a painful high tone with the song's HPF on with resonance while turning the song's LPF. From about
+70 % resonance the HP ladder oscillates on its own, a sine at its cutoff (2.2 kHz with the knob at 30), whatever comes
+in, at about the level where its tanh limits. The LPF after it (H2L, the default route) hides it while the LPF is below
+it and lets it through as the LPF opens, so it seems to come from turning the LPF.
+
+That level is too high since community #336 (04faf186, "Morphable and Driveable and Parallel filters"):
+- original firmware (fc76a9cd, Synthstrom's code): voices dsp/filter/filter_set.cpp:58 HPF_LONG_SATURATION 3, used in
+  renderHPFLong() at :108/:111/:115; the song's, a kit's and an audio track's filters
+  model/global_effectable/global_effectable.cpp:366-367 renderHPF(..., 2), i.e. filter_set.cpp:42/:47 "2 +
+  extraSaturation" = 4 (community #304 still had 3 / 4)
+- 1.2.1 to v16: dsp/filter/hpladder.cpp:101 getTanHAntialiased(a, ..., 1), :106 getTanHUnknown(a, 2), :104 the working
+  value with << 2, for every context. Community main (47b1d92b, 2026-09-25) still has these values, same lines.
+So the ladder limits 2 to 3 bits higher: its whistle is 12 dB (voices) to 18 dB (song, kit, track) louder than in the
+original firmware. In the real firmware in the emulator (tests/song's song, song view, HPF knob 30, resonance 40): the
+whistle at -7.3 dBFS against the music's -33.6 (peaks at 2.3 x full scale, clipped); now -24.5 dBFS, peaks 0.39.
+
+Now FilterSet::renderLong() / renderLongStereo() take the HP ladder's saturation amount, HpLadderFilter::
+kSaturationVoice (3, the default: Voice) or kSaturationGlobal (4: GlobalEffectable::processFilters(), the song, kits,
+audio tracks), and the ladder's loops use it as a template constant (no cost per sample; +4.8 kB of code). The
+antialiased tanh's last working value is written with the same shift as that amount (1.2.1: << 2 with an amount of 1).
+The amount sits in the padding after an unused bool, so a voice's FilterSet stays the same size.
+
+What changes: only the HP ladder above ~39 % resonance (hpfProcessedResonance > 750000000; the antialiased tanh from
+~50 %). Below that, bit-exact; the SVF HPF modes and all LPFs unchanged. Above it the ladder limits earlier: loud
+peaks are softened a little sooner, and the self-oscillation is as loud as in the original firmware (the song's
+whistle ~17 dB quieter, a voice's ~12 dB), no longer far above the music.
+
+Tests (delivery repo, tests/filters/run.sh, ARM=1 on the Cortex-A9 in the emulator; in run_all.sh): the song's, a
+kit's, a synth's and a kit row's filters, every HPF mode, route and LPF mode, resonance 25-50, the LPF turned in
+0.25 s and 2 s: v16 fails (HP ladder up to +12.7 dB against the music on the song's filters, +16.1 synth, +16.2 kit
+row), this passes (HP ladder at most +4.3 dB, SVF +5.5 as in v16). Turning the LPF adds nothing above 8 kHz in either.
+Filter bench (tests/bench/filters, ARM): every case identical to v16 except "HP ladder res60" (mono, stereo) and the
+random cases (they include high HPF resonance). Song test (EMU_OPTS="--init-sounds --seed 1" tests/song/run.sh):
+demand 87a7df292189e341, digital 4473b3155dcfa0e8, unchanged (its HPFs have no resonance).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter_set.cpp          | 23 ++++---
+ src/deluge/dsp/filter/filter_set.h            | 12 ++--
+ src/deluge/dsp/filter/hpladder.cpp            | 67 ++++++++++++-------
+ src/deluge/dsp/filter/hpladder.h              | 22 ++++--
+ .../global_effectable/global_effectable.cpp   |  5 +-
+ 5 files changed, 86 insertions(+), 43 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/filter_set.cpp b/src/deluge/dsp/filter/filter_set.cpp
+index b8b6d165..2216a172 100644
+--- a/src/deluge/dsp/filter/filter_set.cpp
++++ b/src/deluge/dsp/filter/filter_set.cpp
+@@ -39,9 +39,11 @@ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate ster
+ 	}
+ }
+ 
+-[[gnu::hot]] void FilterSet::renderHPFLong(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
++[[gnu::hot]] void FilterSet::renderHPFLong(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement,
++                                           int32_t hpfSaturation) {
+ 	if (HPFOn) {
+ 		if (hpfMode_ == FilterMode::HPLADDER) {
++			hpfilter.ladder.setSaturation(hpfSaturation);
+ 			hpfilter.ladder.filterMono(startSample, endSample, sampleIncrement);
+ 		}
+ 		else if ((hpfMode_ == FilterMode::SVF_BAND) || (hpfMode_ == FilterMode::SVF_NOTCH)) {
+@@ -49,9 +51,10 @@ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate ster
+ 		}
+ 	}
+ }
+-[[gnu::hot]] void FilterSet::renderHPFLongStereo(q31_t* startSample, q31_t* endSample) {
++[[gnu::hot]] void FilterSet::renderHPFLongStereo(q31_t* startSample, q31_t* endSample, int32_t hpfSaturation) {
+ 	if (HPFOn) {
+ 		if (hpfMode_ == FilterMode::HPLADDER) {
++			hpfilter.ladder.setSaturation(hpfSaturation);
+ 			hpfilter.ladder.filterStereo(startSample, endSample);
+ 		}
+ 		else if ((hpfMode_ == FilterMode::SVF_BAND) || (hpfMode_ == FilterMode::SVF_NOTCH)) {
+@@ -84,18 +87,18 @@ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate ster
+ 	}
+ }
+ [[gnu::hot]] void FilterSet::renderLong(q31_t* startSample, q31_t* endSample, int32_t numSamples,
+-                                        int32_t sampleIncrememt) {
++                                        int32_t sampleIncrememt, int32_t hpfSaturation) {
+ 	switch (routing_) {
+ 	case FilterRoute::HIGH_TO_LOW:
+ 
+-		renderHPFLong(startSample, endSample, sampleIncrememt);
++		renderHPFLong(startSample, endSample, sampleIncrememt, hpfSaturation);
+ 		renderLPFLong(startSample, endSample, sampleIncrememt);
+ 
+ 		break;
+ 	case FilterRoute::LOW_TO_HIGH:
+ 
+ 		renderLPFLong(startSample, endSample, sampleIncrememt);
+-		renderHPFLong(startSample, endSample, sampleIncrememt);
++		renderHPFLong(startSample, endSample, sampleIncrememt, hpfSaturation);
+ 
+ 		break;
+ 
+@@ -105,7 +108,7 @@ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate ster
+ 		int32_t length = endSample - startSample;
+ 		memcpy(tempRenderBuffer, startSample, length * sizeof(q31_t));
+ 
+-		renderHPFLong(tempRenderBuffer, tempRenderBuffer + length, sampleIncrememt);
++		renderHPFLong(tempRenderBuffer, tempRenderBuffer + length, sampleIncrememt, hpfSaturation);
+ 		renderLPFLong(startSample, endSample, sampleIncrememt);
+ 
+ 		addTempRenderBuffer(startSample, length);
+@@ -113,12 +116,12 @@ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate ster
+ 	}
+ }
+ // expects to receive an interleaved stereo stream
+-[[gnu::hot]] void FilterSet::renderLongStereo(q31_t* startSample, q31_t* endSample) {
++[[gnu::hot]] void FilterSet::renderLongStereo(q31_t* startSample, q31_t* endSample, int32_t hpfSaturation) {
+ 	// Do HPF, if it's on
+ 	switch (routing_) {
+ 	case FilterRoute::HIGH_TO_LOW:
+ 
+-		renderHPFLongStereo(startSample, endSample);
++		renderHPFLongStereo(startSample, endSample, hpfSaturation);
+ 
+ 		renderLPFLongStereo(startSample, endSample);
+ 
+@@ -127,7 +130,7 @@ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate ster
+ 
+ 		renderLPFLongStereo(startSample, endSample);
+ 
+-		renderHPFLongStereo(startSample, endSample);
++		renderHPFLongStereo(startSample, endSample, hpfSaturation);
+ 
+ 		break;
+ 	case FilterRoute::PARALLEL:
+@@ -135,7 +138,7 @@ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate ster
+ 
+ 		memcpy(tempRenderBuffer, startSample, length * sizeof(q31_t));
+ 
+-		renderHPFLongStereo(tempRenderBuffer, tempRenderBuffer + length);
++		renderHPFLongStereo(tempRenderBuffer, tempRenderBuffer + length, hpfSaturation);
+ 
+ 		renderLPFLongStereo(startSample, endSample);
+ 
+diff --git a/src/deluge/dsp/filter/filter_set.h b/src/deluge/dsp/filter/filter_set.h
+index 783ee031..89888174 100644
+--- a/src/deluge/dsp/filter/filter_set.h
++++ b/src/deluge/dsp/filter/filter_set.h
+@@ -48,10 +48,14 @@ public:
+ 	                  q31_t hpfResonance, FilterMode hpfmode, q31_t hpfMorph, q31_t filterGain, FilterRoute routing,
+ 	                  bool adjustVolumeForHPFResonance, q31_t* overallOscAmplitude);
+ 
+-	void renderLong(q31_t* startSample, q31_t* endSample, int32_t numSamples, int32_t sampleIncrememt = 1);
++	// hpfSaturation: the HP ladder's saturation amount, HpLadderFilter::kSaturationVoice (a voice's filters) or
++	// kSaturationGlobal (the song's, a kit's and an audio track's)
++	void renderLong(q31_t* startSample, q31_t* endSample, int32_t numSamples, int32_t sampleIncrememt = 1,
++	                int32_t hpfSaturation = HpLadderFilter::kSaturationVoice);
+ 
+ 	// expects to receive an interleaved stereo stream
+-	void renderLongStereo(q31_t* startSample, q31_t* endSample);
++	void renderLongStereo(q31_t* startSample, q31_t* endSample,
++	                      int32_t hpfSaturation = HpLadderFilter::kSaturationVoice);
+ 
+ 	// used to check whether the filter is used at all
+ 	inline bool isLPFOn() { return LPFOn; }
+@@ -73,8 +77,8 @@ private:
+ 
+ 	void renderLPFLong(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement = 1);
+ 	void renderLPFLongStereo(q31_t* startSample, q31_t* endSample);
+-	void renderHPFLongStereo(q31_t* startSample, q31_t* endSample);
+-	void renderHPFLong(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement = 1);
++	void renderHPFLongStereo(q31_t* startSample, q31_t* endSample, int32_t hpfSaturation);
++	void renderHPFLong(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, int32_t hpfSaturation);
+ 
+ 	// all filters share a state. This is fine since they just hold plain data and initialization is handled by
+ 	// reset/configure calls.  This is faster than using a variant at the cost of not throwing on incorrect access.
+diff --git a/src/deluge/dsp/filter/hpladder.cpp b/src/deluge/dsp/filter/hpladder.cpp
+index 8ce06d5c..4923a335 100644
+--- a/src/deluge/dsp/filter/hpladder.cpp
++++ b/src/deluge/dsp/filter/hpladder.cpp
+@@ -71,48 +71,65 @@ q31_t HpLadderFilter::setConfig(q31_t hpfFrequency, q31_t hpfResonance, FilterMo
+ // them all again on every sample. Nothing else touches them during a block: the buffers are render buffers (Voice's
+ // spareRenderingBuffer, GlobalEffectable's, FilterSet's tempRenderBuffer), never the filter, and nothing in the loops
+ // calls out. The arithmetic is unchanged.
++// The saturation amount (the tanh's, at high resonance) is the original firmware's: 3 in voices (its filter_set.cpp:58,
++// HPF_LONG_SATURATION, for FilterSet::renderHPFLong(), :111/:115) and 2 + 2 = 4 in the song's, a kit's and an audio
++// track's filters (its global_effectable.cpp:366-367, FilterSet::renderHPF(..., 2), filter_set.cpp:42/:47). Community
++// #336 (04faf186, "Morphable and Driveable and Parallel filters") made it 1 (antialiased) and 2 everywhere, which put
++// the level where the ladder limits 2 to 3 bits higher, and a self-oscillating ladder whistles at its cutoff at about
++// that level: 12 to 18 dB louder, on a song's filters far louder than the music. Below the resonance where the ladder
++// saturates (hpfProcessedResonance 750000000, about 39 %) nothing changes.
+ [[gnu::hot]] void HpLadderFilter::doFilter(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
+ 	if (sampleIncrement == 1) {
+-		render<Layout::MONO>(startSample, endSample, 1);
++		if (saturationAmount_ == kSaturationGlobal) {
++			render<Layout::MONO, kSaturationGlobal>(startSample, endSample, 1);
++		}
++		else {
++			render<Layout::MONO, kSaturationVoice>(startSample, endSample, 1);
++		}
+ 	}
+ 	else {
+-		renderLoop<true, Saturation::PER_SAMPLE, Layout::MONO_STRIDED>(startSample, endSample, sampleIncrement);
++		renderLoop<true, Saturation::PER_SAMPLE, Layout::MONO_STRIDED, 0>(startSample, endSample, sampleIncrement);
+ 	}
+ }
+ // filter an interleaved stereo buffer
+ [[gnu::hot]] void HpLadderFilter::doFilterStereo(q31_t* startSample, q31_t* endSample) {
+-	render<Layout::STEREO>(startSample, endSample, 2);
++	if (saturationAmount_ == kSaturationGlobal) {
++		render<Layout::STEREO, kSaturationGlobal>(startSample, endSample, 2);
++	}
++	else {
++		render<Layout::STEREO, kSaturationVoice>(startSample, endSample, 2);
++	}
+ }
+ 
+ // The branches that depend on the configuration only are taken once per block
+-template <HpLadderFilter::Layout layout>
++template <HpLadderFilter::Layout layout, int32_t amount>
+ void HpLadderFilter::render(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
+ 	// Only saturate / anti-alias if lots of resonance
+ 	if (morph_ != 0) {
+ 		if (hpfProcessedResonance > 900000000) { // 890551738
+-			renderLoop<true, Saturation::ANTIALIASED, layout>(startSample, endSample, sampleIncrement);
++			renderLoop<true, Saturation::ANTIALIASED, layout, amount>(startSample, endSample, sampleIncrement);
+ 		}
+ 		else if (hpfProcessedResonance > 750000000) { // 400551738
+-			renderLoop<true, Saturation::TANH, layout>(startSample, endSample, sampleIncrement);
++			renderLoop<true, Saturation::TANH, layout, amount>(startSample, endSample, sampleIncrement);
+ 		}
+ 		else {
+-			renderLoop<true, Saturation::NONE, layout>(startSample, endSample, sampleIncrement);
++			renderLoop<true, Saturation::NONE, layout, amount>(startSample, endSample, sampleIncrement);
+ 		}
+ 	}
+ 	else {
+ 		if (hpfProcessedResonance > 900000000) {
+-			renderLoop<false, Saturation::ANTIALIASED, layout>(startSample, endSample, sampleIncrement);
++			renderLoop<false, Saturation::ANTIALIASED, layout, amount>(startSample, endSample, sampleIncrement);
+ 		}
+ 		else if (hpfProcessedResonance > 750000000) {
+-			renderLoop<false, Saturation::TANH, layout>(startSample, endSample, sampleIncrement);
++			renderLoop<false, Saturation::TANH, layout, amount>(startSample, endSample, sampleIncrement);
+ 		}
+ 		else {
+-			renderLoop<false, Saturation::NONE, layout>(startSample, endSample, sampleIncrement);
++			renderLoop<false, Saturation::NONE, layout, amount>(startSample, endSample, sampleIncrement);
+ 		}
+ 	}
+ }
+ 
+-template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Layout layout>
++template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Layout layout, int32_t amount>
+ [[gnu::hot]] void HpLadderFilter::renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
+ 	const Coefficients c{fc,
+ 	                     morph_,
+@@ -120,18 +137,19 @@ template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Lay
+ 	                     hpfLPF1Feedback,
+ 	                     divideByTotalMoveability,
+ 	                     hpfDivideByProcessedResonance,
+-	                     hpfProcessedResonance};
++	                     hpfProcessedResonance,
++	                     saturationAmount_ == kSaturationGlobal ? kSaturationGlobal : kSaturationVoice};
+ 	// Without morph, doHPF's cutoff is max(multiply_accumulate_32x32_rshift32_rounded(fc, input << 4, 0), lowerLimit)
+ 	// = max(fc, lowerLimit) for every sample: smmlar adds (0 + 2^31) >> 32 = 0 to fc
+ 	const q31_t fixedFc = std::max(fc, lowerLimit);
+-	renderChannel<morph, saturation, layout, 0>(startSample, endSample, sampleIncrement, l, c, fixedFc);
++	renderChannel<morph, saturation, layout, 0, amount>(startSample, endSample, sampleIncrement, l, c, fixedFc);
+ 	if constexpr (layout == Layout::STEREO) {
+ 		// The channels don't depend on each other, so each gets its own pass (fewer registers needed)
+-		renderChannel<morph, saturation, layout, 1>(startSample, endSample, sampleIncrement, r, c, fixedFc);
++		renderChannel<morph, saturation, layout, 1, amount>(startSample, endSample, sampleIncrement, r, c, fixedFc);
+ 	}
+ }
+ 
+-template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Layout layout, int channel>
++template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Layout layout, int channel, int32_t amount>
+ [[gnu::always_inline]] inline void HpLadderFilter::renderChannel(q31_t* startSample, q31_t* endSample,
+                                                                  int32_t sampleIncrement, HPLadderState& channelState,
+                                                                  const Coefficients& c, q31_t fixedFc) {
+@@ -141,7 +159,7 @@ template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Lay
+ 	// For STEREO, currentSample points at the frame, as in the loop over both channels (same number of frames)
+ 	q31_t* currentSample = startSample;
+ 	do {
+-		currentSample[channel] = doHPF<morph, saturation>(currentSample[channel], state, c, fixedFc, lastA);
++		currentSample[channel] = doHPF<morph, saturation, amount>(currentSample[channel], state, c, fixedFc, lastA);
+ 		if constexpr (layout == Layout::MONO) {
+ 			currentSample += 1;
+ 		}
+@@ -154,14 +172,15 @@ template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Lay
+ 	} while (currentSample < endSample);
+ 
+ 	// Without antialiasing, hpfLastWorkingValue is written on every sample and read by none of this block's (only
+-	// the antialiased tanh reads it), so only the last sample's value matters
++	// the antialiased tanh reads it), so only the last sample's value matters. It's the antialiased tanh's own working
++	// value of that sample (the same shift as its saturation amount; 1.2.1 shifted by 2 whatever the amount)
+ 	if constexpr (saturation == Saturation::TANH || saturation == Saturation::NONE) {
+-		state.hpfLastWorkingValue = (uint32_t)lshiftAndSaturate<2>(lastA) + 2147483648u;
++		state.hpfLastWorkingValue = (uint32_t)lshiftAndSaturate<amount>(lastA) + 2147483648u;
+ 	}
+ 	channelState = state;
+ }
+ 
+-template <bool morph, HpLadderFilter::Saturation saturation>
++template <bool morph, HpLadderFilter::Saturation saturation, int32_t amount>
+ [[gnu::always_inline]] inline q31_t HpLadderFilter::doHPF(q31_t input, HPLadderState& state, const Coefficients& c,
+                                                           q31_t fixedFc, q31_t& lastA) {
+ 	q31_t temp_fc;
+@@ -185,23 +204,23 @@ template <bool morph, HpLadderFilter::Saturation saturation>
+ 
+ 	// Only saturate / anti-alias if lots of resonance
+ 	if constexpr (saturation == Saturation::ANTIALIASED) {
+-		a = getTanHAntialiased(a, &state.hpfLastWorkingValue, 1);
++		a = getTanHAntialiased(a, &state.hpfLastWorkingValue, amount);
+ 	}
+ 	else if constexpr (saturation == Saturation::TANH) {
+ 		lastA = a;
+-		a = getTanHUnknown(a, 2);
++		a = getTanH<amount>(a);
+ 	}
+ 	else if constexpr (saturation == Saturation::NONE) {
+ 		lastA = a;
+ 	}
+ 	else {
+ 		if (c.hpfProcessedResonance > 900000000) { // 890551738
+-			a = getTanHAntialiased(a, &state.hpfLastWorkingValue, 1);
++			a = getTanHAntialiased(a, &state.hpfLastWorkingValue, c.saturationAmount);
+ 		}
+ 		else {
+-			state.hpfLastWorkingValue = (uint32_t)lshiftAndSaturate<2>(a) + 2147483648u;
++			state.hpfLastWorkingValue = (uint32_t)lshiftAndSaturateUnknown(a, c.saturationAmount) + 2147483648u;
+ 			if (c.hpfProcessedResonance > 750000000) { // 400551738
+-				a = getTanHUnknown(a, 2);
++				a = getTanHUnknown(a, c.saturationAmount);
+ 			}
+ 		}
+ 	}
+diff --git a/src/deluge/dsp/filter/hpladder.h b/src/deluge/dsp/filter/hpladder.h
+index b918c66d..abf5f478 100644
+--- a/src/deluge/dsp/filter/hpladder.h
++++ b/src/deluge/dsp/filter/hpladder.h
+@@ -30,6 +30,16 @@ public:
+ 	q31_t setConfig(q31_t hpfFrequency, q31_t hpfResonance, FilterMode lpfMode, q31_t lpfMorph, q31_t filterGain);
+ 	void doFilter(q31_t* startSample, q31_t* endSample, int32_t sampleIncrememt);
+ 	void doFilterStereo(q31_t* startSample, q31_t* endSample);
++
++	// How hard the ladder saturates at high resonance (the tanh's saturation amount; one more halves the level where it
++	// limits, 6 dB): the original firmware's per context, see hpladder.cpp. A self-oscillating ladder whistles at its
++	// cutoff at about the level where it limits.
++	// Synths and kit rows (Voice)
++	static constexpr int32_t kSaturationVoice = 3;
++	// The song's, a kit's and an audio track's filters (GlobalEffectable)
++	static constexpr int32_t kSaturationGlobal = 4;
++	// For the next doFilter() / doFilterStereo(): kSaturationVoice or kSaturationGlobal (FilterSet sets it before each)
++	void setSaturation(int32_t amount) { saturationAmount_ = (uint8_t)amount; }
+ 	void resetFilter() {
+ 		l.reset();
+ 		r.reset();
+@@ -57,23 +67,26 @@ private:
+ 		q31_t divideByTotalMoveability;
+ 		q31_t hpfDivideByProcessedResonance;
+ 		q31_t hpfProcessedResonance;
++		int32_t saturationAmount; // for PER_SAMPLE, which takes it at run time
+ 	};
+ 	// The saturation branch, which depends on the configuration only: antialiased tanh, tanh, none, or decided per
+ 	// sample as before (only for the mono loop with a sampleIncrement other than 1, which nothing uses)
+ 	enum class Saturation { ANTIALIASED, TANH, NONE, PER_SAMPLE };
+ 	// MONO: sampleIncrement 1 (all callers), MONO_STRIDED: any sampleIncrement, STEREO: interleaved
+ 	enum class Layout { MONO, MONO_STRIDED, STEREO };
+-	template <bool morph, Saturation saturation, Layout layout>
++	// amount: the saturation amount (kSaturationVoice or kSaturationGlobal; 0 for PER_SAMPLE, which uses
++	// Coefficients::saturationAmount)
++	template <bool morph, Saturation saturation, Layout layout, int32_t amount>
+ 	void renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+-	template <Layout layout>
++	template <Layout layout, int32_t amount>
+ 	void render(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+ 	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or the left or right of each frame (STEREO,
+ 	// channel 0 or 1)
+-	template <bool morph, Saturation saturation, Layout layout, int channel>
++	template <bool morph, Saturation saturation, Layout layout, int channel, int32_t amount>
+ 	[[gnu::always_inline]] static inline void renderChannel(q31_t* startSample, q31_t* endSample,
+ 	                                                        int32_t sampleIncrement, HPLadderState& channelState,
+ 	                                                        const Coefficients& c, q31_t fixedFc);
+-	template <bool morph, Saturation saturation>
++	template <bool morph, Saturation saturation, int32_t amount>
+ 	[[gnu::always_inline]] static inline q31_t doHPF(q31_t input, HPLadderState& state, const Coefficients& c,
+ 	                                                 q31_t fixedFc, q31_t& lastA);
+ 
+@@ -82,6 +95,7 @@ private:
+ 	static constexpr q31_t lowerLimit = -(ONE_Q31 >> 8);
+ 
+ 	bool hpfDoingAntialiasingNow;
++	uint8_t saturationAmount_; // in the padding after the bool: a voice's FilterSet stays the same size
+ 	int32_t hpfDivideByTotalMoveabilityLastTime;
+ 	int32_t hpfDivideByProcessedResonanceLastTime;
+ 
+diff --git a/src/deluge/model/global_effectable/global_effectable.cpp b/src/deluge/model/global_effectable/global_effectable.cpp
+index 7e694740..ff8c3942 100644
+--- a/src/deluge/model/global_effectable/global_effectable.cpp
++++ b/src/deluge/model/global_effectable/global_effectable.cpp
+@@ -820,7 +820,10 @@ void GlobalEffectable::setupFilterSetConfig(int32_t* postFXVolume, ParamManager*
+ }
+ 
+ [[gnu::hot]] void GlobalEffectable::processFilters(StereoSample* buffer, int32_t numSamples) {
+-	filterSet.renderLongStereo(&buffer->l, &(buffer + numSamples)->l);
++	// The HP ladder saturates as it did here in the original firmware (FilterSet::renderHPF(..., 2)), 6 dB lower than
++	// in a voice: see hpladder.cpp
++	filterSet.renderLongStereo(&buffer->l, &(buffer + numSamples)->l,
++	                           deluge::dsp::filter::HpLadderFilter::kSaturationGlobal);
+ }
+ 
+ void GlobalEffectable::writeAttributesToFile(Serializer& writer, bool writeAutomation) {
+-- 
+2.43.0
+

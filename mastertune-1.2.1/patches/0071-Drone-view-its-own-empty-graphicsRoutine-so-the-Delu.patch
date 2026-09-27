@@ -1,0 +1,38 @@
+From 1fa090a2f9f649eb7ed563d7ba1b7400a54a77b4 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 17:02:43 +0000
+Subject: [PATCH 71/74] Drone view: its own (empty) graphicsRoutine(), so the
+ Deluge no longer hangs once it's open
+
+Since mastertune-v13 (steady pads) DroneView had no graphicsRoutine(). The UI timer calls
+getCurrentUI()->graphicsRoutine() every 15 ms; UI::graphicsRoutine() hands it to the root UI (a RootUI can see the
+view underneath), which was the drone view itself: a tail call to itself for ever. The Deluge hung 15 ms after the
+drone view opened (Scale in Song view, or the Song menu's Drone), whatever song and however it was loaded, and its
+audio stopped with it. In the emulator (tests/song/drone_reopen_emu.py): v16 hangs at the drone view's first graphics
+routine; with this, the drone view's pads, knobs, buttons and menu work after the song is opened again and after
+song changes while playing, and the drone sounds as before (each tone's lines within 0.5 dB and 0.3 Hz).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/views/drone_view.h | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/deluge/gui/views/drone_view.h b/src/deluge/gui/views/drone_view.h
+index ea4a763d..2360d1a0 100644
+--- a/src/deluge/gui/views/drone_view.h
++++ b/src/deluge/gui/views/drone_view.h
+@@ -34,6 +34,10 @@ public:
+ 	UIType getUIType() override { return UIType::DRONE; }
+ 	const char* getName() override { return "drone_view"; }
+ 	[[nodiscard]] bool supportsTriplets() const override { return false; }
++	/// Nothing moves on the pads (mastertune-v13: steady). It must be here all the same: UI::graphicsRoutine(), which
++	/// the UI timer calls every 15 ms on the current UI, passes it on to the root UI, i.e. back to this view, for ever,
++	/// and the Deluge hangs (v13 to v16, as soon as the view was open).
++	void graphicsRoutine() override {}
+ 
+ 	bool renderMainPads(uint32_t whichRows, RGB image[][kDisplayWidth + kSideBarWidth],
+ 	                    uint8_t occupancyMask[][kDisplayWidth + kSideBarWidth], bool drawUndefinedArea = true) override;
+-- 
+2.43.0
+

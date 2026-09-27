@@ -1,0 +1,50 @@
+From e7eb4e34e7001e0a35e3e0e8da22ec09a22e7c4d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 12:54:00 +0000
+Subject: [PATCH 56/60] Scheduler: the playback routine's target interval
+ 16/44100. s as meant, not 0
+
+registerTasks() gave the playback routine (MIDI in, external clock) the target interval 16 / 44100, an integer
+division: 0. That task was then always due, and during its back-off after each run (2/44100 s) chooseBestTask()
+found no best task, so its fallback ran the most important task past its own back-off: the audio routine, about
+10 us after it had returned, again and again. Each of those calls rendered only what was due, 4 to 8 samples, at
+the full fixed cost of a render (the big project S2 of tests/sdload, song stopped: about 45k instructions a call,
+mostly the FX setup of silent kits and audio tracks). The CPU monitor (time in routine() over the audio rendered)
+then showed the share of wall time this took: 90 % for S2 in the emulator, 87 % on the user's Deluge with nothing
+playing.
+
+With 16/44100. s the playback routine runs about every 0.3 ms (at most 32/44100 s apart, as before) and the audio
+routine at its own schedule, every 16 samples less its duration. In the emulator (tests/sdload, the target set in
+RAM): S2 idle 90 % -> 57 %, S3ref (the same synths without the kits and audio tracks) 76 % -> 19 %.
+
+Risk: incoming MIDI (notes, clock) is read by this task, which now runs up to ~0.36 ms later than before (every
+~50 us). The external clock's tick times come from the UART's timing capture (the output DMA's position when the
+byte arrived), so they stay exact; only inputTick()'s allowance for reading them late (its +40 samples) has as much
+less to spare.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/deluge.cpp | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/deluge/deluge.cpp b/src/deluge/deluge.cpp
+index 8259606d..5fcd500a 100644
+--- a/src/deluge/deluge.cpp
++++ b/src/deluge/deluge.cpp
+@@ -581,7 +581,11 @@ void registerTasks() {
+ 	// this one runs quickly and frequently to check for encoder changes
+ 	addRepeatingTask([]() { encoders::readEncoders(); }, p++, 0.0005, 0.001, 0.001, "read encoders");
+ 	// formerly part of audio routine, updates midi and clock
+-	addRepeatingTask([]() { playbackHandler.routine(); }, p++, 2 / 44100., 16 / 44100, 32 / 44100., "playback routine");
++	// mastertune-v17: the target interval 16 / 44100. s as meant, not 16 / 44100 = 0 (integer division). At 0 this task
++	// was always due and, while in its back-off after each run, the scheduler's fallback ran the audio routine instead,
++	// about 10 us after it had returned, again and again: blocks of 4 to 8 samples, each at a render's full fixed cost.
++	addRepeatingTask([]() { playbackHandler.routine(); }, p++, 2 / 44100., 16 / 44100., 32 / 44100.,
++	                 "playback routine");
+ 	addRepeatingTask([]() { audioFileManager.loadAnyEnqueuedClusters(128, false); }, p++, 0.00001, 0.00001, 0.00002,
+ 	                 "load clusters");
+ 	// handles sd card recorders
+-- 
+2.43.0
+

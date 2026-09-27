@@ -1,6 +1,6 @@
 # Deluge 1.2.1 mit Master Tune
 
-Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern, v12 einen Frequenz-Drone mit bis zu 16 Tönen, v13 mehr Leistung, einen Ping-Pong-Arp, flimmerfreies Dimmen der Pads, genaueres MIDI und einen überarbeiteten Drone, v14 ein Reverb ohne Wabbeln, ein Delay ohne Tonhöhensprung und einen Countdown beim Song-Wechsel, v15 einen lebendigen Drone (Life, FM, Pulse), einen CPU-Monitor in einer Zeile und drei Korrekturen aus der Community, v16 Drone-Spuren für Song- und Arranger-View und einen Profiler.
+Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern, v12 einen Frequenz-Drone mit bis zu 16 Tönen, v13 mehr Leistung, einen Ping-Pong-Arp, flimmerfreies Dimmen der Pads, genaueres MIDI und einen überarbeiteten Drone, v14 ein Reverb ohne Wabbeln, ein Delay ohne Tonhöhensprung und einen Countdown beim Song-Wechsel, v15 einen lebendigen Drone (Life, FM, Pulse), einen CPU-Monitor in einer Zeile und drei Korrekturen aus der Community, v16 Drone-Spuren für Song- und Arranger-View und einen Profiler, v17 halbe Last, eine Song-Übersicht mit aufklappbaren Versionen, ein Kürzel für den CPU-Monitor und den L2-Cache in der Hauptdatei.
 
 | Datei | Version (Settings → Firmware version) | Inhalt |
 |---|---|---|
@@ -19,10 +19,12 @@ Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit
 | `deluge-1.2.1-mastertune-v14-c1d1c8bb.bin` | `1.2.1-mastertune-v14-c1d1c8bb` | v13 + Reverb ohne Wabbeln (Modulation, Pre-delay), Delay ohne Tonhöhensprung, Countdown beim Song-Wechsel, zwei Korrekturen für die Karte |
 | `deluge-1.2.1-mastertune-v15-b5f5c900.bin` | `1.2.1-mastertune-v15-b5f5c900` | v14 + lebendiger Drone (Life, FM, Pulse), CPU-Monitor in einer Zeile, Section-Start per CC, USB-MIDI ohne Paketverlust, Clock-Ausgänge unter externer Clock |
 | `deluge-1.2.1-mastertune-v16-c610417f.bin` | `1.2.1-mastertune-v16-c610417f` | v15 + Drone-Spuren (Drones als Kit-Spuren in Song- und Arranger-View, Hz-Spur pro Reihe), Profiler, USB audio bleibt nach dem Neustart an |
+| `deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin` | `1.2.1-mastertune-v17-l2d-b3385d83` | v16 + halbe Last (Aufgabenplanung, Mindestfenster, stille Spuren), Song-Übersicht, CPU-Monitor-Kürzel, Drone-Ansicht ohne Hänger, leiserer HPF-Pfeifton; **mit L2-Cache für Code und Daten** |
+| `deluge-1.2.1-mastertune-v17-2cb5e31b.bin` | `1.2.1-mastertune-v17-2cb5e31b` | dasselbe ohne L2-Cache, zum Zurückwechseln |
 
-SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7`, v14 `cb17bbb3…8e23e6e5`, v15 `cdce07f3…da7ca652`, v16 `7eed1a77…71897f9f` (vollständig: `sha256sum *.bin`).
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7`, v14 `cb17bbb3…8e23e6e5`, v15 `cdce07f3…da7ca652`, v16 `7eed1a77…71897f9f`, v17-l2d `aad4d080…5ec32c4b`, v17 ohne L2 `ae6aedd4…be88ae64` (vollständig: `sha256sum *.bin`).
 Nachgeprüft am 26.09.2026: Jede Version v2–v12 wurde aus ihrem Commit in einer eigenen Arbeitskopie komplett neu gebaut, mit 441–448 neu übersetzten Dateien. Jede SHA-256 stimmt mit der ausgelieferten Datei überein.
-Quellcode: `patches/0001` bis `0055` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 sind die Leistungsversion v12-perf, gleich wie `perf/0001`–`0003`), v14 = 0001–0035, v15 = 0001–0041, v16 = 0001–0055.
+Quellcode: `patches/0001` bis `0074` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 sind die Leistungsversion v12-perf, gleich wie `perf/0001`–`0003`), v14 = 0001–0035, v15 = 0001–0041, v16 = 0001–0055, v17 ohne L2 = 0001–0074, die Hauptdatei v17-l2d dazu `l2test/0001`–`0003`.
 
 ## v3 und v4: Unterschiede
 
@@ -343,7 +345,7 @@ Das OLED zeigt Ton, Modus, Tonhöhe und den Beat mit seinem Bereich (Delta, Thet
 - **`diag/`:** die Messversion v12-diag, v12 plus CPU-Monitor.
   - Zeigt CPU-Last, Stimmen, Qualitätsabsenkung und SD-Zeiten auf dem OLED und per USB-MIDI.
   - Dazu `tools/cpu_monitor.html` und ein Test-Song. Details: `diag/README.md`.
-- **`l2test/`:** zwei Testversionen von v16 mit eingeschaltetem L2-Cache, einmal nur für Code, einmal auch für Daten. Mit v14 zeigte die erste Messung am Gerät: keine abgeschnittenen Stimmen mehr.
+- **`l2test/`:** die Testversion von v17 mit L2-Cache nur für Code (l2i). Die Version mit L2 auch für Daten ist ab v17 die Hauptdatei. Mit v14 zeigte die erste Messung am Gerät: keine abgeschnittenen Stimmen mehr.
   - Zum Messen mit dem CPU-Monitor am Gerät, noch nicht für Auftritte.
   - Anleitung, Risiken und Prüfungen: `l2test/README.md`.
 - **`prof/`:** die Profiler-Messversion v15-prof, einmal ohne L2 und einmal mit L2 für Code.
@@ -577,6 +579,75 @@ v16 enthält v15. **Auf dem Gerät ist nichts davon getestet.** Geprüft ist all
 - **Profiler:** wie in `prof/README.md`, mit v16 erneut im Emulator: 21 Prüfungen bestanden.
 - **Build:** ohne neue Warnungen. Je zwei komplette Neubauten ergeben dieselbe SHA-256, auch bei den beiden L2-Versionen. Alle Prüfungen oben liefen auf genau diesen Builds, dazu Clock, Sections und L2 wie in v15 (`tests/clock`, `tests/sections`, `tests/l2`). Der Volllast-Song klingt auch mit L2 Bit für Bit wie v15.
 
+## v17: halbe Last, Song-Übersicht, Drone-Ansicht ohne Hänger, CPU-Monitor-Kürzel, leiserer HPF-Pfeifton
+
+v17 enthält v16. **Die Hauptdatei hat den L2-Cache für Code und Daten** (bisher `l2test/…-l2d`). Mit v16-l2d war «New Sitar Grii 10» am Gerät hörbar besser, und es gab keinen Absturz. Stürzt v17-l2d ab oder verhält es sich seltsam, liegt daneben dieselbe Version ohne L2. **v17 selbst ist auf dem Gerät noch nicht getestet.** Geprüft ist alles im Emulator mit dem Maschinencode der Firmware.
+
+**Weniger Last** (Patches 0056–0064, 0072, 0073):
+- **Aufgabenplanung korrigiert:**
+  - Seit 1.2.1 ergibt ein Rechenfehler (`16 / 44100` als ganze Zahl) das Intervall 0. Die Audio-Routine lief darum etwa alle 12 µs, mit 4–12 Samples pro Durchgang.
+  - Jeder Durchgang geht alle Spuren durch und richtet ihre Effekte ein. Das kostet bei kleinen Blöcken ein Vielfaches.
+- **Mindestfenster:**
+  - Bis 65 % Last rechnet die Audio-Routine in Blöcken von 60 Samples, sonst wie bisher. Qualität gesenkt oder Kartenzugriffe schalten das Mindestfenster ab.
+  - Sie beginnt so früh, dass der Puffer seine Reserve behält.
+- **Keine unnötig abgeschnittenen Stimmen beim Streamen:** Culling und Qualitätssenkung richten sich nach der Rechenzeit der Audio-Routine selbst, nicht mehr nach der Dauer des Lade-Tasks samt Wartezeit auf die Karte.
+- **Stille Spuren:** Kits und Audiospuren, die nichts ausgeben, prüfen das, bevor sie ihre Effektkette einrichten. Das sind 210 statt 550 Befehle pro Spur, Bit für Bit gleich.
+- **CPU-Monitor:** Durchgänge, die nichts rechnen, zählen nicht als belegt. Die Anzeige zeigt so die echte Last.
+
+| Emulator | v16 | v17 |
+|---|---|---|
+| «New Sitar Grii 10» beim Spielen, CPU-Anzeige | 93 % | 41 % |
+| dasselbe, Schätzung fürs Gerät mit Speicherzeiten | 117 % | 47 % |
+| dasselbe, die fünf Kits | 38 % der Zeit | 14 % |
+| grosser Song im Leerlauf (`tests/sdload`) | 90 % | 12 % |
+| typisches Streaming, CPU-Anzeige | 93 % | 38 % |
+| abgeschnittene Stimmen beim Streamen | 25 | 0 |
+
+- **Warum die Kits so teuer waren:** wegen der winzigen Rechenblöcke, nicht wegen 432 Hz. Bei 432 Hz kostet «New Sitar Grii 10» im Emulator 0,2 % mehr als bei 440 Hz, weil seine Samples ohnehin transponiert klingen.
+- **Der Preis:** Live gespielte Noten beginnen bei leichter Last mit dem nächsten Block, im Mittel etwa 0,5 ms später. Die Reserve gegen Aussetzer ist kleiner: im Emulator mindestens 63 Samples (1,4 ms), in keinem Test ein Aussetzer.
+- **Externe Clock:** Ein Clock-Byte, das spät gelesen wird, tickt jetzt sofort, statt bis 2,9 ms zu spät. Das war ein Fehler in 1.2.1, den v17 sonst häufiger ausgelöst hätte.
+
+**Song-Übersicht** (Patches 0065–0068):
+- **Gruppen:** Songs mit gleichem erstem Wort sind Versionen desselben Songs. `TRACK`, `TRACK 2`, `TRACK 3`, `track 4` und `TRACK 10` erscheinen als eine Zeile «TRACK» mit Pfeil, auf der 7-Segment-Anzeige `TRACK--`. `TRACKS` bleibt ein eigener Song.
+- **Aufklappen:** Ein Klick (Select oder LOAD) klappt die Gruppe auf, die Versionen stehen eingerückt darunter. Drehen geht durch sie, ein Klick lädt, auch während der Wiedergabe mit Countdown.
+- **Zuklappen:** mit BACK oder indem du aus der Gruppe hinausdrehst. Öffnest du den Browser mit «TRACK 3» geladen, ist seine Gruppe schon offen.
+- **Tippen und Löschen:** Ein getippter Name lädt direkt. Löschen (SHIFT + SAVE) auf einer zugeklappten Zeile ist gesperrt («Open the group first»).
+- **Unverändert:** Speichern und die übrigen Browser.
+- **Blättern:** Der Ordner wird seltener neu gelesen, 6–14 statt 68–180 Mal. Beim Blättern während der Wiedergabe bleibt die Audio-Routine höchstens 0,39 ms aus, wie bei v16.
+
+**CPU-Monitor per Kürzel** (Patches 0069–0070):
+- **Schalten:** **LEARN halten und den TEMPO-Knopf drücken.** Das schaltet zwischen Aus und dem zuletzt benutzten Modus (On oder Alerts). Es wirkt in jeder Ansicht, auch beim Spielen. Die Anzeige meldet es kurz, auf 7-Segment `C-ON` / `COFF` / `C-AL`.
+- **Speichern:** Der Modus wird sofort auf der Karte gespeichert (`CommunityFeatures.XML`) und gilt nach dem Neustart wieder. Profile wählt man im Menü, nach dem Neustart gilt es als On.
+- **Start-Song:** Der Start-Song («Last saved») bleibt unberührt.
+
+**Aufnehmen am Computer** (`tools/deluge_rec.py`, neu):
+- **Was es ist:** ein kleiner Recorder für den USB-Audio-Ausgang des Deluge (ab v8, Settings → Community features → USB audio), im Look des Deluge.
+- **Aufnahme:** Er nimmt den Eingang «Deluge» bitgenau als 24-Bit-WAV auf (`USB00001.WAV` …). Unter Windows läuft das über WASAPI exklusiv, das Display zeigt, ob wirklich 24 Bit ankommen.
+- **Bedienung:** REC, ARM (startet, sobald das Signal eine Schwelle übersteigt, mit 0,3 s Vorlauf), STOP und Ordner öffnen. Die Pads zeigen den Pegel.
+- **Nur lesen:** Er sendet nichts an den Deluge.
+- **Installieren und starten:** `pip install sounddevice numpy`, dann `python tools/deluge_rec.py` (ohne Deluge: `--demo`).
+
+**Korrekturen:**
+- **Drone-Ansicht hängt (v13–v16, auch L2)** (Patch 0071): Etwa 15 ms nach dem Öffnen der Drone-Ansicht hing der Deluge, und der Ton brach ab. Ihr fehlte eine eigene Zeichenroutine, und der Aufruf landete endlos bei ihr selbst. Für v16-l2d gibt es dazu die Zwischenlösung `hotfix/`, die v17 ersetzt.
+- **HPF-Pfeifton** (Patch 0074):
+  - Mit viel Resonanz schwingt der HP-Ladder von selbst. Seit dem Filter-Umbau der Community (#336, schon in 1.2.1) begrenzt er dabei 12–18 dB höher als die Original-Firmware von Synthstrom.
+  - Im Song-Master gab das einen Pfeifton bis 27 dB über der Musik. Hörbar wurde er, sobald das LPF über ihm aufging.
+  - v17 begrenzt wieder wie die Original-Firmware: im Song, Kit und in der Spur etwa 17 dB leiser, im Synth etwa 12 dB leiser.
+  - Unter etwa 39 % HPF-Resonanz ist der Klang Bit für Bit gleich. Ganz weg ist der Eigenton nicht, er liegt jetzt etwa auf Höhe der Musik.
+  - Auch das LPF im Modus Drive schwingt ab etwa 50 % Resonanz selbst, rund 9–21 kHz. Das ist Verhalten von 1.2.1 und bleibt unverändert.
+- **Zugriff auf Adresse 0** (Patch 0073): Beim Umrechnen gestreckter Samples ohne Cache las und schrieb die Firmware Adresse 0, geschrieben wurde der gelesene Wert. Das ist behoben.
+
+**Geprüft:**
+- **Build:** ohne neue Warnungen. Je zwei komplette Neubauten ergeben dieselbe SHA-256, bei allen drei Varianten. Alle folgenden Prüfungen liefen auf genau diesen Builds, die meisten auf der Hauptdatei v17-l2d.
+- **Klang:** Der Volllast-Song klingt bei allen drei Varianten Bit für Bit wie v16 (`87a7df29…`, `4473b315…`). Stille Spuren sind Bit für Bit wie v16, auch 116 Arpeggiator-Noten im selben Fenster.
+- **Drone** (`tests/song`, DRONE=1): 81 Prüfungen mit und ohne L2, darunter die Drone-Ansicht nach erneutem Öffnen des Songs und nach einem Song-Wechsel. v16 hängt dort, v17 nicht.
+- **Song-Übersicht** (`tests/browser`): 29 Prüfungen, darunter eine Gruppe mit 120 Versionen und Hunderte Songs. Blättern während der Wiedergabe ohne Aussetzer.
+- **CPU-Monitor-Kürzel** (`tests/settings`): 34 Prüfungen in Song-, Clip-, Keyboard- und Drone-Ansicht, gestoppt und spielend, mit Neustart. Die USB-audio-Einstellung besteht weiterhin 2 von 2.
+- **HPF-Pfeifton** (`tests/filters`, auf dem Cortex-A9 im Emulator): 900 Fälle mit Song, Synth und Kit, in allen Modi und Routen, das LPF langsam und schnell gedreht. v16 pfeift bis 14,5 dB über der Musik, v17 höchstens 2,9 dB darunter.
+- **Leistung** (`tests/sdload` und der Song «New Sitar Grii 10»): die Zahlen oben. Keine Aussetzer, auch nicht bei 0,5 Befehlen pro Takt.
+- **Weiterhin bestanden:** Profiler 21 Prüfungen (alle drei Varianten), Song-Wechsel 131, Clock, Sections, L2 (alle drei), CPU-Monitor-Dekoder 503 Meldungen, Drone auf dem PC 150, Retune ohne Zugriff auf Adresse 0.
+- **Gegenprüfer:** je einer für die Leistungsänderungen, die stillen Spuren, die Song-Übersicht, das Kürzel, die Drone-Ansicht und den Filter. Alle ihre Befunde der Stufe «mittel» und höher sind behoben, jeder mit einem Test.
+
 ## Bedienung
 
 Das Menü liegt unter **Settings → Tuning → Master tune (Hz)**. Die 7-Segment-Anzeige zeigt `TUNE` → `MTUN`.
@@ -597,6 +668,41 @@ Alles, was klingt, folgt der Stimmung. Die Rechnung ist exakt, die Abweichung li
 | CV-Ausgänge | folgen der Stimmung und werden sofort neu ausgegeben |
 | Externe MIDI-Geräte (MIDI-Spuren und MIDI-Drums in Kits) | erhalten „Channel Fine Tuning“ (RPN 1) auf jedem benutzten Kanal, bei MPE auf den Member-Kanälen, siehe unten |
 | Live-Eingang als Oszillator | bleibt unverändert: Er klingt schon in der aktuellen Stimmung, weil das Instrument darauf gestimmt ist |
+
+## Sample-Bibliothek einmal auf 432 Hz umwandeln (`tools/retune_library.py`)
+
+Bei einer anderen Stimmung als 440 Hz rechnet der Deluge jede Sample-Stimme um, auch jeden untransponierten Drum-Schlag. Mit Sinc kostet das pro Stereo-Stimme etwa sechsmal so viel wie das direkte Abspielen. Das Werkzeug wandelt die Bibliothek einmal auf die Zielstimmung um. Danach spielt der Deluge diese Samples wieder direkt ab. Eine Firmware-Änderung ist nicht nötig: Die umgewandelten Dateien tragen den Block `mtun`, und eine Datei, deren `mtun` gleich der aktuellen Stimmung ist, spielt exakt ohne Umrechnung.
+
+```sh
+pip install numpy soxr pylibrb
+python3 tools/retune_library.py --card KOPIE_DER_KARTE --dry-run            # nur zeigen, was sich ändert
+python3 tools/retune_library.py --card KOPIE_DER_KARTE --out NEUE_KARTE     # Standard: 432 Hz, 44,1 kHz
+```
+
+**Was es tut:**
+- **Samples umrechnen:** Jedes Sample wird im exakten Verhältnis umgerechnet (440/432 = 55/54, soxr). Ein 440-Hz-Ton misst danach 432,00 Hz, die Abweichung liegt unter 0,002 Cent. Die Dauer wächst um 55/54.
+- **Abtastrate:** 48- und 96-kHz-Dateien bringt es im selben Durchgang auf 44,1 kHz. Die rechnet der Deluge sonst immer um.
+- **Spitzen über 0 dBFS:** Das Umrechnen kann einzelne Spitzen knapp über 0 dBFS erzeugen, etwa bei Samples, die auf 0 dBFS normalisiert sind. Abgeschnitten wird nichts: Eine solche Datei mit 8 bis 32 Bit PCM schreibt das Werkzeug als 32-Bit-Float, alle anderen Dateien behalten ihr Format. Der Report listet sie auf. Der Deluge begrenzt Float-Samples beim Laden allerdings auf 0 dBFS. Mit `--no-float` wird eine solche Datei stattdessen gerade so viel leiser wie nötig, der Report nennt die dB.
+- **Positionen anpassen:** Start- und Endmarken, Loops und Audio-Clip-Positionen in allen Songs, Kits und Synths werden angepasst. Ebenso die Chunks `smpl` und `cue` in den Dateien.
+- **Audio-Clips und Samples mit Time-Stretch:** Sie bekommen eine Kopie `_ts`, die nur die Tonhöhe verschiebt und die Länge hält (Rubber Band).
+- **AIFF:** wird zu WAV, weil der Deluge `mtun` nur in WAV liest. Der Pfad im XML wird angepasst.
+- **Pfade mit Umlauten:** werden gefunden. Der Deluge schreibt sie in CP437.
+- **Nie verändert:** die Originalkarte. Es schreibt immer eine neue Karte, dazu `RETUNE_REPORT.txt` mit allen Änderungen und Warnungen. Ein zweiter Lauf ändert nichts mehr.
+- **Unverändert bleiben:** Wavetables und Dateien, die schon die Zielstimmung tragen. Ebenso Dateien, die der Deluge ohnehin nicht lesen kann (WAVE_FORMAT_EXTENSIBLE, mehr als 2 Kanäle, 64-Bit-Float).
+
+**Was es bringt** (Emulator, v16 bei 432 Hz, Test-Karte mit Kit, Synth-Samples, Multisample und Audio-Clip):
+- Jede untransponierte Stimme spielt direkt, statt mit Time-Stretch sind es 0 Hops statt 13.
+- Pro Stimme und Block fallen die Befehle von 13 300 auf 2 490 (mono), von 17 600 auf 3 011 (Stereo, 48 kHz) und von 19 800 auf 3 000 (Audio-Clip).
+- Die ganze Karte braucht ohne Sample-Cache 34 % weniger, mit Cache 6 %.
+
+**Grenzen:**
+- **Immer die ganze Karte:** Wandle immer eine Kopie der ganzen Karte um und kopiere das ganze Ergebnis auf eine zweite Karte, nie nur einzelne Ordner. Samples, die mehrere Songs, Kits oder Synths teilen, wären sonst umgewandelt, die Positionen in den übrigen Songs aber nicht. Die Originalkarte bleibt unberührt.
+- **Transponierte Noten** werden weiter umgerechnet, zum Beispiel ein Synth-Sample, das melodisch gespielt wird.
+- **Bei 440 Hz** klingen umgewandelte Samples dank `mtun` richtig, kosten dann aber wieder Umrechnung.
+- **Sehr kurze Loops und Single-Cycle-Samples:** Die Loop-Länge wird auf ganze Samples gerundet, das verstimmt sie um bis zu 1,4 Cent. Das Werkzeug warnt.
+- **`_ts`-Kopien:** Anschläge können um bis zu 4,6 ms verschoben sein.
+- **Loops, die kein Song benutzt**, werden wie Einzel-Samples umgerechnet. Machst du später einen Audio-Clip daraus, streckt der Deluge ihn wieder, er kostet dann also Umrechnung. Solche Loops besser aus einer Kopie der Originale nehmen.
+- **Geprüft:** `tests/retune/run.sh`, auf dem PC und im Emulator. Auf dem Gerät ist es noch nicht getestet.
 
 ## Aufnahmen werden nie doppelt gestimmt
 
@@ -662,9 +768,13 @@ Version 1 liegt weiterhin in der Git-Historie dieses Ordners.
 ```sh
 git clone https://github.com/SynthstromAudible/DelugeFirmware && cd DelugeFirmware
 git checkout release_1_2_1
-git am /pfad/zu/patches/*.patch        # alle = v12; nur 0001 = v2, 0001-0003 = v3, 0001-0004 = v4, 0001-0005 = v5, 0001-0006 = v6, 0001-0007 = v7, 0001-0008 = v8, 0001-0009 = v9, 0001-0010 = v10, 0001-0011 = v11
-./dbt configure -DRELEASE_TYPE:STRING=mastertune-v12   # Name in der Versionsanzeige, z. B. mastertune-v10 für v10
+git am /pfad/zu/patches/*.patch        # alle = v17 ohne L2 (Stände der Versionen: siehe «Quellcode» oben); die Hauptdatei dazu: git am /pfad/zu/l2test/*.patch
+./dbt configure -DRELEASE_TYPE:STRING=mastertune-v17-l2d   # Name in der Versionsanzeige, z. B. mastertune-v17 ohne L2
 ./dbt build release                      # Ergebnis: build/Release/deluge.bin
+# Bitgleich wie die ausgelieferte Datei: Die Firmware enthält den Commit-Hash (Versionsname, Absturzanzeige), git am
+# erzeugt aber neue Hashes. Vor dem Build in build/src/deluge/version/version.cmake den execute_process mit
+# "rev-parse --short HEAD" durch set(GIT_COMMIT_SHORT "<Hash aus dem Dateinamen>") ersetzen. So ergab der Nachbau
+# von v16 aus 0001-0055 genau 7eed1a77… (geraet/analyse/2026-09-27-nachbau-v16.md auf dem Branch geraet-ergebnisse).
 
 # Rechentest (Host-Compiler)
 g++ -std=c++20 -O2 -Isrc/deluge /pfad/zu/tests/master_tune_math_test.cpp -o mt_test && ./mt_test

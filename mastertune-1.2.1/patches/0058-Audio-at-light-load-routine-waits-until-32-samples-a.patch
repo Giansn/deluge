@@ -1,0 +1,283 @@
+From ffdebd79a204dcc5d2411ed9cae846ca23c4d008 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 13:05:39 +0000
+Subject: [PATCH 58/60] Audio: at light load routine() waits until 32 samples
+ are due before it renders (a minimum window)
+
+Each render has a fixed cost besides its cost per sample: Song::renderAudio() and the FX go through every track and
+kit, sounding or not. For tests/sdload's big project (S2: 64 synths, 14 kits, 30 audio tracks) with nothing playing
+that is about 45k instructions a render, and routine() rendered whatever was due whenever it was called: about every
+16 samples as the task manager schedules it (after the commit before last), which still left 57 % on the CPU
+monitor.
+
+Now, while the load is light, routine_() renders nothing when fewer than kMinSamplesDue = 32 samples are due, and
+the audio task is made due when 32 will be (delayTask(), new in the task manager: it moves the task's lastCallTime,
+which runTask() leaves alone after ignoreForStats()) instead of being called again after its 10 us back-off. Then it
+renders, as always, twice what is due less 6: 60 samples, with 96 still in the output buffer. MIDI and gate output
+waiting to go out (live, MIDI thru) is flushed on those calls too, as on a render.
+
+Light load: cpuDireness at 0, no file being saved or loaded (minNumSamplesToRender has its own minimum then), and
+windows of 32 samples or more rendered in under 50 % of their audio's time, measured around routine() (OS timer 0,
+(7 * average + latest) / 8, so that one busy window where voices start doesn't switch it off). While that load keeps
+it off, windows that long are only rendered when overloaded, so after 1/8 s without one it applies again and the
+load starts afresh from the next. Windows of 64 gave underruns and QL in the emulator; 32 at up to 50 % leaves the
+output buffer ~66 samples for a render that takes longer or for other tasks.
+
+In the emulator (tests/sdload, CPU monitor, with the commits before): S2 idle 90 % -> 16 %, S3ref idle 76 % -> 10 %,
+S4 playing (16 audio tracks streaming, a typical card) 93 % -> 38 %, without underruns, QL or culls; the audio
+routine's calls (S2) 7,100/s -> 2,900/s, a quarter of them rendering. The cost: live input (MIDI in, pads) reaches the
+audio with the next window, up to 60 samples (1.4 ms) later than before but with less queued after it (the latency
+the same on average); the output buffer runs down to ~90 samples before a render instead of ~120, so a task that
+blocks without yielding has 2.2 ms instead of ~2.8 ms before the audio underruns.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/OSLikeStuff/task_scheduler.cpp            | 18 +++++
+ src/OSLikeStuff/task_scheduler.h              |  5 ++
+ src/deluge/deluge.cpp                         |  4 +-
+ .../processing/engines/audio_engine.cpp       | 74 ++++++++++++++++---
+ src/deluge/processing/engines/audio_engine.h  |  4 +
+ 5 files changed, 94 insertions(+), 11 deletions(-)
+
+diff --git a/src/OSLikeStuff/task_scheduler.cpp b/src/OSLikeStuff/task_scheduler.cpp
+index c37f0bb9..076b823b 100644
+--- a/src/OSLikeStuff/task_scheduler.cpp
++++ b/src/OSLikeStuff/task_scheduler.cpp
+@@ -146,6 +146,7 @@ struct TaskManager {
+ 	double getSecondsFromStart();
+ 
+ 	void ignoreForStats();
++	void delayTask(TaskID id, double seconds);
+ 	void setNextRunTimeforCurrentTask(double seconds);
+ 
+ 	double getLastRunTimeforCurrentTask();
+@@ -297,6 +298,19 @@ void TaskManager::ignoreForStats() {
+ 	countThisTask = false;
+ }
+ 
++void TaskManager::delayTask(TaskID id, double seconds) {
++	if (id < 0 || id >= kMaxTasks) {
++		return;
++	}
++	Task* t = &list[id];
++	if (t->handle == nullptr || t->removeAfterUse) {
++		return;
++	}
++	// chooseBestTask() has a task due at lastCallTime + targetInterval - durationStats.average. (runTask() doesn't set
++	// lastCallTime after a call that ignoreForStats() left out.)
++	t->lastCallTime = getSecondsFromStart() + seconds - t->schedule.targetInterval + t->durationStats.average;
++}
++
+ double TaskManager::getLastRunTimeforCurrentTask() {
+ 	auto currentTask = &list[currentID];
+ 	return currentTask->durationStats.average;
+@@ -528,6 +542,10 @@ void ignoreForStats() {
+ 	taskManager.ignoreForStats();
+ }
+ 
++void delayTask(TaskID id, double seconds) {
++	taskManager.delayTask(id, seconds);
++}
++
+ double getLastRunTimeforCurrentTask() {
+ 	return taskManager.getLastRunTimeforCurrentTask();
+ }
+diff --git a/src/OSLikeStuff/task_scheduler.h b/src/OSLikeStuff/task_scheduler.h
+index ecdc0233..4b0130c5 100644
+--- a/src/OSLikeStuff/task_scheduler.h
++++ b/src/OSLikeStuff/task_scheduler.h
+@@ -60,6 +60,11 @@ uint8_t addOnceTask(TaskHandle task, uint8_t priority, double timeToWait, const
+ /// interfere with scheduling
+ uint8_t addConditionalTask(TaskHandle task, uint8_t priority, RunCondition condition, const char* name);
+ void ignoreForStats();
++/// mastertune-v17: the repeating task `id` is next due `seconds` from now, as if it had last been called then less its
++/// target interval (its maximum interval counts from there too). For a call that found too little to do yet, with
++/// ignoreForStats(), so the task isn't called again and again meanwhile. Nothing for an empty slot or a task that runs
++/// once.
++void delayTask(TaskID id, double seconds);
+ double getLastRunTimeforCurrentTask();
+ double getSystemTime();
+ void setNextRunTimeforCurrentTask(double seconds);
+diff --git a/src/deluge/deluge.cpp b/src/deluge/deluge.cpp
+index 5fcd500a..a4f3fee1 100644
+--- a/src/deluge/deluge.cpp
++++ b/src/deluge/deluge.cpp
+@@ -577,7 +577,9 @@ void registerTasks() {
+ 
+ 	// 0-9: High priority (10 for dyn tasks)
+ 	uint8_t p = 0;
+-	addRepeatingTask(&(AudioEngine::routine), p++, 0.00001, 16 / 44100., 24 / 44100., "audio  routine");
++	// mastertune-v17: its ID, for delayTask() when routine() waits for the minimum window
++	AudioEngine::routineTaskID =
++	    (TaskID)addRepeatingTask(&(AudioEngine::routine), p++, 0.00001, 16 / 44100., 24 / 44100., "audio  routine");
+ 	// this one runs quickly and frequently to check for encoder changes
+ 	addRepeatingTask([]() { encoders::readEncoders(); }, p++, 0.0005, 0.001, 0.001, "read encoders");
+ 	// formerly part of audio routine, updates midi and clock
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index 10f6827a..07663bfa 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -181,6 +181,7 @@ bool bypassCulling = false;
+ bool audioRoutineLocked = false;
+ size_t minNumSamplesToRender = 0;
+ double routineTimeAverage = 0;
++int8_t routineTaskID = -1;
+ uint32_t audioSampleTimer = 0;
+ uint32_t i2sTXBufferPos;
+ uint32_t i2sRXBufferPos;
+@@ -564,6 +565,34 @@ inline void setDireness(size_t numSamples) { // Consider direness and culling -
+ 	}
+ }
+ 
++// mastertune-v17: the minimum window. Each render costs a fixed amount besides what it costs per sample: a big song
++// spends it on every track and kit, sounding or not (in the emulator 43,500 instructions a render for tests/sdload's
++// big project with nothing playing). Rendering whatever was due whenever routine() was called, the windows of a light
++// load were short (the task manager calls it about every 16 samples, and every few samples while the playback routine's
++// target interval was 0) and that cost was most of the CPU. At light load routine() now waits until kMinSamplesDue
++// samples are due and then, as always, renders about twice that (60 samples, while 96 are still in the output buffer).
++// Only while there's room to spare: the render time of windows that long under kMinWindowMaxLoadPermille of their
++// audio's time, measured around the render (routineMeasured()), and cpuDireness at 0; not while a file is saved or
++// loaded, which has its own minimum (minNumSamplesToRender).
++constexpr size_t kMinSamplesDue = 32;
++constexpr uint32_t kMinWindowMaxLoadPermille = 500;
++/// While the load keeps it off, no windows that long are rendered to measure it again: after this long it applies again
++/// until one is, and the load starts afresh from that one (1/8 s)
++constexpr uint32_t kWindowLoadMaxAge = kSampleRate >> 3;
++/// Render time over the audio's time of the windows of kMinSamplesDue samples or more, in 0.1 %: (7 * average + latest)
++/// / 8, so that one busy window (voices starting) doesn't switch the minimum window off; and audioSampleTimer after the
++/// latest
++static uint32_t windowLoadPermille = 0;
++static uint32_t windowLoadMeasuredAt = 0;
++
++static bool minimumWindowApplies() {
++	if (cpuDireness != 0 || minNumSamplesToRender != 0) {
++		return false;
++	}
++	return windowLoadPermille < kMinWindowMaxLoadPermille
++	       || audioSampleTimer - windowLoadMeasuredAt >= kWindowLoadMaxAge;
++}
++
+ void scheduleMidiGateOutISR(uint32_t saddrPosAtStart, int32_t unadjustedNumSamplesBeforeLappingPlayHead,
+                             int32_t timeWithinWindowAtWhichMIDIOrGateOccurs);
+ void setMonitoringMode();
+@@ -576,8 +605,9 @@ void tickSongFinalizeWindows(size_t& numSamples, int32_t& timeWithinWindowAtWhic
+ void flushMIDIGateBuffers();
+ void renderAudio(size_t numSamples);
+ void renderAudioForStemExport(size_t numSamples);
+-/// inner loop of audio rendering, deliberately not in header
+-[[gnu::hot]] void routine_() {
++/// inner loop of audio rendering, deliberately not in header. Returns false when it rendered nothing because less than
++/// the minimum window was due (mastertune-v17): routineUnmeasured() stops then.
++[[gnu::hot]] bool routine_() {
+ #if JFTRACE
+ 	aeCtr.note();
+ #endif
+@@ -598,7 +628,16 @@ void renderAudioForStemExport(size_t numSamples);
+ 		if (!numRoutines) {
+ 			ignoreForStats();
+ 		}
+-		return;
++		return true;
++	}
++
++	// mastertune-v17: the minimum window. Too little due yet: nothing rendered, and the audio task is due again when
++	// kMinSamplesDue will be. What MIDI and gates wait to go out now (live, MIDI thru) goes, as it would with a render.
++	if (!numRoutines && numSamples < kMinSamplesDue && minimumWindowApplies()) {
++		flushMIDIGateBuffers();
++		ignoreForStats();
++		delayTask(routineTaskID, (double)(kMinSamplesDue - numSamples) / kSampleRate);
++		return false;
+ 	}
+ #if AUTOMATED_TESTER_ENABLED
+ 	AutomatedTester::possiblyDoSomething();
+@@ -652,6 +691,7 @@ void renderAudioForStemExport(size_t numSamples);
+ 	audioSampleTimer += numSamples;
+ 
+ 	bypassCulling = false;
++	return true;
+ }
+ void renderAudio(size_t numSamples) {
+ 	memset(&renderingBuffer, 0, numSamples * sizeof(StereoSample));
+@@ -1197,8 +1237,8 @@ void scheduleMidiGateOutISR(uint32_t saddrPosAtStart, int32_t unadjustedNumSampl
+ 	}
+ }
+ 
+-/// The audio routine exactly as in v12. mastertune-diag: kept in a function of its own, so its machine code (with the
+-/// whole render inlined) stays the same, and measured from outside by routine() below.
++/// The audio routine as in v12 (mastertune-v17: and the minimum window, see routine_()). mastertune-diag: kept in a
++/// function of its own, with the whole render inlined, and measured from outside by routine() below.
+ [[gnu::noinline]] static void routineUnmeasured() {
+ 
+ 	logAction("AudioDriver::routine");
+@@ -1222,7 +1262,9 @@ void scheduleMidiGateOutISR(uint32_t saddrPosAtStart, int32_t unadjustedNumSampl
+ 				deluge::hid::encoders::interpretEncoders(true);
+ 			}
+ #endif
+-			routine_();
++			if (!routine_()) {
++				break;
++			}
+ 			numRoutines += 1;
+ 		}
+ 	}
+@@ -1252,9 +1294,20 @@ void scheduleMidiGateOutISR(uint32_t saddrPosAtStart, int32_t unadjustedNumSampl
+ 	routineBeenCalled = true;
+ }
+ 
+-/// mastertune-v17: a call of routine() that rendered took `ticks` of OS timer 0
+-static void routineMeasured(uint32_t ticks) {
++/// mastertune-v17: a call of routine() rendered `samples` in `ticks` of OS timer 0
++static void routineMeasured(uint32_t ticks, uint32_t samples) {
+ 	routineTimeAverage = (routineTimeAverage + ticks / DELUGE_CLOCKS_PERf) / 2;
++	if (samples >= kMinSamplesDue) {
++		// 1000 * kSampleRate / DELUGE_CLOCKS_PER = 4410 / 3333
++		uint32_t load = (uint32_t)std::min<uint64_t>((uint64_t)ticks * 4410 / ((uint64_t)samples * 3333), 100000);
++		if (audioSampleTimer - windowLoadMeasuredAt > kWindowLoadMaxAge) {
++			windowLoadPermille = load; // The first after a while: afresh
++		}
++		else {
++			windowLoadPermille = (windowLoadPermille * 7 + load) / 8;
++		}
++		windowLoadMeasuredAt = audioSampleTimer;
++	}
+ }
+ 
+ void routine() {
+@@ -1279,8 +1332,9 @@ void routine() {
+ 		else {
+ 			routineUnmeasured();
+ 		}
+-		if (audioSampleTimer != samplesBefore) {
+-			routineMeasured(getTimerValue(0) - startTime);
++		uint32_t samples = audioSampleTimer - samplesBefore;
++		if (samples) {
++			routineMeasured(getTimerValue(0) - startTime, samples);
+ 		}
+ 	}
+ 	profiler::inAudioRoutine = wasInAudioRoutine;
+diff --git a/src/deluge/processing/engines/audio_engine.h b/src/deluge/processing/engines/audio_engine.h
+index 07339016..9dbba2e2 100644
+--- a/src/deluge/processing/engines/audio_engine.h
++++ b/src/deluge/processing/engines/audio_engine.h
+@@ -70,6 +70,8 @@ class Reverb;
+  * so when the audio routine is finished and is then called again the next time, only say one or two
+  * samples will have been output via DMA to the DAC. This means the next window length is set at just
+  * one or two samples. I.e. lighter CPU load means shorter windows.
++ * (mastertune-v17: except that at light load the audio routine now waits until 32 samples are due and renders about
++ * twice that, since each window has a fixed cost too, see kMinSamplesDue in audio_engine.cpp.)
+  *
+  * Often the window length will be rounded to a multiple of 4, because various parts of the rendering code
+  * (e.g. oscillator table lookup / interpolation) use Arm NEON optimizations, which are implemented in
+@@ -171,6 +173,8 @@ extern size_t minNumSamplesToRender;
+ /// mastertune-v17: how long routine() takes, in seconds: (average + latest) / 2 over the calls that rendered, whoever
+ /// called it, as the task manager averages a task's duration. cpuDireness and culling (setDireness()) go by it.
+ extern double routineTimeAverage;
++/// mastertune-v17: the task manager's task that calls routine() (registerTasks()), -1 before it's registered
++extern int8_t routineTaskID;
+ 
+ void registerSideChainHit(int32_t strength);
+ 
+-- 
+2.43.0
+
