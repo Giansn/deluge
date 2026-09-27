@@ -81,6 +81,7 @@ MONITOR_LIMIT = 6144            # More than this (139 ms, the two clocks driftin
 MONITOR_FADE = 441              # Monitor: 10 ms fades where it starts, runs dry or skips ahead, so it does not click
 NOT_OUTPUTS = ("microsoft sound mapper", "primary sound driver")  # Windows' aliases of the default output
 SONG_INFO = bytes([0xF0, 0x00, 0x21, 0x7B, 0x01, 0x12])  # The Deluge's SysEx with its song and firmware (port 3)
+SONG_INFO_7D = bytes([0xF0, 0x7D, 0x12])  # The same after the Deluge got SysEx with the developer ID 0x7D
 
 # --- the look: panel, OLED, pads (the Deluge's colours), lettering
 
@@ -561,11 +562,11 @@ class DelugeInfo:
     """What the Deluge tells about itself: its song's name and its firmware, in SysEx F0 00 21 7B 01 12 <JSON
     {"song": ..., "fw": ...}, UTF-8, packed 7 into 8> F7 on its USB MIDI port 3, while USB audio streams (a firmware
     that sends it). Only listens: it opens port 3 as an input and never sends anything. Port 1, the one a DAW uses,
-    stays free."""
+    stays free. poll() takes what arrived, from the window's loop: no second thread, so closing never waits on one."""
 
     def __init__(self):
         self.song = self.firmware = None  # None: not told (yet); "" for the song: a new song, not saved yet
-        self.midi, self.port = None, ""
+        self.midi, self.port, self.busy = None, "", False  # busy: port 3 is there, but another program has it
 
     @staticmethod
     def pick(names):
@@ -578,29 +579,47 @@ class DelugeInfo:
 
     @staticmethod
     def parse(message):
-        """(song, firmware) from one SysEx, or None if it is not the Deluge's song info."""
+        """(song, firmware) from one SysEx, or None if it is not the Deluge's song info. UTF-8; CP437 (the Deluge's
+        card) if it is not."""
         message = bytes(message)
-        if not message.startswith(SONG_INFO) or message[-1:] != b"\xf7":
+        head = next((h for h in (SONG_INFO, SONG_INFO_7D) if message.startswith(h)), None)
+        if head is None or message[-1:] != b"\xf7":
             return None
+        raw = unpack7(message[len(head):-1])
         try:
-            info = json.loads(unpack7(message[len(SONG_INFO):-1]).decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = raw.decode("cp437")
+        try:
+            info = json.loads(text)
+        except ValueError:
             return None
         if not isinstance(info, dict):
             return None
         song, firmware = info.get("song"), info.get("fw")
         return (song, firmware) if isinstance(song, str) and isinstance(firmware, str) else None
 
-    def received(self, event, data=None):
-        """python-rtmidi's callback: (message, delta time)."""
-        info = self.parse(event[0])
-        if info:
-            self.song, self.firmware = info
+    def poll(self):
+        """Takes the messages that arrived; True if the song or the firmware changed."""
+        changed = False
+        while self.midi is not None:
+            try:
+                event = self.midi.get_message()
+            except Exception:
+                return changed
+            if not event:
+                return changed
+            info = self.parse(event[0])
+            if info and info != (self.song, self.firmware):
+                self.song, self.firmware = info
+                changed = True
+        return changed
 
     def open(self):
         """Listens on the Deluge's port 3 if python-rtmidi is there and the port is free; True if it does."""
         if self.midi is not None:
             return True
+        self.busy = False
         try:
             import rtmidi
             midi = rtmidi.MidiIn()
@@ -612,8 +631,11 @@ class DelugeInfo:
             if i is None:
                 raise LookupError("no port 3 of a Deluge")
             midi.ignore_types(sysex=False)
-            midi.set_callback(self.received)
-            midi.open_port(i)
+            try:
+                midi.open_port(i)
+            except Exception:
+                self.busy = True  # Another program has it (Windows lets only one)
+                raise
         except Exception:
             self.close_midi(midi)
             return False
@@ -721,6 +743,7 @@ class Engine:
                 self.connected, self.last_cb = True, time.monotonic()
                 self.open_monitor()
                 return True
+        self.info.close()  # No audio: port 3 free for other programs
         return False
 
     def open_monitor(self):
@@ -950,7 +973,7 @@ class App:
         self.message, self.message_until = "", 0.0
         self.next_connect = 0.0
         self.pad_fill, self.api_text, self.drag_y = {}, None, None
-        self.song_shown = None
+        self.song_shown, self.next_info, self.info_busy = None, 0.0, False
         self.warned_import = False
         self.menu = None  # The output list on the OLED: {"items": [...], "sel": i}
 
@@ -1269,6 +1292,15 @@ class App:
             self.say("DELUGE LOST", 3)
         while e.events:
             self.say(e.events.popleft(), 2.5)
+        if e.connected and not e.demo:  # Port 3: what the Deluge told; opened again if it was taken or gone
+            if e.info.midi is None and now >= self.next_info:
+                self.next_info = now + 5.0
+                e.info.open()
+            if e.info.busy != self.info_busy:  # Another program has port 3: no song in the names until it lets go
+                self.info_busy = e.info.busy
+                if self.info_busy:
+                    self.say("PORT 3 BUSY: NO SONG", 2.5)
+            e.info.poll()
         if e.info.song != self.song_shown:  # The Deluge told another song
             self.song_shown = e.info.song
             if self.song_shown:
@@ -1446,6 +1478,8 @@ def main():
                 print(f"{i:4d}  {name}" + ("  <- port 3 of the Deluge" if i == port3 else ""))
         except ImportError:
             print("midi: pip install python-rtmidi, for the song and the firmware in the file names")
+        except Exception as ex:
+            print(f"midi: none here ({ex})")
         return
     if sys.platform.startswith("win"):
         try:  # Sharp pixels on scaled Windows displays

@@ -345,42 +345,79 @@ class SongInfo(unittest.TestCase):
         self.assertIsNone(pick(["Deluge 0"]))
         self.assertIsNone(pick(["Launchpad", "loopMIDI Port 3"]))
 
-    def test_listens_only(self):
-        """With python-rtmidi: port 3 opened as an input, SysEx let through, the song and firmware taken from it;
-        closing forgets them. No output port is ever made."""
-        made = []
+    def test_other_heads_and_cp437(self):
+        """After SysEx with the developer ID 0x7D the Deluge sends F0 7D 12 ...; a name in CP437 (the card's code page)
+        is read too."""
+        good = song_info("Rescue", "v17")
+        self.assertEqual(dr.DelugeInfo.parse(dr.SONG_INFO_7D + good[len(dr.SONG_INFO):]), ("Rescue", "v17"))
+        cp437 = dr.SONG_INFO + pack7('{"song":"Grüezi","fw":"v17"}'.encode("cp437")) + b"\xf7"
+        self.assertEqual(dr.DelugeInfo.parse(cp437), ("Grüezi", "v17"))
 
-        class MidiIn:
-            def __init__(self): made.append(self); self.opened, self.sysex = None, None
-            def get_ports(self): return ["Deluge 0", "MIDIIN2 (Deluge) 1", "MIDIIN3 (Deluge) 2"]
-            def ignore_types(self, sysex=True, **kw): self.sysex = not sysex
-            def set_callback(self, f): self.callback = f
-            def open_port(self, i): self.opened = i
-            def close_port(self): self.opened = None
-            def delete(self): pass
-        fake = types.ModuleType("rtmidi")
-        fake.MidiIn = MidiIn
-        old = sys.modules.get("rtmidi")
-        sys.modules["rtmidi"] = fake
-        try:
+    def test_listens_only(self):
+        """With python-rtmidi: port 3 opened as an input, SysEx let through, read by poll() (no second thread), the
+        song and firmware taken from it; closing forgets them. A taken port: busy. No output port is ever made."""
+        fake, made = fake_rtmidi(["Deluge 0", "MIDIIN2 (Deluge) 1", "MIDIIN3 (Deluge) 2"])
+        with installed(fake):
             info = dr.DelugeInfo()
             self.assertTrue(info.open())
             self.assertEqual((made[0].opened, made[0].sysex, info.port), (2, True, "MIDIIN3 (Deluge) 2"))
-            made[0].callback((list(song_info("Rescue 3", "1.2.1-mastertune-v17-4e3d2075")), 0.0), None)
+            made[0].queue += [song_info("Rescue 3", "1.2.1-mastertune-v17-4e3d2075"), bytes([0x90, 60, 100])]
+            self.assertTrue(info.poll())
             self.assertEqual((info.song, info.firmware), ("Rescue 3", "1.2.1-mastertune-v17-4e3d2075"))
-            made[0].callback(([0x90, 60, 100], 0.0), None)  # Anything else changes nothing
-            self.assertEqual(info.song, "Rescue 3")
+            made[0].queue.append(song_info("Rescue 3", "1.2.1-mastertune-v17-4e3d2075"))
+            self.assertFalse(info.poll())  # The same again: no change
             info.close()
             self.assertEqual((made[0].opened, info.song, info.firmware), (None, None, None))
-            fake.MidiIn.get_ports = lambda self: ["Deluge 0"]
+            fake.ports = ["Deluge 0"]
             self.assertFalse(info.open())  # No port 3: nothing opened
             self.assertIsNone(made[-1].opened)
-        finally:
-            if old is None:
-                sys.modules.pop("rtmidi", None)
-            else:
-                sys.modules["rtmidi"] = old
+            fake.ports, fake.taken = ["Deluge 0", "MIDIIN2 (Deluge) 1", "MIDIIN3 (Deluge) 2"], True
+            self.assertFalse(info.open())
+            self.assertTrue(info.busy)
         self.assertNotIn("MidiOut", SRC.read_text(encoding="utf-8"))
+
+
+def fake_rtmidi(ports):
+    """python-rtmidi with made-up MIDI inputs: MidiIn only."""
+    made = []
+    fake = types.ModuleType("rtmidi")
+    fake.ports, fake.taken, fake.broken = list(ports), False, False
+
+    class MidiIn:
+        def __init__(self):
+            if fake.broken:
+                raise RuntimeError("MidiInAlsa::initialize: error creating ALSA sequencer client object.")
+            made.append(self)
+            self.opened, self.sysex, self.queue = None, None, []
+        def get_ports(self): return list(fake.ports)
+        def ignore_types(self, sysex=True, **kw): self.sysex = not sysex
+        def open_port(self, i):
+            if fake.taken:
+                raise RuntimeError("MidiInWinMM::openPort: error creating Windows MM MIDI input port.")
+            self.opened = i
+        def get_message(self): return (list(self.queue.pop(0)), 0.0) if self.queue else None
+        def close_port(self): self.opened = None
+        def delete(self): pass
+    fake.MidiIn = MidiIn
+    fake.get_rtmidi_version = lambda: "6.0.0"
+    return fake, made
+
+
+class installed:
+    """A made-up module in sys.modules for the time of a with block."""
+
+    def __init__(self, module):
+        self.module = module
+
+    def __enter__(self):
+        self.old = sys.modules.get(self.module.__name__)
+        sys.modules[self.module.__name__] = self.module
+
+    def __exit__(self, *a):
+        if self.old is None:
+            sys.modules.pop(self.module.__name__, None)
+        else:
+            sys.modules[self.module.__name__] = self.old
 
 
 class PreRoll(EngineCase):
@@ -606,6 +643,31 @@ class Gui(EngineCase):
         self.assertGreater(app.clip_until, time.monotonic())  # The right channel arrived at full scale
         app.quit()
 
+    def test_port_3_again_and_busy(self):
+        """Port 3 taken by another program: a notice, and a new try every 5 s; once free, the song arrives and shows."""
+        fake, made = fake_rtmidi(["Deluge 0", "MIDIIN2 (Deluge) 1", "MIDIIN3 (Deluge) 2"])
+        fake.taken = True
+        with installed(fake):
+            e = self.engine()
+            e.last_cb = time.monotonic()
+            root = self.tk.Tk()
+            app = dr.App(root, e, 1.0)  # Its first tick tries port 3
+            app.boot_until = 0
+            self.assertEqual((e.info.midi, app.message), (None, "PORT 3 BUSY: NO SONG"))
+            fake.taken = False
+            e.last_cb = time.monotonic()
+            app.tick()
+            self.assertIsNone(e.info.midi)  # Not before 5 s
+            app.next_info = 0
+            app.tick()
+            self.assertIsNotNone(e.info.midi)
+            made[-1].queue.append(song_info("Rescue 3", "1.2.1-mastertune-v18"))
+            e.last_cb = time.monotonic()
+            app.tick()
+            self.assertEqual((e.info.song, app.message), ("Rescue 3", "SONG Rescue 3"))
+            app.quit()
+            self.assertIsNone(made[-1].opened)  # Let go at the end
+
     def test_boxes(self):
         """A box around each control: the six buttons, VOL and THRESH, none touching another, all on the plate, each
         button's name inside its box (OUT and FOLDER no longer run together)."""
@@ -764,6 +826,24 @@ class Devices(EngineCase):
     def test_no_deluge(self):
         ok, e, sd = self.connect(WINDOWS[:1] + WINDOWS[5:])
         self.assertEqual((ok, e.connected, sd.opened), (False, False, []))
+
+    def test_port_3_let_go_without_audio(self):
+        """No audio from the Deluge (its input missing or taken): port 3 is let go at once, for other programs; and
+        --list gets by without any MIDI system."""
+        fake, made = fake_rtmidi(["Deluge 0", "MIDIIN2 (Deluge) 1", "MIDIIN3 (Deluge) 2"])
+        with installed(fake), installed(FakeSd([("Microphone (Realtek)", "Windows WASAPI", 2)])):
+            e = dr.Engine(self.dir)
+            self.engines.append(e)
+            self.assertFalse(e.connect())
+            self.assertIsNone(e.info.midi)
+            self.assertTrue(made and all(m.opened is None for m in made))
+            fake.broken = True
+            argv = sys.argv
+            sys.argv = ["deluge_rec.py", "--list"]
+            try:
+                dr.main()  # No exception
+            finally:
+                sys.argv = argv
 
     def test_never_to_the_deluge(self):
         """Nothing goes to the Deluge: MIDI only as an input (its port 3), no stream that plays and records at once,
