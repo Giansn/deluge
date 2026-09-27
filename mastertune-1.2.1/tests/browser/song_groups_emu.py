@@ -4,8 +4,9 @@
 window).
 
 The user names versions of a song "New Sitar Grii", "New Sitar Grii 2", "New Sitar Grii 10": files whose names are the
-same without the number at their end (and the ' ', '_', '-' or '.' before it; case doesn't matter; a name without a
-number at its end is a song of its own, "SONG" and a number too: the firmware's name for a new song) and that sort next
+same without the number at their end (and the ' ' or '_' before it; case doesn't matter; a name without a number at
+its end is a song of its own, so is one whose number follows '-' or '.', and "SONG" and a number: the firmware's name
+for a new song) and that sort next
 to each other are one row in the song browser, the group's first version, shown by that name with an arrow. Pressing it
 (select encoder or LOAD) folds the group out and loads nothing; the select encoder then goes through the versions,
 pressing one loads it. A group folded out stays so when the encoder moves on (several at once, up to
@@ -81,6 +82,8 @@ Checks (OLED unless said):
 25. SHIFT+SAVE refused on the long name's folded row; on its version 2 (another group folded out too): the prompt
 26. MANY: the 9 groups folded out one after the other: the last 8 stay so, the first is folded in again
 27. 7-segment, NEW: "New Sitar Grii--", "OLD", "SONG1--", ..., the long name and "--" (scrolling)
+28. SEP: Beat > (Beat 2), Jam 2026-09-27, Jam 2026-09-28, Mix 1.5, Mix 1.6, Song > (Song2: only "SONG" exactly is
+    the firmware's new-song name), TR-808, TR-909 (a number after '-' or '.' is part of the name)
 
 Usage: song_groups_emu.py <deluge.elf> [--tools PREFIX] [--out DIR] [--build DIR] [--baseline] [--no-7seg]
   --baseline: a build without the grouping: the same steps, reported (the old browser: every file a row), not checked.
@@ -135,6 +138,11 @@ OLD_NAMES = ["Idea", "Idea 2", "Solo"]
 MANY = "MANY"  # More groups than the browser keeps folded out (LoadSongUI::kMaxOpenGroups)
 MANY_GROUPS = [f"G{c}" for c in "abcdefghi"]
 MANY_NAMES = [n for g in MANY_GROUPS for n in (g, g + " 2")]
+SEP = "SEP"  # Numbers after '-' and '.', and "Song2"
+SEP_NAMES = ["Beat", "Beat 2", "Jam 2026-09-27", "Jam 2026-09-28", "Mix 1.5", "Mix 1.6", "Song", "Song2", "TR-808",
+             "TR-909"]
+SEP_ROWS = [("Beat", True), ("Jam 2026-09-27", False), ("Jam 2026-09-28", False), ("Mix 1.5", False),
+            ("Mix 1.6", False), ("Song", True), ("TR-808", False), ("TR-909", False)]
 DIR_AT = NAME_AT + 0x100
 # The keyboard (qwerty_ui.cpp keyboardChars, QWERTY): row r at pad y = kQwertyHomeRow (3) + 2 - r, column c at x = c + 3
 KEYS = ["1234567890-", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM,.", "__" + " " * 6]
@@ -160,6 +168,7 @@ def build_sd(path):
     files.update({f"{NEW}/{n}.XML": song(NEW_KNOBS.get(n, FILLER)) for n in NEW_NAMES})
     files.update({f"{OLD}/{n}.XML": song(FILLER) for n in OLD_NAMES})
     files.update({f"{MANY}/{n}.XML": song(FILLER) for n in MANY_NAMES})
+    files.update({f"{SEP}/{n}.XML": song(FILLER) for n in SEP_NAMES})
     fat32.build(path, files)
     return len(files), sum(len(d) for d in files.values())
 
@@ -851,6 +860,19 @@ def run_new(b, check):
           b.max_groups == len(MANY_GROUPS) - 1 and s12["groups"] == MANY_GROUPS[1:]
           and up[-1] == MANY_GROUPS[0] and r12 and r12["arrow"] and r12["sel"] and ind(f12, MANY_GROUPS[1] + " 2"),
           f"{s12['name']!r}, {s12['groups']}; -1 x{len(up)}: {up[-3:]}, {b.show(f12)}")
+    b.close()
+
+    # 28: numbers after '-' and '.' are part of the name; "Song2" is a version of "Song"
+    b.open(SEP_NAMES[0], folder=SEP)
+    rows = []
+    for i in range(len(SEP_ROWS)):
+        r = sel_row(b.frame())
+        rows.append((r["text"], r["arrow"], r["indent"]) if r else None)
+        if i + 1 < len(SEP_ROWS):
+            b.turn(1)
+    check("28. SEP: Beat > (Beat 2), Jam 2026-09-27, Jam 2026-09-28, Mix 1.5, Mix 1.6, Song > (Song2), TR-808, TR-909",
+          sorted(r[:2] for r in rows if r) == sorted(SEP_ROWS) and None not in rows and not any(r[2] for r in rows),
+          "; ".join(f"{r[0]}{' >' if r[1] else ''}" if r else "-" for r in rows))
     b.close()
 
 
