@@ -23,12 +23,14 @@ D="$FW/src"
 # The fixed firmware takes the HP ladder's saturation from the caller (song/kit/track or voice)
 DEFS=""
 grep -q kSaturationGlobal "$D/deluge/dsp/filter/hpladder.h" && DEFS="-DHPF_SATURATION_PER_CONTEXT"
+# ... and the 12 / 24 dB LP ladders' (mastertune-v17 lpf-fix)
+grep -q kSaturationGlobal "$D/deluge/dsp/filter/lpladder.h" && DEFS="$DEFS -DLPF_SATURATION_PER_CONTEXT"
 CXX="g++ -std=gnu++23 -O2 -g -fsanitize=undefined -fno-sanitize-recover=undefined -fno-sanitize=signed-integer-overflow -w"
 RUN=""
 [ -n "$ARM" ] && CXX="$ARM_CXX" && RUN="$ARM_RUN"
 F="$D/deluge/dsp/filter"
 status=0
-for t in ${TEST:-filter_tone hpf_whistle}; do
+for t in ${TEST:-filter_tone hpf_whistle lpf_whistle}; do
   $CXX $DEFS -I "$T/bench/filters/stubs" -I "$T/delay/stubs" -I "$T/arm" -I "$D/deluge" -I "$D" -include host_shim.h \
       -include definitions_cxx.hpp -o "$B/$t" "$HERE/${t}_test.cpp" "$F/filter_set.cpp" \
       "$F/lpladder.cpp" "$F/hpladder.cpp" "$F/svf.cpp" "$F/filter.cpp" "$D/deluge/util/waves.cpp" \

@@ -193,7 +193,16 @@ Run run(const Context& ctx, const std::vector<float>& input, const Case& c, bool
 				buf[i] = buf[2 * i];
 			}
 		}
-#ifdef HPF_SATURATION_PER_CONTEXT
+#if defined(LPF_SATURATION_PER_CONTEXT)
+		int32_t sat = ctx.global ? kSatGlobal : kSatVoice;
+		int32_t lpSat = ctx.global ? LpLadderFilter::kSaturationGlobal : LpLadderFilter::kSaturationVoice;
+		if (ctx.stereo) {
+			fs.renderLongStereo(buf, buf + 2 * n, sat, lpSat);
+		}
+		else {
+			fs.renderLong(buf, buf + n, n, 1, sat, lpSat);
+		}
+#elif defined(HPF_SATURATION_PER_CONTEXT)
 		int32_t sat = ctx.global ? kSatGlobal : kSatVoice;
 		if (ctx.stereo) {
 			fs.renderLongStereo(buf, buf + 2 * n, sat);

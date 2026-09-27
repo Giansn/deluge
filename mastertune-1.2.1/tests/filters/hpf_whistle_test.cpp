@@ -114,7 +114,9 @@ static Result runCase(FilterMode lpf, FilterMode hpf, FilterRoute route, double 
 		else {
 			std::memset(buf, 0, sizeof(buf));
 		}
-#ifdef HPF_SATURATION_PER_CONTEXT
+#if defined(LPF_SATURATION_PER_CONTEXT)
+		fs.renderLongStereo(buf, buf + kBlock * 2, HpLadderFilter::kSaturationGlobal, LpLadderFilter::kSaturationGlobal);
+#elif defined(HPF_SATURATION_PER_CONTEXT)
 		fs.renderLongStereo(buf, buf + kBlock * 2, HpLadderFilter::kSaturationGlobal);
 #else
 		fs.renderLongStereo(buf, buf + kBlock * 2);
