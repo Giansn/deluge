@@ -21,6 +21,8 @@ The song ("everything at once", 120 BPM, 4/4, the firmware's default resolution 
 - 1 audio track playing a 2-bar loop recorded at 100 BPM in a 2-bar clip, so time-stretched to 120 BPM
 - Song: the reverb (Mutable, the default model, or --reverb-model), ducked by the sidechain; the drone with 4 binaural
   tones (100, 150, 200 and 300 Hz carriers with 4 to 10 Hz beats), ducked by the sidechain too.
+- --drone-life (not by default): the drone with life 50, FM 50 with the saw modulator and its tones Pulse (the Pulse
+  timbre, 30 % wide), all of mastertune-v15's drone at once, for its CPU cost.
 - --midi-track (not by default): also a MIDI track on channel 1 (e.g. a volca keys over DIN MIDI), a 1-bar bass line in
   16ths (10 notes, each a 16th long), for song_emu.py --midi-timing. MIDI clock out is on anyway (the firmware's default
   settings, as the emulator's erased flash gives).
@@ -430,10 +432,11 @@ def audio_track(lengths):
     return out, clip
 
 
-def drone():
-    out = '\t<drone volume="34" sidechain="20" sidechainShape="-601295438">\n'
+def drone(life=False):
+    lively = ' life="50" lifeRate="25" fm="50" fmForm="1" pulseWidth="30"' if life else ""
+    out = f'\t<drone volume="34" sidechain="20" sidechainShape="-601295438"{lively}>\n'
     for i, (freq, beat, pan) in enumerate(((10000, 400, 0), (15000, 600, -10), (20000, 800, 10), (30000, 1000, 0))):
-        out += f'\t\t<tone index="{i}" active="1" mode="1" timbre="0" byNote="0" note="57" cents="0" ' \
+        out += f'\t\t<tone index="{i}" active="1" mode="1" timbre="{4 if life else 0}" byNote="0" note="57" cents="0" ' \
                f'frequency="{freq}" beat="{beat}" sync="0" level="36" pan="{pan}" />\n'
     out += "\t</drone>\n"
     return out
@@ -454,7 +457,7 @@ def midi_track():
     return out, clip
 
 
-def song_xml(lengths, reverb_model, num_synths=8, midi=False):
+def song_xml(lengths, reverb_model, num_synths=8, midi=False, drone_life=False):
     head = dict(firmwareVersion="c1.2.1", earliestCompatibleFirmware="4.1.0-alpha", arrangementAutoScrollOn=0,
                 xScroll=0, xZoom=24, yScrollSongView=-7, yScrollArrangementView=-7, xScrollArrangementView=0,
                 xZoomArrangementView=192, timePerTimerTick=229, timerTickFraction=-1073741824, rootNote=0,
@@ -484,7 +487,7 @@ def song_xml(lengths, reverb_model, num_synths=8, midi=False):
         clips.append(part[1])
     out += "\t<instruments>\n" + "".join(instruments) + "\t</instruments>\n"
     out += "\t<sessionClips>\n" + "".join(clips) + "\t</sessionClips>\n"
-    out += drone()
+    out += drone(drone_life)
     out += "</song>\n"
     return out
 
@@ -496,13 +499,15 @@ def main():
     ap.add_argument("--xml-out")
     ap.add_argument("--synths", type=int, default=8,
                     help="only the first N synth tracks (a lighter song, e.g. for song_emu.py --save-while-playing)")
+    ap.add_argument("--drone-life", action="store_true",
+                    help="the drone with life, FM (saw) and Pulse tones (mastertune-v15), for its CPU cost")
     ap.add_argument("--midi-track", action="store_true",
                     help="also a MIDI track on channel 1 (a bass line in 16ths), for song_emu.py --midi-timing")
     ap.add_argument("--files-out", help="also write the song and samples as files for a real SD card, under their own "
                     "names (SONGS/MT_LOADTEST.XML, SAMPLES/MT_LOADTEST/), so nothing on the card is overwritten")
     args = ap.parse_args()
     files, lengths = samples()
-    xml = song_xml(lengths, args.reverb_model, args.synths, args.midi_track)
+    xml = song_xml(lengths, args.reverb_model, args.synths, args.midi_track, args.drone_life)
     files["SONGS/DEFAULT.XML"] = xml.encode()
     if args.xml_out:
         open(args.xml_out, "w").write(xml)

@@ -6,6 +6,7 @@
 #include <cmath>
 #include <complex>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <string>
 #include <vector>
@@ -284,8 +285,13 @@ static uint64_t steadyScenarioHash(Drone& drone, DroneSettings& s) {
 	return hash;
 }
 
-/// What the steady scenario gives with the drone of mastertune-v14 (c1d1c8bb), built for the PC as here
+/// What the steady scenario gives with the drone of mastertune-v14 (c1d1c8bb), built for the PC as here, and for the
+/// Cortex-A9 with the firmware's flags (ARM=1)
+#if defined(__arm__)
+constexpr uint64_t kSteadyHashV14 = 0xea987444a6810a1dull;
+#else
 constexpr uint64_t kSteadyHashV14 = 0x4e3344279eb960e2ull;
+#endif
 
 // Frequency of a sine over [from, to), from its rising zero crossings (interpolated)
 static double sineHz(const std::vector<double>& x, size_t from, size_t to) {
@@ -340,8 +346,66 @@ static double bandEnergy(const std::vector<double>& m, size_t n, double lo, doub
 	return e;
 }
 
-int main() {
+// 10. Cost per block of 128 samples, on the Deluge's Cortex-A9 when this runs in the emulator (tests/arm; on the PC
+// nothing is counted), and no overflow with all 16 tones at full level. mastertune-v15: with life, FM and the pulse;
+// also on its own (drone_test cost).
+static void costs() {
+	auto measure = [](const char* label, int tones, Mode mode, Timbre timbre,
+	                  std::function<void(DroneSettings&)> lively = nullptr) {
+		TestDrone d = makeDrone();
+		for (int i = 0; i < tones; i++) {
+			d.tones[i] = on(mode, timbre, 5000 + 3000 * i, 800, 0, 50, i * 4 - 32);
+		}
+		if (lively) {
+			lively(d.settings);
+		}
+		std::vector<StereoSample> buf(kBlock);
+		for (int b = 0; b < 60; b++) {
+			if (b >= 50) {
+				EMU_COUNT_BEGIN(label);
+			}
+			d.render(std::span<StereoSample>(buf.data(), kBlock), Drone::Context{});
+			if (b >= 50) {
+				EMU_COUNT_END();
+			}
+		}
+		return d;
+	};
+	measure("drone 1 tone, sine, 128 samples", 1, Mode::TONE, Timbre::SINE);
+	measure("drone 1 tone, binaural, 128 samples", 1, Mode::BINAURAL, Timbre::SINE);
+	measure("drone 1 tone, isochronic, 128 samples", 1, Mode::ISOCHRONIC, Timbre::SINE);
+	measure("drone 4 tones, binaural, 128 samples", 4, Mode::BINAURAL, Timbre::SINE);
+	measure("drone 16 tones, binaural, 128 samples", 16, Mode::BINAURAL, Timbre::RICH);
+	TestDrone d = measure("drone 16 tones, monaural, 128 samples", 16, Mode::MONAURAL, Timbre::RICH);
+	Out o = run(d, 44100);
+	printf("16 tones at full level: peak %.2f of a tone's full level\n", maxAbs(o.l, 0, o.l.size()) / kFullScale);
+
+	auto life = [](DroneSettings& s) { s.life = 50; };
+	auto fm = [](DroneSettings& s) { s.fm = 50; };
+	auto sawFm = [](DroneSettings& s) { s.fm = 50, s.fmForm = DroneSettings::FmForm::SAW; };
+	auto all = [](DroneSettings& s) { s.life = 50, s.fm = 50, s.fmForm = DroneSettings::FmForm::SAW; };
+	measure("drone 1 tone, binaural soft, 128 samples", 1, Mode::BINAURAL, Timbre::SOFT);
+	measure("drone 1 tone, binaural, life 50, 128 samples", 1, Mode::BINAURAL, Timbre::SINE, life);
+	measure("drone 1 tone, binaural soft, life 50, 128 samples", 1, Mode::BINAURAL, Timbre::SOFT, life);
+	measure("drone 1 tone, binaural, FM 50 sine, 128 samples", 1, Mode::BINAURAL, Timbre::SINE, fm);
+	measure("drone 1 tone, binaural, FM 50 saw, 128 samples", 1, Mode::BINAURAL, Timbre::SINE, sawFm);
+	measure("drone 1 tone, binaural pulse, 128 samples", 1, Mode::BINAURAL, Timbre::PULSE);
+	measure("drone 1 tone, binaural pulse, life 50, FM 50 saw, 128 samples", 1, Mode::BINAURAL, Timbre::PULSE, all);
+	measure("drone 1 tone, tone pulse, life 50, FM 50 saw, 128 samples", 1, Mode::TONE, Timbre::PULSE, all);
+	measure("drone 4 tones, binaural pulse, life 50, FM 50 saw, 128 samples", 4, Mode::BINAURAL, Timbre::PULSE, all);
+	TestDrone e = measure("drone 16 tones, binaural pulse, life 50, FM 50 saw, 128 samples", 16, Mode::BINAURAL,
+	                      Timbre::PULSE, all);
+	Out p = run(e, 44100);
+	printf("16 pulse tones at full level, life and FM: peak %.2f of a tone's full level\n",
+	       maxAbs(p.l, 0, p.l.size()) / kFullScale);
+}
+
+int main(int argc, char** argv) {
 	Drone::initTables(tableMemory.data());
+	if (argc > 1 && !strcmp(argv[1], "cost")) {
+		costs(); // Only the costs: quick in the emulator
+		return 0;
+	}
 	const size_t kN = 65536;
 
 	// 1. A pure tone: level and purity
@@ -716,9 +780,7 @@ int main() {
 		printf("life 0, FM 0: steady scenario %016llx, with the other new settings changed %016llx, v14 %016llx\n",
 		       (unsigned long long)plain, (unsigned long long)others, (unsigned long long)kSteadyHashV14);
 		CHECK(plain == others, "life's other settings change nothing while life and FM are 0");
-#if !defined(__arm__)
 		CHECK(plain == kSteadyHashV14, "the steady drone is v14's bit for bit");
-#endif
 	}
 
 	// 12. Life 50: the pitch drifts (6 cents standard deviation), the level breathes (3 dB), each on its own course,
@@ -982,8 +1044,10 @@ int main() {
 		}
 	}
 
-	// 17. FM on high tones: the index is limited so the sidebands don't alias. The worst component that's no harmonic
-	// (nor a sideband turning next to one) against the strongest, at the deepest bloom over 20 s.
+	// 17. FM on high tones: the index is limited so the sidebands don't alias badly: the worst component below 16 kHz that's
+	// no harmonic (nor a sideband turning next to one) against the strongest, over 20 s of blooming. With the sine
+	// modulator below -50 dB; with the saw no worse than the sound it was chosen by (render5.py b: a pulse at 220 Hz with
+	// saw FM up to 1.2 radians, about -28 dB, its reset's sweep aliasing already).
 	{
 		struct Case {
 			Timbre timbre;
@@ -993,17 +1057,18 @@ int main() {
 		};
 		std::vector<Case> cases;
 		for (auto form : {DroneSettings::FmForm::SINE, DroneSettings::FmForm::SAW}) {
-			for (int32_t f : {5500, 11000, 22000, 44000, 88000}) {
+			for (int32_t f : {22000, 33000, 44000, 88000, 150000}) {
 				cases.push_back({Timbre::PULSE, f, form, 50});
 			}
 			for (int32_t f : {50000, 100000, 200000}) {
 				cases.push_back({Timbre::RICH, f, form, 50});
 			}
-			for (int32_t f : {100000, 300000, 500000}) {
+			cases.push_back({Timbre::ORGAN, 200000, form, 50});
+			cases.push_back({Timbre::SOFT, 250000, form, 50});
+			for (int32_t f : {300000, 500000}) {
 				cases.push_back({Timbre::SINE, f, form, 50});
 			}
 		}
-		cases.push_back({Timbre::PULSE, 22000, DroneSettings::FmForm::SAW, 30}); // As the prototype the user chose
 		for (const Case& k : cases) {
 			TestDrone d = makeDrone();
 			d.drone.seed(7);
@@ -1028,11 +1093,11 @@ int main() {
 				}
 				worst = std::max(worst, other);
 			}
+			const char* names[] = {"sine", "soft", "organ", "rich", "pulse"};
+			bool saw = (k.form == DroneSettings::FmForm::SAW);
 			printf("FM %d %s on %s at %.0f Hz: worst aliasing below 16 kHz %.1f dB, sidebands up to %.1f dB\n", (int)k.fm,
-			       k.form == DroneSettings::FmForm::SAW ? "saw" : "sine",
-			       k.timbre == Timbre::PULSE ? "pulse" : (k.timbre == Timbre::RICH ? "rich" : "sine"), f, worst,
-			       10 * std::log10(deepest));
-			CHECK(worst < -50, "FM aliasing %.1f dB", worst); (void)deepest;
+			       saw ? "saw" : "sine", names[(int)k.timbre], f, worst, 10 * std::log10(deepest));
+			CHECK(worst < (saw ? -27 : -50), "FM aliasing %.1f dB", worst);
 		}
 	}
 
@@ -1075,36 +1140,7 @@ int main() {
 		printf("song file: %zu attributes round trip, defaults without them, clamped\n", file.size());
 	}
 
-	// 10. Cost per block of 128 samples, on the Deluge's Cortex-A9 when this runs
-	// in the emulator (tests/arm; on the PC nothing is counted), and no overflow
-	// with all 16 tones at full level
-	{
-		auto measure = [](const char* label, int tones, Mode mode, Timbre timbre) {
-			TestDrone d = makeDrone();
-			for (int i = 0; i < tones; i++) {
-				d.tones[i] = on(mode, timbre, 5000 + 3000 * i, 800, 0, 50, i * 4 - 32);
-			}
-			std::vector<StereoSample> buf(kBlock);
-			for (int b = 0; b < 60; b++) {
-				if (b >= 50) {
-					EMU_COUNT_BEGIN(label);
-				}
-				d.render(std::span<StereoSample>(buf.data(), kBlock), Drone::Context{});
-				if (b >= 50) {
-					EMU_COUNT_END();
-				}
-			}
-			return d;
-		};
-		measure("drone 1 tone, sine, 128 samples", 1, Mode::TONE, Timbre::SINE);
-		measure("drone 1 tone, binaural, 128 samples", 1, Mode::BINAURAL, Timbre::SINE);
-		measure("drone 1 tone, isochronic, 128 samples", 1, Mode::ISOCHRONIC, Timbre::SINE);
-		measure("drone 4 tones, binaural, 128 samples", 4, Mode::BINAURAL, Timbre::SINE);
-		measure("drone 16 tones, binaural, 128 samples", 16, Mode::BINAURAL, Timbre::RICH);
-		TestDrone d = measure("drone 16 tones, monaural, 128 samples", 16, Mode::MONAURAL, Timbre::RICH);
-		Out o = run(d, 44100);
-		printf("16 tones at full level: peak %.2f of a tone's full level\n", maxAbs(o.l, 0, o.l.size()) / kFullScale);
-	}
+	costs();
 
 	printf("%d checks, %d failed\n", checks, failures);
 	if (failures == 0) {

@@ -1,8 +1,10 @@
 #!/bin/sh
 # Host test for the drone (v12): the firmware's drone DSP on the PC, with UndefinedBehaviorSanitizer.
 # Usage: ./run.sh /path/to/DelugeFirmware   (ARM=1 ./run.sh ...: on the Deluge's Cortex-A9 in the emulator)
+#        ./run.sh /path/to/DelugeFirmware cost   (only the cost per block, e.g. ARM=1 for the instruction counts)
 set -e
 FW=$(cd "$1" && pwd)
+shift
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/../arm/select.sh"
 B=$(mktemp -d)
@@ -13,4 +15,4 @@ RUN=""
 [ -n "$ARM" ] && CXX="$ARM_CXX" && RUN="$ARM_RUN"
 $CXX -I "$HERE/../delay/stubs" -I "$HERE/../arm" -I "$D/deluge" -I "$D" -include host_shim.h \
     -o "$B/drone_test" "$HERE/drone_test.cpp" "$D/deluge/dsp/drone/drone.cpp"
-$RUN "$B/drone_test"
+$RUN "$B/drone_test" "$@"

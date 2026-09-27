@@ -17,6 +17,8 @@
 #   and the same in <out>/device/ and <out>/digital/.
 # Needs: python3 with unicorn 2 and numpy, a C compiler (for blockcount.c). About 2 minutes.
 #
+# SONG_OPTS: more make_sd.py options for all three runs, e.g. SONG_OPTS=--drone-life (the drone with life, FM and Pulse
+#   tones, mastertune-v15: its cost against the default song's, in the profile's drone area)
 # EMU_OPTS: more song_emu.py options for all three runs, e.g. EMU_OPTS="--init-sounds --seed 1" ./run.sh <tree> <out>
 #   --init-sounds  Sets what Sound::Sound() leaves uninitialised but reads (Sound::globalLFO, ModControllableAudio::
 #                  modFXLFO: phase and holdValue; timeStartedSkippingRendering{ModFX,LFO,Arp}), at the start of every
@@ -133,7 +135,7 @@ if [ -n "$SAVE" ]; then
 fi
 
 run() { # out dir, song options, emulator options
-	python3 "$HERE/make_sd.py" "$1/sd.img" $2 > /dev/null
+	python3 "$HERE/make_sd.py" "$1/sd.img" $2 $SONG_OPTS > /dev/null
 	python3 "$HERE/song_emu.py" "$ELF" "$1/sd.img" "$1" --tools "$TOOLS" --build "$OUT" --bars "$BARS" $3 $EMU_OPTS
 	rm -f "$1/sd.img"
 }
