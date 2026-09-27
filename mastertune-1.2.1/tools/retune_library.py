@@ -11,6 +11,9 @@ unshifted when the master tune is the same. This tool makes a converted copy of 
   (soxr, very high quality, the ratio as an exact fraction: 440/432 = 55/54), with the mtun chunk. Bit depth,
   channels and format stay (float stays float). "smpl" (loops, sample period), "cue " and "fact" are scaled; other
   chunks are kept. AIFF files become WAV (the firmware reads mtun only from WAV) and the XML paths follow.
+- Peaks: resampling can put peaks over full scale (a file normalized to 0 dBFS). Nothing is clipped: such an integer
+  file is written as 32-bit float instead (unclipped in the file; the firmware reads it, but limits float samples to
+  full scale as it loads them), or with --no-float at a level just low enough (the report gives the dB).
 - XML: in every song, kit and synth (SONGS/, KITS/, SYNTHS/) the sample positions (start, end, loop points, per
   multisample range too, the early-2016 millisecond positions, the audio clips' start and end) scaled to match.
   transpose and cents stay: they are relative to the file in its own tuning.
@@ -30,6 +33,7 @@ so its repetition rate (the pitch of a single-cycle loop) can be off by more tha
 
 It never writes into the card folder. Usage (Windows: py instead of python3):
   python3 retune_library.py --card CARD_COPY --out NEW_CARD --tuning 432 [--rate 44100] [--dry-run] [--jobs N]
+                            [--no-float]
   --rate 0 keeps each file's sample rate. The report goes to the console and, unless --dry-run, to
   NEW_CARD/RETUNE_REPORT.txt (and .json).
 
@@ -46,6 +50,7 @@ import struct
 import sys
 import time
 import unicodedata
+import zlib
 from fractions import Fraction
 
 import numpy as np
@@ -247,7 +252,8 @@ def decode(info):
 
 
 def encode(x, bits, is_float):
-    """Little-endian WAV data from float64 (frames, channels); returns (bytes, clipped samples)."""
+    """Little-endian WAV data from float64 (frames, channels); returns (bytes, clipped samples). The callers write no
+    clipped samples: see over_full_scale()."""
     if is_float:
         return x.astype(f"<f{bits // 8}").tobytes(), 0
     scale = 2 ** (bits - 1)
@@ -260,6 +266,32 @@ def encode(x, bits, is_float):
         v = (y.reshape(-1) & 0xFFFFFF).astype(np.uint32)
         return np.stack([v & 0xFF, (v >> 8) & 0xFF, v >> 16], axis=1).astype(np.uint8).tobytes(), clipped
     return y.astype(f"<i{bits // 8}").tobytes(), clipped
+
+
+def over_full_scale(x, bits):
+    """How many samples an integer format of bits would clip (as encode() rounds)."""
+    scale = 2 ** (bits - 1)
+    y = np.round(x * scale)
+    return int(np.count_nonzero((y > scale - 1) | (y < -scale)))
+
+
+def headroom_gain(x, bits):
+    """The gain (<= 1) that brings x just into the integer format of bits: the positive peak to the largest code
+    (scale - 1), the negative one to -scale."""
+    scale = 2 ** (bits - 1)
+    hi, lo = float(np.max(x)), float(np.min(x))
+    g = 1.0
+    if hi > 0:
+        g = min(g, (scale - 1) / (scale * hi))
+    if lo < 0:
+        g = min(g, 1 / -lo)
+    while over_full_scale(x * g, bits):  # Only float rounding could leave one
+        g *= 1 - 2 ** -40
+    return g
+
+
+def db(v):
+    return 20 * math.log10(v) if v > 0 else -math.inf
 
 
 def chunk(cid, body):
@@ -374,20 +406,29 @@ def pitch_shift_keep_length(x, rate, scale, loop):
     return y
 
 
-def build_wav(info, frames_new, rate_new, audio_bytes, f, mtun, warnings, where):
+def build_wav(info, frames_new, rate_new, audio_bytes, f, mtun, warnings, where, as_float=False):
     """The WAV file: the original's chunks in their order (fmt with the new rate, smpl, cue and fact scaled, mtun
-    replaced and put right before data), or for an AIFF a new fmt with its note (inst) and sustain loop (smpl)."""
+    replaced and put right before data), or for an AIFF a new fmt with its note (inst) and sustain loop (smpl).
+    as_float: the audio is 32-bit float instead of the original's integer format (fmt changed, a fact chunk added)."""
     n_old = info.frames
+    tag, bits = (3, 32) if as_float else (1, info.bits)
+    block_align = info.channels * bits // 8
     out = []
     if info.kind == "wav":
+        has_fact = any(cid == b"fact" for cid, _ in info.chunks)
         for cid, body in info.chunks:
             if cid == b"fmt ":
                 b = bytearray(body)
-                struct.pack_into("<II", b, 4, rate_new, rate_new * info.block_align)
+                struct.pack_into("<II", b, 4, rate_new, rate_new * block_align)
+                if as_float:
+                    struct.pack_into("<H", b, 0, tag)
+                    struct.pack_into("<HH", b, 12, block_align, bits)
                 out.append(chunk(cid, bytes(b)))
             elif cid == b"mtun":
                 continue
             elif cid == b"data":
+                if as_float and not has_fact:  # Every format but PCM has one (the firmware skips it)
+                    out.append(chunk(b"fact", struct.pack("<I", frames_new)))
                 if mtun is not None:
                     out.append(mtun_chunk(mtun))
                 out.append(chunk(b"data", audio_bytes))
@@ -400,8 +441,8 @@ def build_wav(info, frames_new, rate_new, audio_bytes, f, mtun, warnings, where)
             else:
                 out.append(chunk(cid, body))
     else:  # AIFF -> WAV
-        out.append(chunk(b"fmt ", struct.pack("<HHIIHH", 1, info.channels, rate_new, rate_new * info.block_align,
-                                               info.block_align, info.bits)))
+        out.append(chunk(b"fmt ", struct.pack("<HHIIHH", tag, info.channels, rate_new, rate_new * block_align,
+                                               block_align, bits)))
         note = info.aiff_note
         has_note = note is not None and (note[0] or note[1]) and note[0] < 128
         if has_note or (info.aiff_loop and any(info.aiff_loop)):
@@ -420,6 +461,8 @@ def build_wav(info, frames_new, rate_new, audio_bytes, f, mtun, warnings, where)
             gain = max(-128, min(127, note[6]))
             out.append(chunk(b"inst", struct.pack("<BbbBBBB", note[0], note[1], gain, note[2], note[3], note[4],
                                                   note[5])))
+        if as_float:
+            out.append(chunk(b"fact", struct.pack("<I", frames_new)))
         if mtun is not None:
             out.append(mtun_chunk(mtun))
         out.append(chunk(b"data", audio_bytes))
@@ -441,16 +484,28 @@ def convert_job(job):
     if x.shape[0] != job["frames_new"]:
         raise RuntimeError(f"length {x.shape[0]}, expected {job['frames_new']}")
     peak = float(np.max(np.abs(x))) if x.size else 0.0
-    audio, clipped = encode(x, info.bits, info.float)
+    # Peaks over full scale (resampling a file normalized to 0 dBFS): never clipped. An integer file becomes 32-bit
+    # float, or (--no-float) just as much quieter as it needs
+    over = 0 if info.float else over_full_scale(x, info.bits)
+    as_float, gain = False, 1.0
+    if over and job.get("no_float"):
+        gain = headroom_gain(x, info.bits)
+        x = x * gain
+    elif over:
+        as_float = True
+    audio, clipped = encode(x, 32 if as_float else info.bits, as_float or info.float)
+    if clipped:  # Can't happen (see above): never write a clipped file
+        raise RuntimeError(f"{clipped} samples would be clipped")
+    if info.float and peak >= 1:
+        warnings.append(f"{job['out_rel']}: float, the resampled peak is {db(peak):+.2f} dBFS: kept in the file, "
+                        f"but the firmware limits float samples to full scale as it loads them")
     data = build_wav(info, job["frames_new"], job["rate_new"], audio, Fraction(job["f_num"], job["f_den"]),
-                     job["mtun"], warnings, job["rel"])
+                     job["mtun"], warnings, job["rel"], as_float)
     os.makedirs(os.path.dirname(job["dst"]), exist_ok=True)
     with open(job["dst"], "wb") as fh:
         fh.write(data)
-    if clipped:
-        warnings.append(f"{job['out_rel']}: {clipped} samples clipped (the resampled peak is "
-                        f"{20 * math.log10(peak):+.2f} dBFS)")
-    return job["index"], dict(size=len(data), seconds=time.time() - t, warnings=warnings, peak=peak)
+    return job["index"], dict(size=len(data), seconds=time.time() - t, warnings=warnings, peak=peak, over=over,
+                              as_float=as_float, gain_db=db(gain) if gain != 1 else None)
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -541,14 +596,18 @@ def context_name(node):
 
 
 class Ref:
-    """A file reference in an XML: its path value and the positions that go with it."""
+    """A file reference in an XML: its path value and the positions that go with it, as (value, start, end) with the
+    character positions in the XML text. No link to the parse tree: the plan keeps only these of a whole card's XML
+    (the texts are read again when writing)."""
+    __slots__ = ("xml", "path", "use", "context", "positions", "ms", "loop_mode", "looping", "rel", "encoding", "plan")
 
-    def __init__(self, xml, node, path, use, context):
-        self.xml, self.node, self.path, self.use, self.context = xml, node, path, use, context
+    def __init__(self, xml, path, use, context):
+        self.xml, self.path, self.use, self.context = xml, path, use, context
         self.positions = {}  # name -> (value, start, end)
         self.ms = {}  # early-2016 format: startSeconds, startMilliseconds, endSeconds, endMilliseconds
         self.loop_mode = 0
         self.looping = use == "keep_length"  # Audio clips loop; sources: see add()
+        self.rel = self.encoding = self.plan = None
 
 
 def refs_in_xml(xml_rel, root, warnings):
@@ -559,7 +618,7 @@ def refs_in_xml(xml_rel, root, warnings):
         path = holder.get("fileName")
         if path is None or not path[0]:
             return
-        r = Ref(xml_rel, node, path, use, context_name(node))
+        r = Ref(xml_rel, path, use, context_name(node))
         r.loop_mode = loop_mode
         r.looping = loop_mode in (2, 3)
         zone = zone_owner.child("zone")
@@ -597,7 +656,7 @@ def refs_in_xml(xml_rel, root, warnings):
         elif node.name == "audioClip":
             path = node.get("filePath")
             if path is not None and path[0]:
-                r = Ref(xml_rel, node, path, "keep_length", context_name(node))
+                r = Ref(xml_rel, path, "keep_length", context_name(node))
                 for k in ("startSamplePos", "endSamplePos"):
                     v = node.get(k)
                     if v is not None and v[0]:
@@ -707,19 +766,26 @@ def plan(args, log):
     taken = set(by_key)
     warnings, xml_errors = [], []
 
-    # XML references
+    # XML references: one file at a time, kept are only its references and positions (a card can hold hundreds of MB
+    # of XML), its size and checksum (read_xml() reads it again for writing)
     xmls, all_refs = {}, []
     for rel in files:
         top = rel.split("/")[0].upper()
         if top in XML_FOLDERS and rel.lower().endswith(".xml"):
-            text = open(os.path.join(card, rel), "rb").read().decode("utf-8", errors="surrogateescape")
+            with open(os.path.join(card, rel), "rb") as fh:
+                raw = fh.read()
+            size, crc = len(raw), zlib.crc32(raw)
+            text = raw.decode("utf-8", errors="surrogateescape")
+            del raw
             try:
                 root = parse_xml(text)
             except ValueError as e:
-                xml_errors.append((rel, str(e), text))
+                paths = set(re.findall(r"[\"'>]([^\"'<>]+\.(?:wav|aif|aiff))[\"'<]", text, re.I))
+                xml_errors.append((rel, str(e), paths))
                 continue
             refs, others = refs_in_xml(rel, root, warnings)
-            xmls[rel] = dict(text=text, refs=refs, others=others)
+            del root, text
+            xmls[rel] = dict(refs=refs, others=others, size=size, crc=crc)
             all_refs += refs
 
     plans = {}
@@ -747,9 +813,9 @@ def plan(args, log):
             p.uses.add("unknown")
             p.referenced = True
             warnings.append(f"{rel}: {path} is referenced in a way this tool doesn't know: the file stays as it is")
-    for rel, err, text in xml_errors:
+    for rel, err, paths in xml_errors:
         warnings.append(f"{rel}: not readable as XML ({err}); copied unchanged, the files it names stay as they are")
-        for path in set(re.findall(r"[\"'>]([^\"'<>]+\.(?:wav|aif|aiff))[\"'<]", text, re.I)):
+        for path in sorted(paths):
             p = plan_for(card_path(path, by_key)[0])
             p.uses.add("unknown")
             p.referenced = True
@@ -846,7 +912,8 @@ def plan(args, log):
                 jobs.append(dict(index=len(jobs), src=os.path.join(card, p.rel), rel=p.rel, out_rel=o.rel,
                                  dst=os.path.join(args.out or "", o.rel), mode=o.mode, f_num=o.f.numerator,
                                  f_den=o.f.denominator, pitch_num=o.pitch.numerator, pitch_den=o.pitch.denominator,
-                                 frames_new=o.frames_new, rate_new=o.rate_new, mtun=o.mtun, loop=p.loops))
+                                 frames_new=o.frames_new, rate_new=o.rate_new, mtun=o.mtun, loop=p.loops,
+                                 no_float=args.no_float))
                 o.job = jobs[-1]
     return files, xmls, plans, jobs, warnings
 
@@ -918,10 +985,24 @@ def xml_edits(xmls, warnings):
     return result
 
 
+def read_xml(card, rel, x):
+    """An XML's text, read again for writing: it must be the file the plan read."""
+    with open(os.path.join(card, rel), "rb") as fh:
+        raw = fh.read()
+    if len(raw) != x["size"] or zlib.crc32(raw) != x["crc"]:
+        raise RuntimeError(f"{rel} changed on the card during the run: nothing of it written, run again")
+    return raw.decode("utf-8", errors="surrogateescape")
+
+
 def apply_edits(text, edits):
-    for start, end, new in sorted(edits, reverse=True):
-        text = text[:start] + new + text[end:]
-    return text
+    out, pos = [], 0
+    for start, end, new in sorted(set(edits)):
+        if start < pos:
+            raise RuntimeError(f"overlapping edits at character {start}")
+        out += (text[pos:start], new)
+        pos = end
+    out.append(text[pos:])
+    return "".join(out)
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -946,6 +1027,9 @@ def main():
     ap.add_argument("--rate", type=int, default=44100,
                     help="sample rate of the converted files (default 44100: the Deluge's own, so they need no "
                          "interpolation); 0 keeps each file's rate")
+    ap.add_argument("--no-float", action="store_true",
+                    help="an integer file whose resampled peaks go over full scale is written a little quieter, "
+                         "just enough (the report gives the dB), instead of as 32-bit float")
     ap.add_argument("--dry-run", action="store_true", help="only report what would be done")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 1, help="files converted at once (processes)")
     ap.add_argument("--quiet", action="store_true", help="only the summary and the warnings on the console")
@@ -1026,8 +1110,9 @@ def main():
             dst = os.path.join(args.out, rel)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             if rel in edits and edits[rel][0]:
+                data = apply_edits(read_xml(args.card, rel, xmls[rel]), edits[rel][0])
                 with open(dst, "wb") as fh:
-                    fh.write(apply_edits(xmls[rel]["text"], edits[rel][0]).encode("utf-8", errors="surrogateescape"))
+                    fh.write(data.encode("utf-8", errors="surrogateescape"))
             else:
                 shutil.copy2(os.path.join(args.card, rel), dst)
     for j in jobs:
@@ -1040,7 +1125,7 @@ def main():
         f"{'yes' if pylibrb is not None else 'not installed'}")
     log("")
     log("Audio files:", console=not args.quiet)
-    counts, size_old, size_new = {}, 0, 0
+    counts, size_old, size_new, as_float, quieter = {}, 0, 0, [], []
     for key in sorted(plans):
         p = plans[key]
         counts[p.category] = counts.get(p.category, 0) + 1
@@ -1058,9 +1143,16 @@ def main():
             o.size = r.get("size") or (o.frames_new * info.block_align + 100)
             size_old += p.size
             size_new += o.size
+            if r.get("as_float"):
+                as_float.append((o.rel, info, r))
+            elif r.get("gain_db") is not None:
+                quieter.append((o.rel, info, r))
             log(f"      -> {o.rel}: {o.rate_new} Hz, {info.frames} -> {o.frames_new} samples, "
                 f"{human(p.size)} -> {'~' if args.dry_run else ''}{human(o.size)}"
-                + (f", mtun {o.mtun / 10:g} Hz" if o.mtun else ""), console=not args.quiet)
+                + (f", mtun {o.mtun / 10:g} Hz" if o.mtun else "")
+                + (", 32-bit float (peaks over 0 dBFS)" if r.get("as_float") else "")
+                + (f", {r['gain_db']:+.2f} dB (peaks over 0 dBFS)" if r.get("gain_db") is not None else ""),
+                console=not args.quiet)
     log("", console=not args.quiet)
     log("Songs, kits, synths (positions and paths changed):", console=not args.quiet)
     n_edits = 0
@@ -1078,11 +1170,38 @@ def main():
     log(f"  {len(jobs)} files written ({human(size_old)} -> {human(size_new)}), "
         f"{sum(1 for e in edits.values() if e[0])} XML files with {n_edits} values changed, "
         f"{len(files)} files on the card; {time.time() - t0:.1f} s")
+    def fmt_name(info):
+        return f"{info.bits}-bit {'float' if info.float else 'PCM'}"
+
+    if as_float:
+        log("")
+        log(f"Als 32-Bit-Float geschrieben, weil Spitzen über 0 dBFS ({len(as_float)}): written as 32-bit float, "
+            f"because resampling put peaks over full scale; the file keeps them, the firmware limits them to full "
+            f"scale as it loads the file (--no-float: a little quieter instead)")
+        for rel, info, r in as_float:
+            log(f"  {rel}: {fmt_name(info)} -> 32-bit float, peak {db(r['peak']):+.2f} dBFS, {r['over']} samples "
+                f"over full scale")
+    if quieter:
+        log("")
+        log(f"Leiser geschrieben, weil Spitzen über 0 dBFS ({len(quieter)}, --no-float): the level lowered just "
+            f"enough that nothing is clipped")
+        for rel, info, r in quieter:
+            log(f"  {rel}: {r['gain_db']:+.2f} dB ({fmt_name(info)}, the resampled peak was {db(r['peak']):+.2f} "
+                f"dBFS, {r['over']} samples over full scale)")
     if warnings:
         log("")
         log(f"Warnings ({len(warnings)}):")
         for w in warnings:
             log("  " + w)
+    def out_format(o):
+        """The output's format and level where the peaks changed them."""
+        r = results.get(getattr(o, "job", {}).get("index"), {})
+        if not r.get("over"):
+            return {}
+        return dict(peak_dbfs=round(db(r["peak"]), 3), samples_over_full_scale=r["over"],
+                    written_as="32-bit float" if r["as_float"] else None,
+                    gain_db=None if r["gain_db"] is None else round(r["gain_db"], 3))
+
     if not args.dry_run:
         with open(os.path.join(args.out, "RETUNE_REPORT.txt"), "w", encoding="utf-8",
                   errors="backslashreplace") as fh:
@@ -1094,7 +1213,8 @@ def main():
                                    rate=p.info.rate, frames=p.info.frames, tuning=p.info.tuning,
                                    channels=p.info.channels, bits=p.info.bits, float=p.info.float),
                                outputs={u: dict(path=o.rel, frames=o.frames_new, rate=o.rate_new, mtun=o.mtun,
-                                                converted=o.convert, factor=str(o.f), pitch=str(o.pitch))
+                                                converted=o.convert, factor=str(o.f), pitch=str(o.pitch),
+                                                **out_format(o))
                                         for u, o in p.outputs.items()})
                    for p in plans.values()},
             xml={rel: [readable(line) for line in e[1]] for rel, e in edits.items() if e[1]})
