@@ -4,10 +4,15 @@ the LPF turned with the upper gold knob in Song view (SessionView::modEncoderAct
 param path), while the song plays.
 
 Usage: master_filter_emu.py <deluge.elf> <out.npz> --lpf 24dB --hpf HPLadder --route H2L --hpf-freq K --hpf-res K
-                            --lpf-res K [--turn slow|fast|none] [--synths N] [--tools PREFIX] [--build DIR]
+                            --lpf-res K [--turn slow|fast|none] [--synths N] [--check DB] [--tools PREFIX] [--build DIR]
   K: knob positions 0-50 as the display shows them. The LPF starts fully open (50, off) and is turned down to 0 and
   back up: slow, 1 click every 6 windows (about 2.2 s each way); fast, 4 clicks per window (about 0.1 s each way,
   then held). Writes the output (what the codec gets, stereo, full scale 1) and the LPF knob position per window.
+  --check DB: also plays the music itself (the same song with the HPF off and the LPF left open) and fails (exit 1)
+  where the output from the turn on (power mean, as the codec gets it) is more than DB louder than that music, as
+  tests/filters/filter_tone_test.cpp measures it (DB 10 there). The resonant HPF's whistle (mastertune-v16 filter-fix):
+    master_filter_emu.py <elf> out.npz --hpf-freq 15 --hpf-res 42 --turn slow --check 10   (and --turn fast)
+  v16: +14.4 dB slow, +14.1 fast, fails; filter-fix: passes.
 """
 import argparse
 import os
@@ -54,26 +59,12 @@ def drain_pic(emu):
     emu.uc.mem_write(item + 2, struct.pack("<HHBB", w, w, 1, 0))
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("elf")
-    ap.add_argument("out")
-    ap.add_argument("--lpf", default="24dB")
-    ap.add_argument("--hpf", default="HPLadder")
-    ap.add_argument("--route", default="H2L")
-    ap.add_argument("--hpf-freq", type=float, default=20)
-    ap.add_argument("--hpf-res", type=float, default=40)
-    ap.add_argument("--lpf-res", type=float, default=0)
-    ap.add_argument("--turn", default="slow", choices=("slow", "fast", "none"))
-    ap.add_argument("--synths", type=int, default=2)
-    ap.add_argument("--seconds", type=float, default=6.0)
-    ap.add_argument("--tools")
-    ap.add_argument("--build", default=os.path.join(HERE, "..", "song"))
-    args = ap.parse_args()
+def play(args, hpf_freq, hpf_res, turn):
+    """The song with the HPF at hpf_freq / hpf_res, the LPF turned (turn): output (stereo) and knob position per sample"""
     tools = args.tools or os.path.join(os.path.dirname(os.path.abspath(args.elf)),
                                        "../../toolchain/v16/linux-x86_64/arm-none-eabi-gcc/bin/arm-none-eabi-")
     sd = args.out + ".sd.img"
-    fat32.build(sd, song(args.lpf, args.hpf, args.route, args.hpf_freq, args.hpf_res, args.lpf_res, args.synths))
+    fat32.build(sd, song(args.lpf, args.hpf, args.route, hpf_freq, hpf_res, args.lpf_res, args.synths))
     emu = song_emu.Emulator(args.elf, sd, tools, args.build, lambda s: None)
     sym = emu.sym
     song_emu.setup_sd(emu)
@@ -97,8 +88,8 @@ def main():
     total, window, pos, direction = 0, 0, 64, -1  # the knob's position -64..64 (64: fully open, the LPF off)
     warmup = song_emu.BAR // 2
     while total < args.seconds * 44100:
-        if total >= warmup and args.turn != "none":
-            clicks = 4 if args.turn == "fast" else (1 if window % 6 == 0 else 0)
+        if total >= warmup and turn != "none":
+            clicks = 4 if turn == "fast" else (1 if window % 6 == 0 else 0)
             for _ in range(clicks):
                 if pos == -64 and direction < 0:
                     direction = 1
@@ -115,7 +106,50 @@ def main():
         out.append(w[4])
         pos_per_window.append(np.full(w[1], pos))
     os.remove(sd)
-    np.savez(args.out, x=np.concatenate(out).astype(np.float32), knob=np.concatenate(pos_per_window).astype(np.int8))
+    return np.concatenate(out).astype(np.float32), np.concatenate(pos_per_window).astype(np.int8)
+
+
+def level_db(x):
+    """Power mean of both channels as the codec gets them (saturated at full scale), dB re full scale"""
+    x = np.clip(x.astype(np.float64), -1, 1)
+    return 10 * np.log10(np.mean(x ** 2) + 1e-30)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("elf")
+    ap.add_argument("out")
+    ap.add_argument("--lpf", default="24dB")
+    ap.add_argument("--hpf", default="HPLadder")
+    ap.add_argument("--route", default="H2L")
+    ap.add_argument("--hpf-freq", type=float, default=20)
+    ap.add_argument("--hpf-res", type=float, default=40)
+    ap.add_argument("--lpf-res", type=float, default=0)
+    ap.add_argument("--turn", default="slow", choices=("slow", "fast", "none"))
+    ap.add_argument("--synths", type=int, default=2)
+    ap.add_argument("--seconds", type=float, default=6.0)
+    ap.add_argument("--tools")
+    ap.add_argument("--build", default=os.environ.get("BLOCKCOUNT_DIR", os.path.join(HERE, "..", "song")))
+    ap.add_argument("--check", type=float, help="fail where the output is more than this many dB above the music")
+    args = ap.parse_args()
+    x, knob = play(args, args.hpf_freq, args.hpf_res, args.turn)
+    np.savez(args.out, x=x, knob=knob)
+    if args.check is None:
+        return
+    # From the turn on (after the warm-up), against the music: the HPF off, the LPF open, nothing turned
+    music, _ = play(args, 0, 0, "none")
+    start = song_emu.BAR // 2
+    level, reference = level_db(x[start:]), level_db(music[start:])
+    # the loudest 0.1 s against the music too, for information
+    n = 4410
+    windows = [level_db(x[i:i + n]) for i in range(start, len(x) - n + 1, n)]
+    loudest = int(np.argmax(windows))
+    whistle = level - reference
+    print(f"{os.path.basename(args.out)}: {whistle:+.1f} dB against the music ({reference:.1f} dBFS) from the turn on, "
+          f"loudest 0.1 s {windows[loudest] - reference:+.1f} dB at {(start + loudest * n) / 44100:.1f} s: "
+          f"{'FAIL' if whistle > args.check else 'ok'} (at most {args.check:+.0f} dB)", flush=True)
+    if whistle > args.check:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

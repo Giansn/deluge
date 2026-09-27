@@ -3,17 +3,19 @@
 // medium to full, and the LPF turned down and up again with the gold knob (slow and fast), for every HPF mode, every
 // route and every LPF mode.
 //
-// A user on v16 heard "a painful high tone" with the song's HPF on with resonance while turning its LPF. From about 70 %
-// resonance the HP ladder oscillates on its own, a sine at its cutoff (2.2 kHz with the knob at 30), whatever comes in.
-// Since community #336 its tanh limits 2 to 3 bits higher than in the original firmware, so that sine was 12 to 18 dB
-// louder than there: on the song's filters up to 24 dB above the music. The LPF after it (H2L, the default) hides it
+// A user on v16 heard "a painful high tone" with the song's HPF on with resonance while turning its LPF. From about 70
+// % resonance the HP ladder oscillates on its own, a sine at its cutoff (2.2 kHz with the knob at 30), whatever comes
+// in. Since community #336 its tanh limits 2 to 3 bits higher than in the original firmware, so that sine was 12 to 18
+// dB louder than there: on the song's filters up to 24 dB above the music. The LPF after it (H2L, the default) hides it
 // while it's below the HPF's cutoff, so it seems to come up when the LPF is turned.
 //
-// Measured per case: the loudest 1024-sample window of the output, while the LPF is turned and after, against the
-// loudest of the music itself (the HPF off, the LPF open), each with the filter gain as the firmware applies it (the
-// song's and a kit's to the output, as the audio engine does; a voice's to the input, as Voice::render() does). It must
-// stay within kMaxWhistle dB: louder than that, the HPF drowns out the music. Also printed: the most
-// energy above 8 kHz the turn adds against the same case with the LPF left open (information, turning makes none).
+// Measured per case: the output's level (power mean) while the LPF is turned and after, against the level of the music
+// itself (the HPF off, the LPF open), each with the filter gain as the firmware applies it (the song's and a kit's to
+// the output, as the audio engine does; a voice's to the input, as Voice::render() does). It must stay within
+// kMaxWhistle dB: louder than that, the HPF drowns out the music (v16: up to +13 dB on the song's filters, +16 in a
+// synth or a kit row; the fix: at most +4 with the HP ladder, +6 with the SVF, as in v16). Also printed: the most
+// energy above 8 kHz the turn adds against the same case with the LPF left open (for information: turning makes none
+// to speak of, in v16 or the fix).
 //
 // Contexts (input levels as measured in tests/song's song at the filters' inputs, RMS in dB re full scale):
 //   song      the song's filters (AudioEngine::renderSongFX), stereo, a mix (-49.7)
@@ -102,7 +104,8 @@ std::vector<float> makeInput(Kind kind) {
 			lp += 0.2f * (l - lp);
 			l = lp;
 			double beat = std::fmod(t, 0.5);
-			l += (float)(0.6 * std::exp(-beat * 18) * std::sin(2 * M_PI * (50 + 80 * std::exp(-beat * 30)) * beat)); // kick
+			l += (float)(0.6 * std::exp(-beat * 18)
+			             * std::sin(2 * M_PI * (50 + 80 * std::exp(-beat * 30)) * beat)); // kick
 			double hat = std::fmod(t + 0.25, 0.25);
 			float w = rng.next();
 			hp = w - hp * 0.2f;
@@ -146,12 +149,14 @@ struct Case {
 constexpr double kHold = 0.25; // LPF open before the turn
 constexpr double kTail = 0.5;  // and after
 
-// One run: output windows' levels (dB re full scale) and levels above 8 kHz; turned or with the LPF left open
+// One run: the output's level per 1024-sample window (dB re full scale), and above 8 kHz; turned or with the LPF left
+// open
 struct Run {
 	std::vector<double> level, high;
 };
 
-Run run(const Context& ctx, const std::vector<float>& input, const Case& c, bool turn, int32_t hpfRes, bool hpfOn = true) {
+Run run(const Context& ctx, const std::vector<float>& input, const Case& c, bool turn, int32_t hpfRes,
+        bool hpfOn = true) {
 	static FilterSet fs;
 	fs.reset();
 	jcong = 380116160;
@@ -168,14 +173,15 @@ Run run(const Context& ctx, const std::vector<float>& input, const Case& c, bool
 		int32_t pos = 64;
 		if (turn && t > 0) {
 			int32_t clicks = (int32_t)(t / c.sweepSeconds * 128);
-			pos = clicks <= 128 ? 64 - clicks : std::min(-64 + (clicks - 128), 64);
+			pos = clicks <= 128 ? 64 - clicks : std::min<int32_t>(-64 + (clicks - 128), 64);
 		}
 		int32_t lpfKnob = knobValue(pos);
 		bool lpfOn = c.lpf == FilterMode::TRANSISTOR_24DB_DRIVE || lpfKnob < 2147483602;
 		int32_t gainIn = ctx.global ? 167763968 : 134217728 << 1; // the song's; a voice's (volumeNeutralValue << 1)
-		int32_t gain = fs.setConfig(freqParam(2000000, lpfKnob), lpfResParam, lpfOn ? c.lpf : FilterMode::OFF, 0,
-		                            hpfFreq, hpfResParam, hpfOn ? c.hpf : FilterMode::OFF, 0, gainIn, c.route, false, nullptr);
-		double inScale = ctx.global ? 1.0 : (double)gain / gainIn; // Voice: the oscillators' amplitude
+		int32_t gain =
+		    fs.setConfig(freqParam(2000000, lpfKnob), lpfResParam, lpfOn ? c.lpf : FilterMode::OFF, 0, hpfFreq,
+		                 hpfResParam, hpfOn ? c.hpf : FilterMode::OFF, 0, gainIn, c.route, false, nullptr);
+		double inScale = ctx.global ? 1.0 : (double)gain / gainIn;  // Voice: the oscillators' amplitude
 		double outScale = ctx.global ? (double)gain / gainIn : 1.0; // GlobalEffectable: masterVolumeAdjustment
 		int n = std::min(kBlock, total - s);
 		for (int i = 0; i < n; i++) {
@@ -300,13 +306,13 @@ int main() {
 			double music = meanLevel(ref);
 			Run r = run(ctx, input, c, true, c.hpfRes);
 			Run open = run(ctx, input, c, false, c.hpfRes);
-			double loudest = meanLevel(r), added = -1e9;
+			double level = meanLevel(r), added = -1e9;
 			for (size_t i = 0; i < r.level.size(); i++) {
 				if (r.high[i] > r.level[i] - 40) { // above 8 kHz, where it isn't far below the output's level
 					added = std::max(added, r.high[i] - open.high[std::min(i, open.high.size() - 1)]);
 				}
 			}
-			double whistle = loudest - music;
+			double whistle = level - music;
 			int m = c.hpf == FilterMode::HPLADDER ? 0 : c.hpf == FilterMode::SVF_BAND ? 1 : 2;
 			if (whistle > worst[m]) {
 				worst[m] = whistle;
@@ -316,15 +322,15 @@ int main() {
 			bool bad = whistle > kMaxWhistle;
 			failures += bad;
 			if (bad || getenv("VERBOSE")) {
-				printf("%s %-8s HPF %-9s knob %2d res %2d, LPF %-9s %s turned in %.2f s: loudest %+5.1f dB against the "
+				printf("%s %-8s HPF %-9s knob %2d res %2d, LPF %-9s %s turned in %.2f s: %+5.1f dB against the "
 				       "music (%5.1f dBFS), above 8 kHz %+5.1f dB against the LPF left open\n",
-				       bad ? "FAIL" : "    ", ctx.name, modeName(c.hpf), (int)c.hpfKnob, (int)c.hpfRes,
-				       modeName(c.lpf), routeName(c.route), c.sweepSeconds, whistle, music, added);
+				       bad ? "FAIL" : "    ", ctx.name, modeName(c.hpf), (int)c.hpfKnob, (int)c.hpfRes, modeName(c.lpf),
+				       routeName(c.route), c.sweepSeconds, whistle, music, added);
 			}
 		}
 		for (int m = 0; m < 3; m++) {
 			const Case& c = *worstCase[m];
-			printf("%-8s %-9s: %zu cases, loudest %+5.1f dB against the music (knob %d, res %d, LPF %s, %s)%s\n",
+			printf("%-8s %-9s: %zu cases, at most %+5.1f dB against the music (knob %d, res %d, LPF %s, %s)%s\n",
 			       ctx.name, modeName(hpfModes[m]), cases.size() / 3, worst[m], (int)c.hpfKnob, (int)c.hpfRes,
 			       modeName(c.lpf), routeName(c.route), worst[m] > kMaxWhistle ? "  FAIL" : "");
 		}
