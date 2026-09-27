@@ -200,7 +200,12 @@ class Deluge:
         self.button(b, True)
         self.button(b, False)
         if run:
-            self.run(0.5)  # The view's transition
+            # The view's transition: about 0.5 s (v16 500 ms, v17 520 ms from clip view to song view), up to 1.5 s
+            self.run(0.5)
+            for _ in range(20):
+                if self.ui_mode() == 0:
+                    break
+                self.run(0.05)
 
     def run(self, seconds):
         se.run_task_manager(self.emu, seconds)
