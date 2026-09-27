@@ -1,0 +1,66 @@
+From fac1dfe7057572e69d191087f4836b056fd630ef Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 13:08:12 +0000
+Subject: [PATCH 59/60] CPU monitor: calls of the audio routine that render
+ nothing don't count as busy
+
+The CPU monitor shows the time spent in AudioEngine::routine() over the time of the audio it rendered. Calls that
+render nothing (nothing due yet, only outputting what was rendered ahead, or at light load less than the minimum
+window, the commit before) added their time but no audio. They are short now (a few hundred instructions), but they
+aren't rendering: only calls that rendered count towards the load shown. The time of all calls still goes into
+busyTicksTotal(), which is taken off an SD read's wall-clock time for the card's own.
+
+With the commits before, the number shown is the real load: in the emulator (tests/sdload) S2 idle 90 % -> 16 %,
+S3ref idle 76 % -> 10 %, S4 playing 93 % -> 38 %, the share of the time the audio routine really renders.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/processing/engines/cpu_stats_core.cpp | 6 +++++-
+ src/deluge/processing/engines/cpu_stats_core.h   | 6 +++---
+ 2 files changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/src/deluge/processing/engines/cpu_stats_core.cpp b/src/deluge/processing/engines/cpu_stats_core.cpp
+index 9c13035f..e761f6cc 100644
+--- a/src/deluge/processing/engines/cpu_stats_core.cpp
++++ b/src/deluge/processing/engines/cpu_stats_core.cpp
+@@ -133,7 +133,11 @@ void Collector::routineDone(uint32_t now, uint32_t sampleCounter, uint32_t voice
+ 	uint32_t ticks = now - routineStart_;
+ 	uint32_t samples = sampleCounter - routineSamplesStart_;
+ 	busyTotal_ += ticks; // Wraps, which is fine for differences
+-	acc_.busyTicks += ticks;
++	// mastertune-v17: a call that rendered nothing (nothing due yet, or less than the minimum window at light load, see
++	// AudioEngine's kMinSamplesDue) isn't rendering: it doesn't count towards the load shown
++	if (samples != 0) {
++		acc_.busyTicks += ticks;
++	}
+ 	acc_.samples = addSaturated(acc_.samples, samples);
+ 	if (samples >= kMinPeakSamples && busier(ticks, samples, acc_.peakTicks, acc_.peakSamples)) {
+ 		acc_.peakTicks = ticks;
+diff --git a/src/deluge/processing/engines/cpu_stats_core.h b/src/deluge/processing/engines/cpu_stats_core.h
+index 0f2234e5..4890c551 100644
+--- a/src/deluge/processing/engines/cpu_stats_core.h
++++ b/src/deluge/processing/engines/cpu_stats_core.h
+@@ -39,7 +39,7 @@ constexpr uint32_t kMinPeakSamples = 16;
+ /// Raw sums of one measuring window. Everything shown or sent is derived from it, and two windows can be merged.
+ struct Window {
+ 	uint32_t ticks = 0;          ///< Wall-clock length of the window
+-	uint64_t busyTicks = 0;      ///< Time spent in AudioEngine::routine()
++	uint64_t busyTicks = 0;      ///< Time spent in the AudioEngine::routine() calls that rendered
+ 	uint32_t samples = 0;        ///< Samples it rendered
+ 	uint32_t peakTicks = 0;      ///< The busiest call (relative to the audio it rendered): its time
+ 	uint32_t peakSamples = 0;    ///< and the samples it rendered
+@@ -92,8 +92,8 @@ public:
+ 	/// voices and direness as they are after the call
+ 	void routineDone(uint32_t now, uint32_t sampleCounter, uint32_t voices, int32_t direness);
+ 
+-	/// Time spent in the audio routine since it first ran: never reset, wraps (every 129 s of rendering). The
+-	/// difference (as uint32_t) of two readings is the render time in between.
++	/// Time spent in the audio routine since it first ran (all calls, also those that rendered nothing): never reset,
++	/// wraps (every 129 s of rendering). The difference (as uint32_t) of two readings is the render time in between.
+ 	uint32_t busyTicksTotal() const { return busyTotal_; }
+ 
+ 	/// readTicks: wall clock of the read; audioTicks: busyTicksTotal() at its end minus at its start
+-- 
+2.43.0
+

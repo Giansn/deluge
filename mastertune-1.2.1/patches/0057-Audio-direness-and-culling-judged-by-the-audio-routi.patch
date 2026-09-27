@@ -1,0 +1,125 @@
+From ab856bfac1017a7718380e632b3de41fbf7114f2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 12:57:46 +0000
+Subject: [PATCH 57/60] Audio: direness and culling judged by the audio
+ routine's own time, not the current task's
+
+setDireness() took how long the last renders took from getLastRunTimeforCurrentTask(), the average duration of
+whichever task is current. But routine() doesn't only run as its own task: routineForSD() calls it while a task
+waits for the SD card, and then the current task is the one loading sample clusters, whose average includes its
+waits for the card (and after the task manager's yield() it is whichever task ran last). In tests/sdload (S4: 16
+audio tracks streaming) setDireness() judged by up to 700 samples with a typical card (1 ms a command, 12 MB/s) and
+up to 1,700 with a slow one (3 ms, 6 MB/s): 25 and 17 voices culled (VC on the CPU monitor) and the quality lowered
+(QL) while the output DMA was at most 9 samples behind.
+
+Now routine() measures its own calls (OS timer 0, two reads a call) and keeps (average + latest) / 2 over those that
+rendered, whoever called it, as the task manager averages a task's duration: AudioEngine::routineTimeAverage, which
+setDireness() goes by. Run as its own task this is the number it used before, now measured around
+routineUnmeasured() rather than the task, and without the calls that only output what was rendered earlier. With
+this series, S4 plays without culls or QL with either card.
+
+tests/song: the device run (culling as on the Deluge) gives the same culls and the same audio as before, since it
+modelled exactly this measurement (instructions at 400 MHz); the demand run must zero routineTimeAverage before each
+call now (it zeroed the task list), and stays bit-exact.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ .../processing/engines/audio_engine.cpp       | 38 +++++++++++++++----
+ src/deluge/processing/engines/audio_engine.h  |  3 ++
+ 2 files changed, 33 insertions(+), 8 deletions(-)
+
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index d3779bab..10f6827a 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -74,6 +74,7 @@ namespace params = deluge::modulation::params;
+ 
+ extern "C" {
+ #include "RZA1/mtu/mtu.h"
++#include "RZA1/ostm/ostm.h"
+ #include "drivers/ssi/ssi.h"
+ 
+ #include "RZA1/intc/devdrv_intc.h"
+@@ -179,6 +180,7 @@ bool renderInStereo = true;
+ bool bypassCulling = false;
+ bool audioRoutineLocked = false;
+ size_t minNumSamplesToRender = 0;
++double routineTimeAverage = 0;
+ uint32_t audioSampleTimer = 0;
+ uint32_t i2sTXBufferPos;
+ uint32_t i2sRXBufferPos;
+@@ -508,7 +510,11 @@ inline void cullVoices(size_t numSamples, int32_t numAudio, int32_t numVoice) {
+ /// set the direness level and cull any voices
+ inline void setDireness(size_t numSamples) { // Consider direness and culling - before increasing the number of samples
+ 	// number of samples it took to do the last render
+-	auto dspTime = (int32_t)(getLastRunTimeforCurrentTask() * 44100.);
++	// mastertune-v17: the audio routine's own time (routineTimeAverage), no longer the current task's average duration
++	// (getLastRunTimeforCurrentTask()). routine() also runs inside other tasks: from routineForSD() while one waits for
++	// the SD card, and the task that loads sample clusters averaged up to 1,700 samples with its card waits
++	// (tests/sdload, S4 with a slow card), which culled voices while the output DMA was less than 10 samples behind.
++	auto dspTime = (int32_t)(routineTimeAverage * 44100.);
+ 	size_t nonDSP = numSamples - dspTime;
+ 	// we don't care about the number that were rendered in the last go, only the ones taken by the first routine call
+ 	numSamples = std::max<int32_t>(dspTime - (int32_t)(numRoutines * numSamples), 0);
+@@ -1246,20 +1252,36 @@ void scheduleMidiGateOutISR(uint32_t saddrPosAtStart, int32_t unadjustedNumSampl
+ 	routineBeenCalled = true;
+ }
+ 
++/// mastertune-v17: a call of routine() that rendered took `ticks` of OS timer 0
++static void routineMeasured(uint32_t ticks) {
++	routineTimeAverage = (routineTimeAverage + ticks / DELUGE_CLOCKS_PERf) / 2;
++}
++
+ void routine() {
+-	// mastertune-diag: Settings > CPU monitor measures each call. Not calls from inside a call, which return at once,
+-	// and not the offline stem export, which renders as fast as it can.
+ 	// mastertune-v15-prof: the sampling profiler's context (a call from inside a call returns at once)
+ 	bool wasInAudioRoutine = profiler::inAudioRoutine;
+ 	profiler::inAudioRoutine = true;
+-	if (cpu_stats::enabled && !audioRoutineLocked && !(stemExport.processStarted && stemExport.renderOffline))
+-	    [[unlikely]] {
+-		cpu_stats::routineStart();
++	// Measured: not calls from inside a call, which return at once, and not the offline stem export, which renders as
++	// fast as it can
++	if (audioRoutineLocked || (stemExport.processStarted && stemExport.renderOffline)) {
+ 		routineUnmeasured();
+-		cpu_stats::routineDone();
+ 	}
+ 	else {
+-		routineUnmeasured();
++		// mastertune-v17: every call that renders, for routineTimeAverage, wherever it's called from
++		uint32_t startTime = getTimerValue(0);
++		uint32_t samplesBefore = audioSampleTimer;
++		// mastertune-diag: Settings > CPU monitor measures each call
++		if (cpu_stats::enabled) [[unlikely]] {
++			cpu_stats::routineStart();
++			routineUnmeasured();
++			cpu_stats::routineDone();
++		}
++		else {
++			routineUnmeasured();
++		}
++		if (audioSampleTimer != samplesBefore) {
++			routineMeasured(getTimerValue(0) - startTime);
++		}
+ 	}
+ 	profiler::inAudioRoutine = wasInAudioRoutine;
+ }
+diff --git a/src/deluge/processing/engines/audio_engine.h b/src/deluge/processing/engines/audio_engine.h
+index 6157d08a..07339016 100644
+--- a/src/deluge/processing/engines/audio_engine.h
++++ b/src/deluge/processing/engines/audio_engine.h
+@@ -168,6 +168,9 @@ int32_t getNumSamplesSinceOutputFilled();
+ /// routine() renders at least this many samples per window (at most SSI_TX_BUFFER_NUM_SAMPLES), ahead of what is due
+ /// (mastertune-v13: set while a file is saved or loaded, see routineWhileAccessingFile() in storage_manager.cpp)
+ extern size_t minNumSamplesToRender;
++/// mastertune-v17: how long routine() takes, in seconds: (average + latest) / 2 over the calls that rendered, whoever
++/// called it, as the task manager averages a task's duration. cpuDireness and culling (setDireness()) go by it.
++extern double routineTimeAverage;
+ 
+ void registerSideChainHit(int32_t strength);
+ 
+-- 
+2.43.0
+

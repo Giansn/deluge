@@ -1,0 +1,453 @@
+From 11957c9bac1878d9ca274adba4ea80e15ea21be4 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 13:55:10 +0000
+Subject: [PATCH 60/60] Silent kits and audio tracks: check the silence before
+ setting up the effects
+
+A kit or audio track whose clip renders nothing and whose effects have given out
+exact silence for 4096 samples skips its effects (v12). But renderOutput() only
+found that out after setting all of them up for every block: the volume, pitch
+and reverb conversions, FilterSet::setConfig(), the delay's working state, and a
+cleared buffer for the render - about 550 instructions and 25 SDRAM lines per
+track and call, 24.7k instructions per call for the 45 of a big project, where
+nothing sounds.
+
+GlobalEffectableForClip::renderOutput() now checks the same condition first,
+from what it is made of before the setup:
+- no sound came in last time and the effects have been silent long enough (as
+  before);
+- no clipping, compressor, recording, stutter, sample rate reduction or mod FX
+  (the same reads as the check);
+- the delay has no buffers and no repeats to wait for: then
+  createDelayWorkingState() with no sound coming in allocates none (doDelay
+  false) and only notes that no sound is coming in, which Delay::process()
+  sets again before it reads it; an old file's delay time change goes the old
+  way;
+- the filters' modes stay as FilterSet::setConfig() last left them
+  (FilterSet::keepsModes()): a mode change resets a filter, so it goes the old
+  way; otherwise setConfig() only sets what processFilters() reads after
+  setting it again;
+- hasNothingToRender(): a kit with no drum rendering and no drone row sounding,
+  an audio track neither playing its clip's sample nor echoing an input, i.e.
+  renderGlobalEffectableForClip() would render nothing and return false.
+Then renderWithNothingToRender() does exactly what the old path did besides the
+setup: the sidechain (hits and envelope), the compressor's threshold and reset,
+the kit rows' automation (Kit::tickNoteRowParamManagers(), split out of
+renderGlobalEffectableForClip()), the reverb kept awake while the track sends
+to it, postReverbVolumeLastTime and the clip's automation. Anything else takes
+the old path unchanged, so the output is the same, bit for bit.
+
+Kit::renderNonAudioArpPostOutput() walked all rows of the active clip every
+block for MIDI, gate and drone rows' own arpeggiators; a kit of sound rows only
+(numNonAudioDrums, counted as numDroneDrums) now returns at once. The kit arp's
+settings are still refreshed every block: its note probability and spreads
+apply with the arp off too (Arpeggiator::noteOn(), calculateRandomizerAmounts()).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter_set.h            |   6 +
+ .../global_effectable/global_effectable.cpp   |  23 ++--
+ .../global_effectable/global_effectable.h     |   3 +
+ .../global_effectable_for_clip.cpp            | 110 +++++++++++++++---
+ .../global_effectable_for_clip.h              |  15 +++
+ src/deluge/model/instrument/kit.cpp           |  38 +++++-
+ src/deluge/model/instrument/kit.h             |   8 ++
+ src/deluge/processing/audio_output.cpp        |   9 ++
+ src/deluge/processing/audio_output.h          |   2 +
+ 9 files changed, 187 insertions(+), 27 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/filter_set.h b/src/deluge/dsp/filter/filter_set.h
+index d680d5de..783ee031 100644
+--- a/src/deluge/dsp/filter/filter_set.h
++++ b/src/deluge/dsp/filter/filter_set.h
+@@ -58,6 +58,12 @@ public:
+ 	inline bool isHPFOn() { return HPFOn; }
+ 	inline bool isOn() { return HPFOn || LPFOn; }
+ 
++	/// mastertune-v17: whether setConfig() with these modes would leave the filters as they are: no reset, the same
++	/// modes remembered. Everything else it sets is only read by the rendering, and set again before it.
++	[[nodiscard]] bool keepsModes(FilterMode lpfmode, FilterMode hpfmode) const {
++		return lastLPFMode_ == lpfmode && lastHPFMode_ == hpfmode;
++	}
++
+ private:
+ 	FilterMode lpfMode_;
+ 	FilterMode lastLPFMode_;
+diff --git a/src/deluge/model/global_effectable/global_effectable.cpp b/src/deluge/model/global_effectable/global_effectable.cpp
+index cfd975e2..7e694740 100644
+--- a/src/deluge/model/global_effectable/global_effectable.cpp
++++ b/src/deluge/model/global_effectable/global_effectable.cpp
+@@ -775,6 +775,19 @@ ohNo:
+ 	}
+ }
+ 
++// The filters' modes as setupFilterSetConfig() gives them to FilterSet::setConfig(): off where the params leave a
++// filter open
++void GlobalEffectable::getFilterModesForRender(UnpatchedParamSet* unpatchedParams, FilterMode* lpfModeForRender,
++                                               FilterMode* hpfModeForRender) {
++	bool doLPF = (lpfMode == FilterMode::TRANSISTOR_24DB_DRIVE
++	              || unpatchedParams->getValue(params::UNPATCHED_LPF_FREQ) < 2147483602
++	              || unpatchedParams->getValue(params::UNPATCHED_LPF_MORPH) > NEGATIVE_ONE_Q31);
++	bool doHPF = unpatchedParams->getValue(params::UNPATCHED_HPF_FREQ) > NEGATIVE_ONE_Q31
++	             || unpatchedParams->getValue(params::UNPATCHED_HPF_MORPH) > NEGATIVE_ONE_Q31;
++	*lpfModeForRender = doLPF ? lpfMode : FilterMode::OFF;
++	*hpfModeForRender = doHPF ? hpfMode : FilterMode::OFF;
++}
++
+ void GlobalEffectable::setupFilterSetConfig(int32_t* postFXVolume, ParamManager* paramManager) {
+ 
+ 	UnpatchedParamSet* unpatchedParams = paramManager->getUnpatchedParamSet();
+@@ -798,13 +811,9 @@ void GlobalEffectable::setupFilterSetConfig(int32_t* postFXVolume, ParamManager*
+ 	    getFinalParameterValueLinear(paramNeutralValues[params::LOCAL_HPF_MORPH],
+ 	                                 cableToExpParamShortcut(unpatchedParams->getValue(params::UNPATCHED_HPF_MORPH)));
+ 
+-	bool doLPF = (lpfMode == FilterMode::TRANSISTOR_24DB_DRIVE
+-	              || unpatchedParams->getValue(params::UNPATCHED_LPF_FREQ) < 2147483602
+-	              || unpatchedParams->getValue(params::UNPATCHED_LPF_MORPH) > NEGATIVE_ONE_Q31);
+-	bool doHPF = unpatchedParams->getValue(params::UNPATCHED_HPF_FREQ) > NEGATIVE_ONE_Q31
+-	             || unpatchedParams->getValue(params::UNPATCHED_HPF_MORPH) > NEGATIVE_ONE_Q31;
+-	FilterMode lpfModeForRender = doLPF ? lpfMode : FilterMode::OFF;
+-	FilterMode hpfModeForRender = doHPF ? hpfMode : FilterMode::OFF;
++	FilterMode lpfModeForRender;
++	FilterMode hpfModeForRender;
++	getFilterModesForRender(unpatchedParams, &lpfModeForRender, &hpfModeForRender);
+ 	*postFXVolume =
+ 	    filterSet.setConfig(lpfFrequency, lpfResonance, lpfModeForRender, lpfMorph, hpfFrequency, hpfResonance,
+ 	                        hpfModeForRender, hpfMorph, *postFXVolume, filterRoute, false, NULL);
+diff --git a/src/deluge/model/global_effectable/global_effectable.h b/src/deluge/model/global_effectable/global_effectable.h
+index 88d7db50..1a1f710d 100644
+--- a/src/deluge/model/global_effectable/global_effectable.h
++++ b/src/deluge/model/global_effectable/global_effectable.h
+@@ -22,6 +22,7 @@
+ #include "model/mod_controllable/mod_controllable_audio.h"
+ using namespace deluge;
+ class Serializer;
++class UnpatchedParamSet;
+ class GlobalEffectable : public ModControllableAudio {
+ public:
+ 	GlobalEffectable();
+@@ -34,6 +35,8 @@ public:
+ 	ModelStackWithAutoParam* getParamFromModEncoder(int32_t whichModEncoder, ModelStackWithThreeMainThings* modelStack,
+ 	                                                bool allowCreation = true);
+ 	void setupFilterSetConfig(int32_t* postFXVolume, ParamManager* paramManager);
++	void getFilterModesForRender(UnpatchedParamSet* unpatchedParams, FilterMode* lpfModeForRender,
++	                             FilterMode* hpfModeForRender);
+ 	void processFilters(StereoSample* buffer, int32_t numSamples);
+ 	void compensateVolumeForResonance(ParamManagerForTimeline* paramManager);
+ 	void processFXForGlobalEffectable(StereoSample* inputBuffer, int32_t numSamples, int32_t* postFXVolume,
+diff --git a/src/deluge/model/global_effectable/global_effectable_for_clip.cpp b/src/deluge/model/global_effectable/global_effectable_for_clip.cpp
+index beed982e..701eff8f 100644
+--- a/src/deluge/model/global_effectable/global_effectable_for_clip.cpp
++++ b/src/deluge/model/global_effectable/global_effectable_for_clip.cpp
+@@ -66,6 +66,15 @@ GlobalEffectableForClip::GlobalEffectableForClip() {
+                                                         OutputType outputType, SampleRecorder* recorder) {
+ 	UnpatchedParamSet* unpatchedParams = paramManagerForClip->getUnpatchedParamSet();
+ 
++	// mastertune-v17: nothing to render, and the effects dormant as the check after rendering would find them: skip
++	// straight to what that check does, without setting up the effects and a buffer first
++	if (!renderedLastTime && samplesOfSilentEffects >= kSilentSamplesBeforeSkippingEffects
++	    && effectsStayDormant(paramManagerForClip, recorder) && hasNothingToRender(isClipActive)) {
++		renderWithNothingToRender(modelStack, paramManagerForClip, numSamples, reverbAmountAdjust, sideChainHitPending,
++		                          isClipActive);
++		return;
++	}
++
+ 	// Process FX and stuff. For kits, stutter happens before reverb send
+ 	// The >>1 is to make up for the fact that we've got the preset default to effect a multiplication of 2 already (the
+ 	// maximum multiplication would be 4)
+@@ -103,24 +112,7 @@ GlobalEffectableForClip::GlobalEffectableForClip() {
+ 
+ 	int32_t pan = unpatchedParams->getValue(params::UNPATCHED_PAN) >> 1;
+ 
+-	// Render sidechain
+-	int32_t sidechainVolumeParam = unpatchedParams->getValue(params::UNPATCHED_SIDECHAIN_VOLUME);
+-	int32_t postReverbVolume = paramNeutralValues[params::GLOBAL_VOLUME_POST_REVERB_SEND];
+-	if (sidechainVolumeParam != -2147483648) {
+-		if (sideChainHitPending != 0) {
+-			sidechain.registerHit(sideChainHitPending);
+-		}
+-		int32_t sidechainOutput =
+-		    sidechain.render(numSamples, unpatchedParams->getValue(params::UNPATCHED_SIDECHAIN_SHAPE));
+-
+-		int32_t positivePatchedValue =
+-		    multiply_32x32_rshift32(sidechainOutput, getSidechainVolumeAmountAsPatchCableDepth(paramManagerForClip))
+-		    + 536870912;
+-		postReverbVolume = (positivePatchedValue >> 15)
+-		                   * (positivePatchedValue
+-		                      >> 16); // This is tied to getParamNeutralValue(params::GLOBAL_VOLUME_POST_REVERB_SEND)
+-		                              // returning 134217728
+-	}
++	int32_t postReverbVolume = renderSidechain(paramManagerForClip, numSamples, sideChainHitPending);
+ 	q31_t compThreshold = unpatchedParams->getValue(params::UNPATCHED_COMPRESSOR_THRESHOLD);
+ 	compressor.setThreshold(compThreshold);
+ 	// Raw storage: StereoSample's zero-initialisers would clear all 128 samples on top of the memset below
+@@ -206,6 +198,37 @@ GlobalEffectableForClip::GlobalEffectableForClip() {
+ effectsDone:
+ 	postReverbVolumeLastTime = postReverbVolume;
+ 
++	tickParamManagerForClip(modelStack, paramManagerForClip, numSamples, isClipActive);
++}
++
++// The sidechain moves on (and takes a hit) whether or not anything sounds. Returns the post-reverb volume it gives.
++int32_t GlobalEffectableForClip::renderSidechain(ParamManager* paramManagerForClip, int32_t numSamples,
++                                                 int32_t sideChainHitPending) {
++	UnpatchedParamSet* unpatchedParams = paramManagerForClip->getUnpatchedParamSet();
++	int32_t sidechainVolumeParam = unpatchedParams->getValue(params::UNPATCHED_SIDECHAIN_VOLUME);
++	int32_t postReverbVolume = paramNeutralValues[params::GLOBAL_VOLUME_POST_REVERB_SEND];
++	if (sidechainVolumeParam != -2147483648) {
++		if (sideChainHitPending != 0) {
++			sidechain.registerHit(sideChainHitPending);
++		}
++		int32_t sidechainOutput =
++		    sidechain.render(numSamples, unpatchedParams->getValue(params::UNPATCHED_SIDECHAIN_SHAPE));
++
++		int32_t positivePatchedValue =
++		    multiply_32x32_rshift32(sidechainOutput, getSidechainVolumeAmountAsPatchCableDepth(paramManagerForClip))
++		    + 536870912;
++		postReverbVolume = (positivePatchedValue >> 15)
++		                   * (positivePatchedValue
++		                      >> 16); // This is tied to getParamNeutralValue(params::GLOBAL_VOLUME_POST_REVERB_SEND)
++		                              // returning 134217728
++	}
++	return postReverbVolume;
++}
++
++// Automation of the clip's own params moves on whether or not anything sounds
++void GlobalEffectableForClip::tickParamManagerForClip(ModelStackWithTimelineCounter* modelStack,
++                                                      ParamManager* paramManagerForClip, int32_t numSamples,
++                                                      bool isClipActive) {
+ 	if (playbackHandler.isEitherClockActive() && !playbackHandler.ticksLeftInCountIn && isClipActive) {
+ 		const bool result =
+ 		    params::kMaxNumUnpatchedParams > 32
+@@ -220,6 +243,57 @@ effectsDone:
+ 	}
+ }
+ 
++// mastertune-v17: whether the check in renderOutput() after rendering nothing would find the effects dormant, and
++// setting them up before it would change nothing that is read before they're set up again. The same conditions, taken
++// from what they're made of before the setup (renderOutput() has made sure no sound came in last time):
++// - createDelayWorkingState() with no sound coming in: a delay with no buffers and no repeats to wait for
++//   (repeatsUntilAbandon) doesn't get any (doDelay false), Delay::setupWorkingState() only notes that no sound is
++//   coming in, which Delay::process() only reads after it has been set again. An old file's delay time change is
++//   resolved there, the first time.
++// - setupFilterSetConfig(): FilterSet::setConfig() resets a filter whose mode changes; otherwise it only sets what
++//   processFilters() reads, after it has been set again.
++// - The rest reads params and settings, as the check does.
++bool GlobalEffectableForClip::effectsStayDormant(ParamManager* paramManagerForClip, SampleRecorder* recorder) {
++	UnpatchedParamSet* unpatchedParams = paramManagerForClip->getUnpatchedParamSet();
++	if (clippingAmount || unpatchedParams->getValue(params::UNPATCHED_COMPRESSOR_THRESHOLD) > 0
++	    || (recorder && recorder->status < RecorderStatus::FINISHED_CAPTURING_BUT_STILL_WRITING) || delay.isActive()
++	    || delay.repeatsUntilAbandon || delay.timeChangeFromOldFile || stutterer.isStuttering(this)
++	    || isSRREnabled(paramManagerForClip) || getActiveModFXType(paramManagerForClip) != ModFXType::NONE) {
++		return false;
++	}
++	FilterMode lpfModeForRender;
++	FilterMode hpfModeForRender;
++	getFilterModesForRender(unpatchedParams, &lpfModeForRender, &hpfModeForRender);
++	return filterSet.keepsModes(lpfModeForRender, hpfModeForRender);
++}
++
++// mastertune-v17: what renderOutput() does when nothing is rendered and it skips the effects, and nothing else: the
++// sidechain, the compressor's threshold and reset, what the Kit or AudioOutput moves on without rendering, the reverb
++// kept awake while this sends to it, and the clip's automation
++void GlobalEffectableForClip::renderWithNothingToRender(ModelStackWithTimelineCounter* modelStack,
++                                                        ParamManager* paramManagerForClip, int32_t numSamples,
++                                                        int32_t reverbAmountAdjust, int32_t sideChainHitPending,
++                                                        bool isClipActive) {
++	UnpatchedParamSet* unpatchedParams = paramManagerForClip->getUnpatchedParamSet();
++
++	int32_t postReverbVolume = renderSidechain(paramManagerForClip, numSamples, sideChainHitPending);
++	compressor.setThreshold(unpatchedParams->getValue(params::UNPATCHED_COMPRESSOR_THRESHOLD));
++
++	advanceWithNothingToRender(modelStack, numSamples, isClipActive);
++
++	compressor.reset();
++	int32_t reverbSendAmount = getFinalParameterValueVolume(
++	    reverbAmountAdjust,
++	    cableToLinearParamShortcut(unpatchedParams->getValue(params::UNPATCHED_REVERB_SEND_AMOUNT)));
++	if (reverbSendAmount != 0) {
++		AudioEngine::timeThereWasLastSomeReverb = AudioEngine::audioSampleTimer; // As the volume stage would
++	}
++
++	postReverbVolumeLastTime = postReverbVolume;
++
++	tickParamManagerForClip(modelStack, paramManagerForClip, numSamples, isClipActive);
++}
++
+ int32_t GlobalEffectableForClip::getSidechainVolumeAmountAsPatchCableDepth(ParamManager* paramManager) {
+ 	int32_t sidechainVolumeParam = paramManager->getUnpatchedParamSet()->getValue(params::UNPATCHED_SIDECHAIN_VOLUME);
+ 	return (sidechainVolumeParam >> 2) + 536870912;
+diff --git a/src/deluge/model/global_effectable/global_effectable_for_clip.h b/src/deluge/model/global_effectable/global_effectable_for_clip.h
+index 20bc461b..80f28bd7 100644
+--- a/src/deluge/model/global_effectable/global_effectable_for_clip.h
++++ b/src/deluge/model/global_effectable/global_effectable_for_clip.h
+@@ -69,7 +69,22 @@ protected:
+ 
+ 	virtual bool willRenderAsOneChannelOnlyWhichWillNeedCopying() { return false; }
+ 
++	/// mastertune-v17: whether renderGlobalEffectableForClip() would render nothing now (and return false), changing
++	/// nothing but what advanceWithNothingToRender() moves on. Then renderOutput() can leave out the buffer and, when
++	/// the effects are dormant too, their setup.
++	virtual bool hasNothingToRender(bool isClipActive) { return false; }
++	virtual void advanceWithNothingToRender(ModelStackWithTimelineCounter* modelStack, int32_t numSamples,
++	                                        bool isClipActive) {}
++
+ private:
++	int32_t renderSidechain(ParamManager* paramManagerForClip, int32_t numSamples, int32_t sideChainHitPending);
++	void tickParamManagerForClip(ModelStackWithTimelineCounter* modelStack, ParamManager* paramManagerForClip,
++	                             int32_t numSamples, bool isClipActive);
++	bool effectsStayDormant(ParamManager* paramManagerForClip, SampleRecorder* recorder);
++	void renderWithNothingToRender(ModelStackWithTimelineCounter* modelStack, ParamManager* paramManagerForClip,
++	                               int32_t numSamples, int32_t reverbAmountAdjust, int32_t sideChainHitPending,
++	                               bool isClipActive);
++
+ 	bool renderedLastTime;
+ 
+ 	// How long the effects have given out exact silence for silent input, to know when they can be skipped
+diff --git a/src/deluge/model/instrument/kit.cpp b/src/deluge/model/instrument/kit.cpp
+index dd46849b..bb354e5c 100644
+--- a/src/deluge/model/instrument/kit.cpp
++++ b/src/deluge/model/instrument/kit.cpp
+@@ -460,6 +460,9 @@ void Kit::addDrum(Drum* newDrum) {
+ 	if (newDrum->type == DrumType::DRONE) {
+ 		numDroneDrums++;
+ 	}
++	if (newDrum->type != DrumType::SOUND) {
++		numNonAudioDrums++;
++	}
+ }
+ 
+ void Kit::removeDrumFromKitArpeggiator(int32_t drumIndex) {
+@@ -493,6 +496,9 @@ void Kit::drumRemoved(Drum* drum) {
+ 	if (drum->type == DrumType::DRONE && numDroneDrums > 0) {
+ 		numDroneDrums--;
+ 	}
++	if (drum->type != DrumType::SOUND && numNonAudioDrums > 0) {
++		numNonAudioDrums--;
++	}
+ 
+ #if ALPHA_OR_BETA_VERSION
+ 	int32_t i = drumsWithRenderingActive.searchExact((int32_t)drum);
+@@ -644,6 +650,12 @@ bool Kit::renderGlobalEffectableForClip(ModelStackWithTimelineCounter* modelStac
+ 		}
+ 	}
+ 
++	tickNoteRowParamManagers(modelStack, numSamples, isClipActive);
++	return rendered;
++}
++
++// Automation of the rows' params moves on whether or not anything sounds
++void Kit::tickNoteRowParamManagers(ModelStackWithTimelineCounter* modelStack, int32_t numSamples, bool isClipActive) {
+ 	// Tick ParamManagers
+ 	if (playbackHandler.isEitherClockActive() && !playbackHandler.ticksLeftInCountIn && isClipActive) {
+ 
+@@ -725,7 +737,28 @@ yesTickParamManager:
+ 			}
+ 		}
+ 	}
+-	return rendered;
++}
++
++// mastertune-v17: renderGlobalEffectableForClip() renders nothing, and changes nothing but the rows' automation, when
++// no drum is rendering (drumsWithRenderingActive) and no drone row is sounding
++bool Kit::hasNothingToRender(bool isClipActive) {
++	if (drumsWithRenderingActive.getNumElements() != 0) {
++		return false;
++	}
++	if (numDroneDrums > 0) {
++		for (Drum* list : {firstDrum, drumsWrittenToFile}) {
++			for (Drum* thisDrum = list; thisDrum; thisDrum = thisDrum->next) {
++				if (thisDrum->type == DrumType::DRONE && ((DroneDrum*)thisDrum)->isSounding()) {
++					return false;
++				}
++			}
++		}
++	}
++	return true;
++}
++
++void Kit::advanceWithNothingToRender(ModelStackWithTimelineCounter* modelStack, int32_t numSamples, bool isClipActive) {
++	tickNoteRowParamManagers(modelStack, numSamples, isClipActive);
+ }
+ 
+ void Kit::renderOutput(ModelStack* modelStack, StereoSample* outputBuffer, StereoSample* outputBufferEnd,
+@@ -858,7 +891,8 @@ static void applyNonAudioDrumArpInstruction(NonAudioDrum* nonAudioDrum, ArpRetur
+ }
+ 
+ void Kit::renderNonAudioArpPostOutput(int32_t numSamples) {
+-	if (activeClip == nullptr) {
++	// mastertune-v17: a kit of sound rows only doesn't walk its rows for them every block
++	if (activeClip == nullptr || numNonAudioDrums == 0) {
+ 		return;
+ 	}
+ 	InstrumentClip* clip = (InstrumentClip*)activeClip;
+diff --git a/src/deluge/model/instrument/kit.h b/src/deluge/model/instrument/kit.h
+index 2817d414..b4575e04 100644
+--- a/src/deluge/model/instrument/kit.h
++++ b/src/deluge/model/instrument/kit.h
+@@ -137,6 +137,10 @@ public:
+ 	                                   bool shouldLimitDelayFeedback, bool isClipActive, int32_t pitchAdjust,
+ 	                                   int32_t amplitudeAtStart, int32_t amplitudeAtEnd);
+ 
++	bool hasNothingToRender(bool isClipActive) override;
++	void advanceWithNothingToRender(ModelStackWithTimelineCounter* modelStack, int32_t numSamples,
++	                                bool isClipActive) override;
++
+ 	char const* getXMLTag() { return "kit"; }
+ 
+ 	Drum* firstDrum;
+@@ -150,6 +154,9 @@ public:
+ 	/// mastertune-v16: how many of the drums are drone rows (DroneDrum; addDrum() and drumRemoved() count them), so a
+ 	/// kit without any doesn't walk its drums for them every block
+ 	int32_t numDroneDrums = 0;
++	/// mastertune-v17: how many are MIDI, gate or drone rows (counted as numDroneDrums), which have their own
++	/// arpeggiators (renderNonAudioArpPostOutput())
++	int32_t numNonAudioDrums = 0;
+ 
+ 	ModelStackWithAutoParam* getModelStackWithParam(ModelStackWithTimelineCounter* modelStack, Clip* clip,
+ 	                                                int32_t paramID, deluge::modulation::params::Kind paramKind,
+@@ -182,6 +189,7 @@ private:
+ 	void setupAndRenderArpPreOutput(ModelStackWithTimelineCounter* modelStack, ParamManager* paramManager,
+ 	                                int32_t numSamples);
+ 	void renderNonAudioArpPostOutput(int32_t numSamples);
++	void tickNoteRowParamManagers(ModelStackWithTimelineCounter* modelStack, int32_t numSamples, bool isClipActive);
+ 	void applyKitArpInstruction(ModelStackWithTimelineCounter* modelStack, ArpReturnInstruction* instruction,
+ 	                            bool onlyPendingNoteOn);
+ 	void kitArpNoteToRow(ModelStackWithTimelineCounter* modelStack, int32_t noteRowIndex, bool on,
+diff --git a/src/deluge/processing/audio_output.cpp b/src/deluge/processing/audio_output.cpp
+index 4be4bc5b..e4092df0 100644
+--- a/src/deluge/processing/audio_output.cpp
++++ b/src/deluge/processing/audio_output.cpp
+@@ -292,6 +292,15 @@ renderEnvelope:
+ 	return rendered;
+ }
+ 
++// mastertune-v17: renderGlobalEffectableForClip() renders nothing, and changes nothing, when it neither plays the
++// active clip's sample nor echoes an input
++bool AudioOutput::hasNothingToRender(bool isClipActive) {
++	if (echoing) {
++		return false;
++	}
++	return !(isClipActive && ((AudioClip*)activeClip)->voiceSample);
++}
++
+ bool AudioOutput::willRenderAsOneChannelOnlyWhichWillNeedCopying() {
+ 	return (activeClip && ((AudioClip*)activeClip)->voiceSample
+ 	        && (((AudioClip*)activeClip)->sampleHolder.audioFile->numChannels == 1 || !AudioEngine::renderInStereo));
+diff --git a/src/deluge/processing/audio_output.h b/src/deluge/processing/audio_output.h
+index 0f01350f..09406512 100644
+--- a/src/deluge/processing/audio_output.h
++++ b/src/deluge/processing/audio_output.h
+@@ -40,6 +40,8 @@ public:
+ 	                                   bool shouldLimitDelayFeedback, bool isClipActive, int32_t pitchAdjust,
+ 	                                   int32_t amplitudeAtStart, int32_t amplitudeAtEnd);
+ 
++	bool hasNothingToRender(bool isClipActive) override;
++
+ 	void resetEnvelope();
+ 
+ 	ModControllable* toModControllable() { return this; }
+-- 
+2.43.0
+
