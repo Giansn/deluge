@@ -1,29 +1,37 @@
 #!/usr/bin/env python3
-"""Emulator test of the converted library: the real deluge.elf at master tune 432 Hz plays the same song from the
-original card and from the card tools/retune_library.py made of it, and this compares what the firmware does.
+"""Emulator test of the converted library: the real deluge.elf plays the same song from the original card and from
+the card tools/retune_library.py made of it for 432 Hz, and this compares what the firmware does.
 
-The song (120 BPM, a 1-bar kit and synth clips, a 2-bar audio clip), every part a tone of its own frequency so that
-each can be measured in the mix:
-- kit KIT, all rows ONCE unless said: KICK (48 kHz stereo 24-bit, 600 Hz after 0.1 s of silence, start 50 ms, end
-  800 ms, on beat 1), SNARE (900 Hz, beat 3), LOOPROW (1300 Hz with a sawtooth level of its loop's period, LOOP
-  repeat mode, loop 0.5 to 0.75 s = 325 cycles, the whole bar), HAT (an AIFF, 2300 Hz, beats 2 and 4), TOM (560 Hz,
-  transposed +5: never native), STRETCH (1900 Hz notes, time stretch on, the 7th 16th);
-- synth SMP: a sample (1100 Hz) played at C3 (60, native) for half a bar and at G3 (67, never native) for the other;
-- synth MULTI: a multisample, range A (300 Hz, transpose +12) played at 48, range B (2700 Hz) at 60: both native;
-- audio clip LOOP: 2 bars (176400 samples, exactly the clip at 120 BPM: native at 440 Hz), 450 Hz notes on every beat.
-CommunityFeatures.XML sets the master tune to 432.0 Hz (checked after boot).
+Five runs (each its own process), 4 bars after a 1-bar warm-up: the original card at master tune 440 Hz (the
+reference: native playback), the original at 432 Hz, the converted card at 432 Hz, and both at 432 Hz without the
+sample cache (VoiceSample::possiblySetUpCache() sets none up, as when the RAM is short or the cache was stolen: then
+every resampled voice runs the sinc interpolation, as measured on the Deluge). The master tune comes from
+CommunityFeatures.XML on the card (checked after boot).
 
-Measured (after a 1-bar warm-up, --bars bars):
+The song (120 BPM exactly: 229.6875 samples per tick, so the 2-bar audio clip fits without drift), each part a tone of
+its own frequency (at least 230 Hz apart) so that it can be measured in the mix:
+- kit KIT, ONCE unless said: KICK (48 kHz stereo 24-bit, 800 Hz after 0.1 s of silence, zone start 50 ms, end
+  800 ms, beat 1), SNARE (1100 Hz, beat 3), LOOPROW (3400 Hz with a sawtooth level of its loop's period, LOOP repeat
+  mode, loop 0.5 to 0.75 s = 850 cycles, the whole bar), HAT (an AIFF, 2700 Hz, beats 2 and 4), TOM (400 Hz,
+  transposed +5: never native), STRETCH (a 1700 Hz note, time stretch on: its length is kept, the 7th 16th);
+- synth SMP: a sample (1400 Hz) played at 60 (native) for half a bar and at 67 (never native) for the other half;
+- synth MULTI: a multisample, range A (300 Hz, transpose +12) played at 48, range B (3000 Hz) at 60: both native;
+- audio clip LOOP: 2 bars (176400 samples: native at 440 Hz), 2400 Hz notes on every beat.
+
+Measured:
 - VoiceSample::render() intercepted: per file its calls, the phaseIncrement (stack+12) and timeStretchRatio (stack+16),
-  native (both 1 << 24), interpolated, time-stretched; the instructions per call (to its return: one voice, one
-  window); TimeStretcher::init() and hopEnd() calls.
-- instructions per 128 samples (AudioEngine::routine()), and by area (the song test's profile).
-- the output: each part's pitch (phase slope of its demodulated band) against the exact 432 Hz target, and its markers:
-  onsets and ends (the zone's start and end), the LOOPROW's loop wraps (its period), the audio clip's attacks, as
-  times against the other card's run.
+  native (both 1 << 24), and the instructions per call (to its return: one voice, one window of up to 128 samples);
+  TimeStretcher::init() and hopEnd() calls; writes to address 0 (see run()).
+- instructions per 128 samples (AudioEngine::routine()), and the song test's area "sample reading / interpolation /
+  time-stretch".
+- the output: each part's pitch (phase slope of its demodulated band) against the exact target; its markers (onsets
+  and ends: the KICK's zone start and end, the one-shots' file ends, the LOOPROW's loop wraps and period, the audio
+  clip's notes) of the converted card against the original at 432 Hz (at 440 Hz for the length-kept parts).
 
-Usage: retune_emu.py <deluge.elf> <work dir> [--tools PREFIX] [--build DIR with blockcount.so] [--bars N]
-Needs: python3 with unicorn 2, numpy, scipy, soxr, soundfile, pylibrb (for the audio clip and the STRETCH row).
+Usage: retune_emu.py <deluge.elf> <work dir> [--tools PREFIX] [--build DIR with blockcount.so] [--bars N] [--jobs N]
+       [--reuse]
+Needs: python3 with unicorn 2, numpy, scipy, soxr, soundfile, pylibrb (for the audio clip and the STRETCH row), a C
+compiler (blockcount.c). About 1 minute.
 """
 import argparse
 import collections
@@ -59,9 +67,9 @@ D = "SAMPLES/RT/"
 
 # name, frequency of the content (at 440 Hz), transpose (semitones) of how it's played, whether its length is kept
 PARTS = [
-    ("KICK", 600, 0), ("SNARE", 900, 0), ("LOOPROW", 3400, 0), ("HAT", 2300, 0), ("TOM", 560, 5),
-    ("STRETCH", 1900, 0), ("SMP C3", 1100, 0), ("SMP G3", 1100, 7), ("MULTI A", 300, 0), ("MULTI B", 2700, 0),
-    ("CLIP", 450, 0),
+    ("KICK", 800, 0), ("SNARE", 1100, 0), ("LOOPROW", 3400, 0), ("HAT", 2700, 0), ("TOM", 400, 5),
+    ("STRETCH", 1700, 0), ("SMP C3", 1400, 0), ("SMP G3", 1400, 7), ("MULTI A", 300, 0), ("MULTI B", 3000, 0),
+    ("CLIP", 2400, 0),
 ]
 
 
@@ -69,20 +77,20 @@ PARTS = [
 
 def samples():
     f = {}
-    k = np.concatenate([np.zeros(4800), sine(600, 48000, 0.9, 0.3, fade=0.002)])
+    k = np.concatenate([np.zeros(4800), sine(800, 48000, 0.9, 0.3, fade=0.002)])
     f[D + "KICK.WAV"] = wav(np.stack([k, 0.8 * k], axis=1), 48000, 24)
-    f[D + "SNARE.WAV"] = wav(sine(900, SR, 0.4, 0.3, fade=0.002), SR, 16)
+    f[D + "SNARE.WAV"] = wav(sine(1100, SR, 0.4, 0.3, fade=0.002), SR, 16)
     n = np.arange(SR)
     level = 0.05 + 0.3 * (((n - 22050) % 11025) / 11025)  # The loop's sawtooth, 850 cycles of 3400 Hz per loop
     f[D + "LOOP.WAV"] = wav(level * np.sin(2 * np.pi * 3400 * n / SR), SR, 16)
     hat_inst = struct.pack(">BbBBBBh", 60, 0, 0, 127, 1, 127, 0) + bytes(12)
-    f[D + "HAT.AIF"] = aiff(sine(2300, SR, 0.3, 0.3, fade=0.002), SR, 16, [], hat_inst)
-    f[D + "TOM.WAV"] = wav(sine(560, SR, 0.5, 0.3, fade=0.002), SR, 16)
-    f[D + "STRETCH.WAV"] = wav(notes(1900, SR, 0.5, [0.01], amp=0.3, decay=0.08), SR, 16)
-    f[D + "SMP.WAV"] = wav(sine(1100, SR, 2.0, 0.3), SR, 16)
+    f[D + "HAT.AIF"] = aiff(sine(2700, SR, 0.3, 0.3, fade=0.002), SR, 16, [], hat_inst)
+    f[D + "TOM.WAV"] = wav(sine(400, SR, 0.5, 0.3, fade=0.002), SR, 16)
+    f[D + "STRETCH.WAV"] = wav(notes(1700, SR, 0.5, [0.01], amp=0.3, decay=0.25), SR, 16)
+    f[D + "SMP.WAV"] = wav(sine(1400, SR, 2.0, 0.3), SR, 16)
     f[D + "MULTIA.WAV"] = wav(sine(300, SR, 2.0, 0.3), SR, 16)
-    f[D + "MULTIB.WAV"] = wav(sine(2700, SR, 2.0, 0.3), SR, 16)
-    clip = notes(450, SR, 4.0, [0.5 * i + 0.01 for i in range(8)], amp=0.3, decay=0.2)
+    f[D + "MULTIB.WAV"] = wav(sine(3000, SR, 2.0, 0.3), SR, 16)
+    clip = notes(2400, SR, 4.0, [0.5 * i + 0.01 for i in range(8)], amp=0.3, decay=0.2)
     f[D + "CLIP.WAV"] = wav(np.stack([clip, clip], axis=1), SR, 16)
     return f
 
@@ -355,7 +363,7 @@ def crossings(env, level, rising):
     return idx + (level - a[idx]) / (b[idx] - a[idx])
 
 
-def band(mono, f, bandwidth=50.0):
+def band(mono, f, bandwidth=40.0):
     env = np.abs(demodulate(mono, SR, f, bandwidth))
     env[:EDGE] = env[-EDGE:] = 0
     return env
