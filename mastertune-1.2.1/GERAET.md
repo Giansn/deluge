@@ -34,11 +34,17 @@ Erledigt: der Bericht zu v16, l2d, der Song für den Emulator, der Retune-Test u
    - **CPU-Monitor-Kürzel:** LEARN halten und den TEMPO-Knopf drücken. Er schaltet ein und aus. Nach dem Neustart muss der Modus erhalten sein.
    - **Song-Übersicht:** Songs `TRACK`, `TRACK 2`, `TRACK 3` erscheinen als eine Zeile «TRACK». Klick klappt auf, BACK klappt zu, laden, auch während der Wiedergabe.
    - **HPF-Pfeifton:** In der Song-Ansicht HPF mit viel Resonanz, dann das LPF aufdrehen. Der Ton soll jetzt etwa so laut sein wie die Musik, nicht weit darüber. Und: Stand das LPF bei deinem Fall auf Drive?
-4. **Die Bibliothek `deluge topics` auf 432 Hz umwandeln** (`tools/retune_library.py`, Stand ab Commit `77e6d42`):
+4. **Die Bibliothek `deluge topics` auf 432 Hz umwandeln, neu mit der Version, die den Laptop nicht mehr einfriert** (`tools/retune_library.py`, Stand ab Commit `868d85f`, also zuerst `git pull`):
+   - **Was neu ist:**
+     - Jede Datei wird in Stücken von etwa 3 s umgerechnet. Pro Datei braucht es so etwa 60 MB Speicher statt bis zu 8,5 GB, auch bei langen Aufnahmen.
+     - Wie viele Dateien gleichzeitig laufen, richtet sich nach dem freien Speicher: höchstens die Hälfte davon. Die Konsole zeigt, was gewählt wurde.
+     - Das Ergebnis ist Byte für Byte gleich wie mit der alten Version.
+   - **Neu beginnen:** Der eingefrorene Ordner stammt von der alten Version und lässt sich nicht fortsetzen. Ihn löschen oder umbenennen, dann in einen neuen, leeren Ordner umwandeln:
+     `python tools/retune_library.py --card <Kopie der Karte> --out <neuer leerer Ordner>`
+   - **Bricht es ab** (Absturz, Strom, volle Platte): denselben Befehl mit `--resume` und denselben Ordnern. Fertige Dateien bleiben, halbe werden neu gemacht.
    - Dateien, deren Spitzen über 0 dBFS gingen, schreibt es wie gewünscht als 32-Bit-Float. Der Deluge begrenzt sie beim Abspielen trotzdem auf 0 dBFS.
-   - Immer die ganze Karte, in einen neuen Ordner, dann auf eine zweite Karte. `RETUNE_REPORT.txt` mit pushen.
-   - Danach Messung 2 mit der umgewandelten Karte wiederholen.
-5. **DELUGE USB REC** (`tools/deluge_rec.py`, oder die `DelugeRec.exe` der Helfer-Session, sobald sie den geprüften Stand gebaut hat):
+   - Danach auf eine zweite Karte kopieren, `RETUNE_REPORT.txt` mit pushen und Messung 2 mit der umgewandelten Karte wiederholen.
+5. **DELUGE USB REC** (`DelugeRec-v3.exe` aus dem Release https://github.com/Giansn/deluge/releases/tag/deluge-rec-v3, oder `tools/deluge_rec.py`):
    - eine Aufnahme mit USB audio an. Zeigt das Display `24B`?
    - Die Tasten R, A, S, F.
 
