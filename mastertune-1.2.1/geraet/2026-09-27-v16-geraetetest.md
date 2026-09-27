@@ -11,7 +11,7 @@ Lokale Session am Windows-11-PC, Deluge per USB. Firmware `deluge-1.2.1-mastertu
 | 3 | CPU monitor | teilweise ok | On und Profile laufen, Profile mehrmals umgeschaltet ohne Absturz. Alerts nicht geprüft. |
 | 4 | Drone-Spuren | nicht getestet | |
 | 5 | Messung grosser Song | ok | «New Sitar Grii 10», 30 s Stillstand, 39 s Spielen mit Clips starten und stoppen. Zahlen unten. |
-| 6 | L2-Versionen | nicht getestet | |
+| 6 | L2-Versionen | teilweise | l2d gemessen, grob (siehe Nachtrag), kein Absturz. l2i offen. |
 
 ## Messung «New Sitar Grii 10» (`2026-09-27-v16-grosser-song.jsonl`, CPU monitor auf Profile)
 
@@ -71,8 +71,38 @@ Lokale Session am Windows-11-PC, Deluge per USB. Firmware `deluge-1.2.1-mastertu
 - **Windows-Portnamen:** `Deluge 0`, `MIDIIN2 (Deluge) 1`, `MIDIIN3 (Deluge) 2`. `open_input()` sucht eine 3 am Namensende und nimmt deshalb Port 1, von dem nichts kommt. Mit `-p "MIDIIN3 (Deluge) 2"` geht es. Vorschlag: auch `midiin3` erkennen.
 - **`pip install mido python-rtmidi`** scheitert unter Windows mit Python 3.13 und 3.14. `python-rtmidi` 1.5.8 hat Windows-Pakete nur bis 3.12, sonst will pip kompilieren. Mit Python 3.12 läuft alles.
 
+## Nachtrag: l2d (`2026-09-27-v16-l2d-grosser-song.jsonl`)
+
+Firmware `l2test/deluge-1.2.1-mastertune-v16-l2d-03ccaac5.bin`, CPU monitor auf Profile. Anders als geplant: nur 2 s Stillstand, dann 68 s gespielt, länger und mit mehr Clips als bei v16. Der Vergleich ist darum grob. Die Messung mit festem Ablauf folgt.
+
+| | v16 | l2d |
+|---|---|---|
+| Stillstand: CPU-Anzeige | 86,3 % (30 s) | 80,7 % (2 s) |
+| Spielen: Stimmen Mittel / höchstens | 8,6 / 16 | 14,5 / 24 |
+| Abgeschnittene Stimmen | 3,2/s (124 in 39 s) | 2,5/s (173 in 68 s) |
+| Sekunden mit Lücke über 2,9 ms | 62 %, längste 4,2 ms | 74 %, längste 5,1 ms |
+| Qualität gesenkt | die ganze Zeit | die ganze Zeit (Stufe 11–14) |
+| Anteil Sitar / Oboe | 10,4 / 7,6 % | 18,4 / 8,2 % |
+
+- In den ersten 19 s mit l2d: 13 Stimmen im Mittel, kein Schnitt, Lücke über 2,9 ms nur in 4 s. Danach, mit bis zu 24 Stimmen, wieder Schnitte (3,5/s) und Lücken bis 5,1 ms.
+- **Hörbar (Nutzer):** mit l2d «sehr viel besser».
+- Kein Absturz, keine Auffälligkeiten. Während des Tests wurde nichts gespeichert oder aufgenommen.
+
+## Song für den Emulator (Auftrag 2)
+
+- `karte/SONGS/New Sitar Grii 10.XML`: unverändert aus dem Backup vom 25.09. Laut Nutzer ist der Song seither nicht geändert.
+- `karte/SAMPLES/…`: 136 der 139 Samples mit ihren Kartenpfaden, 75,6 MB. Laut Nutzer alles eigene Samples.
+- `karte/samples-new-sitar-grii-10.csv`: alle 139 mit Spur, Grösse, Format und Länge.
+- Es fehlen drei Hihats aus `SAMPLES/PsyPack/` (Kit Hihat), sie liegen nicht im Backup.
+- Formate: 49× stereo 24 bit, 41× mono 16 bit, 21× stereo 16 bit, 18× stereo 32 bit float, 4× stereo 96 kHz 32 bit, 3× mono 24 bit.
+- **Master Tune bei allen Messungen: 432 Hz** (Angabe des Nutzers). Die Backups vom 25./26.09. haben noch keinen Eintrag, sie stammen von vorher.
+  - Bei 432 Hz werden alle Samples interpoliert, auch die Drums: Sie spielen fast alle untransponiert (3L3Ctr0: 1 von 36 transponiert) und liefen bei 440 Hz nativ.
+  - Emulator-Tabelle (`research/OPTIMIERUNG.md`): pro Stereo-Stimme und Block 3 500 Befehle nativ, 12 000 linear (bei QL 14), 20 800 mit Sinc. Das dürfte einen guten Teil der Kit-Last beim Spielen erklären.
+  - Eine Vergleichsmessung mit 440 Hz würde zeigen, was 432 Hz auf dem Gerät kostet.
+
 ## Dateien
 
 - `2026-09-27-v16-grosser-song.jsonl`: die Messung oben (70 s, Profile)
+- `2026-09-27-v16-l2d-grosser-song.jsonl`: l2d, 70 s, Profile
 - `2026-09-27-v16-profile-check.jsonl`: 12 s Profile beim Spielen
 - `2026-09-27-v16-cpumonitor.jsonl`: erster Lauf, CPU monitor auf On
