@@ -7,7 +7,7 @@ Beide Versionen sind **v14 mit eingeschaltetem L2-Cache**, sonst unverändert. S
 | `deluge-1.2.1-mastertune-v14-l2i-198e9822.bin` | L2 **nur für Code**. Stand der Community von 12/2024, dort seither in Nightly und Beta. | gering |
 | `deluge-1.2.1-mastertune-v14-l2d-d0791052.bin` | L2 **für Code und Daten**, mit Prefetch. Stand der Community von 04/2026 mit den Korrekturen danach. | mittel |
 
-SHA-256: l2i `@@L2I_SHA@@`, l2d `@@L2D_SHA@@`. Patches auf v14: `0001-…` und `0002-…` (nur Code), `0003-…` (Daten).
+SHA-256: l2i `775f01f0…c7e140f6`, l2d `@@L2D_SHA@@`. Patches auf v14: `0001-…` und `0002-…` (nur Code), `0003-…` (Daten).
 
 ## Worum es geht
 
