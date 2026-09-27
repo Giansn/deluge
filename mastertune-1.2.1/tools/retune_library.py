@@ -45,6 +45,7 @@ import shutil
 import struct
 import sys
 import time
+import unicodedata
 from fractions import Fraction
 
 import numpy as np
@@ -80,7 +81,9 @@ class AudioInfo:
         self.mtun = None  # Valid mtun value (tenths of Hz), as the firmware reads it
         self.clm = False  # Serum wavetable chunk
         self.chunks = []  # WAV: (id, bytes) in file order, "data" with b"" as a placeholder; AIFF: its chunks
-        self.data = b""  # Raw audio data
+        self.data = b""  # Raw audio data (only with read_audio_info(..., with_data=True))
+        self.data_pos = self.data_len = None  # Where the audio data is in the file
+        self.file_size = 0
         self.block_align = 0
         self.big_endian = False
         self.aiff_note = None  # AIFF INST: (baseNote, detune, lowNote, highNote, lowVel, highVel, gain)
@@ -95,26 +98,48 @@ def is_valid_tuning(tenths):
     return MIN_TENTHS <= tenths <= MAX_TENTHS
 
 
-def read_audio_info(raw):
+def read_audio_info(fh, with_data=False):
+    """The headers of an open file: the chunks are read and the audio data skipped (with_data: read too). So that
+    planning a whole card doesn't hold its audio in memory."""
     info = AudioInfo()
-    if len(raw) < 12:
+    fh.seek(0, os.SEEK_END)
+    info.file_size = fh.tell()
+    fh.seek(0)
+    head = fh.read(12)
+    if len(head) < 12:
         info.error = "too short"
         return info
-    if raw[:4] == b"RIFF" and raw[8:12] == b"WAVE":
-        return _read_wav(raw, info)
-    if raw[:4] == b"FORM" and raw[8:12] in (b"AIFF", b"AIFC"):
-        return _read_aiff(raw, info)
-    info.error = "RF64 (not supported by the firmware)" if raw[:4] in (b"RF64", b"BW64") else "not a WAV or AIFF file"
+    if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+        _read_wav(fh, info)
+    elif head[:4] == b"FORM" and head[8:12] in (b"AIFF", b"AIFC"):
+        _read_aiff(fh, info, head[8:12])
+    else:
+        info.error = "RF64 (not supported by the firmware)" if head[:4] in (b"RF64", b"BW64") else \
+            "not a WAV or AIFF file"
+    if with_data and info.kind:
+        fh.seek(info.data_pos)
+        info.data = fh.read(info.frames * info.block_align)
     return info
 
 
-def _read_wav(raw, info):
-    pos, fmt, data = 12, None, None
-    while pos + 8 <= len(raw):
-        cid, size = raw[pos:pos + 4], struct.unpack_from("<I", raw, pos + 4)[0]
-        body = raw[pos + 8:pos + 8 + size]
+def _chunks(fh, info, size_format, audio_id, audio_head):
+    """(id, position of the body, size present in the file, body) per chunk; of the audio chunk only its first
+    audio_head bytes."""
+    pos = 12
+    while pos + 8 <= info.file_size:
+        fh.seek(pos)
+        h = fh.read(8)
+        cid, size = h[:4], struct.unpack(size_format, h[4:])[0]
+        present = max(0, min(size, info.file_size - pos - 8))
+        yield cid, pos + 8, present, fh.read(min(present, audio_head) if cid == audio_id else present)
+        pos += 8 + size + (size & 1)
+
+
+def _read_wav(fh, info):
+    fmt = None
+    for cid, at, size, body in _chunks(fh, info, "<I", b"data", 0):
         if cid == b"data":
-            data = body
+            info.data_pos, info.data_len = at, size
             info.chunks.append((cid, b""))
         else:
             info.chunks.append((cid, body))
@@ -125,13 +150,21 @@ def _read_wav(raw, info):
                 info.mtun = value if is_valid_tuning(value) else info.mtun
             elif cid == b"clm " and body[:3] == b"<!>":
                 info.clm = True
-        pos += 8 + size + (size & 1)
-    if fmt is None or data is None or len(fmt) < 16:
+    if fmt is None or info.data_pos is None or len(fmt) < 16:
         info.error = "no fmt or data chunk"
         return info
     tag, info.channels, info.rate, _, info.block_align, info.bits = struct.unpack_from("<HHIIHH", fmt)
-    if tag == 0xFFFE and len(fmt) >= 26:
-        tag = struct.unpack_from("<H", fmt, 24)[0]
+    # What the firmware can't read (AudioFile::loadFile(): format 1, or 3 with 32 bits; 1 or 2 channels) stays as it is:
+    # converting it would gain nothing on the Deluge
+    if tag == 0xFFFE:
+        info.error = "WAVE_FORMAT_EXTENSIBLE: the Deluge can't read it"
+        return info
+    if info.channels not in (1, 2):
+        info.error = f"{info.channels} channels: the Deluge reads only mono and stereo"
+        return info
+    if tag == 3 and info.bits != 32:
+        info.error = f"{info.bits}-bit float: the Deluge reads only 32-bit float"
+        return info
     info.float = tag == 3
     if tag not in (1, 3) or info.channels < 1 or info.block_align != info.channels * ((info.bits + 7) // 8):
         info.error = f"format {tag}, {info.bits} bits (only PCM and float)"
@@ -139,8 +172,7 @@ def _read_wav(raw, info):
     if (info.float and info.bits not in (32, 64)) or (not info.float and info.bits not in (8, 16, 24, 32)):
         info.error = f"{info.bits}-bit {'float' if info.float else 'PCM'}"
         return info
-    info.data = data[:len(data) - len(data) % info.block_align]
-    info.frames = len(info.data) // info.block_align
+    info.frames = info.data_len // info.block_align
     info.kind = "wav"
     return info
 
@@ -152,19 +184,17 @@ def _extended_to_float(b):
     return 0.0 if exponent == 0 and mantissa == 0 else sign * mantissa * 2.0 ** (exponent - 16383 - 63)
 
 
-def _read_aiff(raw, info):
-    if raw[8:12] == b"AIFC":
+def _read_aiff(fh, info, form):
+    if form == b"AIFC":
         info.error = "AIFC (the firmware reads only plain AIFF)"
         return info
-    pos, comm, ssnd, markers, inst = 12, None, None, {}, None
-    while pos + 8 <= len(raw):
-        cid, size = raw[pos:pos + 4], struct.unpack_from(">I", raw, pos + 4)[0]
-        body = raw[pos + 8:pos + 8 + size]
-        info.chunks.append((cid, body))
+    comm, ssnd, markers, inst = None, None, {}, None
+    for cid, at, size, body in _chunks(fh, info, ">I", b"SSND", 8):
+        info.chunks.append((cid, b"" if cid == b"SSND" else body))
         if cid == b"COMM":
             comm = body
         elif cid == b"SSND":
-            ssnd = body
+            ssnd = (body, at, size)
         elif cid == b"MARK" and len(body) >= 2:
             n, p = struct.unpack_from(">H", body)[0], 2
             for _ in range(n):
@@ -175,8 +205,7 @@ def _read_aiff(raw, info):
                 p += 7 + name_len + ((name_len + 1) & 1)  # pstring padded to an even total length
         elif cid == b"INST" and len(body) >= 14:
             inst = body
-        pos += 8 + size + (size & 1)
-    if comm is None or ssnd is None or len(comm) != 18 or len(ssnd) < 8:
+    if comm is None or ssnd is None or len(comm) != 18 or len(ssnd[0]) < 8:
         info.error = "no COMM or SSND chunk"
         return info
     info.channels, info.frames, info.bits = struct.unpack_from(">hIh", comm)
@@ -185,10 +214,9 @@ def _read_aiff(raw, info):
         info.error = f"{info.bits}-bit AIFF"
         return info
     info.block_align = info.channels * info.bits // 8
-    offset = struct.unpack_from(">I", ssnd)[0]
-    data = ssnd[8 + offset:]
-    info.frames = min(info.frames, len(data) // info.block_align)
-    info.data = data[:info.frames * info.block_align]
+    offset = struct.unpack_from(">I", ssnd[0])[0]
+    info.data_pos, info.data_len = ssnd[1] + 8 + offset, max(0, ssnd[2] - 8 - offset)
+    info.frames = min(info.frames, info.data_len // info.block_align)
     info.big_endian = True
     if inst is not None:
         info.aiff_note = tuple(struct.unpack_from(">BbBBBBh", inst))
@@ -402,8 +430,8 @@ def build_wav(info, frames_new, rate_new, audio_bytes, f, mtun, warnings, where)
 def convert_job(job):
     """One output file. job: dict (see plan_file()); returns (index, result dict)."""
     t = time.time()
-    raw = open(job["src"], "rb").read()
-    info = read_audio_info(raw)
+    with open(job["src"], "rb") as fh:
+        info = read_audio_info(fh, with_data=True)
     x = decode(info)
     warnings = []
     if job["mode"] == "keep_length" and job["pitch_num"] != job["pitch_den"]:
@@ -589,6 +617,48 @@ def refs_in_xml(xml_rel, root, warnings):
 # The plan
 
 
+# Paths in the XML files: the firmware's FAT has code page 437 and no Unicode API (src/fatfs/ffconf.h: FF_CODE_PAGE
+# 437, FF_LFN_UNICODE 0), so the Deluge writes them as CP437 bytes; an XML written on a computer may have UTF-8. The
+# XML text is read as UTF-8 with surrogateescape: the bytes that aren't UTF-8 are surrogates, and written back as they
+# were.
+
+
+def path_key(rel):
+    """For comparing paths as FAT does: ignoring case (and the Unicode normalization of the computer's names)."""
+    return unicodedata.normalize("NFC", rel).lower()
+
+
+def card_path(value, by_key):
+    """The file an XML path names: (path as on the card or, if missing, as named; without a leading slash, the path's
+    encoding in the XML: "utf-8" or "cp437"). UTF-8 first, else CP437."""
+    raw = value.lstrip("/").encode("utf-8", "surrogateescape")
+    cp437 = raw.decode("cp437")
+    try:
+        utf8 = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        utf8 = None
+    if utf8 is not None and (utf8 == cp437 or path_key(utf8) in by_key):
+        return by_key.get(path_key(utf8), utf8), "utf-8"
+    if utf8 is None or path_key(cp437) in by_key:
+        return by_key.get(path_key(cp437), cp437), "cp437"
+    return utf8, "utf-8"
+
+
+def xml_value(path, encoding):
+    """A path as XML text in the given encoding (see card_path())."""
+    if encoding == "cp437":
+        try:
+            return unicodedata.normalize("NFC", path).encode("cp437").decode("utf-8", "surrogateescape")
+        except UnicodeEncodeError:
+            pass
+    return path
+
+
+def readable(s):
+    """Report text: bytes that aren't UTF-8 (surrogates) shown as the firmware reads them, as CP437."""
+    return re.sub("[\udc80-\udcff]+", lambda m: m.group().encode("utf-8", "surrogateescape").decode("cp437"), s)
+
+
 class FilePlan:
     def __init__(self, rel):
         self.rel = rel  # Path on the card, as found (forward slashes)
@@ -623,18 +693,18 @@ def card_files(card):
 def unique_name(rel, taken):
     stem, ext = os.path.splitext(rel)
     candidate, i = rel, 2
-    while candidate.lower() in taken:
+    while path_key(candidate) in taken:
         candidate = f"{stem}_{i}{ext}"
         i += 1
-    taken.add(candidate.lower())
+    taken.add(path_key(candidate))
     return candidate
 
 
 def plan(args, log):
     card = args.card
     files = card_files(card)
-    by_lower = {f.lower(): f for f in files}
-    taken = set(by_lower)
+    by_key = {path_key(f): f for f in files}
+    taken = set(by_key)
     warnings, xml_errors = [], []
 
     # XML references
@@ -655,30 +725,32 @@ def plan(args, log):
     plans = {}
 
     def plan_for(rel):
-        key = rel.lower()
+        key = path_key(rel)
         if key not in plans:
-            plans[key] = FilePlan(by_lower.get(key, rel))
+            plans[key] = FilePlan(by_key.get(key, rel))
         return plans[key]
 
     for rel in files:
         if rel.split("/")[0].upper() == "SAMPLES" and rel.lower().endswith(AUDIO_EXTENSIONS):
             plan_for(rel)
     for r in all_refs:
-        p = plan_for(r.path[0].lstrip("/"))
+        r.rel, r.encoding = card_path(r.path[0], by_key)
+        p = plan_for(r.rel)
         p.uses.add(r.use)
         p.referenced = True
         p.loops |= r.use == "keep_length" and r.looping
         r.plan = p
     for rel, x in xmls.items():
         for path in x["others"]:
-            p = plan_for(path.lstrip("/"))
+            path = card_path(path, by_key)[0]
+            p = plan_for(path)
             p.uses.add("unknown")
             p.referenced = True
             warnings.append(f"{rel}: {path} is referenced in a way this tool doesn't know: the file stays as it is")
     for rel, err, text in xml_errors:
         warnings.append(f"{rel}: not readable as XML ({err}); copied unchanged, the files it names stay as they are")
         for path in set(re.findall(r"[\"'>]([^\"'<>]+\.(?:wav|aif|aiff))[\"'<]", text, re.I)):
-            p = plan_for(path.lstrip("/"))
+            p = plan_for(card_path(path, by_key)[0])
             p.uses.add("unknown")
             p.referenced = True
 
@@ -686,13 +758,14 @@ def plan(args, log):
     jobs = []
     for key in sorted(plans):
         p = plans[key]
-        if key not in by_lower:
+        if key not in by_key:
             p.action = p.category = "missing"
             warnings.append(f"{p.rel}: referenced but not on the card")
             continue
-        raw = open(os.path.join(card, p.rel), "rb").read()
-        p.size = len(raw)
-        p.info = info = read_audio_info(raw)
+        with open(os.path.join(card, p.rel), "rb") as fh:
+            p.info = info = read_audio_info(fh)  # Only the headers: the jobs read the audio
+        info.chunks = []  # Not needed until the job, which reads the file again
+        p.size = info.file_size
         if info.kind is None:
             p.action = f"left as it is: {info.error}"
             if p.referenced:
@@ -735,9 +808,9 @@ def plan(args, log):
             if not suffix and info.kind == "wav":
                 return p.rel
             name = stem + suffix + ext
-            if name.lower() in taken:
+            if path_key(name) in taken:
                 name = unique_name(stem + (suffix or "_aif") + ext, taken)
-            taken.add(name.lower())
+            taken.add(path_key(name))
             wav_names.append(name)
             return name
 
@@ -758,7 +831,7 @@ def plan(args, log):
                 # Stays as it is (the firmware shifts it at run time), under its own name if the plain uses get the
                 # converted file under the original name
                 name = p.rel
-                if "resample" in p.uses and p.outputs["resample"].rel.lower() == p.rel.lower():
+                if "resample" in p.uses and path_key(p.outputs["resample"].rel) == path_key(p.rel):
                     stem, ext = os.path.splitext(p.rel)
                     name = unique_name(stem + SUFFIX_TS + ext, taken)
                 p.outputs["keep_length"] = Output(name, "keep_length", Fraction(1), frames, info.rate, None,
@@ -789,9 +862,9 @@ def xml_edits(xmls, warnings):
             if o is None:
                 continue
             changes = []
-            if o.rel.lower() != r.path[0].lstrip("/").lower():
+            if path_key(o.rel) != path_key(r.rel):
                 new_path = ("/" if r.path[0].startswith("/") else "") + o.rel
-                edits.append((r.path[1], r.path[2], new_path))
+                edits.append((r.path[1], r.path[2], xml_value(new_path, r.encoding)))  # As the XML had it
                 changes.append(f"path -> {new_path}")
             f, n_old, n_new = o.f, p.info.frames, o.frames_new
             if f != 1:
@@ -900,8 +973,14 @@ def main():
         sys.exit("needs soxr: pip install soxr (and numpy)")
 
     lines = []
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError):
+            pass
 
     def log(s="", console=True):
+        s = readable(s)
         lines.append(s)
         if console:
             print(s, flush=True)
@@ -1005,10 +1084,11 @@ def main():
         for w in warnings:
             log("  " + w)
     if not args.dry_run:
-        with open(os.path.join(args.out, "RETUNE_REPORT.txt"), "w", encoding="utf-8") as fh:
+        with open(os.path.join(args.out, "RETUNE_REPORT.txt"), "w", encoding="utf-8",
+                  errors="backslashreplace") as fh:
             fh.write("\n".join(lines) + "\n")
         report = dict(
-            tuning=args.tenths, rate=args.rate, warnings=warnings,
+            tuning=args.tenths, rate=args.rate, warnings=[readable(w) for w in warnings],
             files={p.rel: dict(action=p.action, uses=sorted(p.uses),
                                source=None if p.info is None or not p.info.kind else dict(
                                    rate=p.info.rate, frames=p.info.frames, tuning=p.info.tuning,
@@ -1017,7 +1097,7 @@ def main():
                                                 converted=o.convert, factor=str(o.f), pitch=str(o.pitch))
                                         for u, o in p.outputs.items()})
                    for p in plans.values()},
-            xml={rel: e[1] for rel, e in edits.items() if e[1]})
+            xml={rel: [readable(line) for line in e[1]] for rel, e in edits.items() if e[1]})
         with open(os.path.join(args.out, "RETUNE_REPORT.json"), "w", encoding="utf-8") as fh:
             json.dump(report, fh, indent=1)
         print(f"\nreport: {os.path.join(args.out, 'RETUNE_REPORT.txt')}")

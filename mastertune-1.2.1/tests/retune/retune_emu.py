@@ -52,6 +52,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SONG = os.path.join(HERE, "..", "song")
 sys.path.insert(0, HERE)
 sys.path.insert(0, SONG)
+from unicorn import UC_HOOK_MEM_WRITE  # noqa: E402
+
 import fat32  # noqa: E402
 import make_sd as M  # noqa: E402
 import song_emu as E  # noqa: E402
@@ -244,8 +246,13 @@ def run(args, log):
     # the compiler dropped the "if (cacheWritePos)" before the write: a time-stretched voice that is also resampled
     # (sinc) writes a pointer to address 0. The emulator's page 0 is read-only (null pointers read 0 there); here it
     # takes the write, which is counted and undone after each voice's render.
+    counting = [False]
     emu.uc.mem_protect(0, 0x1000, E.UC_PROT_ALL)
     null_writes = [0]
+
+    def on_null_write(uc, access, address, size, value, _):
+        null_writes[0] += counting[0]
+    emu.uc.hook_add(UC_HOOK_MEM_WRITE, on_null_write, begin=0, end=3)
     E.setup_sd(emu)
     E.init_sounds(emu)
     E.boot(emu)
@@ -271,7 +278,6 @@ def run(args, log):
 
     stats = collections.defaultdict(lambda: dict(calls=0, native=0, interpolated=0, stretched=0, instructions=0,
                                                  increments=collections.Counter()))
-    counting = [False]
     current = []
     returns = set()
 
@@ -286,8 +292,7 @@ def run(args, log):
             current[:] = [sample_name(sample), phase_increment, stretch, e.bc.bc_total()]
 
     def at_return(e):
-        if e.u32(0):
-            null_writes[0] += counting[0]
+        if e.u32(0):  # (It writes back what it read there: 0)
             e.w32(0, 0)
         if not current:
             return

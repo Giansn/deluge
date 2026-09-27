@@ -15,14 +15,15 @@ emulated Deluge has the 7-segment display; from 5. on the OLED is swapped in, as
    popup, the clock-out scale untouched; the card says cpuMonitor 1
 3. the clip view (CLIP_VIEW), playing (the task manager with the DMA in real time): Off, then On; the audio goes on
    while it saves; the card says 0, then 1
-4. the same press while the card is busy (sdRoutineLock): Off at once, the card unchanged while it stays busy; once free,
-   cpu_stats::routine() saves it (0); the shortcut again: On
+4. the same press while the card is busy (sdRoutineLock): Off at once, the card unchanged while it stays busy; once
+   free, cpu_stats::routine() saves it (0); the shortcut again: On
 5. restart: On; the OLED swapped in, playing: the monitor's line and its SysEx on USB
 6. Settings > CPU monitor > Alerts, the menu left: the card says 2; the shortcut: Off, then Alerts again; restart:
    Alerts. The menu on Profile, left: the card says 3; restart: On, the profiler not running
 7. restart: On, the profiler not running; the keyboard (KEYBOARD from the clip view) and the drone view (SCALE in Song
-   view): the shortcut toggles, no voice sounds,
-   the UI mode back to none after LEARN
+   view): the shortcut toggles, no voice sounds, the UI mode back to none after LEARN. The task manager isn't run in
+   the drone view: the graphics timer's UI::graphicsRoutine() loops there for ever (DroneView has no graphicsRoutine()
+   of its own and RootUI can see the view underneath, so it tail-calls itself; v16 release too), a bug of its own
 Usage: cpu_monitor_shortcut_emu.py <deluge.elf> [--tools PREFIX] [--out DIR]   (BLOCKCOUNT_DIR: where blockcount.so is)
 Exit status 0 when every check passes."""
 import argparse
@@ -36,7 +37,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "song"))
 import fat32  # noqa: E402
 import make_sd  # noqa: E402
 import song_emu as se  # noqa: E402
-from unicorn.arm_const import UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2  # noqa: E402
+from unicorn.arm_const import UC_ARM_REG_R1, UC_ARM_REG_R2  # noqa: E402
 
 
 def button(x, y):
@@ -55,10 +56,12 @@ MENU_VALUE_OFFSET = 12  # Selection's value_ (CpuMonitorMode::writeCurrentValue(
 SYSEX_COMMAND = 0x10  # cpu_stats_core.h: kSysexCommand
 
 failures = 0
+checks = 0
 
 
 def check(what, ok, detail=""):
-    global failures
+    global failures, checks
+    checks += 1
     failures += not ok
     print(f"  {'ok  ' if ok else 'FAIL'} {what}" + (f": {detail}" if detail else ""), flush=True)
 
@@ -83,7 +86,8 @@ class Deluge:
         emu.intercept(sym.find("_ZN13MIDIDeviceUSB15sendBufferSpaceEv"), lambda e: 4096 * 3)
         emu.intercept(sym.find("_ZN13MIDIDeviceUSB9sendSysexEPKhl"), self.sent)
         emu.uc.ctl_flush_tb()
-        self.dma = None
+        # The audio in real time while the task manager runs: the views' transitions go by the audio's sample count
+        self.dma = se.RealTimeDma(emu)
         # The clock-out scale's member, from the debug info (gdb needs a place where Song is known)
         out = subprocess.run([emu.tool_prefix + "gdb", "-batch", "-ex", "list Song::Song", "-ex",
                               "print (int)&((Song*)0)->insideWorldTickMagnitude", elf], capture_output=True,
@@ -161,16 +165,16 @@ class Deluge:
         self.button(LEARN, False)
         return list(self.popups)
 
-    def press(self, b):
+    def press(self, b, run=True):
         self.button(b, True)
         self.button(b, False)
-        self.run(0.5)  # The view's transition
+        if run:
+            self.run(0.5)  # The view's transition
 
     def run(self, seconds):
         se.run_task_manager(self.emu, seconds)
 
     def play(self):
-        self.dma = se.RealTimeDma(self.emu)
         self.emu.call(self.sym.find("_ZN15PlaybackHandler17playButtonPressedEl"), 0)
         return self.emu.u8(self.sym["playbackHandler"] + 16)
 
@@ -194,8 +198,7 @@ class Deluge:
         self.oled = True
 
     def close(self):
-        if self.dma:
-            self.dma.close()
+        self.dma.close()
 
 
 def popup_for(deluge, mode):
@@ -314,11 +317,10 @@ def main():
           f"{'keyboard' if keyboard else 'not the keyboard'}, {NAMES[d.mode()]}, {d.voices()} voices, UI mode "
           f"{d.ui_mode():#x}, {popups!r}")
     d.press(SESSION_VIEW)
-    d.press(SCALE_MODE)
+    d.press(SCALE_MODE, run=False)  # changeRootUI() at once; see above why the task manager doesn't run here
     drone = d.root() == d.sym["droneView"]
     voices = d.voices()
     popups = d.shortcut()
-    d.run(0.2)
     check("the drone view: On, no voice, the UI mode back to none", drone and d.mode() == ON and d.voices() == voices
           and d.ui_mode() == 0 and d.root() == d.sym["droneView"],
           f"{'drone view' if drone else 'not the drone view'}, {NAMES[d.mode()]}, {voices} -> {d.voices()} voices, "
@@ -326,7 +328,8 @@ def main():
     check("the card says 1", d.saved() == ON, f"{d.saved()}")
     d.close()
 
-    print(f"CPU monitor shortcut and restart ({os.path.basename(a.elf)}): {failures} failed", flush=True)
+    print(f"CPU monitor shortcut and restart ({os.path.basename(a.elf)}): {checks - failures} of {checks} ok",
+          flush=True)
     sys.exit(1 if failures else 0)
 
 

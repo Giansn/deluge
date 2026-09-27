@@ -192,7 +192,9 @@ def build_card(card):
     add("SAMPLES/FLOAT.WAV", wav(flt, 96000, 32, True, before=[chunk(b"fact", struct.pack("<I", len(flt)))]),
         [1000, 1250], 96000)
     add("SAMPLES/U8.WAV", wav(sine(500, 22050, 0.8, 0.8), 22050, 8), [500], 22050)
-    add("SAMPLES/I32.WAV", wav(sine(700, 44100, 0.5), 44100, 32, extensible=True), [700], 44100)
+    add("SAMPLES/I32.WAV", wav(sine(700, 44100, 0.5), 44100, 32), [700], 44100)
+    # WAVE_FORMAT_EXTENSIBLE: the firmware can't read it (AudioFile::loadFile() wants format 1 or 3), so it stays
+    add("SAMPLES/EXT.WAV", wav(sine(700, 44100, 0.5), 44100, 24, extensible=True))
     add("SAMPLES/REC432.WAV", wav(sine(440, 44100, 0.5), 44100, 16, mtun=4320))
     add("SAMPLES/REC445.WAV", wav(sine(800, 44100, 0.5), 44100, 16, mtun=4450), [800], 44100, 4450)
     add("SAMPLES/WT/SERUM.WAV", wav(sine(44100 / 2048, 44100, 2048 * 4 / 44100, fade=0), 44100, 16,
@@ -417,7 +419,7 @@ def main():
     check(struct.unpack_from("<I", fl, fl.index(b"fact") + 8)[0] == rnd(57600 * Fraction(44100, 96000) * tune),
           "FLOAT: fact not updated")
     # Left alone, byte for byte
-    for p in ("SAMPLES/REC432.WAV", "SAMPLES/WT/SERUM.WAV", "SAMPLES/WT/UNREF.WAV", "SAMPLES/WT/WT2.WAV",
+    for p in ("SAMPLES/REC432.WAV", "SAMPLES/EXT.WAV", "SAMPLES/WT/SERUM.WAV", "SAMPLES/WT/UNREF.WAV", "SAMPLES/WT/WT2.WAV",
               "SETTINGS/NOTES.TXT", "CommunityFeatures.XML"):
         check(open(os.path.join(out, p), "rb").read() == CARD_FILES[p], f"{p} changed")
     check(not os.path.exists(os.path.join(out, "SAMPLES/DRUMS/HAT.AIF")), "HAT.AIF still there beside HAT.WAV")
