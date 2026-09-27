@@ -97,7 +97,17 @@ BIG = 120
 FILLER = 7
 TRACKS = ["TRACK", "TRACK 2", "TRACK 3", "track 4", "TRACK 10"]
 VERS = "VERS"  # A folder of its own, at the top level (the checks in SONGS keep their rows)
-VERS_NAMES = [f"E{n:02d}" for n in range(1, 27)] + [f"F {n}" for n in range(1, 27)] + [f"H{n:03d}" for n in range(1, 61)]
+VERS_NAMES = ([f"E{n:02d}X" for n in range(1, 27)] + [f"F {n}" for n in range(1, 27)]
+              + [f"H{n:03d}X" for n in range(1, 61)])
+# The folder NEW (the group: the whole name without the number at its end), in the order the browser sorts them; the
+# songs loaded from it have LPF knobs of their own
+NEW = "NEW"
+SITAR = ["New Sitar Grii", "New Sitar Grii 2", "New Sitar Grii 9", "New Sitar Grii 10"]
+LONG = "The Longest Song Name On This Card"
+NEW_NAMES = (["New Drum Idea", "New Drum Idea 2"] + SITAR + ["SONG1", "SONG1 2", "SONG2", LONG, LONG + " 2", "TRACK",
+             "TRACK 2", "TRACK 2 FINAL", "TRACK 3", "TRACK 4", "TRACK FINAL"])
+NEW_KNOBS = {"New Sitar Grii 9": 38, "New Sitar Grii 10": 40, "TRACK FINAL": 42, "TRACK 4": 44, LONG + " 2": 46,
+             "New Drum Idea": 48}
 DIR_AT = NAME_AT + 0x100
 # The keyboard (qwerty_ui.cpp keyboardChars, QWERTY): row r at pad y = kQwertyHomeRow (3) + 2 - r, column c at x = c + 3
 KEYS = ["1234567890-", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM,.", "__" + " " * 6]
@@ -114,11 +124,13 @@ def build_sd(path):
         if knob not in cache:
             cache[knob] = sc.song_xml("SYN", 1, 1, 0, knob, 0, "selected", None).encode()
         return cache[knob]
-    names = ([f"A{n:03d}" for n in range(1, 151)] + [f"BIG {n}" for n in range(1, BIG + 1)]
-             + ["DEFAULT"] + [f"MID {n}" for n in range(1, 31)] + ["OTHER"] + TRACKS + ["TRACK LIVE", "TRACK!", "TRACKS"] + [f"Z{n:03d}" for n in range(1, 151)])
+    names = ([f"A{n:03d}X" for n in range(1, 151)] + [f"BIG {n}" for n in range(1, BIG + 1)]
+             + ["DEFAULT"] + [f"MID {n}" for n in range(1, 31)] + ["OTHER"] + TRACKS + ["TRACK LIVE", "TRACK!", "TRACKS"]
+             + [f"Z{n:03d}X" for n in range(1, 151)])
     files = {f"SONGS/{n}.XML": song(KNOBS.get(n, FILLER)) for n in names}
     files["SONGS/TRACK DEMOS/DEMO.XML"] = song(FILLER)
     files.update({f"{VERS}/{n}.XML": song(KNOBS.get(n, FILLER)) for n in VERS_NAMES})
+    files.update({f"{NEW}/{n}.XML": song(NEW_KNOBS.get(n, FILLER)) for n in NEW_NAMES})
     fat32.build(path, files)
     return len(files), sum(len(d) for d in files.values())
 
@@ -453,7 +465,7 @@ def run_oled(a, sd, out, check):
               r and r["sel"] and not r["arrow"] and not r["indent"] and knob == KNOBS[single], f"{b.show(f)}; loaded: LPF knob {knob}, name {name!r}")
 
     # 10: the window of 20 file items, a group of 40
-    b.open("A150")
+    b.open("A150X")
     s0, r0 = b.state(), b.reads
     b.turn(1)
     s1, f1 = b.state(), b.frame()
@@ -525,7 +537,7 @@ def run_oled(a, sd, out, check):
     check(f"15. next to BIG ({BIG} versions, more than the window): DEFAULT +1 -1 +1 -1: MID 1, DEFAULT, MID 1, "
           "DEFAULT, the folder not read; -1: BIG 1 (across the group), +1: DEFAULT, each in at most 4 folder reads",
           [n for n, _, _ in near] == ["MID 1", "DEFAULT", "MID 1", "DEFAULT"] and all(r == 0 for _, r, _ in near)
-          and steps[4][0] == "BIG 1" and steps[4][2] == "A149 | A150 | [BIG >]" and steps[4][1] <= 4
+          and steps[4][0] == "BIG 1" and steps[4][2] == "A149X | A150X | [BIG >]" and steps[4][1] <= 4
           and steps[5][0] == "DEFAULT" and steps[5][2] == "BIG > | [DEFAULT] | MID >" and steps[5][1] <= 4,
           "; ".join(f"{n} ({r} reads): {f}" for n, r, f in steps))
 
@@ -594,7 +606,7 @@ def run_oled(a, sd, out, check):
 
     # 18: typing onto a later version at the window's index 0, BACK; typing a folded group's first version, pressed
     layout = d.emu.u8(d.sym["_ZN12FlashStorage14keyboardLayoutE"])
-    b.open("H050", folder=VERS)
+    b.open("H050X", folder=VERS)
     s0 = b.state()
     b.type("F")
     s1, f1 = b.state(), b.frame()
@@ -607,7 +619,7 @@ def run_oled(a, sd, out, check):
           and s2["name"] == "F 1" and s2["group"] == "" and r and r["arrow"] and r["sel"],
           f"keyboard layout {layout}; opened: {s0}; typed: {s1}, {b.show(f1)}; BACK: browser open {b.is_open()}, "
           f"{s2}, {b.show(f2)}")
-    b.open("E26", folder=VERS)
+    b.open("E26X", folder=VERS)
     b.turn(1)
     s0, f0 = b.state(), b.frame()
     b.type("F 1")
