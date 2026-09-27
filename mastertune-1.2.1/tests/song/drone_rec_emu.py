@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """REC on a drone track (mastertune-v16) on the real firmware in the emulator: turning a drone row's pitch while the
 song records writes its Hz lane, and the lane plays back what was turned; turned while not recording, the row's own
-frequency moves, and the lane with it.
+frequency moves, and the lane with it. Then Select's menu on the row, and a drone track made from the drone.
 
 Usage: drone_rec_emu.py <deluge.elf> <out dir> [--tools PREFIX] [--build DIR]   (run.sh's DRONE=1 runs it)
 
 The song: one drone track (make_sd.py's drone kit, "DRONEREC"), a 2-bar clip with one 200 Hz row whose note is as
-long as the clip, no lane, the clip armed for recording and open in the clip view (beingEdited), Affect Entire off, the
-row selected. Played from the start with the internal clock (song_emu.Player: one AudioEngine::routine() window at a
-time, then the playback handler's routine), and between windows, as the user would, on the clip view:
+long as the clip, no lane, the clip armed for recording and open in the clip view (beingEdited), Affect Entire off,
+the row selected; and the drone with one tone, 1000 Hz (make_sd.py --drone-track's reference). Played from the start
+with the internal clock (song_emu.Player: one AudioEngine::routine() window at a time, then the playback handler's
+routine), and between windows, as the user would, on the clip view:
   bar 0.25   REC on (PlaybackHandler::recordButtonPressed())
   bar 0.5    the select encoder +50 clicks (InstrumentClipView::selectEncoderAction()): 1 Hz each, 250 Hz
   bar 1.25   the upper gold knob +10 (InstrumentClipView::modEncoderAction(1, 10)): 260 Hz
@@ -20,19 +21,27 @@ inside each stretch): while recording, each turn sounds at once (bar 0.75: 250 H
 loop (bars 2 to 4, REC off) plays the lane back: 250, 260 and 220 Hz from where they were turned; after the frequency
 change, the lane where nothing was recorded (before the first turn) is the row's own 300 Hz, and the recorded part
 1.5 times higher (375 and 390 Hz). (The last turn's value holds 0.2 s past REC off, then the lane is as before the
-recording, as for any automation recorded with a gold knob.) Then, stopped,
-the firmware saves the song (song_emu.write_back_song()): the row's droneTone has frequency 30000 and its noteRow a
-pitchBend lane whose nodes hold 250, 260 and 220 Hz as cents from 200 Hz (+386, +454, +165).
-Results: <out>/drone_rec.wav (the output), <out>/saved.xml.
+recording, as for any automation recorded with a gold knob.)
+Then, stopped: Select pressed on the clip view (SoundEditor::setup(), as InstrumentClipMinder calls it) gives the
+drone's tone menu for the row; the firmware saves the song (song_emu.write_back_song()): the row's droneTone has
+frequency 30000 and its noteRow a pitchBend lane whose nodes hold 250, 260 and 220 Hz as cents from 200 Hz (+386,
++454, +165).
+Then a drone track made from the drone (the drone view's Shift + Kit, DroneView::buttonAction()): a clip with a new
+kit (DRONE1) comes into Song view; launched, with the drone's tone off, it plays the tone at the drone's level (within
+1 dB, against the drone's 1000 Hz measured above), and saved, the kit has 16 drone rows and the clip a note on the one
+row whose tone was on.
+Results: <out>/drone_rec.wav (the output), <out>/saved.xml, <out>/saved_made.xml.
 """
 import argparse
 import math
 import os
 import re
 import struct
+import subprocess
 import sys
 
 import numpy as np
+from unicorn.arm_const import UC_ARM_REG_R0
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -43,6 +52,7 @@ import song_emu  # noqa: E402
 SR = 44100
 BAR = song_emu.BAR  # Samples: 2 s at 120 BPM
 TICKS_PER_BAR = make_sd.BAR
+BUTTON_KIT = 9 * (1 + 16) + 5  # hid/button.h: fromCartesian(kitButtonCoord {5, 1})
 
 failures = 0
 
@@ -55,7 +65,6 @@ def check(what, ok, detail=""):
 
 def song():
     make_sd.DRONE_TRACKS = [("DRONEREC", 2, [(20000, [(0, 2 * TICKS_PER_BAR)], [])])]
-    make_sd.drone_reference = lambda: ""
     xml = make_sd.song_xml({}, 1, drone_track=True)
     xml = xml.replace("<instrumentClip", '<instrumentClip\n\t\t\tbeingEdited="1"\n\t\t\taffectEntire="0"', 1)
     return xml
@@ -67,6 +76,88 @@ def drain_pic(emu):
     item = emu.sym["uartItems"]
     w = struct.unpack("<H", emu.uc.mem_read(item, 2))[0]
     emu.uc.mem_write(item + 2, struct.pack("<HHBB", w, w, 1, 0))
+
+
+def amplitude(x, hz):
+    w = np.blackman(len(x))
+    return 2 * abs(np.sum(x * w * np.exp(-2j * np.pi * hz * np.arange(len(x)) / SR))) / w.sum()
+
+
+def member_offsets(emu, queries):
+    """Offsets of members from the ELF's debug info (the toolchain's gdb), each query as (context, expression)"""
+    args = []
+    for context, expression in queries:
+        args += ["-ex", f"list {context}", "-ex", f"print {expression}"]
+    out = subprocess.run([emu.tool_prefix + "gdb", "-batch", *args, emu.elf], capture_output=True, text=True).stdout
+    values = [int(v) for v in re.findall(r"^\$\d+ = (-?\d+)$", out, re.M)]
+    if len(values) != len(queries):
+        raise SystemExit(f"gdb: {queries}:\n{out[-500:]}")
+    return values
+
+
+def menu_on_row(emu):
+    """Select pressed on the clip view with the drone row selected: InstrumentClipMinder's SoundEditor::setup(clip)
+    gives the drone's tone menu for that row (droneTrackToneMenu, drone::trackTone at the row's tone)"""
+    sym = emu.sym
+    (clip_offset,) = member_offsets(emu, [("Song::Song", "(int)&((Song*)0)->currentClip")])
+    clip = emu.u32(emu.u32(sym["currentSong"]) + clip_offset)
+    drain_pic(emu)
+    ok = emu.call(sym["_ZN11SoundEditor5setupEP4ClipPK8MenuIteml"], sym["soundEditor"], clip, 0, 0) & 0xFF
+    drain_pic(emu)
+    tone = emu.u32(sym["_ZN6deluge3gui9menu_item5drone9trackToneE"])
+    frequency = emu.u32(tone + 12) if tone else None  # Tone: active, mode, timbre, byNote, note, cents, frequency
+    start, size = sym.by_name["soundEditor"]
+    held = struct.pack("<I", sym["droneTrackToneMenu"]) in bytes(emu.uc.mem_read(start, size))
+    check("Select on the drone row: the tone menu for that row", ok and held and frequency == 30000,
+          f"setup {ok}, the menu {'there' if held else 'not there'}, its tone at {frequency}")
+
+
+def made_from_the_drone(emu, player, out_dir, drone_level):
+    """The drone view's Shift + Kit (DroneView::buttonAction()): a drone track of the drone, then its clip launched and
+    the drone's tone off, so the 1000 Hz heard is the track's"""
+    print("== a drone track made from the drone (drone view, Shift + Kit), launched, the drone's tone off", flush=True)
+    sym = emu.sym
+    drone_offset, active_offset = member_offsets(emu, [("Song::Song", "(int)&((Song*)0)->drone"),
+                                                       ("Clip::Clip", "(int)&((Clip*)0)->activeIfNoSolo")])
+    new_clips = []
+    emu.intercept(sym["_ZN14InstrumentClip28setupAsNewKitClipIfNecessaryEP29ModelStackWithTimelineCounter"],
+                  lambda e: new_clips.append(e.uc.reg_read(UC_ARM_REG_R0)))
+    emu.uc.ctl_flush_tb()  # Code translated before the hook
+    shift = sym["_ZN7Buttons21shiftCurrentlyPressedE"]
+    emu.uc.mem_write(shift, b"\x01")
+    drain_pic(emu)
+    emu.call(sym["_ZN9DroneView12buttonActionEhbb"], sym["droneView"], BUTTON_KIT, 1, 0)
+    drain_pic(emu)
+    emu.uc.mem_write(shift, b"\x00")
+    check("Shift + Kit made a clip with a new kit", len(new_clips) == 1, f"{len(new_clips)} clip(s)")
+    if len(new_clips) != 1:
+        return
+    song = emu.u32(sym["currentSong"])
+    emu.uc.mem_write(song + drone_offset, b"\x00")  # drone.tones[0].active
+    emu.uc.mem_write(new_clips[0] + active_offset, b"\x01")  # The clip launched (activeIfNoSolo)
+    player.start()
+    out = []
+    total = 0
+    while total < int(1.5 * BAR):
+        w = player.window()
+        total += w[1]
+        out.append(w[4])
+    left = np.concatenate(out)[:, 0]
+    i = int(1.0 * BAR)
+    level = amplitude(left[i:i + 16384], 1000)
+    db = 20 * math.log10(level / drone_level)
+    check("its row plays the drone's tone at the drone's level (1000 Hz, within 1 dB)", abs(db) < 1, f"{db:+.2f} dB")
+    drain_pic(emu)
+    emu.call(sym.find("_ZN15PlaybackHandler11endPlaybackEv"))
+    drain_pic(emu)
+    song_emu.write_back_song(emu, os.path.join(out_dir, "saved_made.xml"))
+    xml = open(os.path.join(out_dir, "saved_made.xml"), encoding="utf-8", errors="replace").read()
+    kit = re.search(r'<kit\b[^>]*presetName="DRONE1".*?</kit>', xml, re.S)
+    tones = re.findall(r"<droneTone\b", kit.group(0)) if kit else []
+    clip = re.search(r'<instrumentClip\b[^>]*instrumentPresetName="DRONE1".*?</instrumentClip>', xml, re.S)
+    rows = re.findall(r'noteData(?:WithLift)?="0x([0-9A-F]+)"', clip.group(0)) if clip else []
+    check("saved: the kit DRONE1 with 16 drone rows, its clip with one note (the drone's one tone on)",
+          len(tones) == 16 and len(rows) == 1, f"{len(tones)} rows, notes in {len(rows)} row(s)")
 
 
 def peak_hz(x, lo, hi):
@@ -156,6 +247,8 @@ def main():
     drain_pic(emu)
     emu.call(sym.find("_ZN15PlaybackHandler11endPlaybackEv"))
     drain_pic(emu)
+    drone_level = amplitude(left[int(0.5 * BAR):int(0.5 * BAR) + 16384], 1000)
+    menu_on_row(emu)
     song_emu.write_back_song(emu, os.path.join(args.out, "saved.xml"))
     xml = open(os.path.join(args.out, "saved.xml"), encoding="utf-8", errors="replace").read()
     frequency = re.search(r'<droneTone\b[^>]*?frequency="(\d+)"', xml, re.S)
@@ -173,8 +266,10 @@ def main():
     found = all(any(abs(c - w) < 0.5 for _, c in cents) for w in wanted)
     check("saved: the lane's nodes hold 250, 260 and 220 Hz as cents from 200 Hz",
           lane is not None and found, " ".join(f"{p}:{c:+}" for p, c in cents))
+    made_from_the_drone(emu, player, args.out, drone_level)
     os.remove(sd)
-    print(f"REC on a drone track: {'all checks passed' if not failures else f'{failures} failed'}", flush=True)
+    result = "all checks passed" if not failures else f"{failures} failed"
+    print(f"REC on a drone track and one made from the drone: {result}", flush=True)
     sys.exit(1 if failures else 0)
 
 
