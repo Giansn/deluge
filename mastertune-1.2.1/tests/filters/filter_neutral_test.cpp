@@ -22,7 +22,11 @@
 //    the start and kMinBurst. Fails where the step is more than kMaxStep times that or above 4 kHz more than
 //    kMaxBurst dB come in. Without FILTERSET_FADES (the source before the crossfades) only printed.
 //
-// Arguments: the part (static, zipper, clicks or all), then verbose: every static case's hash.
+// 4. fadein: a filter switched on fades in from its input: linear, the same weight for left and right, exact after
+//    320 frames (see fadeIn()).
+// 5. slots: more crossfades at once than there are slots: the one beyond switches at once, counted (see slots()).
+//
+// Arguments: the part (static, zipper, clicks, fadein, slots or all), then verbose: every static case's hash.
 #include "dsp/filter/filter_set.h"
 #include "util/functions.h"
 #include <algorithm>
@@ -489,6 +493,9 @@ int clicks() {
 		par.route = FilterRoute::PARALLEL;
 		changes.push_back({"route H2L -> L2H", ctx, both, l2h});
 		changes.push_back({"route H2L -> par", ctx, both, par});
+		changes.push_back({"LP24 on", ctx, lp(FilterMode::OFF, 10, 30), lp(FilterMode::TRANSISTOR_24DB, 10, 30)});
+		changes.push_back({"SVF on", ctx, lp(FilterMode::OFF, 10, 30), lp(FilterMode::SVF_BAND, 10, 30)});
+		changes.push_back({"HPL on", ctx, hpOff, hp});
 		Settings bothOff = both;
 		bothOff.lpfMode = FilterMode::OFF;
 		bothOff.hpfMode = FilterMode::OFF;
@@ -521,6 +528,134 @@ int clicks() {
 	       worstBurst, kMaxBurst);
 	return failures;
 }
+// 4. fadein: a filter switched on fades in from its input (Filter::reset(true)): the same filter, configured the same,
+//    once reset with the fade and once without, run on the same tone (left = right). The fade's output must be
+//    wet + (dry - wet) * left / 320 per frame, left from 319 down to 0 (linear in amplitude, within 2 LSB), the same
+//    for both channels of a frame, and exactly the plain filter's from frame 320 on. v17 (1.2.1's fade): exponential,
+//    per interleaved sample (left and right differ), 0.1 % jumped at the end: fails.
+#ifdef FILTER_FADE_IN
+constexpr int kFadeIn = LpLadderFilter::kFadeInSamples;
+#else
+constexpr int kFadeIn = 320; // the source before (1.2.1's fade: about 460 samples, exponential)
+#endif
+template <typename F>
+int fadeInCase(const char* name, FilterMode mode, bool stereo, int32_t saturation) {
+	constexpr int kFrames = 4 * kBlock;
+	std::vector<float> tone = makeTone(kFrames);
+	F a{}, b{};
+	for (F* f : {&a, &b}) {
+		f->configure(freqParam(12), linearParam(30), mode, 0, 134217728);
+	}
+	a.reset(true);
+	b.reset(false);
+	int ch = stereo ? 2 : 1;
+	std::vector<int32_t> dry(ch * kFrames), wa(ch * kFrames), wb(ch * kFrames);
+	for (int i = 0; i < kFrames; i++) {
+		for (int c = 0; c < ch; c++) {
+			dry[ch * i + c] = (int32_t)std::lround(tone[2 * i] * 2147483648.0);
+		}
+	}
+	wa = dry;
+	wb = dry;
+	for (int blk = 0; blk < 4; blk++) {
+		int o = blk * kBlock * ch;
+		for (F* f : {&a, &b}) {
+			if constexpr (requires { f->setSaturation(saturation); }) {
+				f->setSaturation(saturation);
+			}
+			std::vector<int32_t>& w = f == &a ? wa : wb;
+			if (stereo) {
+				f->filterStereo(&w[o], &w[o] + 2 * kBlock);
+			}
+			else {
+				f->filterMono(&w[o], &w[o] + kBlock, 1);
+			}
+		}
+	}
+	double worstLaw = 0;
+	int lrDiffer = 0, after = 0;
+	for (int i = 0; i < kFrames; i++) {
+		for (int c = 0; c < ch; c++) {
+			int64_t got = wa[ch * i + c], wet = wb[ch * i + c], d = dry[ch * i + c];
+			if (i >= kFadeIn) {
+				after += got != wet;
+				continue;
+			}
+			double keep = (double)(kFadeIn - 1 - i) / kFadeIn;
+			double want = wet + (d - wet) * keep;
+			worstLaw = std::max(worstLaw, std::fabs(got - want));
+		}
+		if (stereo) {
+			lrDiffer += wa[2 * i] != wa[2 * i + 1];
+		}
+	}
+	bool bad = worstLaw > 2 || lrDiffer || after;
+	printf("fadein %-5s %-6s: largest error against the linear law %.1f LSB, left != right in %d frames, %d samples "
+	       "differ from the plain filter after %d frames%s\n",
+	       name, stereo ? "stereo" : "mono", worstLaw, lrDiffer, after, kFadeIn, bad ? "  FAIL" : "");
+	return bad;
+}
+int fadeIn() {
+	int failures = 0;
+	for (bool st : {false, true}) {
+		failures += fadeInCase<LpLadderFilter>("LP24", FilterMode::TRANSISTOR_24DB, st, kLpSatVoice);
+		failures += fadeInCase<SVFilter>("SVF", FilterMode::SVF_BAND, st, 0);
+		failures += fadeInCase<HpLadderFilter>("HPL", FilterMode::HPLADDER, st, kHpSatVoice);
+	}
+	return failures;
+}
+
+#ifdef FILTERSET_FADES
+// 5. slots: kNumFades + 1 kits switch their LPF off in the same block: kNumFades crossfade, the one beyond switches
+//    at once (as 1.2.1); counted by FilterSet::isOn(), which stays true while a switched-off filter fades out. After
+//    kFadeSamples every slot is free again: kNumFades more fade.
+int slots() {
+	constexpr int n = FilterSet::kNumFades + 1;
+	std::vector<float> tone = makeTone(8 * kBlock);
+	std::vector<Runner*> runs;
+	Settings on;
+	on.lpfMode = FilterMode::TRANSISTOR_24DB;
+	on.cut = 15;
+	Settings off = on;
+	off.lpfMode = FilterMode::OFF;
+	for (int i = 0; i < n; i++) {
+		runs.push_back(new Runner(Ctx::KIT));
+	}
+	std::vector<double> out;
+	auto blockAll = [&](const Settings& s, int b) {
+		for (Runner* r : runs) {
+			r->block(s, &tone[2 * b * kBlock], kBlock, out, nullptr);
+		}
+	};
+	blockAll(on, 0);
+	blockAll(off, 1);
+	int fading = 0;
+	for (Runner* r : runs) {
+		fading += r->fs->isOn();
+	}
+	for (int b = 2; b < 5; b++) {
+		blockAll(off, b);
+	}
+	int stillFading = 0;
+	for (Runner* r : runs) {
+		stillFading += r->fs->isOn();
+	}
+	blockAll(on, 5);
+	blockAll(off, 6);
+	int fadingAgain = 0;
+	for (Runner* r : runs) {
+		fadingAgain += r->fs->isOn();
+	}
+	for (Runner* r : runs) {
+		delete r;
+	}
+	bool bad = fading != n - 1 || stillFading != 0 || fadingAgain != n - 1;
+	printf("slots: %d FilterSets switch off at once: %d crossfade, %d switch at once (%d slots); %d still fading after "
+	       "%d samples; then %d crossfade again%s\n",
+	       n, fading, n - fading, FilterSet::kNumFades, stillFading, 3 * kBlock, fadingAgain, bad ? "  FAIL" : "");
+	return bad;
+}
+#endif
 } // namespace
 
 int main(int argc, char** argv) {
@@ -537,6 +672,14 @@ int main(int argc, char** argv) {
 	if (!only || !strcmp(only, "clicks")) {
 		failures += clicks();
 	}
+	if (!only || !strcmp(only, "fadein")) {
+		failures += fadeIn();
+	}
+#ifdef FILTERSET_FADES
+	if (!only || !strcmp(only, "slots")) {
+		failures += slots();
+	}
+#endif
 	if (failures) {
 		printf("FAIL: %d cases with zipper or clicks above the limits\n", failures);
 		return 1;

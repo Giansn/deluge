@@ -15,7 +15,11 @@
 # every mode / route / context; REF=/path/to/older/DelugeFirmware builds it there too and compares), no zipper when
 # the cutoff, resonance or morph is automated (block-set against per-sample-set, above 2 kHz), no clicks when a mode or
 # the route changes or a filter is switched off.
-# TEST=filter_tone, TEST=hpf_whistle, TEST=lpf_whistle, TEST=lpf_precision or TEST=filter_neutral: only that one.
+# lpf_ramp_math_test.cpp (v18): the LP ladders' per-sample coefficient ramps in float64: every mid-ramp set stable and
+# within 0.5 dB of the real ladder with its moveability (30 Hz <-> 18 kHz in one block); where the ladders sing
+# against their cutoff (printed).
+# TEST=filter_tone, TEST=hpf_whistle, TEST=lpf_whistle, TEST=lpf_precision, TEST=lpf_ramp_math or TEST=filter_neutral:
+# only that one.
 # song_filter_emu.py, master_filter_emu.py --check 10: the same in the whole firmware (song view, the gold knob).
 set -e
 FW=$(cd "$1" && pwd)
@@ -41,6 +45,7 @@ filterDefs() {
   grep -q rampGain "$1/deluge/dsp/filter/filter_set.h" && d="$d -DFILTERSET_RAMP_GAIN"
   grep -q kFadeSamples "$1/deluge/dsp/filter/filter_set.h" && d="$d -DFILTERSET_FADES"
   grep -q noiseLastValue "$1/deluge/dsp/filter/lpladder.h" && d="$d -DLPF_CUTOFF_NOISE"
+  grep -q kFadeInSamples "$1/deluge/dsp/filter/filter.h" && d="$d -DFILTER_FADE_IN"
   echo "$d"
 }
 DEFS=$(filterDefs "$D")
@@ -56,9 +61,9 @@ awk '/_rounded\(q31_t.*\) \{$/ {r = 1} r && /int64_t\)b\) >> 32\)/ {sub(/\* \(in
     "$D/deluge/util/fixedpoint.h" > "$B/prec/util/fixedpoint.h"
 grep -q '0x80000000LL) >> 32)' "$B/prec/util/fixedpoint.h" || { echo "run.sh: fixedpoint.h's rounded multiplies not found"; exit 1; }
 status=0
-for t in ${TEST:-filter_tone hpf_whistle lpf_whistle lpf_precision filter_neutral}; do
+for t in ${TEST:-filter_tone hpf_whistle lpf_whistle lpf_precision lpf_ramp_math filter_neutral}; do
   INC=""
-  [ "$t" = lpf_precision ] && INC="-I $B/prec"
+  { [ "$t" = lpf_precision ] || [ "$t" = lpf_ramp_math ]; } && INC="-I $B/prec"
   $CXX $DEFS $INC -I "$T/bench/filters/stubs" -I "$T/delay/stubs" -I "$T/arm" -I "$D/deluge" -I "$D" -include host_shim.h \
       -include definitions_cxx.hpp -o "$B/$t" "$HERE/${t}_test.cpp" "$F/filter_set.cpp" \
       "$F/lpladder.cpp" "$F/hpladder.cpp" "$F/svf.cpp" "$F/filter.cpp" "$D/deluge/util/waves.cpp" \
@@ -81,6 +86,8 @@ for t in ${TEST:-filter_tone hpf_whistle lpf_whistle lpf_precision filter_neutra
     fi
     $RUN "$B/$t" zipper || status=1
     $RUN "$B/$t" clicks || status=1
+    $RUN "$B/$t" fadein || status=1
+    $RUN "$B/$t" slots || status=1
     continue
   fi
   $RUN "$B/$t" || status=1
