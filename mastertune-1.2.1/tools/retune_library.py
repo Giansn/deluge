@@ -1267,10 +1267,18 @@ def run_jobs(todo, args, done):
         if not args.quiet and (count % 50 == 0 or count == len(todo)):
             print(f"  {count}/{len(todo)}", flush=True)
 
+    def failed(job, e):
+        return RuntimeError(f"{job['rel']} -> {job['out_rel']}: {e} (the files finished so far are kept: --resume "
+                            f"continues)")
+
     if limiter.workers == 1:
         for j in order:
             limiter.start(j)
-            finished(j, convert_job(j)[1])
+            try:
+                result = convert_job(j)[1]
+            except Exception as e:
+                raise failed(j, e) from e
+            finished(j, result)
             limiter.finish(j["index"])
         return limiter
     by_index = {j["index"]: j for j in todo}
@@ -1290,8 +1298,7 @@ def run_jobs(todo, args, done):
                 except Exception as e:
                     for other in running:
                         other.cancel()
-                    raise RuntimeError(f"{by_index[index]['rel']} -> {by_index[index]['out_rel']}: {e} (the files "
-                                       f"finished so far are kept: --resume continues)") from e
+                    raise failed(by_index[index], e) from e
     return limiter
 
 

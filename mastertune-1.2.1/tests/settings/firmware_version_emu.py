@@ -11,7 +11,7 @@ centred below the title.
 What's drawn is taken from the canvas calls (Canvas::drawChar(): character, position, spacing, height) and from the
 OLED's image (OLED::main): for the version string of this ELF (the menu item's own renderOLED(): title, then the
 text) and, through drawLinesBrokenAtDashes() with a string of the test's, for the real v17 string (33), the v16 L2
-string (42), one of 48 and a short one:
+string (42), one of 48, the v18 one (24) and a short one:
 - the characters drawn are the string, in order; each with the small font's spacing (6) and height (7)
 - lines: each (but the last) ends with '-', at most 21 characters (128 pixels); within a line the characters 6
   pixels apart; centred (left and right margins within a pixel); lines 9 pixels apart; the block centred between
@@ -44,6 +44,7 @@ STRINGS = [
      ["1.2.1-mastertune-v16-", "l2d-dronefix-ba499a93"]),
     ("48 characters", "1.2.1-mastertune-v18-l2d-hotfix2-0123abcd-dirty1",
      ["1.2.1-mastertune-", "v18-l2d-hotfix2-", "0123abcd-dirty1"]),
+    ("the v18 string (no commit hash since v18)", "1.2.1-mastertune-v18-l2d", ["1.2.1-mastertune-", "v18-l2d"]),
     ("a short one", "1.2.1", ["1.2.1"]),
 ]
 

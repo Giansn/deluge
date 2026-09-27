@@ -4,7 +4,7 @@
 its D/C line and chip select through the PIC.
 
 The contrast (command 0x81 + value, D/C low) was 0xFF, sent once by oledMainInit() at boot. Now the menu's levels 1-10
-give 1, 4, 14, 29, 51, 79, 114, 155, 202, 255; the command goes through the SPI transfer queue between two images
+give 8, 11, 20, 35, 57, 84, 118, 157, 203, 255; the command goes through the SPI transfer queue between two images
 (destination OLED_CODE_FOR_COMMAND): oledRoutine() sends D/C low before the selection, oledSelectingComplete()
 writes the two bytes without the DMA, then D/C high and the deselection. CommunityFeatures.XML keeps it as the entry
 oledContrast (missing: 255), read at boot, which queues the command then.
@@ -22,16 +22,16 @@ Checks (a card without CommunityFeatures.XML, the song DEFAULT.XML):
 1. boot with the OLED: oledMainInit()'s 0x81 0xFF; no other contrast command; the menu on 10 and shown (isRelevant())
 2. images go out: every DMA start with the OLED selected and D/C high, 768 bytes from one of the canvases, never two
    at once; no byte written to the SPI while a DMA runs; the queue empty and idle afterwards
-3. Settings open, the encoder (Integer::selectEncoderAction()) from 10 down by 7: level 3, the OLED gets 0x81 14 with
+3. Settings open, the encoder (Integer::selectEncoderAction()) from 10 down by 7: level 3, the OLED gets 0x81 20 with
    D/C low, selected, no DMA running; the PIC got D/C low before the selection, D/C high before the deselection;
-   images after it with D/C high. Three quick turns (-1, -1, +4, the tasks not run between): 0x81 4, 0x81 1, 0x81 51
-4. up to level 6 (0x81 79); a new image, and while its DMA runs a turn back to 5: nothing written until it's done,
-   then 0x81 51
-5. the menu left: CommunityFeatures.XML says oledContrast 51
-6. restart: oledMainInit()'s 0x81 0xFF, then (the file read) 0x81 51 through the queue, D/C low; the menu on 5;
+   images after it with D/C high. Three quick turns (-1, -1, +4, the tasks not run between): 0x81 11, 0x81 8, 0x81 57
+4. up to level 6 (0x81 84); a new image, and while its DMA runs a turn back to 5: nothing written until it's done,
+   then 0x81 57
+5. the menu left: CommunityFeatures.XML says oledContrast 57
+6. restart: oledMainInit()'s 0x81 0xFF, then (the file read) 0x81 57 through the queue, D/C low; the menu on 5;
    images as in 2
-7. the 7-segment Deluge (no OLED) on the same card: the item not shown; 51 read; a new value (level 8) sends nothing
-   (no SPI byte, nothing queued) but is saved: 155
+7. the 7-segment Deluge (no OLED) on the same card: the item not shown; 57 read; a new value (level 8) sends nothing
+   (no SPI byte, nothing queued) but is saved: 157
 8. a damaged entry, a card whose CommunityFeatures.XML says oledContrast "abc" (stringToInt() gives 0): it counts as
    missing, the contrast 255 and the menu on 10 (not the darkest, 1), only oledMainInit()'s 0x81 0xFF; Settings left:
    saved as 255. The same boot with the entry "", "0", "-5", "-2147483648", "99999": 255 each time; with "1": 1
@@ -54,7 +54,7 @@ from unicorn import UC_HOOK_MEM_WRITE  # noqa: E402
 from unicorn.arm_const import UC_ARM_REG_PC, UC_ARM_REG_R0  # noqa: E402
 
 MENU_VALUE_OFFSET = 12  # Integer's value_ (OledBrightness::readCurrentValue(): str r4, [r0, #12])
-CONTRAST = [1, 4, 14, 29, 51, 79, 114, 155, 202, 255]  # Per level 1-10
+CONTRAST = [8, 11, 20, 35, 57, 84, 118, 157, 203, 255]  # Per level 1-10
 IMAGE_BYTES = 128 * 48 // 8
 DMA_US = IMAGE_BYTES * 8 / 10e6 * 1e6  # 614 us at the SPI's 10 MHz
 # The OLED's code (oled.c, oled_low_level.c; the line info is thin there, the inline chain's names are enough)
@@ -333,8 +333,8 @@ def main():
     pic_t = len(side.pic)
     level = d.turn(-7)
     d.run(0.2)
-    check("level 3, the contrast 14", level == 3 and d.contrast() == 14, f"level {level}, {d.contrast()}")
-    cmds = check_commands(d, t, [14], "the OLED got")
+    check("level 3, the contrast 20", level == 3 and d.contrast() == 20, f"level {level}, {d.contrast()}")
+    cmds = check_commands(d, t, [20], "the OLED got")
     stream = [m for _, m in side.pic[pic_t:]]
     around = []
     if cmds:
@@ -350,14 +350,14 @@ def main():
     t = d.emu.now()
     levels = [d.turn(-1), d.turn(-1), d.turn(+4)]
     d.run(0.3)
-    check("three quick turns: levels 2, 1, 5; the contrast 51", levels == [2, 1, 5] and d.contrast() == 51,
+    check("three quick turns: levels 2, 1, 5; the contrast 57", levels == [2, 1, 5] and d.contrast() == 57,
           f"{levels}, {d.contrast()}")
-    check_commands(d, t, [4, 1, 51], "the OLED got, in order")
+    check_commands(d, t, [11, 8, 57], "the OLED got, in order")
     check_images(d, t, "meanwhile")
     print(f"  (the PIC's OLED messages since step 3: {len(stream)}, D/C low {stream.count(DC_LOW)} times)")
 
     print("== 4. a turn while an image's DMA runs", flush=True)
-    d.turn(+1)  # Level 6: 0x81 79
+    d.turn(+1)  # Level 6: 0x81 84
     d.run(0.2)
     side.dma_us = 20000  # Held in flight for 20 ms
     sym = d.sym
@@ -377,8 +377,8 @@ def main():
     side.dma_us = DMA_US
     cmds = side.commands(t)
     done = [dm[0] for dm in side.dmas if dm[0] <= t][-1] + 20000e-6 * se.CPU_HZ
-    check("a DMA running at the turn; nothing written then; 0x81 51 after it ended, D/C low, selected", running
-          and written_at_once == 0 and [c[1] for c in cmds] == [51] and cmds[0][0] >= done and cmds[0][2] == 0
+    check("a DMA running at the turn; nothing written then; 0x81 57 after it ended, D/C low, selected", running
+          and written_at_once == 0 and [c[1] for c in cmds] == [57] and cmds[0][0] >= done and cmds[0][2] == 0
           and cmds[0][3] and not cmds[0][4],
           f"running {running}, {written_at_once} bytes at once, {[(c[1], c[2], c[3], c[4]) for c in cmds]}, "
           f"{(cmds[0][0] - done) / se.CPU_HZ * 1e3 if cmds else 0:.1f} ms after the DMA's end")
@@ -389,7 +389,7 @@ def main():
 
     print("== 5. the menu left", flush=True)
     d.leave()
-    check("CommunityFeatures.XML: oledContrast 51", saved(sd) == 51, f"{saved(sd)}")
+    check("CommunityFeatures.XML: oledContrast 57", saved(sd) == 57, f"{saved(sd)}")
     d.close()
     del d
 
@@ -400,18 +400,18 @@ def main():
     t = d.emu.now()
     d.run(0.3)
     later = side.commands(t)
-    check("oledMainInit()'s 0x81 0xFF, then 0x81 51 from the file through the queue (D/C low, selected, no DMA)",
-          [c[1:4] for c in boot] == [(0xFF, 0, True)] + ([(51, 0, True)] if len(boot) > 1 else [])
-          and [c[1] for c in boot + later] == [0xFF, 51] and all(c[2] == 0 and c[3] and not c[4] for c in boot + later),
+    check("oledMainInit()'s 0x81 0xFF, then 0x81 57 from the file through the queue (D/C low, selected, no DMA)",
+          [c[1:4] for c in boot] == [(0xFF, 0, True)] + ([(57, 0, True)] if len(boot) > 1 else [])
+          and [c[1] for c in boot + later] == [0xFF, 57] and all(c[2] == 0 and c[3] and not c[4] for c in boot + later),
           f"at boot {[c[1:] for c in boot]}, then {[c[1:] for c in later]}")
-    check("the contrast 51, the menu on 5", d.contrast() == 51 and d.level() == 5, f"{d.contrast()}, {d.level()}")
+    check("the contrast 57, the menu on 5", d.contrast() == 57 and d.level() == 5, f"{d.contrast()}, {d.level()}")
     check_images(d, 0, "since boot")
     d.close()
     del d
 
     print("== 7. the 7-segment Deluge on the same card", flush=True)
     d = Deluge(a.elf, sd, tools, oled=False)
-    check("no OLED; the item not shown; 51 read", not d.have_oled() and not d.relevant() and d.contrast() == 51,
+    check("no OLED; the item not shown; 57 read", not d.have_oled() and not d.relevant() and d.contrast() == 57,
           f"OLED {d.have_oled()}, relevant {d.relevant()}, {d.contrast()}")
     d.open_settings()
     d.run(0.1)
@@ -420,12 +420,12 @@ def main():
     d.set_level(8)
     queued = [d.emu.u8(d.sym["spiTransferQueue"] + 8 * (i % 32)) for i in range(q[1], q[1] + (d.queue()[1] - q[1]) % 32)]
     d.run(0.1)
-    check("level 8: nothing sent (no SPI byte, no image, nothing for the OLED queued), the contrast kept as 155",
+    check("level 8: nothing sent (no SPI byte, no image, nothing for the OLED queued), the contrast kept as 157",
           len(side.spi) == spi and len(side.dmas) == dmas and not [x for x in queued if x != 1]
-          and d.contrast() == 155, f"{len(side.spi) - spi} bytes, {len(side.dmas) - dmas} images, queued "
+          and d.contrast() == 157, f"{len(side.spi) - spi} bytes, {len(side.dmas) - dmas} images, queued "
           f"destinations {queued}, {d.contrast()}")
     d.leave()
-    check("CommunityFeatures.XML: oledContrast 155", saved(sd) == 155, f"{saved(sd)}")
+    check("CommunityFeatures.XML: oledContrast 157", saved(sd) == 157, f"{saved(sd)}")
     d.close()
     del d
 
