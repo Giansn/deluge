@@ -16,11 +16,11 @@
 //    per-sample one takes as clicks and the block-set one moves through in straight lines (v17: -35 to -60 dBc, the
 //    drive ladder and the HP ladder -40; v18: -58 to -112).
 // 3. clicks: a mode change, a route change and a filter switched off, with a 110 / 220 / 330 Hz tone going through
-//    (no steps of its own): the largest step between two samples in the 20 ms after the change against the largest
-//    in the 100 ms before it, and the energy above 4 kHz in the 20 ms after it against the same case without the
-//    change (dB). Fails where the step is more than kMaxStep times the one before or above 4 kHz more than kMaxBurst
-//    dB comes in (v17: switching off / changing the mode or route jumps, up to 20x the step and +30 dB; with the v18
-//    crossfades within both). Without FILTERSET_FADES (the source before the crossfades) only printed.
+//    (no steps of its own): the largest step between two samples in the 20 ms after the change against the larger of
+//    the largest in the 100 ms before it and the largest with the new settings from the start, and the energy above 4
+//    kHz in the 20 ms after it (dBc) against the larger of the same without the change, with the new settings from
+//    the start and kMinBurst. Fails where the step is more than kMaxStep times that or above 4 kHz more than
+//    kMaxBurst dB come in. Without FILTERSET_FADES (the source before the crossfades) only printed.
 //
 // Arguments: the part (static, zipper, clicks or all), then verbose: every static case's hash.
 #include "dsp/filter/filter_set.h"
@@ -45,6 +45,7 @@ constexpr int kBlock = 128;
 constexpr double kMaxZipper = -55; // dBc above 2 kHz, the block-set configuration against the per-sample one
 constexpr double kMaxStep = 2.5;   // the largest sample step after a change against the one before it
 constexpr double kMaxBurst = 6;    // dB above 4 kHz after a change against the case without it
+constexpr double kMinBurst = -70;  // dBc above 4 kHz that don't count (a 7 ms linear crossfade's corners: -80 dBc)
 bool verbose = false;
 
 #ifdef HPF_SATURATION_PER_CONTEXT
@@ -422,7 +423,8 @@ struct Change {
 };
 
 struct ClickResult {
-	double step, burst;
+	double stepBefore, stepAfter; // the largest sample step in the 100 ms before the change and the 20 ms after
+	double burst;                 // the energy above 4 kHz in the 20 ms after, against the energy there (dBc)
 };
 
 ClickResult measureChange(const Change& c, const std::vector<float>& in, bool change) {
@@ -433,7 +435,7 @@ ClickResult measureChange(const Change& c, const std::vector<float>& in, bool ch
 		run.block(change && b >= at ? c.after : c.before, &in[2 * b * kBlock], kBlock, out, nullptr);
 	}
 	int a = at * kBlock, w = (int)(0.02 * kFs), pre = (int)(0.1 * kFs);
-	double stepBefore = 1e-12, stepAfter = 0, burst = 0;
+	double stepBefore = 1e-12, stepAfter = 0, burst = 0, all = 0;
 	HP h(4000);
 	for (int i = 1; i < blocks * kBlock; i++) {
 		double y = out[2 * i], s = std::fabs(out[2 * i] - out[2 * (i - 1)]);
@@ -444,9 +446,10 @@ ClickResult measureChange(const Change& c, const std::vector<float>& in, bool ch
 		if (i >= a && i < a + w) {
 			stepAfter = std::max(stepAfter, s);
 			burst += hy * hy;
+			all += y * y;
 		}
 	}
-	return {stepAfter / stepBefore, burst};
+	return {stepBefore, stepAfter, db(burst) - db(all)};
 }
 
 int clicks() {
@@ -495,20 +498,23 @@ int clicks() {
 	double worstStep = 0, worstBurst = -300;
 	for (Change& c : changes) {
 		ClickResult with = measureChange(c, in, true), without = measureChange(c, in, false);
-		// Without the change, the case with the new settings from the start: the burst a change brings is what
-		// either doesn't have (the new filter may simply let more above 4 kHz through)
+		// And the case with the new settings from the start: a change may simply bring a louder signal, with larger
+		// steps, or let more above 4 kHz through. The step against the larger of the one before and the one of the
+		// new settings; above 4 kHz what comes in beyond both (where it's above kMinBurst dBc: below that, the
+		// crossfade's own corners)
 		Change settled = c;
 		settled.before = c.after;
 		ClickResult newOnly = measureChange(settled, in, false);
-		double burst = db(with.burst) - db(std::max(without.burst, newOnly.burst));
-		bool bad = with.step > kMaxStep || burst > kMaxBurst;
+		double step = with.stepAfter / std::max(with.stepBefore, newOnly.stepAfter);
+		double burst = with.burst - std::max({without.burst, newOnly.burst, kMinBurst});
+		bool bad = step > kMaxStep || burst > kMaxBurst;
 #ifdef FILTERSET_FADES
 		failures += bad;
 #endif
-		worstStep = std::max(worstStep, with.step);
+		worstStep = std::max(worstStep, step);
 		worstBurst = std::max(worstBurst, burst);
-		printf("click %-7s %-17s: largest step %5.2fx the one before, above 4 kHz %+6.1f dB%s\n", ctxName(c.ctx), c.name,
-		       with.step, burst, bad ? "  CLICK" : "");
+		printf("click %-7s %-17s: largest step %6.2fx, above 4 kHz %6.1f dBc (%+6.1f dB)%s\n", ctxName(c.ctx), c.name,
+		       step, with.burst, burst, bad ? "  CLICK" : "");
 		fflush(stdout);
 	}
 	printf("clicks: worst step %.2fx (limit %.1f), above 4 kHz %+.1f dB (limit %+.0f)\n", worstStep, kMaxStep,
