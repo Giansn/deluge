@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Settings > Defaults > OLED brightness (mastertune-v18), on the real firmware in the emulator (the harness of
+"""Settings > OLED brightness (mastertune-v18), on the real firmware in the emulator (the harness of
 ../song), with the OLED's side modelled: the SSD1309 on RSPI0 (8-bit bytes written to SPDR, the image by the DMA),
 its D/C line and chip select through the PIC.
 
