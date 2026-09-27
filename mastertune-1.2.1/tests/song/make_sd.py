@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Builds the SD card image for the song benchmark: generated samples and the song SONGS/DEFAULT.XML.
 
-Usage: make_sd.py <image> [--reverb-model N] [--xml-out file] [--synths N] [--midi-track]
+Usage: make_sd.py <image> [--reverb-model N] [--xml-out file] [--synths N] [--midi-track] [--drone-track]
 
 The song ("everything at once", 120 BPM, 4/4, the firmware's default resolution of 96 ticks per quarter note):
 - 8 synth tracks, all playing 4-bar clips of 4-note chords (Cm9, Abmaj7, Fm9, G7sus4, one chord per bar), 2
@@ -23,6 +23,13 @@ The song ("everything at once", 120 BPM, 4/4, the firmware's default resolution 
   tones (100, 150, 200 and 300 Hz carriers with 4 to 10 Hz beats), ducked by the sidechain too.
 - --drone-life (not by default): the drone with life 50, FM 50 with the saw modulator and its tones Pulse (the Pulse
   timbre, 30 % wide), all of mastertune-v15's drone at once, for its CPU cost.
+- --drone-track (not by default; mastertune-v16): instead of the tracks above and the drone, drone tracks alone
+  (kits of drone rows, DroneDrum) and the drone with one tone as the reference for their level (run.sh's DRONE=1,
+  drone_check.py checks what it plays). DRONE_TRACKS says what plays when: DRONE1 (a 2-bar clip) has a 200 Hz row
+  with an Hz lane that takes it a fifth up (+702 cents, 300 Hz) in the 2nd bar and a 500 Hz row whose note is on from
+  half a bar to 1.5 bars; DRONE2 (1 bar, overlapping it) a 700 Hz and a 1100 Hz row, each a note as long as the clip
+  (held across the loop point). The drone: 1000 Hz at level 40, its volume 40 (the defaults), as the 1100 Hz row
+  (level 40, its kit at a new kit's volume) should sound.
 - --midi-track (not by default): also a MIDI track on channel 1 (e.g. a volca keys over DIN MIDI), a 1-bar bass line in
   16ths (10 notes, each a 16th long), for song_emu.py --midi-timing. MIDI clock out is on anyway (the firmware's default
   settings, as the emulator's erased flash gives).
@@ -442,6 +449,74 @@ def drone(life=False):
     return out
 
 
+# --- drone tracks (mastertune-v16)
+
+DRONE_LEVEL = 40
+# Kit, clip length in bars, rows: (frequency in hundredths of a hertz, notes as (start, length) in ticks, the Hz lane
+# as (position in ticks, cents))
+DRONE_TRACKS = [
+    ("DRONE1", 2, [(20000, [(0, 2 * BAR)], [(0, 0), (BAR, 702)]),
+                   (50000, [(BAR // 2, BAR)], [])]),
+    ("DRONE2", 1, [(70000, [(0, BAR)], []),
+                   (110000, [(0, BAR)], [])]),
+]
+DRONE_REFERENCE_HZ = 1000  # The song's drone's tone
+# A new kit's params (GlobalEffectable::initParams(): volume 3/4 of the way up), no reverb
+DRONE_KIT_PARAMS = dict(KIT_PARAMS, volume="0x3504F334", reverbAmount="0x80000000")
+
+
+def lane_value(cents):
+    """The Hz lane's value (expression X, DroneTrackPitch): 2^31 is +9600 cents"""
+    return max(-2 ** 31 + 1, min(2 ** 31 - 1, round(cents / 9600 * 2 ** 31)))
+
+
+def hex32(v):
+    return f"{v & 0xFFFFFFFF:08X}"
+
+
+def drone_tone_attrs(frequency):
+    return dict(mode=0, timbre=0, byNote=0, note=57, cents=0, frequency=frequency, beat=1000, sync=0, triplet=0,
+                pulseAttack=6, pulseRelease=6, level=DRONE_LEVEL, pan=0)
+
+
+def drone_tracks():
+    parts = []
+    for name, bars, rows in DRONE_TRACKS:
+        k = dict(presetName=name, presetFolder="KITS", defaultVelocity=64, isArmedForRecording=1, activeModFunction=0,
+                 colour=0, lpfMode="24dB", hpfMode="HPLadder", filterRoute="H2L", modFXType="none")
+        out = f"\t\t<kit{attrs(k, 3)}>\n"
+        out += '\t\t\t<delay pingPong="1" analog="0" syncLevel="7" syncType="0" />\n'
+        out += '\t\t\t<sidechain attack="327244" release="936" syncLevel="6" syncType="0" />\n'
+        out += '\t\t\t<audioCompressor attack="83886080" release="83886080" thresh="0" ratio="1073741824" ' \
+               'compHPF="0" compBlend="2147483647" />\n'
+        out += "\t\t\t<soundSources>\n"
+        clip_rows = []
+        for index, (frequency, notes, lane) in enumerate(rows):
+            out += f"\t\t\t\t<droneTone{attrs(drone_tone_attrs(frequency), 5)} />\n"
+            row_params = None
+            if lane:
+                value = "0x" + hex32(lane_value(lane[0][1])) + "".join(hex32(lane_value(c)) + hex32(pos)
+                                                                       for pos, c in lane)
+                row_params = f'\t\t\t\t\t<expressionData pitchBend="{value}" />\n'
+            clip_rows.append(("drumIndex", index, [(pos, length, 64) for pos, length in notes], row_params))
+        out += "\t\t\t</soundSources>\n"
+        out += "\t\t\t<selectedDrumIndex>0</selectedDrumIndex>\n"
+        out += "\t\t</kit>\n"
+        block = global_params_block("kitParams", DRONE_KIT_PARAMS, 3)
+        clip = instrument_clip(name, "KITS", bars * BAR, clip_rows, params_block=block, kit=True)
+        clip = clip.replace('isArmedForRecording="0"', 'isArmedForRecording="1"', 1)
+        parts.append((out, clip))
+    return parts
+
+
+def drone_reference():
+    """The song's drone with one tone, the reference for the drone tracks' level"""
+    out = '\t<drone volume="40" sidechain="0" sidechainShape="-601295438">\n'
+    out += f'\t\t<tone index="0" active="1"{attrs(drone_tone_attrs(DRONE_REFERENCE_HZ * 100), 3)} />\n'
+    out += "\t</drone>\n"
+    return out
+
+
 MIDI_BASS = [(0, 36), (2, 36), (3, 48), (4, 39), (6, 43), (8, 36), (10, 46), (11, 48), (12, 43), (14, 39)]  # (step, note)
 
 
@@ -457,7 +532,7 @@ def midi_track():
     return out, clip
 
 
-def song_xml(lengths, reverb_model, num_synths=8, midi=False, drone_life=False):
+def song_xml(lengths, reverb_model, num_synths=8, midi=False, drone_life=False, drone_track=False):
     head = dict(firmwareVersion="c1.2.1", earliestCompatibleFirmware="4.1.0-alpha", arrangementAutoScrollOn=0,
                 xScroll=0, xZoom=24, yScrollSongView=-7, yScrollArrangementView=-7, xScrollArrangementView=0,
                 xZoomArrangementView=192, timePerTimerTick=229, timerTickFraction=-1073741824, rootNote=0,
@@ -482,12 +557,15 @@ def song_xml(lengths, reverb_model, num_synths=8, midi=False, drone_life=False):
                        tempo="0x00002EE0")
     out += global_params_block("songParams", song_params, 1)
     instruments, clips = [], []
-    for part in synths()[:num_synths] + [kit(lengths), audio_track(lengths)] + ([midi_track()] if midi else []):
+    parts = synths()[:num_synths] + [kit(lengths), audio_track(lengths)] + ([midi_track()] if midi else [])
+    if drone_track:
+        parts = drone_tracks()
+    for part in parts:
         instruments.append(part[0])
         clips.append(part[1])
     out += "\t<instruments>\n" + "".join(instruments) + "\t</instruments>\n"
     out += "\t<sessionClips>\n" + "".join(clips) + "\t</sessionClips>\n"
-    out += drone(drone_life)
+    out += drone_reference() if drone_track else drone(drone_life)
     out += "</song>\n"
     return out
 
@@ -501,13 +579,16 @@ def main():
                     help="only the first N synth tracks (a lighter song, e.g. for song_emu.py --save-while-playing)")
     ap.add_argument("--drone-life", action="store_true",
                     help="the drone with life, FM (saw) and Pulse tones (mastertune-v15), for its CPU cost")
+    ap.add_argument("--drone-track", action="store_true",
+                    help="drone tracks alone (kits of drone rows, one with an Hz lane) and the drone with one tone as "
+                         "their reference (mastertune-v16, run.sh's DRONE=1)")
     ap.add_argument("--midi-track", action="store_true",
                     help="also a MIDI track on channel 1 (a bass line in 16ths), for song_emu.py --midi-timing")
     ap.add_argument("--files-out", help="also write the song and samples as files for a real SD card, under their own "
                     "names (SONGS/MT_LOADTEST.XML, SAMPLES/MT_LOADTEST/), so nothing on the card is overwritten")
     args = ap.parse_args()
     files, lengths = samples()
-    xml = song_xml(lengths, args.reverb_model, args.synths, args.midi_track, args.drone_life)
+    xml = song_xml(lengths, args.reverb_model, args.synths, args.midi_track, args.drone_life, args.drone_track)
     files["SONGS/DEFAULT.XML"] = xml.encode()
     if args.xml_out:
         open(args.xml_out, "w").write(xml)

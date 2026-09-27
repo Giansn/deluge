@@ -65,8 +65,8 @@ import time
 import numpy as np
 import unicorn
 from unicorn import UC_ARCH_ARM, UC_HOOK_CODE, UC_HOOK_INTR, UC_HOOK_MEM_UNMAPPED, UC_MODE_ARM, UC_PROT_ALL, Uc, UcError
-from unicorn.arm_const import (UC_ARM_REG_C1_C0_2, UC_ARM_REG_CPSR, UC_ARM_REG_FPEXC, UC_ARM_REG_LR, UC_ARM_REG_PC,
-                               UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_SP,
+from unicorn.arm_const import (UC_ARM_REG_C1_C0_2, UC_ARM_REG_CPSR, UC_ARM_REG_D0, UC_ARM_REG_FPEXC, UC_ARM_REG_LR,
+                               UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_SP,
                                UC_CPU_ARM_CORTEX_A9)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -202,7 +202,10 @@ class Emulator:
 
         self.sd_path = sd_image
         self.sd_fd = os.open(sd_image, os.O_RDWR)
-        self.sd_reads = self.sd_writes = 0
+        self.sd_reads = self.sd_writes = 0  # Sectors
+        self.sd_read_commands = self.sd_write_commands = 0  # sd_read_sect() / disk_write() calls
+        self.sd_log = None  # A list: every read and write as (kind "r"/"w", sector, count, emu.now()) (tests/sdload)
+        self.sd_model = None  # An SdModel: the card takes time (--sd-latency); None: the card is instant
         self.dma_free = 0  # See ssi_position()
         self.dma = None  # A RealTimeDma from when it takes over (--save-while-playing, --midi-timing)
         self.stopped = False
@@ -419,19 +422,31 @@ def disassemble(emu, name):
 
 def setup_sd(emu):
     """The SD card: FatFS's own code on the image file. Its sector reads (sd_read_sect(), under disk_read() and the
-    cluster loading) and writes (disk_write()) go to the file; mount_volume() skips the card's initialisation."""
+    cluster loading) and writes (disk_write()) go to the file; mount_volume() skips the card's initialisation.
+    Counted: sectors (emu.sd_reads, sd_writes) and commands (calls: sd_read_commands, sd_write_commands); with
+    emu.sd_log a list, every access. The card is instant unless emu.sd_model is an SdModel (--sd-latency)."""
     uc = emu.uc
 
     def read_sectors(e):
         buf, sector, count = (uc.reg_read(r) for r in (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2))
         uc.mem_write(buf, os.pread(e.sd_fd, count * 512, sector * 512).ljust(count * 512, b"\0"))
         e.sd_reads += count
+        e.sd_read_commands += 1
+        if e.sd_log is not None:
+            e.sd_log.append(("r", sector, count, e.now()))
+        if e.sd_model:
+            return e.sd_model.wait(count, False)  # Goes on in the wait loop (SdModel), which returns 0
         return 0
 
     def write_sectors(e):
         buf, sector, count = (uc.reg_read(r) for r in (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2))
         os.pwrite(e.sd_fd, bytes(uc.mem_read(buf, count * 512)), sector * 512)
         e.sd_writes += count
+        e.sd_write_commands += 1
+        if e.sd_log is not None:
+            e.sd_log.append(("w", sector, count, e.now()))
+        if e.sd_model:
+            return e.sd_model.wait(count, True)
         return 0
 
     emu.intercept(emu.sym.find("sd_read_sect"), read_sectors)
@@ -447,6 +462,74 @@ def setup_sd(emu):
         raise SystemExit(f"mount_volume() doesn't look as expected: {code[call - 3:call + 1]}")
     disk_status = emu.sym["diskStatus"]
     emu.skip_to(begin, code[call - 2][0], lambda e: e.uc.mem_write(disk_status, b"\0"))
+
+
+SD_WAIT_TRAMPOLINE = STOP + 0x80  # SdModel's wait loop (Thumb code written there)
+SD_WAIT_DONE = 0x7FFE0000  # An MMIO word it polls: 1 once the card is done
+
+
+class SdModel:
+    """--sd-latency: the card takes time. Every sd_read_sect() (and disk_write()) call is one command taking
+    command_us + sectors * sector_us of emulated time. The data is there at once (read from the image), but the call
+    returns only when that time has passed, and meanwhile the firmware does what it does on the Deluge while it waits
+    for the card: routineForSD() once (sd_read.c) and then again and again until the transfer is done (the DMA wait
+    loop in sd_dev_low.c: the audio routine, UI timers, OLED, PIC, encoders, buttons). That loop is Thumb code written
+    at SD_WAIT_TRAMPOLINE, which the intercepted call jumps to with the caller's return address; it polls
+    SD_WAIT_DONE between the routineForSD() calls. With poll_us, successive polls are at least that far apart (the
+    time in between is idle, emu.idle): fewer calls to emulate, for speed; 0 (the default) calls it back to back as
+    the Deluge does. Defaults: a typical SDHC card on the Deluge's 4-bit bus, ~1 ms per command, ~12 MB/s.
+    Writes the same (write_command_us, write_sector_us: default as for reads). Off by default: the card is instant.
+    self.waits: (start in instructions, duration in instructions, sectors, write, routineForSD() calls)."""
+
+    def __init__(self, emu, command_us=1000.0, sector_us=512 / 12e6 * 1e6, poll_us=0.0, write_command_us=None,
+                 write_sector_us=None):
+        self.emu = emu
+        self.command, self.sector = command_us * CPU_HZ / 1e6, sector_us * CPU_HZ / 1e6
+        self.write_command = (command_us if write_command_us is None else write_command_us) * CPU_HZ / 1e6
+        self.write_sector = (sector_us if write_sector_us is None else write_sector_us) * CPU_HZ / 1e6
+        self.poll = poll_us * CPU_HZ / 1e6
+        self.params = dict(command_us=command_us, sector_us=sector_us, poll_us=poll_us,
+                           write_command_us=self.write_command * 1e6 / CPU_HZ,
+                           write_sector_us=self.write_sector * 1e6 / CPU_HZ)
+        self.stack = []  # Waits in progress (a read from inside routineForSD() would nest)
+        self.waits = []
+        code = struct.pack("<10H", 0xB510,  # push {r4, lr}
+                           0x4C04,  # loop: ldr r4, =routineForSD
+                           0x47A0,  # blx r4
+                           0x4804,  # ldr r0, =SD_WAIT_DONE
+                           0x6800,  # ldr r0, [r0]
+                           0x2800,  # cmp r0, #0
+                           0xD0F9,  # beq loop
+                           0x2000,  # movs r0, #0 (SD_OK)
+                           0xBD10,  # pop {r4, pc}
+                           0xBF00)  # nop
+        emu.uc.mem_write(SD_WAIT_TRAMPOLINE, code + struct.pack("<II", emu.sym["routineForSD"] | 1, SD_WAIT_DONE))
+        emu.readers[SD_WAIT_DONE] = self.done
+        emu.uc.mmio_map(SD_WAIT_DONE, 0x1000, emu.mmio_read, SD_WAIT_DONE, emu.mmio_write, SD_WAIT_DONE)
+        emu.sd_model = self
+
+    def wait(self, sectors, write):
+        """From the intercepted call: go on in the wait loop (the caller's return address stays in lr)."""
+        now = self.emu.now()
+        duration = (self.write_command + sectors * self.write_sector) if write else (self.command + sectors * self.sector)
+        self.stack.append([now, now + duration, sectors, write, 0, now])
+        self.emu.uc.reg_write(UC_ARM_REG_PC, SD_WAIT_TRAMPOLINE | 1)
+        return None
+
+    def done(self, size):
+        e = self.emu
+        w = self.stack[-1]
+        now = e.now()
+        if now < w[1] and self.poll and w[5] + self.poll > now:
+            e.idle += min(w[5] + self.poll, w[1]) - now
+            now = e.now()
+        w[5] = now
+        w[4] += 1
+        if now < w[1]:
+            return 0
+        self.stack.pop()
+        self.waits.append((w[0], now - w[0], w[2], w[3], w[4]))
+        return 1
 
 
 # What Sound::Sound() (and ModControllableAudio's constructor) leave uninitialised although it is read (see --init-sounds):
@@ -1580,6 +1663,126 @@ def save_while_playing(emu, player, warmup_bars, out_dir, log, repeat_samples=0,
     return result
 
 
+NEVER = STOP + 0xA0  # movs r0, #0; bx lr: a yield condition that never holds (run_task_manager())
+
+
+def gdb_values(emu, expressions):
+    """Integers the toolchain's gdb prints for these expressions on the ELF (struct offsets, sizes)."""
+    out = subprocess.run([emu.tool_prefix + "gdb", "-batch"] + [x for e in expressions for x in ("-ex", f"print {e}")]
+                         + [emu.elf], capture_output=True, text=True).stdout
+    values = [int(v) for v in re.findall(r"^\$\d+ = (-?\d+)$", out, re.M)]
+    if len(values) != len(expressions):
+        raise SystemExit(f"gdb: {expressions}:\n{out[-500:]}")
+    return values
+
+
+def drain_uarts(emu):
+    """No transfer-end interrupt here: whatever the firmware put in the PIC's and the MIDI UART's rings counts as sent
+    (as tests/songchange does for the PIC), so they never fill up."""
+    items = emu.sym["uartItems"]
+    for item in range(2):
+        w = struct.unpack("<H", emu.uc.mem_read(items + 8 * item, 2))[0]
+        emu.uc.mem_write(items + 8 * item + 2, struct.pack("<HHBB", w, w, 1, 0))
+
+
+def run_task_manager(emu, seconds):
+    """Runs the firmware's own task manager for `seconds` of emulated time, as deluge_main()'s loop does:
+    TaskManager::yield() with a condition that never holds and that timeout. registerTasks()'s tasks run at their own
+    intervals, as chooseBestTask() picks them by the emulated time (the audio routine every ~16 samples at most, the
+    cluster loading, the kit RAM saver every second, the CPU monitor every 50 ms, UI, OLED, PIC, ...); the time the
+    scheduler itself spins counts too. Needs the task list as boot() left it (Player empties it) and, for the audio,
+    a RealTimeDma. The yield counts as a task's run: the current task ID is set to an unused slot first, so no real
+    task's duration statistics (which the audio routine's culling reads) get it. The UARTs' rings are drained at
+    every flush (drain_uarts())."""
+    sym = emu.sym
+    if not getattr(emu, "task_manager_setup", None):
+        task_size, current_id, handle = gdb_values(emu, ["sizeof(Task)", "(int)&((TaskManager*)0)->currentID",
+                                                         "(int)&((Task*)0)->handle"])
+        base, size = sym.by_name["taskManager"]
+        free = [i for i in range(size // task_size) if not emu.u32(base + i * task_size + handle)]
+        if not free:
+            raise SystemExit("no free slot in the task list")
+        emu.uc.mem_write(NEVER, b"\x00\x20\x70\x47")
+        emu.intercept(sym.find("uartFlushIfNotSending"), lambda e: drain_uarts(e))
+        emu.uc.ctl_flush_tb()
+        emu.task_manager_setup = (base + current_id, free[-1], sym.find("_ZN11TaskManager5yieldEPFbvEd"))
+    at, slot, yield_ = emu.task_manager_setup
+    emu.uc.mem_write(at, struct.pack("<b", slot))
+    drain_uarts(emu)
+    emu.uc.reg_write(UC_ARM_REG_D0, struct.unpack("<Q", struct.pack("<d", seconds))[0])
+    emu.call(yield_, NEVER)
+
+
+CPU_STATS_FIELDS = ["ticks", "busyTicks", "samples", "peakTicks", "peakSamples", "voicesNow", "voicesMax", "direMax",
+                    "direSamples", "culled", "sdLoads", "sdTicks", "sdCardTicks", "sdMaxTicks", "sdCardMaxTicks",
+                    "maxGapTicks"]
+CPU_STATS_WINDOW = "<I4xQ9I4xQQ3I4x"  # cpu_stats::Window (88 bytes)
+CPU_STATS_SUMMARY = ["windowMs", "dspAvgPermille", "dspPeakPermille", "voicesNow", "voicesMax", "direMax",
+                     "direSharePermille", "culled", "sdLoads", "sdAvgUs", "sdMaxUs", "maxGapUs", "samples",
+                     "sdCardAvgUs", "sdCardMaxUs"]
+
+
+class CpuStats:
+    """Settings > CPU monitor (cpu_stats) switched on, and its half-second windows as the firmware publishes them
+    (Collector's half_ slot), collected each time its task (cpu_stats::routine()) runs. summaries() has the firmware's
+    own cpu_stats::summarize() compute what the display shows (CPU average and peak in 0.1 %, SD read times, ...)."""
+
+    def __init__(self, emu, mode=1):
+        self.emu = emu
+        sym = emu.sym
+        emu.uc.mem_write(sym["_ZN9cpu_stats4modeE"], bytes([mode]))
+        emu.uc.mem_write(sym["_ZN9cpu_stats7enabledE"], b"\x01")
+        half, window = gdb_values(emu, ["(int)&cpu_stats::collector.half_ - (int)&cpu_stats::collector",
+                                        "(int)&cpu_stats::collector.half_.window - (int)&cpu_stats::collector.half_"])
+        self.slot = sym["_ZN9cpu_stats9collectorE"] + half
+        self.window_at = self.slot + window
+        self.seq = emu.u32(self.slot)
+        self.windows = []  # (emulated seconds when collected, dict)
+        emu.intercept(sym.find("_ZN9cpu_stats7routineEv"), self.collect)
+        emu.uc.ctl_flush_tb()
+
+    def collect(self, emu=None):
+        seq = self.emu.u32(self.slot)
+        if seq != self.seq and not seq & 1:
+            self.seq = seq
+            raw = bytes(self.emu.uc.mem_read(self.window_at, struct.calcsize(CPU_STATS_WINDOW)))
+            self.windows.append((self.emu.seconds(), dict(zip(CPU_STATS_FIELDS, struct.unpack(CPU_STATS_WINDOW, raw)))))
+
+    def summaries(self):
+        """The firmware's cpu_stats::summarize() of each window collected (called here, between runs)."""
+        out = []
+        f = self.emu.sym.find("_ZN9cpu_stats9summarizeE")
+        for t, w in self.windows:
+            self.emu.uc.mem_write(STOP + 0x400, struct.pack(CPU_STATS_WINDOW, *(w[k] for k in CPU_STATS_FIELDS)))
+            self.emu.call(f, STOP + 0x600, STOP + 0x400)
+            values = struct.unpack(f"<{len(CPU_STATS_SUMMARY)}I", self.emu.uc.mem_read(STOP + 0x600, 4 * len(CPU_STATS_SUMMARY)))
+            out.append(dict(at_s=t, **dict(zip(CPU_STATS_SUMMARY, values))))
+        return out
+
+
+def ram_usage(emu):
+    """The GeneralMemoryAllocator's regions (internal RAM, SDRAM, the stealable SDRAM with the sample clusters): size,
+    bytes free (its empty-space records) and allocations."""
+    offsets = gdb_values(emu, ["sizeof(MemoryRegion)", "(int)&((MemoryRegion*)0)->emptySpaces",
+                               "(int)&((ResizeableArray*)0)->memory", "(int)&((ResizeableArray*)0)->numElements",
+                               "(int)&((ResizeableArray*)0)->memorySize", "(int)&((ResizeableArray*)0)->memoryStart",
+                               "(int)&((ResizeableArray*)0)->elementSize"])
+    region_size, empty, memory, count, msize, mstart, esize = offsets
+    base = emu.sym["_ZZN22GeneralMemoryAllocator3getEvE22generalMemoryAllocator"]
+    regions = []
+    for r in range(3):
+        a = base + r * region_size
+        start, end, allocations = struct.unpack("<3I", emu.uc.mem_read(a, 12))
+        arr = a + empty
+        mem, n, size, first, es = (emu.u32(arr + o) for o in (memory, count, msize, mstart, esize))
+        free = 0
+        for i in range(n):
+            free += emu.u32(mem + ((first + i) % max(size, 1)) * es)
+        regions.append(dict(start=start, end=end, size=end - start, free=free, used=end - start - free,
+                            allocations=allocations, empty_spaces=n))
+    return regions
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("elf")
@@ -1614,6 +1817,11 @@ def main():
                          "setupDefault() seeds it from the MTU2's fast timer (TCNT_0), i.e. from the emulated time, "
                          "which depends on the build's code and data layout. With it, measured.wav is bit-exact "
                          "across builds that render the same")
+    ap.add_argument("--sd-latency", metavar="CMD_US,SECTOR_US[,POLL_US]",
+                    help="the SD card takes time (SdModel), from after boot: each read or write command CMD_US plus "
+                         "SECTOR_US per sector of emulated time, during which the firmware calls routineForSD() as "
+                         "it waits (POLL_US apart at least; default 0, back to back). E.g. 1000,42.7 for a typical "
+                         "SDHC card (~1 ms per command, ~12 MB/s). Default: off, the card is instant")
     ap.add_argument("--poke", action="append", default=[], metavar="SYMBOL=VALUE",
                     help="write this 32-bit value to the firmware's variable after boot (e.g. to try a setting of a "
                          "build that keeps it in a variable)")
@@ -1635,6 +1843,9 @@ def main():
         + (f", set to {args.seed:#010x} (--seed)" if args.seed is not None else ""))
     if args.seed is not None:
         emu.w32(jcong, args.seed)
+    if args.sd_latency:
+        SdModel(emu, *(float(x) for x in args.sd_latency.split(",")))
+        log(f"--sd-latency: {emu.sd_model.params}")
     for poke in args.poke:
         name, value = poke.split("=")
         emu.w32(emu.sym[name], int(value, 0))

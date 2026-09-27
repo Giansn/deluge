@@ -1,5 +1,7 @@
 // Host test for the drone (v12): runs the firmware's drone DSP on the PC and
-// measures its tones. mastertune-v15: life, FM and the pulse timbre (sections 11 to 18).
+// measures its tones. mastertune-v15: life, FM and the pulse timbre (sections 11 to 18). mastertune-v16: drone tracks,
+// one tone rendered alone (Drone::renderTone()) and the pitch of a drone track's row (DroneTrackPitch), sections 20
+// to 23.
 #include "dsp/drone/drone.h"
 #include "emu_count.h"
 #include <chrono>
@@ -1176,6 +1178,181 @@ int main(int argc, char** argv) {
 			       c.name, (int)c.life, with, frames, lowest, highest);
 			CHECK(with == 0 || with == frames, "%s, life %d: table switches as it drifts", c.name, (int)c.life);
 		}
+	}
+
+	// 20. mastertune-v16, drone tracks: Drone::renderTone() renders one tone as render() does it in the drone, bit for
+	// bit (the drone at volume 50, the tone's gain 1), through each way a tone renders: steady and set by note, binaural,
+	// isochronic synced to the grid, a Pulse (the lively path at the default width), a glide, a mode change through
+	// silence, off (fading out, then at rest) and on again. Blocks of 128 and 37 samples.
+	{
+		using deluge::dsp::DroneTrackPitch;
+		struct Case {
+			const char* name;
+			Tone tone;
+		};
+		Tone byNote = on(Mode::TONE, Timbre::SOFT, 20000, 0, 0, 44, -9);
+		byNote.byNote = true;
+		byNote.note = 57;
+		byNote.cents = 13;
+		Tone iso = on(Mode::ISOCHRONIC, Timbre::ORGAN, 30000, 0, 5, 40, 7);
+		iso.triplet = true;
+		for (Case c : {Case{"sine", on(Mode::TONE, Timbre::SINE, 44000, 0, 0, 50, 0)}, Case{"note", byNote},
+		               Case{"binaural", on(Mode::BINAURAL, Timbre::RICH, 15000, 700, 0, 36, 12)},
+		               Case{"isochronic", iso}, Case{"pulse", on(Mode::MONAURAL, Timbre::PULSE, 11000, 400, 0, 40, 0)}}) {
+			for (size_t block : {(size_t)128, (size_t)37}) {
+				TestDrone d = makeDrone();
+				Drone renderer;
+				Drone::Voice voice;
+				Drone::Context context;
+				context.quarterNotesPerSecond = 2.2f;
+				context.position = 0.;
+				bool same = true, restedAlike = true, sounded = false;
+				size_t n = 0;
+				for (size_t pos = 0; pos < (size_t)(3 * kFs); pos += block, n++) {
+					Tone t = c.tone;
+					double seconds = pos / kFs;
+					if (seconds > 0.8) {
+						t.frequency += 3000; // A glide
+						t.note += 2;
+					}
+					if (seconds > 1.3) {
+						t.mode = (t.mode == Mode::TONE) ? Mode::MONAURAL : Mode::TONE; // Through silence
+					}
+					t.active = !(seconds > 1.8 && seconds < 2.4); // Off, and on again
+					d.tones[3] = t;
+					std::vector<StereoSample> a(block), b(block);
+					Drone::Context ctx = context;
+					ctx.position = pos / kFs * context.quarterNotesPerSecond;
+					d.render(std::span<StereoSample>(a.data(), block), ctx);
+					renderer.renderTone(voice, t, std::span<StereoSample>(b.data(), block), ctx, 1.f);
+					for (size_t i = 0; i < block; i++) {
+						same = same && a[i].l == b[i].l && a[i].r == b[i].r;
+						sounded = sounded || a[i].l != 0;
+					}
+					restedAlike = restedAlike && (voice.started == d.drone.isSounding());
+				}
+				printf("renderTone, %s, blocks of %zu: %s the drone's tone over 3 s\n", c.name, block,
+				       same ? "bit for bit" : "NOT");
+				CHECK(same && sounded, "renderTone %s (blocks of %zu) differs from the drone's tone", c.name, block);
+				CHECK(restedAlike, "renderTone %s: its voice at rest when the drone's is", c.name);
+			}
+		}
+	}
+
+	// 21. The pitch of a drone track's row (DroneTrackPitch): the lane's value in cents from the tone's own pitch, 2^31
+	// for +9600 cents. 0 leaves the tone as it is (set by note too); +1200 cents is an octave up, as a frequency to a
+	// hundredth of a hertz; a frequency round trips through the lane's value; the ends clamp.
+	{
+		using deluge::dsp::DroneTrackPitch;
+		Tone t = on(Mode::BINAURAL, Timbre::SINE, 20000, 800, 0, 40, 0);
+		Tone off = DroneTrackPitch::sounding(t, false, 0, 440.f);
+		Tone open = DroneTrackPitch::sounding(t, true, 0, 440.f);
+		Tone expectOff = t;
+		expectOff.active = false;
+		CHECK(off == expectOff && open == t, "the gate is the tone's on and off, nothing else changes");
+		int32_t octave = DroneTrackPitch::valuePlusCents(0, 1200.f);
+		CHECK(octave == 268435456, "+1200 cents is 2^31 / 8: %d", (int)octave);
+		Tone up = DroneTrackPitch::sounding(t, true, octave, 440.f);
+		CHECK(!up.byNote && up.frequency == 40000 && up.beat == t.beat, "an octave up: %d", (int)up.frequency);
+		double worst = 0;
+		for (int32_t hundredths : {1000, 5525, 20000, 30000, 44000, 123456, 500000}) {
+			int32_t value = DroneTrackPitch::valueForHz(t, hundredths * 0.01f, 440.f);
+			worst = std::max(worst, std::abs(DroneTrackPitch::hz(t, value, 440.f) - hundredths * 0.01));
+		}
+		CHECK(worst < 0.005, "frequencies round trip through the lane to %.4f Hz", worst);
+		Tone note = t;
+		note.byNote = true;
+		note.note = 57; // A3, 220 Hz
+		note.cents = 0;
+		Tone fifthDown = DroneTrackPitch::sounding(note, true, DroneTrackPitch::valuePlusCents(0, -700.f), 440.f);
+		double expected = 220 * std::pow(2.0, -7 / 12.0);
+		CHECK(!fifthDown.byNote && std::abs(fifthDown.frequency * 0.01 - expected) < 0.006,
+		      "a tone set by note, a fifth down: %.2f Hz (%.3f)", fifthDown.frequency * 0.01, expected);
+		CHECK(DroneTrackPitch::sounding(note, true, 0, 432.f) == DroneTrackPitch::sounding(note, true, 0, 440.f),
+		      "without the lane a tone by note stays by note (and follows the master tune in the voice)");
+		CHECK(DroneTrackPitch::valuePlusCents(2000000000, 5000.f) == DroneTrackPitch::valuePlusCents(0, 9600.f)
+		          && DroneTrackPitch::valuePlusCents(0, -20000.f) < -2147483000,
+		      "the lane's value saturates at +-9600 cents");
+		CHECK(DroneTrackPitch::hz(t, DroneTrackPitch::valuePlusCents(0, 9600.f), 440.f) == 5000.f
+		          && DroneTrackPitch::hz(t, DroneTrackPitch::valuePlusCents(0, -9600.f), 440.f) == 10.f,
+		      "the frequency stays within the drone's 10 Hz to 5 kHz");
+		printf("drone track pitch: +1200 cents = %d, round trip within %.4f Hz, a fifth down from A3 %.2f Hz\n",
+		       (int)octave, worst, fifthDown.frequency * 0.01);
+	}
+
+	// 22. A drone track's row sounds its lane: 200 Hz with the lane at +702 cents plays 300 Hz, and when the lane goes
+	// back to 0 (a node), 200 Hz within 0.1 s. Its gate: closed, it fades as a tone of the drone does (6 dB a block) to
+	// exact silence within 70 ms and the voice rests; opened again, it's back at the level of the song's drone's tone.
+	{
+		using deluge::dsp::DroneTrackPitch;
+		Tone t = on(Mode::TONE, Timbre::SINE, 20000, 0, 0, 50, 0);
+		Drone renderer;
+		Drone::Voice voice;
+		int32_t value = DroneTrackPitch::valuePlusCents(0, 1200.f * std::log2(1.5f));
+		bool gate = true;
+		Out o;
+		size_t silentAt = 0, restedAt = 0;
+		const size_t n = (size_t)(3 * kFs);
+		for (size_t pos = 0; pos < n; pos += kBlock) {
+			double seconds = pos / kFs;
+			if (seconds >= 1.0) {
+				value = 0;
+			}
+			gate = !(seconds >= 2.0 && seconds < 2.5);
+			std::vector<StereoSample> b(kBlock);
+			renderer.renderTone(voice, DroneTrackPitch::sounding(t, gate, value, 440.f),
+			                    std::span<StereoSample>(b.data(), kBlock), Drone::Context{}, 1.f);
+			bool silent = true;
+			for (auto& x : b) {
+				o.l.push_back(x.l);
+				o.r.push_back(x.r);
+				silent = silent && x.l == 0 && x.r == 0;
+			}
+			if (!gate && silent && silentAt == 0) {
+				silentAt = pos;
+			}
+			if (!gate && !voice.started && restedAt == 0) {
+				restedAt = pos;
+			}
+		}
+		double lane = sineHz(o.l, (size_t)(0.3 * kFs), (size_t)(0.95 * kFs));
+		double back = sineHz(o.l, (size_t)(1.1 * kFs), (size_t)(1.9 * kFs));
+		double settled = maxAbs(o.l, (size_t)(1.1 * kFs), (size_t)(1.9 * kFs));
+		double reopened = maxAbs(o.l, (size_t)(2.7 * kFs), n);
+		double fade = (silentAt - 2.0 * kFs) / kFs * 1000;
+		printf("drone row: lane +702 cents %.3f Hz, back at 0 %.3f Hz; gate closed: silent after %.1f ms, at rest %s; "
+		       "reopened %.4f of full scale\n",
+		       lane, back, fade, restedAt ? "yes" : "no", reopened / kFullScale);
+		CHECK(std::abs(lane - 300.0) < 0.01, "lane: %.4f Hz", lane);
+		CHECK(std::abs(back - 200.0) < 0.01, "back: %.4f Hz", back);
+		CHECK(silentAt > 0 && fade < 70 && restedAt > 0 && restedAt <= silentAt + kBlock, "gate closes in %.1f ms", fade);
+		CHECK(std::abs(settled / kFullScale - 1) < 0.01 && std::abs(reopened / kFullScale - 1) < 0.01,
+		      "level at 50 with gain 1: the song's drone's at volume 50");
+	}
+
+	// 23. A tone's file attributes (the song's drone's tones and drone tracks' rows share them): all round trip, each
+	// name is known, the others (index, active) aren't
+	{
+		Tone t = on(Mode::ISOCHRONIC, Timbre::PULSE, 12345, 777, 3, 21, -5);
+		t.byNote = true;
+		t.note = 61;
+		t.cents = -17;
+		t.triplet = true;
+		t.pulseAttack = 9;
+		t.pulseRelease = 33;
+		std::vector<std::pair<std::string, int32_t>> file;
+		t.writeAttributes([&](const char* name, int32_t value) { file.push_back({name, value}); });
+		Tone back;
+		back.active = true;
+		bool allKnown = true;
+		for (auto& [name, value] : file) {
+			allKnown = allKnown && Tone::isAttribute(name.c_str());
+			back.readAttribute(name.c_str(), value);
+		}
+		CHECK(file.size() == 13 && allKnown && back == t, "%zu attributes round trip", file.size());
+		CHECK(!Tone::isAttribute("active") && !Tone::isAttribute("index") && !Tone::isAttribute("volume"),
+		      "active, index and the drone's own aren't tone attributes");
+		printf("tone attributes: %zu round trip\n", file.size());
 	}
 
 	costs();
