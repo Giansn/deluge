@@ -162,6 +162,9 @@ class Deluge(sc.Deluge):
         emu.uc.hook_add(UC_HOOK_CODE, self._on_graphics_routine, begin=at, end=at)
         emu.uc.ctl_flush_tb()
 
+    def _hook_display(self):
+        pass  # What the display shows isn't checked here (and a popup's text on the stack's top 64 bytes can't be read)
+
     def _on_graphics_routine(self, uc, address, size, _):
         self.graphics_entries += 1
         if self.graphics_entries > 1000 and not self.hang:
@@ -372,7 +375,7 @@ def run(d, results):
         d.press(sc.MOD_BUTTON[section])
         for which in (0, 1):
             d.knob(which, 2)
-            d.step()
+            d.steps(0.1)  # Not a quick turn back (the pitch 10 Hz a click then)
             d.knob(which, -2)
         d.step()
     d.press(sc.MOD_BUTTON[1])  # Back to pitch and beat

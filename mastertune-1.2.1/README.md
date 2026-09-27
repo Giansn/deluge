@@ -598,6 +598,39 @@ Alles, was klingt, folgt der Stimmung. Die Rechnung ist exakt, die Abweichung li
 | Externe MIDI-Geräte (MIDI-Spuren und MIDI-Drums in Kits) | erhalten „Channel Fine Tuning“ (RPN 1) auf jedem benutzten Kanal, bei MPE auf den Member-Kanälen, siehe unten |
 | Live-Eingang als Oszillator | bleibt unverändert: Er klingt schon in der aktuellen Stimmung, weil das Instrument darauf gestimmt ist |
 
+## Sample-Bibliothek einmal auf 432 Hz umwandeln (`tools/retune_library.py`)
+
+Bei einer anderen Stimmung als 440 Hz rechnet der Deluge jede Sample-Stimme um, auch jeden untransponierten Drum-Schlag. Mit Sinc kostet das pro Stereo-Stimme etwa sechsmal so viel wie das direkte Abspielen. Das Werkzeug wandelt die Bibliothek einmal auf die Zielstimmung um. Danach spielt der Deluge diese Samples wieder direkt ab. Eine Firmware-Änderung ist nicht nötig: Die umgewandelten Dateien tragen den Block `mtun`, und eine Datei, deren `mtun` gleich der aktuellen Stimmung ist, spielt exakt ohne Umrechnung.
+
+```sh
+pip install numpy soxr pylibrb
+python3 tools/retune_library.py --card KOPIE_DER_KARTE --dry-run            # nur zeigen, was sich ändert
+python3 tools/retune_library.py --card KOPIE_DER_KARTE --out NEUE_KARTE     # Standard: 432 Hz, 44,1 kHz
+```
+
+**Was es tut:**
+- **Samples umrechnen:** Jedes Sample wird im exakten Verhältnis umgerechnet (440/432 = 55/54, soxr). Ein 440-Hz-Ton misst danach 432,00 Hz, die Abweichung liegt unter 0,002 Cent. Die Dauer wächst um 55/54.
+- **Abtastrate:** 48- und 96-kHz-Dateien bringt es im selben Durchgang auf 44,1 kHz. Die rechnet der Deluge sonst immer um.
+- **Positionen anpassen:** Start- und Endmarken, Loops und Audio-Clip-Positionen in allen Songs, Kits und Synths werden angepasst. Ebenso die Chunks `smpl` und `cue` in den Dateien.
+- **Audio-Clips und Samples mit Time-Stretch:** Sie bekommen eine Kopie `_ts`, die nur die Tonhöhe verschiebt und die Länge hält (Rubber Band).
+- **AIFF:** wird zu WAV, weil der Deluge `mtun` nur in WAV liest. Der Pfad im XML wird angepasst.
+- **Pfade mit Umlauten:** werden gefunden. Der Deluge schreibt sie in CP437.
+- **Nie verändert:** die Originalkarte. Es schreibt immer eine neue Karte, dazu `RETUNE_REPORT.txt` mit allen Änderungen und Warnungen. Ein zweiter Lauf ändert nichts mehr.
+- **Unverändert bleiben:** Wavetables und Dateien, die schon die Zielstimmung tragen. Ebenso Dateien, die der Deluge ohnehin nicht lesen kann (WAVE_FORMAT_EXTENSIBLE, mehr als 2 Kanäle, 64-Bit-Float).
+
+**Was es bringt** (Emulator, v16 bei 432 Hz, Test-Karte mit Kit, Synth-Samples, Multisample und Audio-Clip):
+- Jede untransponierte Stimme spielt direkt, statt mit Time-Stretch sind es 0 Hops statt 13.
+- Pro Stimme und Block fallen die Befehle von 13 300 auf 2 490 (mono), von 17 600 auf 3 011 (Stereo, 48 kHz) und von 19 800 auf 3 000 (Audio-Clip).
+- Die ganze Karte braucht ohne Sample-Cache 34 % weniger, mit Cache 6 %.
+
+**Grenzen:**
+- **Transponierte Noten** werden weiter umgerechnet, zum Beispiel ein Synth-Sample, das melodisch gespielt wird.
+- **Bei 440 Hz** klingen umgewandelte Samples dank `mtun` richtig, kosten dann aber wieder Umrechnung.
+- **Sehr kurze Loops und Single-Cycle-Samples:** Die Loop-Länge wird auf ganze Samples gerundet, das verstimmt sie um bis zu 1,4 Cent. Das Werkzeug warnt.
+- **`_ts`-Kopien:** Anschläge können um bis zu 4,6 ms verschoben sein.
+- **Loops, die kein Song benutzt**, werden wie Einzel-Samples umgerechnet. Machst du später einen Audio-Clip daraus, streckt der Deluge ihn wieder, er kostet dann also Umrechnung. Solche Loops besser aus einer Kopie der Originale nehmen.
+- **Geprüft:** `tests/retune/run.sh`, auf dem PC und im Emulator. Auf dem Gerät ist es noch nicht getestet.
+
 ## Aufnahmen werden nie doppelt gestimmt
 
 - **Markierung beim Aufnehmen:** Eine Aufnahme auf dem Deluge (Audio-Clip, Resampling, Sample-Aufnahme, Stem-Export) bei einer anderen Stimmung als 440 Hz bekommt in der WAV-Datei einen 12-Byte-Block `mtun` mit dieser Stimmung.
