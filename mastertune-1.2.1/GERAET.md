@@ -21,20 +21,19 @@ Vor jeder Arbeit `git pull`, denn die Cloud-Session liefert laufend nach.
 - **Python 3.12 nehmen.** `python-rtmidi` hat für neuere Versionen keine fertigen Pakete.
 - **Port-Namen:** Die Ports heissen `Deluge 0`, `MIDIIN2 (Deluge) 1` und `MIDIIN3 (Deluge) 2`. Ab Commit nach `0377a67` erkennt das Skript `MIDIIN3` von selbst, `-p` ist dann nicht mehr nötig.
 
-## Aufträge (Stand 27.09.2026, nach dem ersten Bericht)
+## Aufträge (Stand 27.09.2026, nach dem l2d-Nachtrag)
 
-1. **L2-Versionen mit demselben Song** (Punkt 6):
-   - «New Sitar Grii 10» mit `l2test/…v16-l2i-0186f612.bin`, dann mit `…v16-l2d-03ccaac5.bin`.
-   - Genau wie im ersten Bericht: CPU monitor auf Profile, 30 s Stillstand, dann etwa 40 s dieselbe Stelle spielen.
-   - Mit der passenden `.symbols.json` aus `l2test/`.
-   - Dazu notieren, ob Knackser oder Aussetzer zu hören sind. Lücken über 2,9 ms können welche geben.
-2. **Den Song für den Emulator:**
-   - Auf dem Gerät sieht der Profiler nicht in eine Spur hinein. Die Interrupts sind gesperrt, während sie rechnet. Der Emulator kann das.
-   - Bitte `SONGS/New Sitar Grii 10.XML` pushen. Instrumente und Kits stecken in der Song-Datei.
-   - Dazu die Samples, die er benutzt, mit ihren Pfaden ab dem Karten-Hauptverzeichnis, nach `geraet/karte/…`.
-   - Über 100 MB zusammen: nur die XML und eine Liste der Samples mit Grösse und Länge.
-3. **Die übrigen v16-Punkte**, wenn es passt: 1 (Versionsanzeige), 2 (USB audio), 4 (Drone-Spuren).
+Erledigt: der erste Bericht zu v16 und die Messung mit l2d. l2d ist hörbar besser und lief ohne Absturz, darum wird es ab v17 die Hauptversion.
 
+1. **Den Song für den Emulator.** Er ist noch nicht auf GitHub: Der Commit mit den Samples kam nicht an.
+   - Zuerst nur `karte/SONGS/New Sitar Grii 10.XML` und `karte/samples-new-sitar-grii-10.csv` committen und pushen. Die beiden Dateien sind klein, und damit kann ich schon arbeiten. Samples mit gleichem Format und gleicher Länge erzeuge ich im Emulator selbst.
+   - Die Samples danach in einem eigenen Commit, gern in mehreren Teilen. Einzelne Dateien über 100 MB nimmt GitHub nicht an.
+2. **440 gegen 432 Hz** (die wichtigste Messung). Bei 432 Hz muss jede Sample-Stimme umgerechnet werden, auch jeder Drum-Schlag. Bei 440 Hz spielen die untransponierten Drums ohne Umrechnung, das kostet einen Bruchteil.
+   - Mit der l2d-Firmware, fester Ablauf: 30 s Stillstand, dann 40 s dieselbe Stelle mit denselben Clips.
+   - Einmal mit Settings → Tuning auf 432 Hz, einmal auf 440 Hz. Sonst alles gleich.
+   - Dateien `…-l2d-432.jsonl` und `…-l2d-440.jsonl`.
+3. **Sobald v17 da ist:** dieselbe Messung mit v17 (l2d, 432 Hz) für den Vergleich mit v16.
+4. **Wenn es passt:** die übrigen v16-Punkte 1, 2 und 4 sowie l2i.
 ## Stand (27.09.2026)
 
 | Datei | Was |
