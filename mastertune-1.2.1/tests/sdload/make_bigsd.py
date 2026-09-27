@@ -7,20 +7,24 @@ Usage: make_bigsd.py <image> <kind> [--fsinfo valid|invalid|stale] [--fragment K
   small  the song tests' card (make_sd.py's song: 8 synths, a kit, the audio loop) on a 2 GB card: the reference
   bigidle  the song of the earlier idle measurement (64 synths: make_sd.py's 8 synths 8 times, 4 copies of its kit,
          the audio loop) on the 2 GB card: the reference for s2 without its 200 samples and full card
-  s1     the same song on a 32 GB card (1,048,576 clusters of 32 KB, a FAT of 4 MB per copy) holding 20 GB of other
-         files (5,000 of 4 MB in 50 folders SAMPLES/ARCHIVE00..49, nothing written); --fsinfo: the FSInfo sector as
-         a computer may leave it (fat32.build())
+  s1     the same song on a 32 GB card (1,048,576 clusters of 32 KB, a FAT of 4 MB = 8,193 sectors per copy) holding
+         20 GB of other files (5,120 of 4 MB in 52 folders SAMPLES/ARCHIVE00..51, nothing written): the used clusters
+         are contiguous from the FAT's start, the first free cluster is 655,466; --fsinfo: the FSInfo sector as a
+         computer may leave it (fat32.build())
   s2     a big project on that full card: the big song of the idle test (64 synths: make_sd.py's 8 synths 8 times, 4
          copies of its kit, the audio loop) plus 200 samples: 170 kit rows (10 kits of 17 rows, 0.5 MB mono samples,
          each row a note per bar) and 30 audio tracks (long stereo samples of 80 s, 14.1 MB, 40-bar clips, i.e. no time
-         stretching). The 200 samples are in SAMPLES/BIG among 3,000 files with long names (~31 characters: 3 long-name
-         entries + 1 short each, 12,000 entries in 12 clusters), every 15th one used. Other files as for s1 (16 GB).
-         --fragment K: the 200 used samples' clusters interleaved in runs of K clusters
-  s4     streaming: 1 of make_sd.py's synths (PADA), its kit and loop, plus 16 audio tracks playing long stereo samples (the
-         first 2 MB of each is real audio, then zeros) from SAMPLES/BIG as in s2, on the 32 GB card
+         stretching). The 200 samples are in SAMPLES/BIG among its 3,000 files with long names (~35 characters: 3
+         long-name entries + 1 short each; 12,002 entries, 751 sectors in 12 clusters): every 15th in the folder's
+         order (by name, as fat32.build() writes it), so they are spread evenly over the folder. Other files: 16 GB
+         (4,096 of 4 MB in 41 folders). --fragment K: the 200 used samples' clusters interleaved in runs of K clusters
+  s4     streaming: 1 of make_sd.py's synths (PADA), its kit and loop, plus 16 audio tracks playing long stereo samples
+         (the first 2 MB of each is real audio, then zeros) from SAMPLES/BIG as in s2 (16 of s2's 30, spread over the
+         folder), on the 32 GB card with 4 GB of other files (1,024 in 11 folders)
   s5     the song browser: SONGS with 1,200 songs (SONG001..SONG400, each with versions A and B; every 10th
-         with a long name instead, e.g. "SONG 012 final mix B.XML"), 1 KB each (nothing written), plus the
-         startup song
+         with a long name instead, e.g. "SONG 012 final mix B.XML"): each begins as the firmware writes a song (the
+         XML header with previewNumPads and the preview the browser draws, then the startup song's attributes; the
+         first 4 KB written, 39 KB each), plus the startup song
 Writes <image> and <image>.json (fat32.build()'s layout: where the FAT, the directories and the files are).
 """
 import argparse
@@ -71,9 +75,27 @@ def sample_file(frames, channels, seed, real_bytes):
 
 
 def big_dir_names():
-    """3,000 long names in SAMPLES/BIG; every 15th is used by the song (200)."""
+    """3,000 long names in SAMPLES/BIG."""
     kinds = ["Drum Hit", "Texture", "Vocal Chop", "Field Rec", "Synth Stab", "Bass Loop"]
     return [f"{kinds[i % 6]} {i:04d} Ambient Room Take.wav" for i in range(3000)]
+
+
+def used_samples(names):
+    """The 200 of them the song uses, in the folder's order: every 15th entry as fat32.build() writes the folder
+    (sorted by name), so they are spread evenly over it. 30 of them (spread too) for the audio tracks, 170 for the
+    kit rows."""
+    order = sorted(range(len(names)), key=lambda i: names[i])
+    used = order[7::15]
+    long_ones = [used[(2 * k + 1) * len(used) // 60] for k in range(30)]
+    return used, long_ones, [i for i in used if i not in long_ones]
+
+
+def song_file(xml, n):
+    """A song as the firmware writes it (Song::writeToFile()): previewNumPads and the preview's 8 rows of 18 pads
+    (RGB in hex) after the versions, then the rest of xml."""
+    colours = bytes((n * 37 + k * (5 + n % 7)) % 256 for k in range(8 * 18 * 3)).hex().upper()
+    at = xml.index('earliestCompatibleFirmware="4.1.0-alpha"') + len('earliestCompatibleFirmware="4.1.0-alpha"')
+    return xml[:at] + f'\n\tpreviewNumPads="144"\n\tpreview="{colours}"' + xml[at:]
 
 
 def archive_fillers(gigabytes):
@@ -169,9 +191,7 @@ def main():
         notes = dict(synths=64, kits=4)
     elif args.kind in ("s2", "s4"):
         names = big_dir_names()
-        used = [i for i in range(len(names)) if i % 15 == 7]  # 200
-        long_ones = used[::7][:30]
-        short_ones = [i for i in used if i not in long_ones]
+        used, long_ones, short_ones = used_samples(names)  # 200: 30 + 170
         big = {}
         if args.kind == "s2":
             for i in long_ones:
@@ -187,7 +207,7 @@ def main():
             files, lengths = song(big_synths(8), kit_parts, tracks)
             notes = dict(synths=64, kits=14, kit_rows_big=len(shorts), audio_tracks_big=len(long_ones))
         else:
-            streams = long_ones[:16]
+            streams = [long_ones[k * len(long_ones) // 16] for k in range(16)]
             for i in streams:
                 big[f"{BIG_DIR}/{names[i]}"] = sample_file(LONG_FRAMES, 2, i, 2 * MB)
             files0, lengths0 = make_sd.samples()
@@ -202,15 +222,17 @@ def main():
             opts["fragment"] = (sorted(big), args.fragment)
     else:  # s5
         files, lengths = make_sd.samples()
-        files["SONGS/DEFAULT.XML"] = make_sd.song_xml(lengths, 1, 1).encode()
-        fillers = []
+        xml = make_sd.song_xml(lengths, 1, 1)
+        files["SONGS/DEFAULT.XML"] = xml.encode()
         for n in range(1, 401):
             for v in ("", "A", "B"):
                 name = f"SONG{n:03d}{v}.XML" if n % 10 else f"SONG {n:03d} final mix{' ' + v if v else ''}.XML"
-                fillers.append((f"SONGS/{name}", 1024))
-        opts["fillers"] = fillers
+                data = song_file(xml, 3 * n + len(v)).encode()
+                files[f"SONGS/{name}"] = (len(data), [(0, data[:4096])])
     layout = fat32.build(args.image, files, **opts)
-    layout["notes"] = dict(notes, kind=args.kind, fsinfo=args.fsinfo, fragment=args.fragment,
+    folders = {d: dict(files=layout["dir_files"][d], entries=n, sectors=-(-n * 32 // 512))
+               for d, n in layout["dir_entries"].items() if n >= 256}
+    layout["notes"] = dict(notes, kind=args.kind, fsinfo=args.fsinfo, fragment=args.fragment, folders=folders,
                            files_with_data=len(files),
                            real_bytes=sum(len(d) if isinstance(d, bytes) else sum(len(p) for _, p in d[1])
                                           for d in files.values()),
@@ -218,7 +240,10 @@ def main():
     json.dump(layout, open(args.image + ".json", "w"))
     print(f"{args.image}: {args.kind}, {layout['num_clusters']:,} clusters ({layout['num_clusters'] * 32 / 1024 / 1024:.1f}"
           f" GB), {layout['used_clusters']:,} used, {len(files)} files + {layout['fillers']} fillers, "
-          f"{layout['notes']['real_bytes'] / MB:.1f} MB written, song {len(files['SONGS/DEFAULT.XML']):,} bytes")
+          f"{layout['notes']['real_bytes'] / MB:.1f} MB written, song {len(files['SONGS/DEFAULT.XML']):,} bytes; FAT "
+          f"{layout['fat_sectors']:,} sectors per copy, first free cluster {layout['first_free_cluster']:,}"
+          + "".join(f"; {d}: {f['files']:,} files, {f['entries']:,} entries, {f['sectors']:,} sectors"
+                    for d, f in folders.items()))
 
 
 if __name__ == "__main__":

@@ -81,8 +81,13 @@
 #   Select's tone menu for the row; kit rows made drone rows (audition pad held, Shift + Kit); a drone track made from
 #   the drone (the drone view's Shift + Kit), its level and its saved kit. Then a drone track of 16 rows saved again
 #   and again while it plays, the DMA in real time (drone_save_emu.py): no row drops out while its kit is written.
+#   Then a drone row's Hz lane when its notes are edited (drone_edit_emu.py): notes recorded (pads under REC), moved
+#   to another row and made Euclidean leave the lanes alone; Shift + select while recording records a fine step, Shift +
+#   the upper gold knob deletes the lane and the row goes back to its own pitch; a MIDI pitch bend within the row's
+#   bend range; a row cut when the kit's active clip has no row for it; the saved kit's drone rows after its others.
 #   Results: <out>/drone-load/ and <out>/drone-saved/ (measured.wav, result.json, saved.xml), <out>/drone-rec/
-#   (drone_rec.wav, saved.xml, saved_made.xml), <out>/drone-save/ (save.wav, save_result.json). About 6 minutes.
+#   (drone_rec.wav, saved.xml, saved_made.xml), <out>/drone-save/ (save.wav, save_result.json), <out>/drone-edit/
+#   (drone_edit.wav, saved.xml). About 6 minutes.
 #
 # Files: make_sd.py (the song and its samples, generated; its docstring describes the song), fat32.py (the card
 # image), song_emu.py (the emulator harness; its docstring says what is real and what is modelled), blockcount.c
@@ -152,6 +157,8 @@ if [ -n "$DRONE" ]; then
 	python3 "$HERE/drone_rec_emu.py" "$ELF" "$OUT/drone-rec" --tools "$TOOLS" --build "$OUT" || status=1
 	echo
 	python3 "$HERE/drone_save_emu.py" "$ELF" "$OUT/drone-save" --tools "$TOOLS" --build "$OUT" || status=1
+	echo
+	python3 "$HERE/drone_edit_emu.py" "$ELF" "$OUT/drone-edit" --tools "$TOOLS" --build "$OUT" || status=1
 	exit ${status:-0}
 fi
 

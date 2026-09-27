@@ -79,7 +79,7 @@ UNCACHED_MIRROR_OFFSET = 0x40000000
 STOP = 0x7FFF0000  # Return address of the calls made from here: nothing is executed there
 PROGRAM_STACK_TOP = 0x20300000
 
-CPU_HZ = 400e6
+CPU_HZ = 400e6  # Emulated instructions per second: 1 per cycle at 400 MHz (set_instructions_per_cycle())
 PERIPHERAL_HZ = 33.33e6
 SAMPLE_RATE = 44100
 CYCLES_PER_BLOCK = CPU_HZ * 128 / SAMPLE_RATE  # 1,161,000
@@ -97,6 +97,16 @@ L2C_REGISTERS = {0x100: "control", 0x104: "aux_control", 0x220: "int_clear", 0x7
                  0x77C: "inv_way", 0x7B0: "clean_pa", 0x7BC: "clean_way", 0x7F0: "clean_inv_pa", 0x7FC: "clean_inv_way",
                  0x900: "d_lockdown", 0x904: "i_lockdown"}
 OLED_SPI_DMA_CHANNEL = 4
+
+
+def set_instructions_per_cycle(ipc):
+    """The emulated CPU runs ipc instructions per cycle of its 400 MHz (default 1): every emulated time (the timers,
+    the task manager's clock, the SSI's DMA, SdModel) is instructions / (400 MHz * ipc). For what a slower CPU (cache
+    misses, the L2 cache off) does to the same code; before anything reads CPU_HZ (modules that imported it by name
+    keep the old value)."""
+    global CPU_HZ, CYCLES_PER_BLOCK
+    CPU_HZ = 400e6 * ipc
+    CYCLES_PER_BLOCK = CPU_HZ * 128 / SAMPLE_RATE
 
 
 def dmac_channel_base(n):
@@ -464,25 +474,36 @@ def setup_sd(emu):
     emu.skip_to(begin, code[call - 2][0], lambda e: e.uc.mem_write(disk_status, b"\0"))
 
 
-SD_WAIT_TRAMPOLINE = STOP + 0x80  # SdModel's wait loop (Thumb code written there)
+SD_WAIT_TRAMPOLINE = STOP + 0x80  # SdModel's wait loop (Thumb code written there), wait="loop"
+SD_YIELD_TRAMPOLINE = STOP + 0x200  # SdModel's wait through the task manager, wait="yield"
 SD_WAIT_DONE = 0x7FFE0000  # An MMIO word it polls: 1 once the card is done
 
 
 class SdModel:
     """--sd-latency: the card takes time. Every sd_read_sect() (and disk_write()) call is one command taking
     command_us + sectors * sector_us of emulated time. The data is there at once (read from the image), but the call
-    returns only when that time has passed, and meanwhile the firmware does what it does on the Deluge while it waits
-    for the card: routineForSD() once (sd_read.c) and then again and again until the transfer is done (the DMA wait
-    loop in sd_dev_low.c: the audio routine, UI timers, OLED, PIC, encoders, buttons). That loop is Thumb code written
-    at SD_WAIT_TRAMPOLINE, which the intercepted call jumps to with the caller's return address; it polls
-    SD_WAIT_DONE between the routineForSD() calls. With poll_us, successive polls are at least that far apart (the
-    time in between is idle, emu.idle): fewer calls to emulate, for speed; 0 (the default) calls it back to back as
-    the Deluge does. Defaults: a typical SDHC card on the Deluge's 4-bit bus, ~1 ms per command, ~12 MB/s.
-    Writes the same (write_command_us, write_sector_us: default as for reads). Off by default: the card is instant.
-    self.waits: (start in instructions, duration in instructions, sectors, write, routineForSD() calls)."""
+    returns only when that time has passed and the firmware has noticed, and meanwhile the firmware does what it does
+    on the Deluge while it waits for the card. How it waits (wait):
+    - "yield" (the default; the firmware as built, with USE_TASK_MANAGER, CMakeLists.txt): sd_read_sect() calls
+      routineForSD() once (sd_read.c), then sddev_int_wait() / sddev_wait_dma_end_1() (sd_dev_low.c, sd.c) call
+      yieldingRoutineWithTimeoutForSD(): TaskManager::yield() runs the task manager's tasks (the audio routine among
+      them, by their schedule) until the card is done, checked after each task. A write (disk_write()) the same
+      without the routineForSD() call. Thumb code at SD_YIELD_TRAMPOLINE; the condition reads SD_WAIT_DONE.
+    - "loop" (a build without USE_TASK_MANAGER, or the Player's tests, whose task list is empty): routineForSD() again
+      and again until the transfer is done (the DMA wait loop in sd_dev_low.c: the audio routine, UI timers, OLED,
+      PIC, encoders, buttons). Thumb code at SD_WAIT_TRAMPOLINE; it polls SD_WAIT_DONE between the routineForSD()
+      calls. With poll_us, successive polls are at least that far apart (the time in between is idle, emu.idle):
+      fewer calls to emulate, for speed; 0 (the default) calls it back to back as the Deluge does.
+    The intercepted call jumps to the trampoline with the caller's return address. Defaults: a typical SDHC card on
+    the Deluge's 4-bit bus, ~1 ms per command, ~12 MB/s. Writes the same (write_command_us, write_sector_us: default
+    as for reads). Off by default: the card is instant. self.waits: (start in instructions, duration in instructions,
+    sectors, write, polls of SD_WAIT_DONE, the card's own time in instructions)."""
 
     def __init__(self, emu, command_us=1000.0, sector_us=512 / 12e6 * 1e6, poll_us=0.0, write_command_us=None,
-                 write_sector_us=None):
+                 write_sector_us=None, wait="yield"):
+        if wait not in ("yield", "loop"):
+            raise ValueError(wait)
+        self.mode = wait
         self.emu = emu
         self.command, self.sector = command_us * CPU_HZ / 1e6, sector_us * CPU_HZ / 1e6
         self.write_command = (command_us if write_command_us is None else write_command_us) * CPU_HZ / 1e6
@@ -490,9 +511,12 @@ class SdModel:
         self.poll = poll_us * CPU_HZ / 1e6
         self.params = dict(command_us=command_us, sector_us=sector_us, poll_us=poll_us,
                            write_command_us=self.write_command * 1e6 / CPU_HZ,
-                           write_sector_us=self.write_sector * 1e6 / CPU_HZ)
-        self.stack = []  # Waits in progress (a read from inside routineForSD() would nest)
+                           write_sector_us=self.write_sector * 1e6 / CPU_HZ, wait=wait)
+        self.stack = []  # Waits in progress (a read from inside a task run while waiting would nest)
         self.waits = []
+        self.entry = {}
+        if wait == "yield":
+            self.write_yield_trampoline(emu)
         code = struct.pack("<10H", 0xB510,  # push {r4, lr}
                            0x4C04,  # loop: ldr r4, =routineForSD
                            0x47A0,  # blx r4
@@ -508,12 +532,37 @@ class SdModel:
         emu.uc.mmio_map(SD_WAIT_DONE, 0x1000, emu.mmio_read, SD_WAIT_DONE, emu.mmio_write, SD_WAIT_DONE)
         emu.sd_model = self
 
+    def write_yield_trampoline(self, emu):
+        """wait="yield": routineForSD() (reads only), then yieldingRoutineWithTimeoutForSD(condition, 2 s)."""
+        t = SD_YIELD_TRAMPOLINE
+        code = struct.pack("<14H", 0xB510,  # +00 read: push {r4, lr}
+                           0x4C06,  # +02 ldr r4, [pc, #24] (=routineForSD)
+                           0x47A0,  # +04 blx r4
+                           0x4806,  # +06 ldr r0, [pc, #24] (=the timeout's address)
+                           0xED90, 0x0B00,  # +08 vldr d0, [r0]
+                           0x4805,  # +0C ldr r0, [pc, #20] (=the condition)
+                           0x4C06,  # +0E ldr r4, [pc, #24] (=yieldingRoutineWithTimeoutForSD)
+                           0x47A0,  # +10 blx r4
+                           0x2000,  # +12 movs r0, #0 (SD_OK)
+                           0xBD10,  # +14 pop {r4, pc}
+                           0xB510,  # +16 write: push {r4, lr}
+                           0xE7F5,  # +18 b +06
+                           0xBF00)  # +1A nop
+        code += struct.pack("<IIIIId", emu.sym["routineForSD"] | 1, t + 0x30, (t + 0x38) | 1,
+                            emu.sym["yieldingRoutineWithTimeoutForSD"] | 1, 0, 2.0)  # +1C..+37: 2 s as the driver's
+        code += struct.pack("<4HI", 0x4801,  # +38 condition: ldr r0, [pc, #4] (=SD_WAIT_DONE)
+                            0x6800,  # +3A ldr r0, [r0]
+                            0x4770,  # +3C bx lr
+                            0xBF00, SD_WAIT_DONE)  # +3E, +40
+        emu.uc.mem_write(t, code)
+        self.entry = {False: t | 1, True: (t + 0x16) | 1}
+
     def wait(self, sectors, write):
-        """From the intercepted call: go on in the wait loop (the caller's return address stays in lr)."""
+        """From the intercepted call: go on in the wait (the caller's return address stays in lr)."""
         now = self.emu.now()
         duration = (self.write_command + sectors * self.write_sector) if write else (self.command + sectors * self.sector)
-        self.stack.append([now, now + duration, sectors, write, 0, now])
-        self.emu.uc.reg_write(UC_ARM_REG_PC, SD_WAIT_TRAMPOLINE | 1)
+        self.stack.append([now, now + duration, sectors, write, 0, now, duration])
+        self.emu.uc.reg_write(UC_ARM_REG_PC, self.entry[write] if self.mode == "yield" else SD_WAIT_TRAMPOLINE | 1)
         return None
 
     def done(self, size):
@@ -528,7 +577,7 @@ class SdModel:
         if now < w[1]:
             return 0
         self.stack.pop()
-        self.waits.append((w[0], now - w[0], w[2], w[3], w[4]))
+        self.waits.append((w[0], now - w[0], w[2], w[3], w[4], w[6]))
         return 1
 
 
@@ -992,9 +1041,18 @@ class RealTimeDma:
         self.pending = []  # Addresses written since the last collect()
         self.samples = []  # (left, right) as written, in order
         self.numbers = []  # The absolute number (see position()) of every sample written, in order (MidiTiming)
-        for b in (self.base, self.cached):
-            emu.uc.hook_add(unicorn.UC_HOOK_MEM_WRITE, self.on_write, begin=b, end=b + 128 * 8 - 1)
+        self.hooks = [emu.uc.hook_add(unicorn.UC_HOOK_MEM_WRITE, self.on_write, begin=b, end=b + 128 * 8 - 1)
+                      for b in (self.base, self.cached)]
         emu.dma = self
+
+    def close(self):
+        """The DMA stops following the time (its hooks removed; emu.dma back to None)."""
+        self.collect()
+        for h in self.hooks:
+            self.emu.uc.hook_del(h)
+        self.hooks = []
+        if self.emu.dma is self:
+            self.emu.dma = None
 
     def position(self):
         """The number of the sample the DMA reads now (counted from where the firmware wrote first)."""
@@ -1687,10 +1745,13 @@ def drain_uarts(emu):
 
 def run_task_manager(emu, seconds):
     """Runs the firmware's own task manager for `seconds` of emulated time, as deluge_main()'s loop does:
-    TaskManager::yield() with a condition that never holds and that timeout. registerTasks()'s tasks run at their own
-    intervals, as chooseBestTask() picks them by the emulated time (the audio routine every ~16 samples at most, the
-    cluster loading, the kit RAM saver every second, the CPU monitor every 50 ms, UI, OLED, PIC, ...); the time the
-    scheduler itself spins counts too. Needs the task list as boot() left it (Player empties it) and, for the audio,
+    TaskManager::yield() with a condition that never holds and that timeout. registerTasks()'s tasks run as
+    chooseBestTask() picks them by the emulated time (the cluster loading, the kit RAM saver every second, the CPU
+    monitor every 50 ms, UI, OLED, PIC, ...). The audio routine runs whenever its 10 us back-off since it last
+    returned has passed: the playback routine's target interval is 0 (deluge.cpp, integer 16 / 44100), so that task is
+    always due and, within its own back-off, makes chooseBestTask() fall back to any task past its back-off. That is
+    every ~12 us after the routine returns, 2-6 samples per call with a stopped song, ~11 while playing (tests/sdload).
+    The time the scheduler itself spins counts too. Needs the task list as boot() left it (Player empties it) and, for the audio,
     a RealTimeDma. The yield counts as a task's run: the current task ID is set to an unused slot first, so no real
     task's duration statistics (which the audio routine's culling reads) get it. The UARTs' rings are drained at
     every flush (drain_uarts())."""
@@ -1738,8 +1799,12 @@ class CpuStats:
         self.window_at = self.slot + window
         self.seq = emu.u32(self.slot)
         self.windows = []  # (emulated seconds when collected, dict)
-        emu.intercept(sym.find("_ZN9cpu_stats7routineEv"), self.collect)
+        self.hook = emu.intercept(sym.find("_ZN9cpu_stats7routineEv"), self.collect)
         emu.uc.ctl_flush_tb()
+
+    def close(self):
+        """Stops collecting (the windows so far stay)."""
+        self.emu.uc.hook_del(self.hook)
 
     def collect(self, emu=None):
         seq = self.emu.u32(self.slot)
@@ -1821,7 +1886,10 @@ def main():
                     help="the SD card takes time (SdModel), from after boot: each read or write command CMD_US plus "
                          "SECTOR_US per sector of emulated time, during which the firmware calls routineForSD() as "
                          "it waits (POLL_US apart at least; default 0, back to back). E.g. 1000,42.7 for a typical "
-                         "SDHC card (~1 ms per command, ~12 MB/s). Default: off, the card is instant")
+                         "SDHC card (~1 ms per command, ~12 MB/s). Default: off, the card is instant. The wait is "
+                         "SdModel's \"loop\" (a build without USE_TASK_MANAGER): the Player drives the audio itself "
+                         "and its task list is empty, so the firmware's own wait (a yield to the task manager) would "
+                         "run nothing here; tests/sdload models that one with the task manager")
     ap.add_argument("--poke", action="append", default=[], metavar="SYMBOL=VALUE",
                     help="write this 32-bit value to the firmware's variable after boot (e.g. to try a setting of a "
                          "build that keeps it in a variable)")
@@ -1844,7 +1912,7 @@ def main():
     if args.seed is not None:
         emu.w32(jcong, args.seed)
     if args.sd_latency:
-        SdModel(emu, *(float(x) for x in args.sd_latency.split(",")))
+        SdModel(emu, *(float(x) for x in args.sd_latency.split(",")), wait="loop")
         log(f"--sd-latency: {emu.sd_model.params}")
     for poke in args.poke:
         name, value = poke.split("=")

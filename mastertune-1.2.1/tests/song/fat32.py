@@ -19,8 +19,9 @@ Options for big cards (tests/sdload):
   after files were deleted and written again.
 - fsinfo: "valid" (free count and next free cluster right), "invalid" (both 0xFFFFFFFF, as a card whose FSInfo was
   never updated), "stale" (next free cluster 2, the FAT's start: FatFS searches from there).
-build() returns the layout (FAT and data area, the clusters of each directory and file), for telling the sectors read
-apart (sdload_emu.py).
+build() returns the layout (FAT and data area, the clusters of each directory and file, each directory's entries and
+files, the first free cluster: all used clusters are contiguous from cluster 2), for telling the sectors read apart
+(sdload_emu.py).
 """
 import os
 import struct
@@ -256,6 +257,8 @@ def build(path, files, clusters=None, fillers=(), fragment=None, fsinfo="valid")
                 data_start=data_start, num_clusters=num_clusters, used_clusters=next_cluster - 2,
                 total_sectors=total_sectors,
                 dirs={d: runs[d + "/"] for d in dirs},
+                dir_entries=entry_counts, dir_files={d: sum(k == "file" for k, _, _ in e) for d, e in dirs.items()},
+                first_free_cluster=next_cluster,
                 files={p: runs[p] for p in files},
                 fillers=len(fillers), filler_clusters=sum(runs[p][0][1] for p, _ in fillers))
 

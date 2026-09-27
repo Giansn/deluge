@@ -3,31 +3,49 @@
 the number of files, long names, big samples and the card's own speed. One scenario per call (run.sh runs them all,
 one emulator at a time); images from make_bigsd.py (their layout in <image>.json tells the areas apart).
 
-Usage: sdload_emu.py <deluge.elf> <image> <out dir> <scenario> [--seconds S] [--sd-latency CMD_US,SECTOR_US]
-                     [--lines] [--tools PREFIX] [--build DIR]
+Usage: sdload_emu.py <deluge.elf> <image> <out dir> <scenario> [--save] [--idle S] [--idle-fixed S] [--lines]
+                     [--seconds S] [--sd-latency CMD_US,SECTOR_US] [--sd-wait yield|loop] [--ipc X] [--steps N]
+                     [--settle-ms MS] [--tools PREFIX] [--build DIR]
 Scenarios:
   load   boot (the card mounted), SONGS/DEFAULT.XML loaded as at startup (setupStartupSong()), then optionally
          --save (SONGS/SAVETEST.XML written as SaveSongUI does: the first cluster of a new file is where FatFS
          searches the FAT for free space, create_chain()) and/or --idle S (below). Per phase: instructions, SD
-         commands (sd_read_sect()/disk_write() calls) and sectors by area (FAT, directories, data), estimated real
-         time with the card profiles (CPU at 400 MHz, 1 instruction per cycle, plus command and sector times). Per
-         sample opened (AudioFileManager::getAudioFileFromFilename()): directory, FAT and data sectors. RAM (the
+         commands (sd_read_sect()/disk_write() calls) and sectors by area (FAT: also how far into it, directories,
+         data), estimated real time with the card profiles: the CPU's instructions plus command and sector times. Not in
+         the estimates: the driver's own work per command (routineForSD() and, while the card works, the yield to the
+         task manager, which returns only after the task it runs), since sd_read_sect() is intercepted: a lower bound.
+         Per sample lookup (AudioFileManager::getAudioFileFromFilename(); the song looks up every reference twice,
+         Song::loadAllSamples(false), then (true)): its file and the sectors it read; per file read from the card (its
+         first lookup; the later ones find it in memory): directory, FAT and data sectors, by folder. RAM (the
          allocator's regions) after loading.
   --idle S  after loading, the song stopped, S seconds of emulated time with the firmware's own task manager
-         (song_emu.run_task_manager(): every registered task at its own interval, the SSI's DMA in real time) and
-         the CPU monitor on (cpu_stats, as Settings > CPU monitor: its half-second windows and what it shows,
-         computed by the firmware's cpu_stats::summarize()). Per task: calls and instructions; the audio routine's
-         calls, the samples each renders and its instructions (CPU % at 1 instruction per cycle). Cluster loads while
-         idle. --lines: then, for 0.02 s more, the distinct 32-byte lines (the Cortex-A9's L1 line) of SDRAM and
+         (song_emu.run_task_manager(): the registered tasks as its scheduler picks them, the SSI's DMA in real time)
+         and the CPU monitor on (cpu_stats, as Settings > CPU monitor: its half-second windows and what it shows,
+         computed by the firmware's cpu_stats::summarize()). Per task (name and priority: two are "playback routine"):
+         calls, instructions inclusive and exclusive (without the tasks run inside it while it yields). The audio
+         routine: calls, samples each, instructions, CPU % as cpu_stats measures it (time in routine() / audio
+         rendered), and per run of its task the time until the next and what fills it (other tasks, the scheduler).
+         --idle-fixed S: then S seconds more with the playback routine's (priority 2) target interval set to 16/44100. s
+         in RAM, what deluge.cpp:584 means: its integer 16 / 44100 is 0, which keeps that task always due, and while
+         it is backed off the scheduler's fallback runs whatever is past its own back-off, the audio routine (10 us)
+         first. --lines: then, for 0.02 s more, the distinct 32-byte lines (the Cortex-A9's L1 line) of SDRAM and
          internal RAM each audio routine call touches (data only), against the L1 data cache's 1,024 lines.
   play   loads, then plays (PlaybackHandler::playButtonPressed()) for --seconds with the task manager as for --idle,
-         the card instant or, with --sd-latency, taking time (song_emu.SdModel: the firmware waits for each command in
-         its routineForSD() loop, which runs the audio routine meanwhile). Cluster loads and their duration, audio
-         routine calls from the task manager and from routineForSD(), gaps (song_emu.RealTimeDma: 128 samples or more
-         = an underrun), culled voices by type, cpu_stats as shown (QL: direness above 0, VC: voices culled).
-  browse loads, opens the song browser (openUI(&loadSongUI)) and turns the select encoder one step at a time
-         (LoadSongUI::selectEncoderAction(+1)) through the whole SONGS folder: per step instructions, commands and
-         sectors, and how often the browser reads the whole folder again (Browser::readFileItemsFromFolderAndMemory()).
+         the card instant or, with --sd-latency, taking time (song_emu.SdModel; --sd-wait yield, the default, as the
+         firmware built with USE_TASK_MANAGER waits: routineForSD() once, then the driver's waits yield to the task
+         manager until the card is done; loop: routineForSD() again and again, a build without USE_TASK_MANAGER).
+         Cluster loads, the card waits (their time against the card's own), audio routine calls by where they come
+         from (the task manager; a task run inside another task's yield, i.e. while it waits for the card;
+         routineForSD()), gaps (song_emu.RealTimeDma: 128 samples or more = an underrun), culled voices by type,
+         cpu_stats as shown (QL: direness above 0, VC: voices culled).
+  browse loads, opens the song browser (openUI(&loadSongUI)), lets the task manager run until its scroll-in has
+         ended, then turns the select encoder one step at a time (LoadSongUI::selectEncoderAction(+1)) through the
+         whole SONGS folder with --settle-ms of the task manager after each step (UI timers: the scrolling; a fast
+         turn): per step instructions, commands and sectors (the next song's preview drawn from its file), and how
+         often the browser reads the whole folder again (Browser::readFileItemsFromFolderAndMemory()); the UI modes
+         found before the steps (reset only if the select encoder would be ignored).
+--ipc X: the CPU runs X instructions per cycle at 400 MHz (song_emu.set_instructions_per_cycle(); default 1, the
+emulator's usual assumption; the real Cortex-A9 with cache misses runs fewer).
 Results: <out>/<scenario>.json and a summary on stdout. The display is the OLED (as on the user's Deluge).
 """
 import argparse
@@ -44,14 +62,21 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "../song"))
 import song_emu as se  # noqa: E402
-from song_emu import CPU_HZ, SAMPLE_RATE, STOP  # noqa: E402
+from song_emu import SAMPLE_RATE, STOP  # noqa: E402
 from unicorn import UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE  # noqa: E402
-from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_R0, UC_ARM_REG_R1  # noqa: E402
+from unicorn.arm_const import UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2  # noqa: E402
 
 # Card profiles for the estimates: (µs per command, µs per 512-byte sector)
 PROFILES = {"typical (1 ms/command, 12 MB/s)": (1000.0, 512 / 12e6 * 1e6),
             "fast (0.25 ms/command, 25 MB/s)": (250.0, 512 / 25e6 * 1e6)}
-INSTR_PER_SAMPLE = CPU_HZ / SAMPLE_RATE  # 9,070: 100 % CPU at 1 instruction per cycle
+UI_MODE_HORIZONTAL_SCROLL = 1 << 29  # ui.h (UI_MODE_NONE 0, UI_MODE_VERTICAL_SCROLL 1)
+AUDIO_TASK = "audio routine (p0)"
+PLAYBACK_TASK = "playback routine (p2)"
+
+
+def hz():
+    """Emulated instructions per second: 400 MHz times --ipc (song_emu.CPU_HZ)."""
+    return se.CPU_HZ
 
 
 def log(s):
@@ -65,6 +90,7 @@ class Card:
         self.layout = json.load(open(image + ".json"))
         lay = self.layout
         self.fat_start, self.data_start, self.csize = lay["fat_start"], lay["data_start"], lay["csize"]
+        self.fat_sectors = lay["fat_sectors"]
         runs = sorted((first, first + n) for chain in lay["dirs"].values() for first, n in chain)
         self.dir_starts = [a for a, _ in runs]
         self.dir_ends = [b for _, b in runs]
@@ -79,7 +105,8 @@ class Card:
         return "dir" if i >= 0 and c < self.dir_ends[i] else "data"
 
     def summarize(self, entries):
-        """Commands and sectors by kind and area of a slice of emu.sd_log."""
+        """Commands and sectors by kind and area of a slice of emu.sd_log; <kind>_fat_extent: how far into the FAT
+        (sectors of one copy from its start) the reads or writes went."""
         out = collections.Counter()
         for kind, sector, count, _ in entries:
             a = self.area(sector)
@@ -87,15 +114,23 @@ class Card:
             out[f"{kind}_sectors"] += count
             out[f"{kind}_{a}_commands"] += 1
             out[f"{kind}_{a}_sectors"] += count
+            if a == "fat":
+                end = (sector - self.fat_start) % self.fat_sectors + count
+                out[f"{kind}_fat_extent"] = max(out[f"{kind}_fat_extent"], end)
         return dict(out)
 
 
 def estimate(instructions, sd):
-    """Seconds on the Deluge: the CPU work at 400 MHz plus the card's time for these commands and sectors."""
+    """Seconds on the Deluge: the CPU work plus the card's time for these commands and sectors (not the driver's own
+    work per command: a lower bound)."""
     commands = sd.get("r_commands", 0) + sd.get("w_commands", 0)
     sectors = sd.get("r_sectors", 0) + sd.get("w_sectors", 0)
-    return {name: round(instructions / CPU_HZ + (commands * c + sectors * s) / 1e6, 3)
+    return {name: round(instructions / hz() + (commands * c + sectors * s) / 1e6, 3)
             for name, (c, s) in PROFILES.items()}
+
+
+def short(profile_values):
+    return ", ".join(f"{v:.2f} s {k.split()[0]}" for k, v in profile_values.items())
 
 
 class Run:
@@ -107,20 +142,21 @@ class Run:
         self.emu = emu = se.Emulator(args.elf, args.image, tools, args.build, log)
         emu.sd_log = []
         se.setup_sd(emu)
+        self.regions = None
         self.result = dict(scenario=args.scenario, image=os.path.basename(args.image), card=self.card.layout["notes"],
                            card_clusters=self.card.layout["num_clusters"], used_clusters=self.card.layout["used_clusters"],
-                           phases={}, profiles=PROFILES)
+                           fat_sectors=self.card.fat_sectors,
+                           first_free_cluster=self.card.layout.get("first_free_cluster"),
+                           instructions_per_cycle=hz() / 400e6, phases={}, profiles=PROFILES)
         self.phase("boot (mount)", lambda: se.boot(emu))
         emu.call(emu.sym["_ZN6deluge3hid7display15swapDisplayTypeEv"])  # The OLED
-        self.opens = []
-        regions = se.Regions(emu, [("_ZN16AudioFileManager24getAudioFileFromFilename", "open")], "other")
-        regions.on_enter["open"] = lambda e, back: len(e.sd_log)
-        regions.on_exit["open"] = lambda e, at, n: self.opens.append((n, self.card.summarize(e.sd_log[at:])))
+        self.lookups = []
+        self.watch_lookups()
         emu.uc.ctl_flush_tb()
         t = time.time()
         self.phase("song load (setupStartupSong())", lambda: se.load_startup_song(emu))
         self.result["load_host_s"] = time.time() - t
-        self.result["opens"] = self.open_stats()
+        self.result["lookups"] = self.lookup_stats()
         self.result["ram_after_load"] = se.ram_usage(emu)
 
     def phase(self, name, fn):
@@ -129,32 +165,93 @@ class Run:
         fn()
         instructions = emu.now() - i0
         sd = self.card.summarize(emu.sd_log[n0:])
-        p = dict(instructions=instructions, cpu_s=instructions / CPU_HZ, sd=sd, estimated_s=estimate(instructions, sd))
+        p = dict(instructions=instructions, cpu_s=instructions / hz(), sd=sd, estimated_s=estimate(instructions, sd))
         self.result["phases"][name] = p
-        log(f"{name}: {instructions / 1e6:,.1f}M instructions ({instructions / CPU_HZ:.3f} s CPU), reads "
+        log(f"{name}: {instructions / 1e6:,.1f}M instructions ({instructions / hz():.3f} s CPU), reads "
             f"{sd.get('r_commands', 0):,} commands / {sd.get('r_sectors', 0):,} sectors (FAT "
             f"{sd.get('r_fat_sectors', 0):,}, directories {sd.get('r_dir_sectors', 0):,}, data "
             f"{sd.get('r_data_sectors', 0):,}), writes {sd.get('w_commands', 0):,} / {sd.get('w_sectors', 0):,}; "
-            f"estimated " + ", ".join(f"{v:.2f} s {k.split()[0]}" for k, v in p["estimated_s"].items()))
+            f"estimated {short(p['estimated_s'])} (card and CPU, without the driver's work per command)")
+        if sd.get("r_fat_sectors", 0) > 64:  # A search of the FAT
+            ff = self.card.layout.get("first_free_cluster")
+            log(f"  FAT: {sd['r_fat_sectors']:,} sectors read, up to its sector {sd['r_fat_extent']:,} of "
+                f"{self.card.fat_sectors:,} (one copy)"
+                + (f"; the first free cluster, {ff:,}, is in its sector {ff * 4 // 512 + 1:,}" if ff else ""))
         return p
 
-    def open_stats(self):
-        if not self.opens:
+    # --- the sample lookups while loading
+
+    def watch_lookups(self):
+        emu, sym = self.emu, self.emu.sym
+        prefix = "_ZN16AudioFileManager24getAudioFileFromFilename"
+        # LTO's .constprop clone drops `this` (the one audioFileManager): the path is then the first argument
+        clone = any("constprop" in k for k in sym.by_name if k.startswith(prefix))
+        path_reg, may_reg = (UC_ARM_REG_R0, UC_ARM_REG_R1) if clone else (UC_ARM_REG_R1, UC_ARM_REG_R2)
+        string_memory, = se.gdb_values(emu, ["(int)&((String*)0)->stringMemory"])
+        regions = se.Regions(emu, [(prefix, "lookup")], "other")
+
+        def enter(e, back):
+            p = e.u32(e.uc.reg_read(path_reg) + string_memory)
+            raw = (e.ram(p, 256) or e.ram(p, 32) or b"") if p else b""
+            return raw.split(b"\0")[0].decode(errors="replace"), e.uc.reg_read(may_reg) & 0xFF, len(e.sd_log)
+
+        def leave(e, extra, n):
+            self.lookups.append((extra[0], extra[1], n, self.card.summarize(e.sd_log[extra[2]:])))
+        regions.on_enter["lookup"] = enter
+        regions.on_exit["lookup"] = leave
+
+    def lookup_stats(self):
+        L = self.lookups
+        if not L:
             return None
-        keys = ["r_dir_sectors", "r_fat_sectors", "r_data_sectors", "r_commands"]
-        arr = {k: np.array([o[1].get(k, 0) for o in self.opens]) for k in keys}
-        ins = np.array([o[0] for o in self.opens])
+        first, again = {}, 0
+        for x in L:
+            if x[3].get("r_commands", 0):
+                if x[0] in first:
+                    again += 1
+                else:
+                    first[x[0]] = x
         tot = collections.Counter()
-        for o in self.opens:
-            tot.update(o[1])
-        out = dict(count=len(self.opens), instructions_mean=float(ins.mean()),
-                   per_open={k: dict(mean=float(v.mean()), max=int(v.max()), total=int(v.sum())) for k, v in arr.items()},
-                   estimated_total_s=estimate(int(ins.sum()), dict(tot)))
-        log(f"samples opened: {len(self.opens)}, per open: directory sectors mean {arr['r_dir_sectors'].mean():.0f} "
-            f"(max {arr['r_dir_sectors'].max()}), FAT sectors mean {arr['r_fat_sectors'].mean():.1f} (max "
-            f"{arr['r_fat_sectors'].max()}), commands mean {arr['r_commands'].mean():.0f}, instructions mean "
-            f"{ins.mean() / 1e3:,.0f}k; all opens estimated " + ", ".join(
-                f"{v:.2f} s {k.split()[0]}" for k, v in out["estimated_total_s"].items()))
+        for x in L:
+            tot.update(x[3])
+        instructions = sum(x[2] for x in L)
+
+        def group(xs):
+            d = np.array([x[3].get("r_dir_sectors", 0) for x in xs])
+            mean = lambda key: float(np.mean([x[3].get(key, 0) for x in xs]))  # noqa: E731
+            return dict(files=len(xs), dir_sectors_mean=float(d.mean()), dir_sectors_min=int(d.min()),
+                        dir_sectors_max=int(d.max()), dir_sectors_total=int(d.sum()),
+                        fat_sectors_mean=mean("r_fat_sectors"), data_sectors_mean=mean("r_data_sectors"),
+                        commands_mean=mean("r_commands"), instructions_mean=float(np.mean([x[2] for x in xs])))
+        by_folder = collections.defaultdict(list)
+        for p, x in first.items():
+            by_folder[p.rsplit("/", 1)[0] if "/" in p else ""].append(x)
+        folders = self.card.layout["notes"].get("folders", {})
+        out = dict(lookups=len(L), files=len(dict.fromkeys(x[0] for x in L)),
+                   by_may_read_card={str(k): v for k, v in sorted(collections.Counter(x[1] for x in L).items())},
+                   files_read=len(first), lookups_reading_again=again, lookups_in_memory=len(L) - len(first) - again,
+                   per_file_read=group(list(first.values())) if first else None,
+                   by_folder={f: dict(group(xs), folder=folders.get(f)) for f, xs in by_folder.items()},
+                   total=dict(instructions=instructions, commands=tot["r_commands"], sectors=tot["r_sectors"],
+                              dir_sectors=tot["r_dir_sectors"], fat_sectors=tot["r_fat_sectors"],
+                              data_sectors=tot["r_data_sectors"]),
+                   estimated_total_s=estimate(instructions, dict(tot)))
+        log(f"sample lookups (getAudioFileFromFilename()): {len(L)} for {out['files']} files (mayReadCard "
+            f"{out['by_may_read_card']}); {len(first)} read the card, each file's first; {out['lookups_in_memory']} "
+            f"found the file in memory" + (f", {again} read the card again" if again else ""))
+        if first:
+            g = out["per_file_read"]
+            log(f"  per file read: directory sectors mean {g['dir_sectors_mean']:.0f} (min {g['dir_sectors_min']}, max "
+                f"{g['dir_sectors_max']}), FAT {g['fat_sectors_mean']:.1f}, data {g['data_sectors_mean']:.0f}, commands "
+                f"{g['commands_mean']:.0f}, {g['instructions_mean'] / 1e3:,.0f}k instructions")
+        for f, v in sorted(out["by_folder"].items(), key=lambda kv: -kv[1]["dir_sectors_total"])[:3]:
+            fo = v["folder"]
+            log(f"  {f or '(root)'}" + (f" ({fo['files']:,} files, {fo['entries']:,} entries, {fo['sectors']:,} sectors)"
+                                        if fo else "")
+                + f": {v['files']} files read, directory sectors mean {v['dir_sectors_mean']:.0f} (min "
+                  f"{v['dir_sectors_min']}, max {v['dir_sectors_max']}), total {v['dir_sectors_total']:,}")
+        log(f"  all lookups: {tot['r_commands']:,} commands, {tot['r_sectors']:,} sectors (directories "
+            f"{tot['r_dir_sectors']:,}); estimated {short(out['estimated_total_s'])}")
         return out
 
     # --- saving
@@ -184,119 +281,210 @@ class Run:
 
     # --- the task manager (idle, play)
 
-    def task_accounting(self):
-        """Per task (TaskManager::runTask()): calls and instructions (inclusive); audio routine calls by caller."""
+    def setup_tasks(self):
+        """Once: per task (TaskManager::runTask()) calls and instructions, inclusive and exclusive (without the tasks
+        run inside it, as while it waits for the card); the audio routine's calls by caller; culls, cluster loads."""
+        if self.regions:
+            return
         emu, sym = self.emu, self.emu.sym
-        name_off, = se.gdb_values(emu, ["(int)&((Task*)0)->name"])
-        task_size, = se.gdb_values(emu, ["sizeof(Task)"])
-        base = sym["taskManager"]
-        self.tasks = collections.defaultdict(lambda: [0, 0])
-        self.routine_calls = []  # (caller, instructions, samples)
+        (self.task_size, self.name_off, self.prio_off, self.target_off, self.handle_off, list_size,
+         current_off, average_off) = se.gdb_values(emu, ["sizeof(Task)", "(int)&((Task*)0)->name",
+                                                         "(int)&((Task*)0)->schedule.priority",
+                                                         "(int)&((Task*)0)->schedule.targetInterval",
+                                                         "(int)&((Task*)0)->handle", "sizeof(((TaskManager*)0)->list)",
+                                                         "(int)&((TaskManager*)0)->currentID",
+                                                         "(int)&((Task*)0)->durationStats.average"])
+        self.num_slots = list_size // self.task_size
+        self.tm = sym["taskManager"]
         timer = sym["_ZN11AudioEngine16audioSampleTimerE"]
         rfs = sym["routineForSD"] & ~1
         rfs_end = rfs + sym.by_name["routineForSD"][1]
-
-        def task_name(i):
-            p = emu.u32(base + i * task_size + name_off)
-            s = emu.ram(p, 40) if p else None
-            return s.split(b"\0")[0].decode(errors="replace") if s else f"task {i}"
-
-        self.task_name = task_name
         regions = se.Regions(emu, [("_ZN11TaskManager7runTaskEa", "task"), ("_ZN11AudioEngine7routineEv", "audio")],
                              "scheduler, idle loop")
+        self.task_stack = []  # [task ID, instructions of the tasks run inside it]
 
         def task_enter(e, back):
-            return struct.unpack("<b", bytes([e.uc.reg_read(UC_ARM_REG_R0) & 0xFF]))[0]
+            tid = struct.unpack("<b", bytes([e.uc.reg_read(UC_ARM_REG_R0) & 0xFF]))[0]
+            self.task_stack.append([tid, 0])
+            return tid
 
         def task_exit(e, tid, n):
-            self.tasks[tid][0] += 1
-            self.tasks[tid][1] += n
+            inner = self.task_stack.pop()[1] if self.task_stack else 0
+            t = self.tasks[tid]
+            t[0] += 1
+            t[1] += n
+            t[2] += n - inner
+            if self.task_stack:
+                self.task_stack[-1][1] += n
 
         def audio_enter(e, back):
-            caller = "routineForSD" if rfs <= back < rfs_end else "task" if any(
-                s[0] == "task" for s in regions.stack) else "other"
-            return caller, e.u32(timer)
+            if rfs <= back < rfs_end:
+                caller = "routineForSD()"
+            else:
+                depth = sum(1 for s in regions.stack if s[0] == "task")
+                caller = ("task manager" if depth == 1 else "task manager, inside another task's yield"
+                          if depth > 1 else "other")
+            return caller, e.u32(timer), e.now()
 
         def audio_exit(e, extra, n):
-            self.routine_calls.append((extra[0], n, (e.u32(timer) - extra[1]) & 0xFFFFFFFF))
+            self.routine_calls.append((extra[0], n, (e.u32(timer) - extra[1]) & 0xFFFFFFFF, extra[2], e.now()))
 
         regions.on_enter.update(task=task_enter, audio=audio_enter)
         regions.on_exit.update(task=task_exit, audio=audio_exit)
         self.regions = regions
-        self.culls = collections.Counter()
 
         def on_cull(e):
+            """cullVoice(saveVoice, type, ...): setDireness() judged by the current task's average duration
+            (getLastRunTimeforCurrentTask(), in samples: dspTime); against it the DMA's real lag."""
             kind = e.uc.reg_read(UC_ARM_REG_R1)
             self.culls[se.CULL_TYPES[kind] if kind < len(se.CULL_TYPES) else str(kind)] += 1
+            audio = [x for x in regions.stack if x[0] == "audio"]
+            current = struct.unpack("<b", bytes(e.uc.mem_read(self.tm + current_off, 1)))[0]
+            self.cull_context[f"routine() from {audio[-1][4][0] if audio else '?'}, current task "
+                              f"{self.task_key(current)}"] += 1
+            average = struct.unpack("<d", bytes(e.uc.mem_read(self.tm + current * self.task_size + average_off, 8)))[0] \
+                if 0 <= current < self.num_slots else 0
+            self.cull_samples.append((round(average * SAMPLE_RATE), e.dma.gap() if e.dma else -1))
         emu.intercept(sym.find("_ZN11AudioEngine9cullVoiceE"), on_cull)
-        self.cluster_loads = 0
 
         def on_load(e):
             self.cluster_loads += 1
         emu.intercept(sym.find("_ZN16AudioFileManager11loadClusterE"), on_load)
         emu.uc.ctl_flush_tb()
 
+    def reset_counters(self):
+        self.tasks = collections.defaultdict(lambda: [0, 0, 0])  # calls, inclusive, exclusive instructions
+        self.routine_calls = []  # (caller, instructions, samples, start, end)
+        self.culls = collections.Counter()
+        self.cull_context = collections.Counter()
+        self.cull_samples = []  # (numSamples setDireness() judged by, the DMA's gap then)
+        self.cluster_loads = 0
+        self.regions.time.clear()
+        self.regions.last = self.emu.bc.bc_total()
+
+    def task_key(self, tid):
+        """The task's name and priority (the list as it is now)."""
+        if not 0 <= tid < self.num_slots:
+            return f"task {tid}"
+        t = self.tm + tid * self.task_size
+        p = self.emu.u32(t + self.name_off)
+        s = self.emu.ram(p, 40) if p else None
+        name = " ".join(s.split(b"\0")[0].decode(errors="replace").split()) if s else f"task {tid}"
+        return f"{name} (p{self.emu.u8(t + self.prio_off)})"
+
     def run_tasks(self, seconds, label):
         emu = self.emu
+        self.setup_tasks()
+        self.reset_counters()
         cpu = se.CpuStats(emu)
         dma = se.RealTimeDma(emu)
-        self.task_accounting()
+        waits0 = len(emu.sd_model.waits) if emu.sd_model else 0
         i0, n0, t = emu.now(), len(emu.sd_log), time.time()
-        regions = self.regions
-        regions.last = emu.bc.bc_total()
-        regions.time.clear()
         se.run_task_manager(emu, seconds)
-        dma.collect()
-        regions.charge()
+        dma.close()
+        cpu.close()
+        self.regions.charge()
         total = emu.now() - i0
+        us = lambda n: n / hz() * 1e6  # noqa: E731
         sd = self.card.summarize(emu.sd_log[n0:])
         calls = self.routine_calls
         rendering = [c for c in calls if c[2]]
         audio_instr = sum(c[1] for c in calls)
         samples = sum(c[2] for c in calls)
-        by_caller = collections.Counter(c[0] for c in rendering)
-        tasks = {self.task_name(tid): dict(calls=v[0], instructions=v[1], share=v[1] / total)
-                 for tid, v in sorted(self.tasks.items(), key=lambda kv: -kv[1][1])}
+        keys = {tid: self.task_key(tid) for tid in self.tasks}
+        tasks = {keys[tid]: dict(calls=v[0], inclusive=v[1] / total, exclusive=v[2] / total)
+                 for tid, v in sorted(self.tasks.items(), key=lambda kv: -kv[1][2])}
+        audio_task = next((v for tid, v in self.tasks.items() if keys[tid] == AUDIO_TASK), [0, 0, 0])
+        runs = max(audio_task[0], 1)
+        others = sum(v[2] for tid, v in self.tasks.items() if keys[tid] != AUDIO_TASK)
+        scheduler = self.regions.time.get("scheduler, idle loop", 0)
         windows = cpu.summaries()
-        r = dict(label=label, seconds=total / CPU_HZ, host_s=time.time() - t, instructions=total, sd=sd,
+        r = dict(label=label, seconds=total / hz(), host_s=time.time() - t, instructions=total, sd=sd,
+                 instructions_per_cycle=hz() / 400e6,
                  audio=dict(calls=len(calls), rendering_calls=len(rendering), samples=samples,
                             samples_per_rendering_call=samples / max(len(rendering), 1),
+                            samples_per_call_most_often=dict(collections.Counter(c[2] for c in rendering).most_common(8)),
                             instructions=audio_instr, instructions_per_call=audio_instr / max(len(calls), 1),
                             instructions_per_rendering_call=sum(c[1] for c in rendering) / max(len(rendering), 1),
                             empty_call_instructions=sum(c[1] for c in calls if not c[2]),
-                            cpu_percent_1ipc=audio_instr / max(samples, 1) / INSTR_PER_SAMPLE * 100,
-                            rendering_calls_by_caller=dict(by_caller),
-                            window_sizes=dict(collections.Counter(c[2] for c in rendering).most_common(8))),
-                 tasks=tasks, exclusive=dict(regions.time), culls=dict(self.culls), cluster_loads=self.cluster_loads,
-                 dma=dict(max_gap=dma.max_gap, underrun_samples=dma.underruns, samples_played=int(dma.position() - dma.start_position)),
+                            cpu_percent=audio_instr / max(samples, 1) / (hz() / SAMPLE_RATE) * 100,
+                            share_of_time=audio_instr / total,
+                            rendering_calls_by_caller=dict(collections.Counter(c[0] for c in rendering))),
+                 audio_task=dict(runs=audio_task[0], every_us=us(total / runs), in_task_us=us(audio_task[2] / runs),
+                                 gap_us=us((total - audio_task[2]) / runs), gap_other_tasks_us=us(others / runs),
+                                 gap_scheduler_us=us(scheduler / runs), other_tasks_share=others / total,
+                                 scheduler_share=scheduler / total),
+                 tasks=tasks, exclusive=dict(self.regions.time), culls=dict(self.culls),
+                 cull_context=dict(self.cull_context),
+                 cull_judged_samples_max=max((c[0] for c in self.cull_samples), default=None),
+                 cull_dma_gap_max=max((c[1] for c in self.cull_samples), default=None),
+                 cluster_loads=self.cluster_loads,
+                 dma=dict(max_gap=dma.max_gap, underrun_samples=dma.underruns,
+                          samples_played=int(dma.position() - dma.start_position)),
                  cpu_stats=windows)
         if emu.sd_model:
-            waits = [w for w in emu.sd_model.waits if w[0] >= i0]
-            d = np.array([w[1] for w in waits]) / CPU_HZ * 1e3 if waits else np.zeros(1)
+            waits = emu.sd_model.waits[waits0:]
+            d = np.array([w[1] for w in waits] or [0]) / hz() * 1e3
+            card = np.array([w[5] for w in waits] or [0]) / hz() * 1e3
             r["sd_waits"] = dict(count=len(waits), ms_mean=float(d.mean()), ms_max=float(d.max()),
-                                 ms_total=float(d.sum()), routine_for_sd_calls=sum(w[4] for w in waits),
-                                 model=emu.sd_model.params)
-        emu.dma = None
-        a = r["audio"]
-        log(f"{label}: {r['seconds']:.2f} s emulated ({r['host_s']:.0f} s host), {total / 1e6:,.0f}M instructions")
-        log(f"  audio routine: {a['calls']:,} calls, {a['rendering_calls']:,} rendering ({a['samples_per_rendering_call']:.1f}"
-            f" samples each; by caller {a['rendering_calls_by_caller']}), {a['instructions_per_rendering_call']:,.0f} "
-            f"instructions per rendering call, {a['empty_call_instructions'] / max(a['calls'] - a['rendering_calls'], 1):,.0f}"
-            f" per empty call; CPU {a['cpu_percent_1ipc']:.1f} % at 1 instruction per cycle (time in routine() / audio"
-            f" rendered, as cpu_stats measures)")
-        log("  tasks (inclusive): " + ", ".join(f"{k} {v['share'] * 100:.1f}% ({v['calls']:,})" for k, v in
-                                                list(tasks.items())[:9]))
+                                 ms_total=float(d.sum()), card_ms_mean=float(card.mean()),
+                                 extra_ms_mean=float((d - card).mean()), extra_ms_max=float((d - card).max()),
+                                 polls=int(sum(w[4] for w in waits)), model=emu.sd_model.params)
+        a, at = r["audio"], r["audio_task"]
+        log(f"{label}: {r['seconds']:.2f} s emulated ({r['host_s']:.0f} s host), {total / 1e6:,.0f}M instructions"
+            + (f", the CPU at {r['instructions_per_cycle']:g} instructions per cycle"
+               if r["instructions_per_cycle"] != 1 else ""))
+        log(f"  audio routine: {a['calls']:,} calls ({a['calls'] / r['seconds']:,.0f}/s), {a['rendering_calls']:,} "
+            f"rendering, {a['samples_per_rendering_call']:.1f} samples each (most often "
+            f"{a['samples_per_call_most_often']}), {a['instructions_per_rendering_call']:,.0f} instructions each; by "
+            f"caller {a['rendering_calls_by_caller']}; CPU {a['cpu_percent']:.1f} % as cpu_stats measures (time in "
+            f"routine() / audio rendered)")
+        log(f"  its task: every {at['every_us']:.1f} us ({at['runs']:,} runs): {at['in_task_us']:.1f} us in it, then "
+            f"{at['gap_us']:.1f} us until the next (other tasks {at['gap_other_tasks_us']:.1f} us, the scheduler "
+            f"{at['gap_scheduler_us']:.1f} us); in all, other tasks {at['other_tasks_share'] * 100:.1f} % of the time, "
+            f"the scheduler {at['scheduler_share'] * 100:.1f} %")
+        log("  tasks (exclusive / inclusive, runs): " + ", ".join(
+            f"{k} {v['exclusive'] * 100:.1f}/{v['inclusive'] * 100:.1f}% ({v['calls']:,})"
+            for k, v in list(tasks.items())[:10]))
         log(f"  cluster loads {self.cluster_loads}, SD reads {sd.get('r_commands', 0)} commands / {sd.get('r_sectors', 0)} "
             f"sectors, culls {dict(self.culls)}, DMA max gap {dma.max_gap} samples, underrun samples {dma.underruns}")
+        if self.cull_samples:
+            log(f"  culls judged by up to {r['cull_judged_samples_max']} samples (setDireness(): the current task's "
+                f"average duration) while the DMA was at most {r['cull_dma_gap_max']} samples behind: "
+                f"{dict(self.cull_context)}")
         if "sd_waits" in r:
             w = r["sd_waits"]
-            log(f"  card waits: {w['count']} commands, mean {w['ms_mean']:.2f} ms, max {w['ms_max']:.2f} ms, total "
-                f"{w['ms_total']:.0f} ms, routineForSD() calls meanwhile {w['routine_for_sd_calls']:,}")
-        for w in windows:
-            log(f"  cpu_stats {w['at_s']:6.2f} s: CPU {w['dspAvgPermille'] / 10:.1f}% avg / {w['dspPeakPermille'] / 10:.1f}% "
-                f"peak, voices {w['voicesNow']}/{w['voicesMax']}, direness max {w['direMax']} ({w['direSharePermille'] / 10:.1f}%"
-                f" of the audio), culled {w['culled']}, SD loads {w['sdLoads']} avg {w['sdAvgUs']} us (card "
-                f"{w['sdCardAvgUs']} us) max {w['sdMaxUs']} us, max gap {w['maxGapUs']} us")
+            log(f"  card waits ({w['model']['wait']}): {w['count']} commands, mean {w['ms_mean']:.2f} ms (the card's own "
+                f"{w['card_ms_mean']:.2f} ms, +{w['extra_ms_mean']:.2f} ms until the firmware noticed, max +"
+                f"{w['extra_ms_max']:.2f}), max {w['ms_max']:.2f} ms, total {w['ms_total']:.0f} ms, polls {w['polls']:,}")
+        if windows:
+            avg = [x["dspAvgPermille"] / 10 for x in windows]
+            steady = avg[1:] or avg  # The first window began before this phase
+            r["cpu_stats_avg_percent"] = float(np.mean(steady))
+            log(f"  cpu_stats ({len(windows)} windows of 0.5 s): CPU avg {np.mean(steady):.1f} % (after the first "
+                f"window; {min(avg):.1f}-{max(avg):.1f}), peak max {max(x['dspPeakPermille'] for x in windows) / 10:.1f} %, voices max "
+                f"{max(x['voicesMax'] for x in windows)}, direness max {max(x['direMax'] for x in windows)} (QL in "
+                f"{sum(x['direMax'] > 0 for x in windows)} windows), culled {sum(x['culled'] for x in windows)} (VC), "
+                f"SD loads {sum(x['sdLoads'] for x in windows)} (avg up to {max(x['sdAvgUs'] for x in windows)} us), "
+                f"max gap {max(x['maxGapUs'] for x in windows)} us")
+        return r
+
+    def idle_fixed(self, seconds):
+        """--idle-fixed: the playback routine's target interval 16/44100. s (deluge.cpp:584 as meant) for this phase."""
+        self.setup_tasks()
+        at = next((self.tm + i * self.task_size + self.target_off for i in range(self.num_slots)
+                   if self.emu.u32(self.tm + i * self.task_size + self.handle_off)
+                   and self.task_key(i) == PLAYBACK_TASK), None)
+        if at is None:
+            raise SystemExit(f"no task {PLAYBACK_TASK}")
+        old, = struct.unpack("<d", bytes(self.emu.uc.mem_read(at, 8)))
+        self.emu.uc.mem_write(at, struct.pack("<d", 16 / 44100.))
+        try:
+            r = self.run_tasks(seconds, f"idle, {seconds:g} s more with the playback routine's target interval "
+                                        f"{16 / 44100. * 1e6:.0f} us instead of {old * 1e6:g} us (deluge.cpp:584 as meant)")
+        finally:
+            self.emu.uc.mem_write(at, struct.pack("<d", old))
+        r["playback_target_s"] = dict(original=old, set=16 / 44100.)
         return r
 
     def lines(self, seconds=0.02):
@@ -316,7 +504,6 @@ class Run:
                  for b, size in ((se.SDRAM, se.SDRAM_SIZE), (se.SDRAM + se.UNCACHED_MIRROR_OFFSET, se.SDRAM_SIZE),
                                  (se.INTERNAL_RAM, se.INTERNAL_RAM_SIZE))]
         timer = emu.sym["_ZN11AudioEngine16audioSampleTimerE"]
-        routine = emu.sym["_ZN11AudioEngine7routineEv"]
         depth = [0, 0]
         regions = se.Regions(emu, [("_ZN11AudioEngine7routineEv", "lines")], "other")
 
@@ -342,7 +529,7 @@ class Run:
         se.run_task_manager(emu, seconds)
         for h in hooks:
             emu.uc.hook_del(h)
-        emu.dma = None
+        dma.close()
         if not per_call:
             return None
         a = np.array(per_call, dtype=float)
@@ -359,7 +546,7 @@ class Run:
 
     # --- the song browser
 
-    def browse(self, steps):
+    def browse(self, steps, settle_s):
         emu, sym = self.emu, self.emu.sym
         reads = [0]
 
@@ -368,38 +555,60 @@ class Run:
         emu.intercept(sym.find("_ZN7Browser32readFileItemsFromFolderAndMemory"), on_read)
         emu.uc.ctl_flush_tb()
         ui = sym["loadSongUI"]
+        mode_at = sym["currentUIMode"]
         opened = self.phase("song browser opened (openUI(&loadSongUI))",
                             lambda: emu.call(sym["_Z6openUIP2UI"], ui, timeout_s=60))
         opened["folder_reads"] = reads[0]
-        mode = emu.u32(sym["currentUIMode"])
-        opened["ui_mode_after_open"] = mode
-        if mode:  # What the startup song's loading left (the UI's own flow isn't run here): the browser needs NONE
-            log(f"currentUIMode {mode:#x} after opening, set to UI_MODE_NONE for the select encoder")
-            emu.w32(sym["currentUIMode"], 0)
+        opened["ui_mode_after_open"] = emu.u32(mode_at)
+        dma = se.RealTimeDma(emu)
+        waited = 0.0
+        while emu.u32(mode_at) and waited < 2:  # The scroll-in (UI_MODE_VERTICAL_SCROLL), by the UI timer
+            se.run_task_manager(emu, 0.05)
+            waited += 0.05
+        opened["scroll_in_s"] = waited
+        opened["ui_mode_after_scroll_in"] = emu.u32(mode_at)
+        log(f"currentUIMode {opened['ui_mode_after_open']:#x} after opening, {opened['ui_mode_after_scroll_in']:#x} after "
+            f"{waited:.2f} s of the task manager")
         per_step = []
         select = sym["_ZN10LoadSongUI19selectEncoderActionEa"]
         selected = sym["_ZN7Browser17fileIndexSelectedE"]
         deleted = sym["_ZN7Browser26numFileItemsDeletedAtStartE"]
+        modes = collections.Counter()
         mode_resets = 0
+        settle_reads = [0, 0, 0]  # commands, sectors, folder reads while settling
         t = time.time()
         for i in range(steps):
             se.drain_uarts(emu)
-            if emu.u32(sym["currentUIMode"]):
-                emu.w32(sym["currentUIMode"], 0)
+            mode = emu.u32(mode_at)
+            modes[mode] += 1
+            if mode not in (0, UI_MODE_HORIZONTAL_SCROLL):  # The select encoder would be ignored
+                emu.w32(mode_at, 0)
                 mode_resets += 1
             r0, i0, n0 = reads[0], emu.now(), len(emu.sd_log)
             emu.call(select, ui, 1, timeout_s=60)
             sd = self.card.summarize(emu.sd_log[n0:])
             per_step.append((emu.now() - i0, sd.get("r_commands", 0), sd.get("r_sectors", 0), reads[0] - r0,
                              struct.unpack("<i", emu.uc.mem_read(selected, 4))[0] + emu.u32(deleted)))
+            if settle_s:
+                r1, n1 = reads[0], len(emu.sd_log)
+                se.run_task_manager(emu, settle_s)
+                sd = self.card.summarize(emu.sd_log[n1:])
+                settle_reads[0] += sd.get("r_commands", 0)
+                settle_reads[1] += sd.get("r_sectors", 0)
+                settle_reads[2] += reads[0] - r1
+        dma.close()
         a = np.array([p[:4] for p in per_step], dtype=float)
         rereads = a[:, 3] > 0
         est = [estimate(int(p[0]), {"r_commands": p[1], "r_sectors": p[2]}) for p in per_step]
         key = list(PROFILES)[0]
         e = np.array([x[key] for x in est])
-        r = dict(steps=steps, host_s=time.time() - t, folder_reads=int(a[:, 3].sum()),
+        plain = ~rereads
+        r = dict(steps=steps, settle_s=settle_s, host_s=time.time() - t, folder_reads=int(a[:, 3].sum()),
                  steps_with_reread=int(rereads.sum()),
                  per_step_instructions=dict(median=float(np.median(a[:, 0])), max=float(a[:, 0].max())),
+                 per_plain_step=dict(instructions=float(a[plain, 0].mean()) if plain.any() else 0,
+                                     commands=float(a[plain, 1].mean()) if plain.any() else 0,
+                                     sectors=float(a[plain, 2].mean()) if plain.any() else 0),
                  per_reread=dict(instructions=float(a[rereads, 0].mean()) if rereads.any() else 0,
                                  commands=float(a[rereads, 1].mean()) if rereads.any() else 0,
                                  sectors=float(a[rereads, 2].mean()) if rereads.any() else 0),
@@ -407,14 +616,20 @@ class Run:
                  estimated_total_s=estimate(int(a[:, 0].sum()), {"r_commands": int(a[:, 1].sum()),
                                                                   "r_sectors": int(a[:, 2].sum())}),
                  estimated_step_ms=dict(median=float(np.median(e)) * 1e3, max=float(e.max()) * 1e3,
+                                        plain_mean=float(e[plain].mean()) * 1e3 if plain.any() else 0,
                                         reread_mean=float(e[rereads].mean()) * 1e3 if rereads.any() else 0),
-                 selected_index_trace=[p[4] for p in per_step[::50]], ui_mode_resets=mode_resets)
-        log(f"browsing: {steps} steps ({r['host_s']:.0f} s host): the folder read again {r['folder_reads']} times "
-            f"({r['steps_with_reread']} steps); a step without: {r['per_step_instructions']['median'] / 1e3:,.0f}k "
-            f"instructions; with: {r['per_reread']['instructions'] / 1e6:,.1f}M instructions, "
-            f"{r['per_reread']['commands']:,.0f} commands, {r['per_reread']['sectors']:,.0f} sectors, estimated "
-            f"{r['estimated_step_ms']['reread_mean']:.0f} ms ({key.split()[0]}); whole scroll "
-            + ", ".join(f"{v:.1f} s {k.split()[0]}" for k, v in r["estimated_total_s"].items()))
+                 while_settling=dict(commands=settle_reads[0], sectors=settle_reads[1], folder_reads=settle_reads[2]),
+                 ui_modes_before_steps={f"{k:#x}": v for k, v in modes.items()}, ui_mode_resets=mode_resets,
+                 selected_index_trace=[p[4] for p in per_step[::50]])
+        log(f"browsing: {steps} steps, {settle_s * 1e3:g} ms of the task manager after each ({r['host_s']:.0f} s host); UI "
+            f"modes before the steps {r['ui_modes_before_steps']}, reset {mode_resets}; the folder read again "
+            f"{r['folder_reads']} times ({r['steps_with_reread']} steps); a step without: "
+            f"{r['per_plain_step']['instructions'] / 1e3:,.0f}k instructions, {r['per_plain_step']['commands']:.1f} "
+            f"commands, estimated {r['estimated_step_ms']['plain_mean']:.1f} ms; with: "
+            f"{r['per_reread']['instructions'] / 1e6:,.1f}M instructions, {r['per_reread']['commands']:,.0f} commands, "
+            f"{r['per_reread']['sectors']:,.0f} sectors, estimated {r['estimated_step_ms']['reread_mean']:.0f} ms "
+            f"({key.split()[0]}); whole scroll {short(r['estimated_total_s'])}; while settling "
+            f"{settle_reads[0]} commands, {settle_reads[2]} folder reads")
         return r
 
 
@@ -426,31 +641,40 @@ def main():
     ap.add_argument("scenario", choices=["load", "play", "browse"])
     ap.add_argument("--save", action="store_true")
     ap.add_argument("--idle", type=float, default=0)
+    ap.add_argument("--idle-fixed", type=float, default=0)
     ap.add_argument("--lines", action="store_true")
     ap.add_argument("--seconds", type=float, default=2)
     ap.add_argument("--steps", type=int, default=1250)
+    ap.add_argument("--settle-ms", type=float, default=20)
     ap.add_argument("--sd-latency", help="CMD_US,SECTOR_US[,POLL_US] (song_emu.SdModel), for play")
+    ap.add_argument("--sd-wait", default="yield", choices=["yield", "loop"])
+    ap.add_argument("--ipc", type=float, default=1.0)
     ap.add_argument("--name", help="result file name (default: the scenario)")
     ap.add_argument("--tools")
     ap.add_argument("--build", default=HERE)
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
+    if args.ipc != 1:
+        se.set_instructions_per_cycle(args.ipc)
     run = Run(args)
     res = run.result
     if args.save:
         run.save()
     if args.idle:
         res["idle"] = run.run_tasks(args.idle, f"idle, song stopped, {args.idle:g} s with the task manager")
+        if args.idle_fixed:
+            res["idle_fixed"] = run.idle_fixed(args.idle_fixed)
         if args.lines:
             res["lines"] = run.lines()
     if args.scenario == "play":
         if args.sd_latency:
-            se.SdModel(run.emu, *(float(x) for x in args.sd_latency.split(",")))
+            se.SdModel(run.emu, *(float(x) for x in args.sd_latency.split(",")), wait=args.sd_wait)
         run.emu.call(run.emu.sym.find("_ZN15PlaybackHandler17playButtonPressedEl"), 0)
         res["play"] = run.run_tasks(args.seconds, f"playing {args.seconds:g} s, card "
-                                    + (f"model {args.sd_latency}" if args.sd_latency else "instant"))
+                                    + (f"model {args.sd_latency}, wait {args.sd_wait}" if args.sd_latency
+                                       else "instant"))
     if args.scenario == "browse":
-        res["browse"] = run.browse(args.steps)
+        res["browse"] = run.browse(args.steps, args.settle_ms / 1e3)
     path = os.path.join(args.out, (args.name or args.scenario) + ".json")
     json.dump(res, open(path, "w"), indent=1, default=str)
     log(f"-> {path}")
