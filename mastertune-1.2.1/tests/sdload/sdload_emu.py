@@ -145,6 +145,7 @@ class Run:
         emu.sd_log = []
         se.setup_sd(emu)
         self.regions = None
+        self.ui_renders = None  # --ui-load: [redraws so far]
         self.result = dict(scenario=args.scenario, image=os.path.basename(args.image), card=self.card.layout["notes"],
                            card_clusters=self.card.layout["num_clusters"], used_clusters=self.card.layout["used_clusters"],
                            fat_sectors=self.card.fat_sectors,
@@ -316,6 +317,7 @@ class Run:
             t[0] += 1
             t[1] += n
             t[2] += n - inner
+            t[3] = max(t[3], n - inner)
             if self.task_stack:
                 self.task_stack[-1][1] += n
 
@@ -364,7 +366,7 @@ class Run:
         emu.uc.ctl_flush_tb()
 
     def reset_counters(self):
-        self.tasks = collections.defaultdict(lambda: [0, 0, 0])  # calls, inclusive, exclusive instructions
+        self.tasks = collections.defaultdict(lambda: [0, 0, 0, 0])  # calls, inclusive, exclusive, longest run (excl.)
         self.routine_calls = []  # (caller, instructions, samples, start, end)
         self.culls = collections.Counter()
         self.cull_context = collections.Counter()
@@ -383,12 +385,15 @@ class Run:
         name = " ".join(s.split(b"\0")[0].decode(errors="replace").split()) if s else f"task {tid}"
         return f"{name} (p{self.emu.u8(t + self.prio_off)})"
 
-    def run_tasks(self, seconds, label):
+    def run_tasks(self, seconds, label, setup=None):
+        """setup(dma): called with the RealTimeDma before the task manager runs (clockin's MIDI input)."""
         emu = self.emu
         self.setup_tasks()
         self.reset_counters()
         cpu = se.CpuStats(emu)
         dma = se.RealTimeDma(emu)
+        if setup:
+            setup(dma)
         waits0 = len(emu.sd_model.waits) if emu.sd_model else 0
         i0, n0, t = emu.now(), len(emu.sd_log), time.time()
         se.run_task_manager(emu, seconds)
@@ -403,7 +408,7 @@ class Run:
         audio_instr = sum(c[1] for c in calls)
         samples = sum(c[2] for c in calls)
         keys = {tid: self.task_key(tid) for tid in self.tasks}
-        tasks = {keys[tid]: dict(calls=v[0], inclusive=v[1] / total, exclusive=v[2] / total)
+        tasks = {keys[tid]: dict(calls=v[0], inclusive=v[1] / total, exclusive=v[2] / total, longest_us=us(v[3]))
                  for tid, v in sorted(self.tasks.items(), key=lambda kv: -kv[1][2])}
         audio_task = next((v for tid, v in self.tasks.items() if keys[tid] == AUDIO_TASK), [0, 0, 0])
         runs = max(audio_task[0], 1)
@@ -457,6 +462,13 @@ class Run:
         log("  tasks (exclusive / inclusive, runs): " + ", ".join(
             f"{k} {v['exclusive'] * 100:.1f}/{v['inclusive'] * 100:.1f}% ({v['calls']:,})"
             for k, v in list(tasks.items())[:10]))
+        longest = sorted(((k, v["longest_us"]) for k, v in tasks.items() if k != AUDIO_TASK), key=lambda kv: -kv[1])
+        log("  longest runs (exclusive, the audio routine waits meanwhile): " + ", ".join(
+            f"{k} {u:.0f} us ({u * SAMPLE_RATE / 1e6:.0f} samples)" for k, u in longest[:4]))
+        if self.ui_renders is not None:
+            r["ui_renders"] = self.ui_renders[0]
+            log(f"  UI load: {self.ui_renders[0]:,} redraws of the pads, sidebar and OLED ({self.ui_renders[0] / r['seconds']:.0f}/s)")
+            self.ui_renders[0] = 0
         log(f"  cluster loads {self.cluster_loads}, SD reads {sd.get('r_commands', 0)} commands / {sd.get('r_sectors', 0)} "
             f"sectors, culls {dict(self.culls)}, DMA max gap {dma.max_gap} samples, underrun samples {dma.underruns}")
         if self.cull_samples:
@@ -477,6 +489,118 @@ class Run:
                 f"{sum(x['direMax'] > 0 for x in windows)} windows), culled {sum(x['culled'] for x in windows)} (VC), "
                 f"SD loads {sum(x['sdLoads'] for x in windows)} (avg up to {max(x['sdAvgUs'] for x in windows)} us), "
                 f"max gap {max(x['maxGapUs'] for x in windows)} us")
+        return r
+
+    def ui_load(self):
+        """--ui-load: every run of the pending-UI task (doAnyPendingUIRendering(), at most every 10 ms) redraws all main
+        pads, the sidebar and the OLED with the firmware's own functions (the open UI's renderMainPads(), renderSidebar(),
+        renderOLED(); the pads' colours to the PIC's UART, the image to the OLED's DMA), as while a knob is turned or the
+        view scrolls: the UI's real work at its real cost, which the audio routine waits for."""
+        emu, sym = self.emu, self.emu.sym
+        rows, side, oled = (sym["whichMainRowsNeedRendering"], sym["whichSideRowsNeedRendering"],
+                            sym["doesOLEDNeedRendering"])
+        self.ui_renders = [0]
+
+        def before(e):
+            e.uc.mem_write(rows, struct.pack("<I", 0xFF))
+            e.uc.mem_write(side, struct.pack("<I", 0xFF))
+            e.uc.mem_write(oled, b"\x01")
+            self.ui_renders[0] += 1
+        emu.intercept(sym.find("_Z23doAnyPendingUIRenderingv"), before)
+        emu.uc.ctl_flush_tb()
+
+    def clock_in(self, seconds, bpm):
+        """clockin: the song follows an external MIDI clock that comes in through the firmware's own DIN MIDI input:
+        a MIDI start, then a clock (0xF8) every 1/24 beat at `bpm`, each byte put into the UART's receive ring at its
+        arrival (the receive DMA's write address, CRDA, read by uartGetCharWithTiming(), moves on then) and with its
+        timing capture as the RZ/A1's DMA takes it (the SSI transmit DMA's source address, CRSA, at the arrival). Per
+        tick the firmware processed (PlaybackHandler::inputTick()): where it placed it (timeLastInputTicks[0]) against
+        when the byte arrived, i.e. when the tick's sample plays minus the arrival (the firmware aims at 168 samples:
+        40 plus the output buffer's 128), how long the byte waited, and the samples rendered ahead then."""
+        emu, sym = self.emu, self.emu.sym
+        ph = sym["playbackHandler"]
+        off_ticks, off_enabled, off_ignoring = se.gdb_values(emu, [
+            "(int)&((PlaybackHandler*)0)->timeLastInputTicks", "(int)&((PlaybackHandler*)0)->midiInClockEnabled",
+            "(int)&((PlaybackHandler*)0)->ignoringMidiClockInput"])
+        emu.uc.mem_write(ph + off_enabled, b"\x01")
+        emu.uc.mem_write(ph + off_ignoring, b"\x00")
+        rx, rx_size = sym.by_name["midiRxBuffer"]
+        timing, timing_size = sym.by_name["midiRxTimingBuffer"]
+        timing_size //= 4
+        read_addr = sym["rxBufferReadAddr"] + 4  # UART_ITEM_MIDI
+        crda = se.dmac_channel_base(emu.elf_bytes_at(sym["rxDmaChannels"] + 1, 1)[0]) + 0x1C
+        timer = sym["_ZN11AudioEngine16audioSampleTimerE"]
+        out_pos, out_end = sym["_ZN11AudioEngine24renderingBufferOutputPosE"], sym["_ZN11AudioEngine24renderingBufferOutputEndE"]
+        ssi = sym["ssiTxBuffer"]
+        period = se.CPU_HZ * 60 / (bpm * 24)  # Instructions per clock
+        state = dict(events=[], next=0, written=0, arrivals={}, dma=None)
+        ticks = []  # (arrival position, heard position, waited samples, rendered ahead, tick number)
+
+        def setup(dma):
+            state["dma"] = dma
+            t0 = emu.now() + int(0.02 * se.CPU_HZ)
+            state["events"] = [(t0, 0xFA)] + [(int(t0 + (k + 0.5) * period), 0xF8)
+                                             for k in range(int((seconds - 0.03) * se.CPU_HZ / period))]
+
+        def write_address(size):
+            dma = state["dma"]
+            if dma is not None:
+                now = emu.now()
+                ev = state["events"]
+                while state["next"] < len(ev) and ev[state["next"]][0] <= now:
+                    t, byte = ev[state["next"]]
+                    k = state["written"]
+                    emu.uc.mem_write(rx + k % rx_size, bytes([byte]))
+                    pos = dma.exact_position(t)
+                    whole = int(pos // 1)
+                    crsa = ssi + whole % 128 * 8 + (4 if pos - whole >= 0.5 else 0)
+                    emu.uc.mem_write(timing + k % timing_size * 4, struct.pack("<I", crsa))
+                    state["arrivals"][k % rx_size] = pos
+                    state["written"] += 1
+                    state["next"] += 1
+            return rx + state["written"] % rx_size
+        emu.readers[crda] = write_address
+
+        regions = se.Regions(emu, [("_ZN15PlaybackHandler9inputTickEbm", "tick")], "other")
+
+        def enter(e, back):
+            k = (e.u32(read_addr) - 1 - rx) % rx_size
+            return state["arrivals"].get(k), e.u32(ph + off_ticks)
+
+        def leave(e, extra, n):
+            arrival, before = extra
+            dma = state["dma"]
+            tick = e.u32(ph + off_ticks)
+            if arrival is None or dma is None or tick == before:
+                return  # Not one of ours, or skipped (numInputTicksToSkip)
+            ahead = (e.u32(out_end) - e.u32(out_pos)) >> 3
+            next_sample = (e.u32(timer) - ahead) & 0xFFFFFFFF  # The sample dma.written stands for
+            rel = struct.unpack("<i", struct.pack("<I", (tick - next_sample) & 0xFFFFFFFF))[0]
+            now = dma.exact_position(e.now())
+            ticks.append((arrival, dma.written + rel, now - arrival, ahead, tick))
+        regions.on_enter["tick"] = enter
+        regions.on_exit["tick"] = leave
+        emu.uc.ctl_flush_tb()
+        r = self.run_tasks(seconds, f"following an external MIDI clock at {bpm:g} BPM through the DIN MIDI input, "
+                                    f"{seconds:g} s", setup=setup)
+        emu.readers[crda] = lambda size: emu.u32(read_addr)
+        lat = np.array([h - a for a, h, _, _, _ in ticks] or [0.0])
+        waited = np.array([w for _, _, w, _, _ in ticks] or [0.0])
+        ahead = np.array([x for _, _, _, x, _ in ticks] or [0])
+        err = lat - 168
+        r["clock_in"] = dict(bpm=bpm, clocks_sent=len(state["events"]) - 1, ticks=len(ticks),
+                             latency_mean=float(lat.mean()), latency_min=float(lat.min()),
+                             latency_max=float(lat.max()), latency_std=float(lat.std()),
+                             error_abs_mean=float(np.abs(err).mean()), error_abs_max=float(np.abs(err).max()),
+                             late_over_64=int((err > 64).sum()), waited_mean=float(waited.mean()),
+                             waited_max=float(waited.max()), ahead_mean=float(ahead.mean()), ahead_max=int(ahead.max()),
+                             ticks_list=[(round(a, 2), round(h - a, 2), round(w, 2), int(x)) for a, h, w, x, _ in ticks])
+        c = r["clock_in"]
+        log(f"  MIDI clock in: {c['ticks']} of {c['clocks_sent']} clocks placed; the tick plays {c['latency_mean']:.1f} "
+            f"samples after the byte arrived on average (min {c['latency_min']:.1f}, max {c['latency_max']:.1f}, std "
+            f"{c['latency_std']:.1f}; aimed at 168): error |latency - 168| mean {c['error_abs_mean']:.1f}, max "
+            f"{c['error_abs_max']:.1f} samples, {c['late_over_64']} more than 64 late; the byte waited {c['waited_mean']:.1f} "
+            f"samples on average (max {c['waited_max']:.1f}), rendered ahead then {c['ahead_mean']:.1f} (max {c['ahead_max']})")
         return r
 
     def idle_fixed(self, seconds):
@@ -659,7 +783,9 @@ def main():
     ap.add_argument("elf")
     ap.add_argument("image")
     ap.add_argument("out")
-    ap.add_argument("scenario", choices=["load", "play", "browse"])
+    ap.add_argument("scenario", choices=["load", "play", "browse", "clockin"])
+    ap.add_argument("--ui-load", action="store_true")
+    ap.add_argument("--bpm", type=float, default=120)
     ap.add_argument("--save", action="store_true")
     ap.add_argument("--idle", type=float, default=0)
     ap.add_argument("--idle-fixed", type=float, default=0)
@@ -679,6 +805,8 @@ def main():
         se.set_instructions_per_cycle(args.ipc)
     run = Run(args)
     res = run.result
+    if args.ui_load:
+        run.ui_load()
     if args.save:
         run.save()
     if args.idle:
@@ -697,6 +825,10 @@ def main():
         if args.lines:  # The card instant from here on (a wait in progress ends as modelled)
             run.emu.sd_model = None
             res["lines"] = run.lines(internal=False)
+    if args.scenario == "clockin":
+        if args.sd_latency:
+            se.SdModel(run.emu, *(float(x) for x in args.sd_latency.split(",")), wait=args.sd_wait)
+        res["clockin"] = run.clock_in(args.seconds, args.bpm)
     if args.scenario == "browse":
         res["browse"] = run.browse(args.steps, args.settle_ms / 1e3)
     path = os.path.join(args.out, (args.name or args.scenario) + ".json")

@@ -40,6 +40,14 @@ Checks (OLED unless said):
     OTHER and TRACK below; -1: DEFAULT, MID and OTHER below; +1 +1: OTHER at the bottom, MID with an arrow above
 13. the save browser: TRACK 2, TRACK 3, track 4 each a row of its own (Browser::renderOLED(), unchanged)
 14. 7-segment display: from OTHER +1: "TRACK--"; pressed: "TRACK"; +1: "TRACK 2"; BACK: "TRACK--"
+15. the folder read (Browser::readFileItemsFromFolderAndMemory()) only when needed next to a group larger than the
+    window (BIG): DEFAULT +1 -1 +1 -1 (MID 1, DEFAULT, ...): no read (the rows' files are all in the window);
+    across the group, DEFAULT -1 (BIG 1) and back +1: at most 4 reads each on the OLED (the window reaching ahead of
+    the steps over the versions: 2-3 for 120 of them, one for the rows), at most 3 on the 7-segment display; the
+    rows "A149 | A150 | [BIG >]" and "BIG > | [DEFAULT] | MID >". (Before: 1 read per step next to it, 5-6 across.)
+16. SHIFT+SAVE (delete) on the folded row TRACK: no delete prompt (it would delete TRACK.XML, which the row doesn't
+    show, and the prompt doesn't name it), a popup instead; on TRACK 2 in the group folded out: the prompt as before;
+    BACK from it: nothing deleted
 
 Usage: song_groups_emu.py <deluge.elf> [--tools PREFIX] [--out DIR] [--build DIR] [--baseline] [--no-7seg]
   --baseline: a build without the grouping: the same steps, reported (the old browser: every file a row), not checked.
@@ -64,6 +72,7 @@ from unicorn.arm_const import UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_AR
 
 BUTTON_SELECT = sc.button_xy(4, 3)  # selectEncButtonCoord
 BUTTON_LOAD, BUTTON_BACK = sc.BUTTON_LOAD, sc.BUTTON_BACK
+BUTTON_SHIFT, BUTTON_SAVE = sc.button_xy(8, 0), sc.button_xy(6, 3)  # shiftButtonCoord, saveButtonCoord
 UI_MODE_NONE = 0
 UI_MODE_LOADING_SONG_UNESSENTIAL_SAMPLES_UNARMED = 35
 NAME_AT = STOP + 0x400  # A name written for String::set()
@@ -111,7 +120,8 @@ class Browser:
             self.group_off = None  # A build without the grouping
         self.v = {n: sym[n] for n in ("_ZN8QwertyUI11enteredTextE", "_ZN7Browser17fileIndexSelectedE",
                                       "_ZN7Browser26numFileItemsDeletedAtStartE", "_Z12getCurrentUIv", "saveSongUI",
-                                      "_ZN6deluge3hid7display4OLED16submenuArrowIconE")}
+                                      "_ZN6deluge3hid7display4OLED16submenuArrowIconE",
+                                      "_ZN6deluge3gui12context_menu10deleteFileE")}
         own = [k for k in sym.by_name if k.startswith("_ZN10LoadSongUI10renderOLED")]
         self.render_load = sym.find("_ZN10LoadSongUI10renderOLED") if own else sym.find("_ZN7Browser10renderOLED")
         self.render_browser = sym.find("_ZN7Browser10renderOLED")
@@ -136,6 +146,11 @@ class Browser:
         emu.intercept(sym.find("_ZN6deluge3hid7display11oled_canvas6Canvas20drawGraphicMultiLine"), on_graphic)
         emu.intercept(sym.find("_ZN6deluge3hid7display11oled_canvas6Canvas10invertArea"), on_invert)
         emu.intercept(sym.find("_ZN6deluge3hid7display12SevenSegment16setScrollingText"), on_scrolling_text)
+
+        def on_popup(e):
+            d.events.append((d.window_index, "popup", dict(text=e.ram_str(e.uc.reg_read(UC_ARM_REG_R1)))))
+        for f in ("_ZN6deluge3hid7display4OLED12displayPopupEPKc", "_ZN6deluge3hid7display12SevenSegment12displayPopupEPKc"):
+            emu.intercept(sym.find(f), on_popup)
         emu.uc.ctl_flush_tb()
 
     # --- state
@@ -202,6 +217,9 @@ class Browser:
     def scroll_texts(self, mark):
         return [e["text"] for _, kind, e in self.d.events[mark:] if kind == "7segScroll"]
 
+    def popups(self, mark):
+        return [e["text"] for _, kind, e in self.d.events[mark:] if kind == "popup"]
+
     # --- input
     def settle(self, limit=400):
         """Windows of the task manager's work until no UI mode is on (animations done) and no load is paused."""
@@ -241,6 +259,17 @@ class Browser:
         ok = d.call("_Z6openUIP2UI", ui or self.ui) & 0xFF
         self.settle(2000)
         return bool(ok) and self.is_open(ui)
+
+    def shift_save(self):
+        """SHIFT held, SAVE pressed and released (Browser: delete the selected file, its prompt)."""
+        d = self.d
+        self.settle()
+        d.button(BUTTON_SHIFT, True)
+        d.button(BUTTON_SAVE, True)
+        d.button(BUTTON_SAVE, False)
+        d.button(BUTTON_SHIFT, False)
+        for _ in range(50):
+            d.step()
 
     def back(self):
         if not self.is_open():
@@ -448,6 +477,46 @@ def run_oled(a, sd, out, check):
           f"{b.show(f1)}; {b.show(f2)}; {b.show(f3)}")
     b.close()
 
+    # 15: next to a group larger than the window, and across it: the folder read only when the rows need it
+    b.open("DEFAULT")
+    steps = []
+    for o in (1, -1, 1, -1, -1, 1):
+        r0 = b.reads
+        b.turn(o)
+        steps.append((b.name(), b.reads - r0, b.show(b.frame())))
+    near = steps[:4]
+    check(f"15. next to BIG ({BIG} versions, more than the window): DEFAULT +1 -1 +1 -1: MID 1, DEFAULT, MID 1, "
+          "DEFAULT, the folder not read; -1: BIG 1 (across the group), +1: DEFAULT, each in at most 4 folder reads",
+          [n for n, _, _ in near] == ["MID 1", "DEFAULT", "MID 1", "DEFAULT"] and all(r == 0 for _, r, _ in near)
+          and steps[4][0] == "BIG 1" and steps[4][2] == "A149 | A150 | [BIG >]" and steps[4][1] <= 4
+          and steps[5][0] == "DEFAULT" and steps[5][2] == "BIG > | [DEFAULT] | MID >" and steps[5][1] <= 4,
+          "; ".join(f"{n} ({r} reads): {f}" for n, r, f in steps))
+
+    # 16: SHIFT+SAVE (delete the selected file) on a folded group's row: refused, the group folded out first
+    b.open("OTHER")
+    b.turn(1)
+    mark = len(d.events)
+    b.shift_save()
+    on_folded = (b.name(), b.is_open(), b.is_open(b.v["_ZN6deluge3gui12context_menu10deleteFileE"]), b.popups(mark))
+    b.close()
+    b.open("OTHER")
+    b.turn(1)
+    b.press(BUTTON_SELECT)
+    b.turn(1)
+    b.shift_save()
+    on_version = (b.name(), b.is_open(b.v["_ZN6deluge3gui12context_menu10deleteFileE"]))
+    b.back()  # The prompt closes, nothing deleted
+    f = b.frame()
+    check("16. SHIFT+SAVE on the folded row TRACK: no delete prompt (it would delete TRACK, not shown), a popup, the "
+          "browser stays; on the version TRACK 2 (folded out): the prompt, as before; BACK: nothing deleted",
+          on_folded[0] == "TRACK" and on_folded[1] and not on_folded[2] and on_folded[3]
+          and on_version == ("TRACK 2", True) and b.is_open() and b.name() == "TRACK 2"
+          and [r["text"] for r in f if r["text"] in TRACKS] == TRACKS[:len([r for r in f if r["text"] in TRACKS])]
+          and row(f, "TRACK 2") and row(f, "TRACK 2")["sel"],
+          f"folded row: selected {on_folded[0]!r}, browser open {on_folded[1]}, prompt open {on_folded[2]}, popups "
+          f"{on_folded[3]}; version: selected {on_version[0]!r}, prompt open {on_version[1]}; after BACK: {b.show(f)}")
+    b.close()
+
     # 13: the save browser lists every file
     save = b.v["saveSongUI"]
     b.open("TRACK", save)
@@ -484,6 +553,20 @@ def run_7seg(a, sd, out, check):
     check('14. 7-segment: +1 from OTHER: "TRACK--"; pressed: "TRACK"; +1: "TRACK 2"; BACK: "TRACK--"',
           t1[-1:] == ["TRACK--"] and t2[-1:] == ["TRACK"] and t3[-1:] == ["TRACK 2"] and t4[-1:] == ["TRACK--"],
           f"{t1[-1:]}, {t2[-1:]}, {t3[-1:]}, {t4[-1:]}")
+    b.close()
+
+    b.open("DEFAULT")
+    steps = []
+    for o in (1, -1, -1, 1):
+        r0, mark = b.reads, len(b.d.events)
+        b.turn(o)
+        steps.append((b.name(), b.reads - r0, b.scroll_texts(mark)[-1:]))
+    check(f'15. 7-segment: DEFAULT +1 -1: "MID--", "DEFAULT", the folder not read; -1: "BIG--" (across {BIG} versions), '
+          '+1: "DEFAULT", each in at most 3 folder reads',
+          [(n, t) for n, _, t in steps] == [("MID 1", ["MID--"]), ("DEFAULT", ["DEFAULT"]), ("BIG 1", ["BIG--"]),
+                                            ("DEFAULT", ["DEFAULT"])]
+          and steps[0][1] == 0 and steps[1][1] == 0 and steps[2][1] <= 3 and steps[3][1] <= 3,
+          "; ".join(f"{n} {t} ({r} reads)" for n, r, t in steps))
     b.close()
 
 
