@@ -43,7 +43,7 @@ PRESETS = {
 def build_sd(path, name, arp):
     make_sd.kit = lambda lengths: ("", "")
     make_sd.audio_track = lambda lengths: ("", "")
-    make_sd.drone = lambda: ""
+    make_sd.drone = lambda *args, **kwargs: ""
     synth = make_sd.synth(name, SAW, SAW_DETUNED, 1, PARAMS, ENV1, ENV2, CABLES, notes_octave=1, arp=arp)
     make_sd.synths = lambda: [synth]
     files, lengths = make_sd.samples()

@@ -44,7 +44,7 @@ CASES = {
 def build_sd(path, arp, params):
     make_sd.kit = lambda lengths: ("", "")
     make_sd.audio_track = lambda lengths: ("", "")
-    make_sd.drone = lambda: ""
+    make_sd.drone = lambda *args, **kwargs: ""
     env = dict(attack=make_sd.knob(0), decay=make_sd.knob(10), sustain=make_sd.knob(0), release=make_sd.knob(0))
     p = dict(ratchetProbability=make_sd.knob(50), arpeggiatorGate=make_sd.knob(25), reverbAmount=make_sd.knob(0),
              delayFeedback=make_sd.knob(0))

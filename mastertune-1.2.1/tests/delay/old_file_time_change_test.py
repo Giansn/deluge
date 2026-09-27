@@ -8,7 +8,7 @@ import make_sd, song_emu, fat32
 def build(path):
     make_sd.kit = lambda lengths: ("", "")
     make_sd.audio_track = lambda lengths: ("", "")
-    make_sd.drone = lambda: ""
+    make_sd.drone = lambda *args, **kwargs: ""
     k = make_sd.knob
     env = dict(attack=k(0), decay=k(20), sustain=k(20), release=k(5))
     a = make_sd.synth("SYNA", make_sd.SAW, make_sd.SQUARE, 1, dict(delayFeedback=k(25)), env, make_sd.PAD_ENV2,

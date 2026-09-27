@@ -100,7 +100,7 @@ def log(s):
 def song_xml(name, clip_bars, song_mod, synth_mod, lpf_knob, delay_fb_knob, clip_attr, swing, affect_entire=0):
     make_sd.kit = lambda lengths: ("", "")
     make_sd.audio_track = lambda lengths: ("", "")
-    make_sd.drone = lambda: ""
+    make_sd.drone = lambda *args, **kwargs: ""
     synth = make_sd.synth(name, make_sd.SAW, make_sd.SQUARE, 1, {}, make_sd.PAD_ENV1, make_sd.PAD_ENV2,
                           [("velocity", "volume", 25)])
     make_sd.synths = lambda: [synth]

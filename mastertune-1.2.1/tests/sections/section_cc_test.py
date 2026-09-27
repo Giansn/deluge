@@ -25,7 +25,7 @@ SECTIONS = {0: (2, 60, "note on channel 3"), 1: (IS_A_CC + 3, 64, "CC 64 on chan
 def build_sd(path):
     make_sd.kit = lambda lengths: ("", "")
     make_sd.audio_track = lambda lengths: ("", "")
-    make_sd.drone = lambda: ""
+    make_sd.drone = lambda *args, **kwargs: ""
     env = dict(attack=make_sd.knob(0), decay=make_sd.knob(20), sustain=make_sd.knob(30), release=make_sd.knob(10))
     synth = make_sd.synth("SEC", make_sd.SAW, make_sd.SQUARE, 1, {}, env, make_sd.PAD_ENV2, [], notes_octave=1)
     make_sd.synths = lambda: [synth]

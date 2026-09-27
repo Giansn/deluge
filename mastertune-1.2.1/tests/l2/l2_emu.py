@@ -33,7 +33,7 @@ UNLOCKED, LOCKED = 0, 0xFFFFFFFF
 def build_sd(path):
     make_sd.kit = lambda lengths: ("", "")
     make_sd.audio_track = lambda lengths: ("", "")
-    make_sd.drone = lambda: ""
+    make_sd.drone = lambda *args, **kwargs: ""
     env = dict(attack=make_sd.knob(0), decay=make_sd.knob(20), sustain=make_sd.knob(30), release=make_sd.knob(10))
     synth = make_sd.synth("L2", make_sd.SAW, make_sd.SQUARE, 1, {}, env, make_sd.PAD_ENV2, [], notes_octave=1)
     make_sd.synths = lambda: [synth]

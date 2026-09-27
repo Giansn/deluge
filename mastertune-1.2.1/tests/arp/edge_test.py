@@ -69,7 +69,7 @@ def sound_params_for(name):
 def build_sd(path, arp, params, rows):
     make_sd.kit = lambda lengths: ("", "")
     make_sd.audio_track = lambda lengths: ("", "")
-    make_sd.drone = lambda: ""
+    make_sd.drone = lambda *args, **kwargs: ""
     env = dict(attack=K(0), decay=K(10), sustain=K(50), release=K(0))
     p = dict(ratchetProbability=K(50), arpeggiatorGate=K(25), reverbAmount=K(0), delayFeedback=K(0))
     p.update(params)
