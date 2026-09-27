@@ -48,12 +48,12 @@ Erledigt: der Bericht zu v16, l2d, der Song für den Emulator, der Retune-Test u
    - eine Aufnahme mit USB audio an. Zeigt das Display `24B`?
    - Die Tasten R, A, S, F.
 
-### Dringend (27.09.2026, abends)
+### Erledigt: «Rescue», das LPF wirkt nicht (27.09.2026)
 
-- **Song «Rescue» (Name bitte genau): Das LPF wirkt nicht.** Bitte die Song-XML aus `SONGS/` nach `geraet/karte/SONGS/` pushen. Samples sind nur nötig, wenn der Song ohne sie stumm wäre, sonst genügt die CSV-Liste wie beim Sitar-Song. Dazu notieren:
-  - welches LPF: das des Song-Masters in der Song-Ansicht oder das einer Spur
-  - was «wirkt nicht» heisst: Der Klang ändert sich beim Drehen nicht, der Wert bewegt sich nicht, oder er springt zurück
-  - ob es mit v16-l2d auch so war
+- **Befund** (Emulator mit der echten XML, gegengeprüft): Das LPF wirkt. Die Resonanz des Song-LPF steht aber auf Maximum, darum schwingt der Filter ab Knopf etwa 36 selbst. Sein Ton wandert mit dem Knopf nach unten, liegt rund 10 dB über der Musik und übersteuert. Unten bleibt ein Ton unter 60 Hz. v16 verhält sich gleich.
+- **Die Automation** (ein Knoten «ganz offen») ist nicht die Ursache. In der Song-Ansicht wirkt sie nur beim Aufnehmen ins Arrangement.
+- **Entscheid des Nutzers:** Die Firmware begrenzt die Resonanz nicht, Selbstschwingung bleibt möglich wie im Original. v18 macht sie 6 dB leiser und ohne das Brummen unten.
+- **Am Gerät:** in der Song-Ansicht mit der Filter-Taste auf LPF, den unteren Goldknopf (Resonanz) unter etwa 35, dann speichern. Wer die Automation auch loswerden will: SHIFT halten, dann den oberen Goldknopf drücken («Automation deleted»). Ohne SHIFT wechselt der Druck den Filtertyp.
 
 ## Stand (27.09.2026)
 
