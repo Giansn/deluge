@@ -11,7 +11,11 @@
 # ladder (the rustle report on v17): fails where the A-weighted error at cutoff 5 / 15 is above -180 dBFS or the output
 # doesn't die away after the music at resonance 0 / 25 % (v17: -161 to -178 dBFS, tails up to -114 dBFS; lpf-fix: -183
 # to -200 dBFS, silent). Built with lpladder.h's private members public and, on the PC, rounding as the Deluge rounds.
-# TEST=filter_tone, TEST=hpf_whistle, TEST=lpf_whistle or TEST=lpf_precision: only that one.
+# filter_neutral_test.cpp (mastertune v18): a configuration that doesn't change renders exactly as before (a hash of
+# every mode / route / context; REF=/path/to/older/DelugeFirmware builds it there too and compares), no zipper when
+# the cutoff, resonance or morph is automated (block-set against per-sample-set, above 2 kHz), no clicks when a mode or
+# the route changes or a filter is switched off.
+# TEST=filter_tone, TEST=hpf_whistle, TEST=lpf_whistle, TEST=lpf_precision or TEST=filter_neutral: only that one.
 # song_filter_emu.py, master_filter_emu.py --check 10: the same in the whole firmware (song view, the gold knob).
 set -e
 FW=$(cd "$1" && pwd)
@@ -29,6 +33,17 @@ DEFS=""
 grep -q kSaturationGlobal "$D/deluge/dsp/filter/hpladder.h" && DEFS="-DHPF_SATURATION_PER_CONTEXT"
 # ... and the 12 / 24 dB LP ladders' (mastertune-v17 lpf-fix)
 grep -q kSaturationGlobal "$D/deluge/dsp/filter/lpladder.h" && DEFS="$DEFS -DLPF_SATURATION_PER_CONTEXT"
+# ... the per-sample gain ramps and the crossfades (mastertune v18)
+filterDefs() {
+  d=""
+  grep -q kSaturationGlobal "$1/deluge/dsp/filter/hpladder.h" && d="-DHPF_SATURATION_PER_CONTEXT"
+  grep -q kSaturationGlobal "$1/deluge/dsp/filter/lpladder.h" && d="$d -DLPF_SATURATION_PER_CONTEXT"
+  grep -q rampGain "$1/deluge/dsp/filter/filter_set.h" && d="$d -DFILTERSET_RAMP_GAIN"
+  grep -q kFadeSamples "$1/deluge/dsp/filter/filter_set.h" && d="$d -DFILTERSET_FADES"
+  grep -q noiseLastValue "$1/deluge/dsp/filter/lpladder.h" && d="$d -DLPF_CUTOFF_NOISE"
+  echo "$d"
+}
+DEFS=$(filterDefs "$D")
 CXX="g++ -std=gnu++23 -O2 -g -fsanitize=undefined -fno-sanitize-recover=undefined -fno-sanitize=signed-integer-overflow -w"
 RUN=""
 [ -n "$ARM" ] && CXX="$ARM_CXX" && RUN="$ARM_RUN"
@@ -41,7 +56,7 @@ awk '/_rounded\(q31_t.*\) \{$/ {r = 1} r && /int64_t\)b\) >> 32\)/ {sub(/\* \(in
     "$D/deluge/util/fixedpoint.h" > "$B/prec/util/fixedpoint.h"
 grep -q '0x80000000LL) >> 32)' "$B/prec/util/fixedpoint.h" || { echo "run.sh: fixedpoint.h's rounded multiplies not found"; exit 1; }
 status=0
-for t in ${TEST:-filter_tone hpf_whistle lpf_whistle lpf_precision}; do
+for t in ${TEST:-filter_tone hpf_whistle lpf_whistle lpf_precision filter_neutral}; do
   INC=""
   [ "$t" = lpf_precision ] && INC="-I $B/prec"
   $CXX $DEFS $INC -I "$T/bench/filters/stubs" -I "$T/delay/stubs" -I "$T/arm" -I "$D/deluge" -I "$D" -include host_shim.h \
@@ -49,6 +64,25 @@ for t in ${TEST:-filter_tone hpf_whistle lpf_whistle lpf_precision}; do
       "$F/lpladder.cpp" "$F/hpladder.cpp" "$F/svf.cpp" "$F/filter.cpp" "$D/deluge/util/waves.cpp" \
       "$D/deluge/util/lookuptables/lookuptables.cpp" "$B/fw_functions.cpp"
   echo "== $t"
+  if [ "$t" = filter_neutral ] && [ -n "$REF" ]; then
+    # The static hash of the older source (REF), built the same way, against this one's
+    R=$(cd "$REF" && pwd)/src
+    $CXX $(filterDefs "$R") -I "$T/bench/filters/stubs" -I "$T/delay/stubs" -I "$T/arm" -I "$R/deluge" -I "$R" \
+        -include host_shim.h -include definitions_cxx.hpp -o "$B/${t}_ref" "$HERE/${t}_test.cpp" \
+        "$R/deluge/dsp/filter/filter_set.cpp" "$R/deluge/dsp/filter/lpladder.cpp" "$R/deluge/dsp/filter/hpladder.cpp" \
+        "$R/deluge/dsp/filter/svf.cpp" "$R/deluge/dsp/filter/filter.cpp" "$R/deluge/util/waves.cpp" \
+        "$R/deluge/util/lookuptables/lookuptables.cpp" "$B/fw_functions.cpp"
+    $RUN "$B/${t}_ref" static | grep '^static' > "$B/ref_static.txt"
+    $RUN "$B/$t" static | grep '^static' > "$B/new_static.txt"
+    if diff "$B/ref_static.txt" "$B/new_static.txt" > "$B/static.diff"; then
+      echo "static: the same output as $REF in all $(grep -c 'LPF' "$B/new_static.txt") groups ($(tail -1 "$B/new_static.txt"))"
+    else
+      echo "static: DIFFERENT from $REF:"; cat "$B/static.diff"; status=1
+    fi
+    $RUN "$B/$t" zipper || status=1
+    $RUN "$B/$t" clicks || status=1
+    continue
+  fi
   $RUN "$B/$t" || status=1
 done
 exit $status
