@@ -6,13 +6,16 @@
 #      songs keeps only their references and positions (peak memory).
 #      paths_memory_test.py: paths in CP437 as the Deluge writes them (umlauts) and in UTF-8; a dry run over 300 MB of
 #      WAV holds no audio in memory (only the headers are read while planning).
+#      stream_resume_test.py: files converted block by block give the same bytes as whole (and as the previous
+#      whole-file conversion, Rubber Band included); a 4 min file needs no more memory than a 10 s one (peak measured);
+#      the memory limiter's decisions; --resume after a run killed mid-way gives the same card as an uninterrupted run.
 #   2. retune_emu.py: the firmware in the emulator (unicorn) plays a song from the original card and from the
 #      converted one at master tune 432 Hz (and the original at 440 Hz as the reference, and both without the sample
 #      cache): native voices, time stretching, instructions per block and per voice, pitch and markers in the output.
 #
 # Usage: ./run.sh <firmware tree | deluge.elf> [work dir]   (a tree: its build/Release/deluge.elf and toolchain)
 # Needs: python3 with numpy, scipy, soxr, soundfile, pylibrb, unicorn 2; a C compiler; sox and ffmpeg optional
-#   (pip install numpy scipy soxr soundfile pylibrb unicorn imageio-ffmpeg). About 2 minutes.
+#   (pip install numpy scipy soxr soundfile pylibrb unicorn imageio-ffmpeg). About 3 minutes, 400 MB of disk.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 if [ -d "$1" ]; then
@@ -34,6 +37,10 @@ echo
 echo "== 1b. PC: paths in CP437 (umlauts, as the Deluge writes them), memory of a dry run over 300 MB"
 python3 paths_memory_test.py "$WORK/paths_memory" > "$WORK/paths_memory.log" 2>&1 || status=1
 grep -E "^(FAIL|umlauts|memory|paths_memory_test)" "$WORK/paths_memory.log"
+echo
+echo "== 1c. PC: large files block by block (memory, same output), memory limiter, --resume"
+python3 stream_resume_test.py "$WORK/stream_resume" > "$WORK/stream_resume.log" 2>&1 || status=1
+grep -E "^(FAIL|blocks|large|limiter|resume|stream_resume_test)" "$WORK/stream_resume.log"
 echo
 echo "== 2. emulator: $ELF, the original and the converted card"
 python3 retune_emu.py "$ELF" "$WORK/emu" --tools "$TOOLS" || status=1

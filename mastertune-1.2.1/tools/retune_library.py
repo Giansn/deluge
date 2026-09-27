@@ -31,9 +31,20 @@ At master tune 440 Hz (or any other) the converted card still plays in tune: the
 between the master tune and the file's mtun. A loop shorter than about 0.2 s gets a length rounded to whole samples,
 so its repetition rate (the pitch of a single-cycle loop) can be off by more than 0.1 cents: the report lists them.
 
+Memory: a file is converted in blocks of about 3 s (read, resampled or pitch-shifted, written), so a job needs about
+50 to 100 MB whatever the file's length (the output is the same, byte for byte, as converting the whole file at once:
+soxr's stream gives the same samples, Rubber Band gets the same steps). A file with peaks over full scale is converted
+twice (the first pass finds the peak). Files are converted in parallel as far as the memory allows: at most half of
+the memory available at the start (--max-memory), estimated per job from the file's length up to one block.
+
+Interrupted (a crash, a reset, Ctrl+C): every converted file is written under a temporary name (.retune-tmp) and
+renamed when complete, and RETUNE_PROGRESS.jsonl in NEW_CARD lists the files finished. --resume with the same options
+continues: it keeps those, removes the temporary files, converts the rest and then writes all songs, kits and synths
+(they are always written last). At the end of a run the progress file is removed.
+
 It never writes into the card folder. Usage (Windows: py instead of python3):
   python3 retune_library.py --card CARD_COPY --out NEW_CARD --tuning 432 [--rate 44100] [--dry-run] [--jobs N]
-                            [--no-float]
+                            [--no-float] [--max-memory 4G] [--resume]
   --rate 0 keeps each file's sample rate. The report goes to the console and, unless --dry-run, to
   NEW_CARD/RETUNE_REPORT.txt (and .json).
 

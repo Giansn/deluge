@@ -14,8 +14,8 @@ Checks:
 - peaks over full scale after resampling: an integer file written as 32-bit float with its samples unclipped, or with
   --no-float just as much quieter as needed, never clipped (test_peaks());
 - memory: a dry run over 300 MB of songs (many large XML files) keeps only their references and positions, not the
-  texts and parse trees (test_xml_memory(); the peak memory is measured with resource/wait4 on Unix, with psutil on
-  Windows if installed, else that part is skipped).
+  texts and parse trees (test_xml_memory(); the peak memory is measured with VmHWM on Linux, resource/wait4 on
+  other Unix, psutil on Windows if installed, else that part is skipped).
 
 Usage: pc_test.py <work dir>   Needs: numpy scipy soxr soundfile pylibrb (sox and ffmpeg optional, psutil on Windows)
 """

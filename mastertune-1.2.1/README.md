@@ -677,12 +677,16 @@ Bei einer anderen Stimmung als 440 Hz rechnet der Deluge jede Sample-Stimme um, 
 pip install numpy soxr pylibrb
 python3 tools/retune_library.py --card KOPIE_DER_KARTE --dry-run            # nur zeigen, was sich ändert
 python3 tools/retune_library.py --card KOPIE_DER_KARTE --out NEUE_KARTE     # Standard: 432 Hz, 44,1 kHz
+python3 tools/retune_library.py --card KOPIE_DER_KARTE --out NEUE_KARTE --resume   # nach einem Abbruch weiter
 ```
 
 **Was es tut:**
 - **Samples umrechnen:** Jedes Sample wird im exakten Verhältnis umgerechnet (440/432 = 55/54, soxr). Ein 440-Hz-Ton misst danach 432,00 Hz, die Abweichung liegt unter 0,002 Cent. Die Dauer wächst um 55/54.
 - **Abtastrate:** 48- und 96-kHz-Dateien bringt es im selben Durchgang auf 44,1 kHz. Die rechnet der Deluge sonst immer um.
 - **Spitzen über 0 dBFS:** Das Umrechnen kann einzelne Spitzen knapp über 0 dBFS erzeugen, etwa bei Samples, die auf 0 dBFS normalisiert sind. Abgeschnitten wird nichts: Eine solche Datei mit 8 bis 32 Bit PCM schreibt das Werkzeug als 32-Bit-Float, alle anderen Dateien behalten ihr Format. Der Report listet sie auf. Der Deluge begrenzt Float-Samples beim Laden allerdings auf 0 dBFS. Mit `--no-float` wird eine solche Datei stattdessen gerade so viel leiser wie nötig, der Report nennt die dB.
+- **Speicher:** Jede Datei wird in Blöcken von etwa 3 s gelesen, umgerechnet und geschrieben. Ein Auftrag braucht so 50 bis 100 MB, egal wie lang die Datei ist. Das Ergebnis ist Byte für Byte dasselbe wie am Stück gerechnet. Beispiel: Eine 4-Minuten-Datei (61 MB, 24 Bit Stereo) brauchte vorher 1 GB, jetzt 61 MB. Eine Datei mit Spitzen über 0 dBFS wird zweimal gerechnet, der erste Durchgang findet die Spitze.
+- **Gleichzeitige Aufträge:** Wie viele Dateien gleichzeitig laufen, richtet sich nach den Kernen (`--jobs`) und nach dem freien Arbeitsspeicher beim Start: Die Umwandlung nutzt höchstens die Hälfte davon. `--max-memory 4G` setzt die Grenze selbst. Die Konsole zeigt, was gewählt wurde und was gleichzeitig lief.
+- **Abbruch und Fortsetzen (`--resume`):** Jede Datei entsteht unter einem Zwischennamen (`.retune-tmp`) und bekommt ihren Namen erst, wenn sie vollständig auf der Platte ist. `RETUNE_PROGRESS.jsonl` im Zielordner führt die fertigen Dateien. Nach einem Abbruch (Absturz, Neustart, Ctrl+C) setzt derselbe Befehl mit `--resume` fort: Fertige Dateien bleiben, halbe werden gelöscht, der Rest wird umgerechnet. Danach schreibt es alle Songs, Kits und Synths, die kommen immer zuletzt. Das Ergebnis ist dasselbe wie ohne Abbruch. Andere Optionen als beim ersten Lauf lehnt `--resume` ab, ebenso einen Ordner einer älteren Version ohne `RETUNE_PROGRESS.jsonl`: dessen Dateien können halb geschrieben sein.
 - **Positionen anpassen:** Start- und Endmarken, Loops und Audio-Clip-Positionen in allen Songs, Kits und Synths werden angepasst. Ebenso die Chunks `smpl` und `cue` in den Dateien.
 - **Audio-Clips und Samples mit Time-Stretch:** Sie bekommen eine Kopie `_ts`, die nur die Tonhöhe verschiebt und die Länge hält (Rubber Band).
 - **AIFF:** wird zu WAV, weil der Deluge `mtun` nur in WAV liest. Der Pfad im XML wird angepasst.
