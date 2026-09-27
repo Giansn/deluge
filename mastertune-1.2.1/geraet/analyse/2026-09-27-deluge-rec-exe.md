@@ -43,3 +43,22 @@
   - 39 Tests. Eine Stream-Simulation mit echten Threads, Taktabweichung bis 20 % und Schwankungen im Takt der Blöcke zeigt keinen Sprung grösser als der Sinus selbst. Die alte v3 sprang dort um 0,44.
 - **Lauf 6** (https://github.com/Giansn/deluge/actions/runs/36349256737): alle Schritte grün. `DelugeRec-v4.exe` mit 25'087'902 Bytes, SHA-256 `a1c6174d868f2934606e7da6b59dcdb07553138c2d9e3eea930a89ee50cb2cb2`, im Release `deluge-rec-v4` und in `deluge-rec`.
 - **Nicht geprüft:** mit dem echten Deluge am PC.
+
+## v5: Dateinamen mit Song, Datum und Firmware
+
+- **Name:** «Songname Datum Zeit Firmware.WAV», zum Beispiel `Rescue 3 2026-09-27 21-30-05 v17.WAV`. Nie überschrieben, sonst « (2)», nach 4 GB « part 2».
+- **In der Datei:** eine RIFF-INFO-Liste mit Titel = Song, Datum, Programm (DelugeRec v5) und einem Kommentar mit der Uhrzeit, der vollen Firmware und VOL.
+- **Woher Song und Firmware kommen:** Der Deluge muss sie melden. Dafür gibt es einen Firmware-Patch, siehe `2026-09-27-songinfo-auftrag.md`.
+  - DelugeRec hört auf USB-MIDI-Port 3 nur zu (python-rtmidi). Port 1 für die DAW bleibt frei, gesendet wird nichts.
+  - Ohne den Patch heisst die Datei nur nach Datum und Zeit.
+- **Prüfung:** ein Prüfer über App und Patch. Fünf Fehler bestätigt und behoben:
+  - Umlaute in CP437
+  - Port 3 wurde nicht nachgeholt, wenn er belegt war
+  - möglicher Hänger von rtmidi beim Schliessen
+  - Kopf `F0 7D 12`
+  - `--list` ohne MIDI-System
+  - 46 Tests.
+- **Lauf 7** (https://github.com/Giansn/deluge/actions/runs/36354450337): alle Schritte grün.
+  - Selbsttest unter Windows: `midi: rtmidi 5.0.0, 0 inputs`, die Aufnahme hiess `2026-09-27 22-13-15.WAV`.
+  - `DelugeRec-v5.exe` mit 25'395'835 Bytes, SHA-256 `0c267315499470f0f67bea0ac39f72c00e1bfa4ca65e2850ea7492965d47768d`.
+- **Nicht geprüft:** mit dem echten Deluge. Für Songname und Firmware braucht es zuerst eine Firmware mit dem Patch.
