@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """REC on a drone track (mastertune-v16) on the real firmware in the emulator: turning a drone row's pitch while the
 song records writes its Hz lane, and the lane plays back what was turned; turned while not recording, the row's own
-frequency moves, and the lane with it. Then Select's menu on the row, and a drone track made from the drone.
+frequency moves, and the lane with it. Then Select's menu on the row, kit rows made drone rows, and a drone track made
+from the drone.
 
 Usage: drone_rec_emu.py <deluge.elf> <out dir> [--tools PREFIX] [--build DIR]   (run.sh's DRONE=1 runs it)
 
 The song: one drone track (make_sd.py's drone kit, "DRONEREC"), a 2-bar clip with one 200 Hz row whose note is as
-long as the clip, no lane, the clip armed for recording and open in the clip view (beingEdited), Affect Entire off,
-the row selected; and the drone with one tone, 1000 Hz (make_sd.py --drone-track's reference). Played from the start
-with the internal clock (song_emu.Player: one AudioEngine::routine() window at a time, then the playback handler's
-routine), and between windows, as the user would, on the clip view:
+long as the clip, no lane, and above it a gate row without notes; the clip armed for recording and open in the clip
+view (beingEdited), Affect Entire off, the drone row selected; and the drone with one tone, 1000 Hz (make_sd.py
+--drone-track's reference). Played from the start with the internal clock (song_emu.Player: one AudioEngine::routine()
+window at a time, then the playback handler's routine), and between windows, as the user would, on the clip view:
   bar 0.25   REC on (PlaybackHandler::recordButtonPressed())
   bar 0.5    the select encoder +50 clicks (InstrumentClipView::selectEncoderAction()): 1 Hz each, 250 Hz
   bar 1.25   the upper gold knob +10 (InstrumentClipView::modEncoderAction(1, 10)): 260 Hz
@@ -23,13 +24,17 @@ change, the lane where nothing was recorded (before the first turn) is the row's
 1.5 times higher (375 and 390 Hz). (The last turn's value holds 0.2 s past REC off, then the lane is as before the
 recording, as for any automation recorded with a gold knob.)
 Then, stopped: Select pressed on the clip view (SoundEditor::setup(), as InstrumentClipMinder calls it) gives the
-drone's tone menu for the row; the firmware saves the song (song_emu.write_back_song()): the row's droneTone has
+drone's tone menu for the row. Kit rows made drone rows, through the pads and buttons as the user presses them
+(InstrumentClipView::padAction(), Buttons::buttonAction()): the gate row's audition pad held, Shift + Kit, and the pad
+of the empty row above the kit's held (a row being added), Shift + Kit: the clip view stays (Kit alone opens the
+row's sample browser), and each new drone row sounds its tone (200 Hz, a new drone row's) while its pad is held, at
+the drone's level (within 1 dB). The firmware saves the song (song_emu.write_back_song()): the row's droneTone has
 frequency 30000 and its noteRow a pitchBend lane whose nodes hold 250, 260 and 220 Hz as cents from 200 Hz (+386,
-+454, +165).
++454, +165), and the clip's three rows are drone rows.
 Then a drone track made from the drone (the drone view's Shift + Kit, DroneView::buttonAction()): a clip with a new
 kit (DRONE1) comes into Song view; launched, with the drone's tone off, it plays the tone at the drone's level (within
-1 dB, against the drone's 1000 Hz measured above), and saved, the kit has 16 drone rows and the clip a note on the one
-row whose tone was on.
+1 dB, against the drone's 1000 Hz measured above), and saved, the kit has 16 drone rows, the clip a note on the one
+row whose tone was on, and that row is the kit's selected one (so the select encoder turns its pitch).
 Results: <out>/drone_rec.wav (the output), <out>/saved.xml, <out>/saved_made.xml.
 """
 import argparse
@@ -53,6 +58,8 @@ SR = 44100
 BAR = song_emu.BAR  # Samples: 2 s at 120 BPM
 TICKS_PER_BAR = make_sd.BAR
 BUTTON_KIT = 9 * (1 + 16) + 5  # hid/button.h: fromCartesian(kitButtonCoord {5, 1})
+BUTTON_SHIFT = 9 * (0 + 16) + 8  # fromCartesian(shiftButtonCoord {8, 0})
+AUDITION_X = 16 + 1  # The audition pads' column: kDisplayWidth + 1
 
 failures = 0
 
@@ -67,6 +74,11 @@ def song():
     make_sd.DRONE_TRACKS = [("DRONEREC", 2, [(20000, [(0, 2 * TICKS_PER_BAR)], [])])]
     xml = make_sd.song_xml({}, 1, drone_track=True)
     xml = xml.replace("<instrumentClip", '<instrumentClip\n\t\t\tbeingEdited="1"\n\t\t\taffectEntire="0"', 1)
+    # A gate row above the drone row, without notes: made a drone row later (rows_made_drone()). The rows from the
+    # bottom of the grid (yScroll 0), so the pads' y is the row's index.
+    xml = xml.replace("\t\t\t</soundSources>", '\t\t\t\t<gateOutput channel="2" />\n\t\t\t</soundSources>', 1)
+    xml = xml.replace("\t\t\t</noteRows>", '\t\t\t\t<noteRow drumIndex="1" />\n\t\t\t</noteRows>', 1)
+    xml = xml.replace('yScroll="40"', 'yScroll="0"', 1)
     return xml
 
 
@@ -110,6 +122,44 @@ def menu_on_row(emu):
     held = struct.pack("<I", sym["droneTrackToneMenu"]) in bytes(emu.uc.mem_read(start, size))
     check("Select on the drone row: the tone menu for that row", ok and held and frequency == 30000,
           f"setup {ok}, the menu {'there' if held else 'not there'}, its tone at {frequency}")
+
+
+def rows_made_drone(emu, player, drone_level):
+    """Stopped, on the clip view: a row's audition pad held, Shift + Kit (InstrumentClipView::buttonAction()) makes it
+    a drone row: the gate row (y 1), then a row being added (the empty row above the kit's, y 2). Each sounds its
+    tone (a new drone row's 200 Hz) while its pad is held, at the drone's level; the clip view stays (Kit alone would
+    open the row's sample browser)"""
+    print("== kit rows made drone rows: audition pad held, Shift + Kit", flush=True)
+    sym = emu.sym
+    pad = sym.find("_ZN18InstrumentClipView9padActionElll")
+    button = sym.find("_ZN7Buttons12buttonActionEhbb")
+    clip_view = sym["instrumentClipView"]
+    for y, what in ((1, "the gate row"), (2, "a row being added above the kit's")):
+        drain_pic(emu)
+        emu.call(pad, clip_view, AUDITION_X, y, 64)
+        drain_pic(emu)
+        emu.call(button, BUTTON_SHIFT, 1, 0)
+        emu.call(button, BUTTON_KIT, 1, 0)
+        drain_pic(emu)
+        ui = emu.call(sym["_Z12getCurrentUIv"])
+        emu.call(button, BUTTON_KIT, 0, 0)
+        emu.call(button, BUTTON_SHIFT, 0, 0)
+        drain_pic(emu)
+        out = []
+        total = 0
+        while total < int(0.25 * BAR):  # Its pad still held
+            w = player.window()
+            total += w[1]
+            out.append(w[4])
+        left = np.concatenate(out)[:, 0][-16384:]
+        hz = peak_hz(left, 150, 250)
+        db = 20 * math.log10(amplitude(left, 200) / drone_level + 1e-12)
+        drain_pic(emu)
+        emu.call(pad, clip_view, AUDITION_X, y, 0)
+        drain_pic(emu)
+        check(f"{what}: Shift + Kit made it a drone row, sounding its 200 Hz at the drone's level while held",
+              ui == clip_view and abs(hz - 200) < 0.3 and abs(db) < 1,
+              f"{hz:.2f} Hz, {db:+.2f} dB, {'the clip view' if ui == clip_view else f'another UI {ui:#x}'}")
 
 
 def made_from_the_drone(emu, player, out_dir, drone_level):
@@ -158,6 +208,11 @@ def made_from_the_drone(emu, player, out_dir, drone_level):
     rows = re.findall(r'noteData(?:WithLift)?="0x([0-9A-F]+)"', clip.group(0)) if clip else []
     check("saved: the kit DRONE1 with 16 drone rows, its clip with one note (the drone's one tone on)",
           len(tones) == 16 and len(rows) == 1, f"{len(tones)} rows, notes in {len(rows)} row(s)")
+    selected = re.search(r"<selectedDrumIndex>(\d+)</selectedDrumIndex>", kit.group(0)) if kit else None
+    with_note = re.findall(r'<noteRow\b[^>]*?noteData(?:WithLift)?="0x[0-9A-F]+"[^>]*?drumIndex="(\d+)"',
+                           clip.group(0), re.S) if clip else []
+    check("saved: that row is the kit's selected one", selected is not None and with_note == [selected.group(1)],
+          f"selected {selected.group(1) if selected else None}, the note's row {with_note}")
 
 
 def peak_hz(x, lo, hi):
@@ -249,6 +304,7 @@ def main():
     drain_pic(emu)
     drone_level = amplitude(left[int(0.5 * BAR):int(0.5 * BAR) + 16384], 1000)
     menu_on_row(emu)
+    rows_made_drone(emu, player, drone_level)
     song_emu.write_back_song(emu, os.path.join(args.out, "saved.xml"))
     xml = open(os.path.join(args.out, "saved.xml"), encoding="utf-8", errors="replace").read()
     frequency = re.search(r'<droneTone\b[^>]*?frequency="(\d+)"', xml, re.S)
@@ -266,6 +322,13 @@ def main():
     found = all(any(abs(c - w) < 0.5 for _, c in cents) for w in wanted)
     check("saved: the lane's nodes hold 250, 260 and 220 Hz as cents from 200 Hz",
           lane is not None and found, " ".join(f"{p}:{c:+}" for p, c in cents))
+    kit = re.search(r'<kit\b[^>]*presetName="DRONEREC".*?</kit>', xml, re.S)
+    sources = re.findall(r"<(droneTone|gateOutput|midiOutput|sound|sample|synth)\b", kit.group(0)) if kit else []
+    clip = re.search(r'<instrumentClip\b[^>]*instrumentPresetName="DRONEREC".*?</instrumentClip>', xml, re.S)
+    indices = [int(i) for i in re.findall(r'<noteRow\b[^>]*?drumIndex="(\d+)"', clip.group(0), re.S)] if clip else []
+    kinds = [sources[i] if i < len(sources) else "?" for i in indices]
+    check("saved: the clip's three rows are drone rows (the gate row made one, and the row added)",
+          kinds == ["droneTone"] * 3, " ".join(kinds))
     made_from_the_drone(emu, player, args.out, drone_level)
     os.remove(sd)
     result = "all checks passed" if not failures else f"{failures} failed"

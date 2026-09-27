@@ -77,9 +77,12 @@
 #   (song_emu.py --write-back: the firmware saves the song and loads it again), and drone_check.py checks what played:
 #   each row when its notes say, at its lane's Hz (FFT per window), its level against the drone's, the saved XML, and
 #   that both runs play the same. Then REC on a drone track (drone_rec_emu.py): its pitch turned on the clip view while
-#   recording writes the row's Hz lane, which plays back, and turned while not recording moves the row's own pitch.
+#   recording writes the row's Hz lane, which plays back, and turned while not recording moves the row's own pitch;
+#   Select's tone menu for the row; kit rows made drone rows (audition pad held, Shift + Kit); a drone track made from
+#   the drone (the drone view's Shift + Kit), its level and its saved kit. Then a drone track of 16 rows saved again
+#   and again while it plays, the DMA in real time (drone_save_emu.py): no row drops out while its kit is written.
 #   Results: <out>/drone-load/ and <out>/drone-saved/ (measured.wav, result.json, saved.xml), <out>/drone-rec/
-#   (drone_rec.wav, saved.xml). About 5 minutes.
+#   (drone_rec.wav, saved.xml, saved_made.xml), <out>/drone-save/ (save.wav, save_result.json). About 6 minutes.
 #
 # Files: make_sd.py (the song and its samples, generated; its docstring describes the song), fat32.py (the card
 # image), song_emu.py (the emulator harness; its docstring says what is real and what is modelled), blockcount.c
@@ -147,6 +150,8 @@ if [ -n "$DRONE" ]; then
 	python3 "$HERE/drone_check.py" "$OUT/drone-load" "$OUT/drone-saved" || status=1
 	echo
 	python3 "$HERE/drone_rec_emu.py" "$ELF" "$OUT/drone-rec" --tools "$TOOLS" --build "$OUT" || status=1
+	echo
+	python3 "$HERE/drone_save_emu.py" "$ELF" "$OUT/drone-save" --tools "$TOOLS" --build "$OUT" || status=1
 	exit ${status:-0}
 fi
 
