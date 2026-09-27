@@ -66,38 +66,39 @@ Coefs coefsOf(const LpLadderFilter::Coefficients& c) {
 std::vector<Coefs> rampSets(const LpLadderFilter& a, const LpLadderFilter& b, int n, int* piecesOut) {
 	LpLadderFilter f = b;
 	f.lastParams_ = a.params_;
-	LpLadderFilter::Coefficients knots[LpLadderFilter::kMaxPieces + 1];
+	LpLadderFilter::Knot<LpLadderFilter::Coefficients> knots[LpLadderFilter::kMaxKnots];
 	const auto from = a.coefficients<FilterMode::TRANSISTOR_24DB>();
 	const auto to = b.coefficients<FilterMode::TRANSISTOR_24DB>();
-	int pieces;
+	int count;
 	const char* env = getenv("PIECES");
 	if (env && !strcmp(env, "0")) {
-		pieces = 1;
-		knots[0] = from;
-		knots[1] = to;
+		count = 2;
+		knots[0] = {0, from, from};
+		knots[1] = {n, to, to};
 	}
 	else {
-		pieces = f.rampKnots(n, from, to, knots);
+		count = f.rampKnots(n, from, to, knots);
 	}
-	*piecesOut = pieces;
+	*piecesOut = count - 1;
 	if (getenv("DBG")) {
-		for (int j = 0; j <= pieces; j++) {
-			printf("knot %d: m %d pr %d div %d c1 %d c2 %d c3 %d d1 %d | params f %d r %d\n", j, knots[j].moveability,
-			       knots[j].processedResonance, knots[j].divideByTotalMoveabilityAndProcessedResonance,
-			       knots[j].lpf1Feedback, knots[j].lpf2Feedback, knots[j].lpf3Feedback,
-			       knots[j].divideBy1PlusTannedFrequency, j < pieces ? f.pieceParams(j, pieces).frequency : 0,
-			       j < pieces ? f.pieceParams(j, pieces).resonance : 0);
+		for (int j = 0; j < count; j++) {
+			printf("knot %d at %d: m %d pr %d -> m %d pr %d\n", j, knots[j].sample, knots[j].in.moveability,
+			       knots[j].in.processedResonance, knots[j].out.moveability, knots[j].out.processedResonance);
 		}
 	}
 	std::vector<Coefs> sets;
-	for (int j = 0; j < pieces; j++) {
-		int begin = LpLadderFilter::pieceStart(j, pieces, n), end = LpLadderFilter::pieceStart(j + 1, pieces, n);
-		auto d = knots[j].steps(knots[j + 1], end - begin);
-		auto now = knots[j];
-		for (int k = begin; k < end; k++) {
-			now.step(d);
-			sets.push_back(coefsOf(now));
-		}
+	LpLadderFilter::forEachPiece(knots, count,
+	                             [&](int begin, int end, const LpLadderFilter::Coefficients& start,
+	                                 const LpLadderFilter::Coefficients& d) {
+		                             auto now = start;
+		                             for (int k = begin; k < end; k++) {
+			                             now.step(d);
+			                             sets.push_back(coefsOf(now));
+		                             }
+	                             });
+	if ((int)sets.size() != n) {
+		printf("rampSets: %d sets for %d samples\n", (int)sets.size(), n);
+		exit(1);
 	}
 	return sets;
 }
@@ -160,8 +161,9 @@ StateSpace probe(bool twelve, const Coefs& c) {
 	return ss;
 }
 
-// Eigenvalues: the characteristic polynomial (Faddeev-LeVerrier), its roots (Durand-Kerner)
-std::vector<cd> eigenvalues(const StateSpace& ss) {
+// Eigenvalues: the characteristic polynomial (Faddeev-LeVerrier), its roots (Durand-Kerner). converged: false where
+// the iteration didn't settle (repeated roots, as the ladder's four equal poles without resonance)
+std::vector<cd> eigenvalues(const StateSpace& ss, bool* converged = nullptr) {
 	int n = ss.n;
 	double M[4][4] = {}, AM[4][4];
 	std::vector<double> coef(n + 1); // p(z) = z^n + coef[1] z^(n-1) + ... + coef[n]
@@ -208,17 +210,69 @@ std::vector<cd> eigenvalues(const StateSpace& ss) {
 			moved = std::max(moved, std::abs(d));
 		}
 		if (moved < 1e-15) {
-			break;
+			if (converged) {
+				*converged = true;
+			}
+			return r;
 		}
+	}
+	if (converged) {
+		*converged = false;
 	}
 	return r;
 }
+// The spectral radius; where the roots didn't settle, from Gelfand's formula instead: ||A^k||^(1/k), k = 2^24 by
+// repeated squaring (normalised as it goes), within about 1e-6
 double radius(const StateSpace& ss) {
+	bool converged = false;
 	double m = 0;
-	for (cd e : eigenvalues(ss)) {
+	for (cd e : eigenvalues(ss, &converged)) {
 		m = std::max(m, std::abs(e));
 	}
-	return m;
+	if (converged) {
+		return m;
+	}
+	int n = ss.n;
+	double P[4][4], Q[4][4];
+	std::copy(&ss.A[0][0], &ss.A[0][0] + 16, &P[0][0]);
+	double logScale = 0; // log of the factor taken out of P so far, per power of A: A^k = P * exp(logScale * ...)
+	double logNorm = 0;
+	int k = 1;
+	for (int it = 0; it < 24; it++) {
+		double norm = 0;
+		for (int i = 0; i < n; i++) {
+			for (int j = 0; j < n; j++) {
+				norm = std::max(norm, std::fabs(P[i][j]));
+			}
+		}
+		// A^k = P * e^logNorm
+		logNorm += std::log(norm);
+		for (int i = 0; i < n; i++) {
+			for (int j = 0; j < n; j++) {
+				P[i][j] /= norm;
+			}
+		}
+		for (int i = 0; i < n; i++) {
+			for (int j = 0; j < n; j++) {
+				double v = 0;
+				for (int l = 0; l < n; l++) {
+					v += P[i][l] * P[l][j];
+				}
+				Q[i][j] = v;
+			}
+		}
+		std::copy(&Q[0][0], &Q[0][0] + 16, &P[0][0]);
+		logNorm *= 2;
+		k *= 2;
+	}
+	double norm = 0;
+	for (int i = 0; i < n; i++) {
+		for (int j = 0; j < n; j++) {
+			norm = std::max(norm, std::fabs(P[i][j]));
+		}
+	}
+	(void)logScale;
+	return std::exp((logNorm + std::log(norm)) / k);
 }
 
 // H(e^jw) = D + C (zI - A)^-1 B
