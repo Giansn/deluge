@@ -1,6 +1,6 @@
 # Deluge 1.2.1 mit Master Tune
 
-Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern, v12 einen Frequenz-Drone mit bis zu 16 Tönen, v13 mehr Leistung, einen Ping-Pong-Arp, flimmerfreies Dimmen der Pads, genaueres MIDI und einen überarbeiteten Drone, v14 ein Reverb ohne Wabbeln, ein Delay ohne Tonhöhensprung und einen Countdown beim Song-Wechsel.
+Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern, v12 einen Frequenz-Drone mit bis zu 16 Tönen, v13 mehr Leistung, einen Ping-Pong-Arp, flimmerfreies Dimmen der Pads, genaueres MIDI und einen überarbeiteten Drone, v14 ein Reverb ohne Wabbeln, ein Delay ohne Tonhöhensprung und einen Countdown beim Song-Wechsel, v15 einen lebendigen Drone (Life, FM, Pulse), einen CPU-Monitor in einer Zeile und drei Korrekturen aus der Community.
 
 | Datei | Version (Settings → Firmware version) | Inhalt |
 |---|---|---|
@@ -17,10 +17,11 @@ Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit
 | `deluge-1.2.1-mastertune-v12-f89b478c.bin` | `1.2.1-mastertune-v12-f89b478c` | v11 + Frequenz-Drone: 16 Töne, binaural, monaural, isochron, Tempo-Sync, Sidechain, eigene Ansicht |
 | `deluge-1.2.1-mastertune-v13-9b861a5c.bin` | `1.2.1-mastertune-v13-9b861a5c` | v12-perf + Drone-Feinschliff, Ping-Pong-Arp, flimmerfreies Dimmen, schnelleres Speichern, genaueres MIDI, CPU-Monitor in Worten |
 | `deluge-1.2.1-mastertune-v14-c1d1c8bb.bin` | `1.2.1-mastertune-v14-c1d1c8bb` | v13 + Reverb ohne Wabbeln (Modulation, Pre-delay), Delay ohne Tonhöhensprung, Countdown beim Song-Wechsel, zwei Korrekturen für die Karte |
+| `deluge-1.2.1-mastertune-v15-b5f5c900.bin` | `1.2.1-mastertune-v15-b5f5c900` | v14 + lebendiger Drone (Life, FM, Pulse), CPU-Monitor in einer Zeile, Section-Start per CC, USB-MIDI ohne Paketverlust, Clock-Ausgänge unter externer Clock |
 
-SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7`, v14 `cb17bbb3…8e23e6e5` (vollständig: `sha256sum *.bin`).
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7`, v14 `cb17bbb3…8e23e6e5`, v15 `cdce07f3…da7ca652` (vollständig: `sha256sum *.bin`).
 Nachgeprüft am 26.09.2026: Jede Version v2–v12 wurde aus ihrem Commit in einer eigenen Arbeitskopie komplett neu gebaut, mit 441–448 neu übersetzten Dateien. Jede SHA-256 stimmt mit der ausgelieferten Datei überein.
-Quellcode: `patches/0001` bis `0035` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 sind die Leistungsversion v12-perf, gleich wie `perf/0001`–`0003`), v14 = 0001–0035.
+Quellcode: `patches/0001` bis `0041` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 sind die Leistungsversion v12-perf, gleich wie `perf/0001`–`0003`), v14 = 0001–0035, v15 = 0001–0041.
 
 ## v3 und v4: Unterschiede
 
@@ -341,7 +342,7 @@ Das OLED zeigt Ton, Modus, Tonhöhe und den Beat mit seinem Bereich (Delta, Thet
 - **`diag/`:** die Messversion v12-diag, v12 plus CPU-Monitor.
   - Zeigt CPU-Last, Stimmen, Qualitätsabsenkung und SD-Zeiten auf dem OLED und per USB-MIDI.
   - Dazu `tools/cpu_monitor.html` und ein Test-Song. Details: `diag/README.md`.
-- **`l2test/`:** zwei Testversionen von v14 mit eingeschaltetem L2-Cache, einmal nur für Code, einmal auch für Daten.
+- **`l2test/`:** zwei Testversionen von v15 mit eingeschaltetem L2-Cache, einmal nur für Code, einmal auch für Daten. Mit v14 zeigte die erste Messung am Gerät: keine abgeschnittenen Stimmen mehr.
   - Zum Messen mit dem CPU-Monitor am Gerät, noch nicht für Auftritte.
   - Anleitung, Risiken und Prüfungen: `l2test/README.md`.
 - **`research/OPTIMIERUNG.md`:** alle Messungen und Erkenntnisse zur Optimierung.
@@ -350,7 +351,7 @@ Das OLED zeigt Ton, Modus, Tonhöhe und den Beat mit seinem Bereich (Delta, Thet
 
 v13 enthält v12 und die Leistungsversion v12-perf, dazu die folgenden Neuerungen. **Auf dem Gerät ist nichts davon getestet**; geprüft ist alles im Emulator mit dem Maschinencode der Firmware und von unabhängigen Gegenprüfern.
 
-**Drone** (Handbuch `docs/Drone-Handbuch.pdf`, auf v13 nachgeführt):
+**Drone** (Handbuch `docs/Drone-Handbuch.pdf`, auf v15 nachgeführt):
 - **Select drehen stellt die Tonhöhe** in spürbaren Rasten: 1 Hz pro Klick, mit Shift 0,1 Hz; als Note ein Halbton, mit Shift ein Cent. Die Goldknöpfe bleiben für schnelles Stimmen.
 - **SYNTH / KIT / MIDI / CV wählen den Modus** des gewählten Tons: Ton / Binaural / Monaural / Isochron. Die LED der Taste zeigt den aktuellen Modus.
 - Die Pads leuchten ruhig, nichts pulsiert mehr.
@@ -455,6 +456,65 @@ v14 enthält v13 und bringt drei Neuerungen und zwei Korrekturen beim Lesen und 
 - **Song-Wechsel** (`tests/songchange`, Emulator, auf dem fertigen v14-Build): Countdown in rund 5000 Audio-Fenstern, höchstens 15 ms später als die Takt- und Beatgrenzen. Dazu kommen Swing, externe Clock mit 123 BPM, Stopp während des Wartens, die Regler auf dem laufenden Song und der Punkt für Beats, zusammen 131 Prüfungen. Ein Gegenprüfer fand zwei kleine Punkte, beide sind behoben (Punkt für Beats, hängendes Popup).
 - **SD-Karte über USB** (`tests/smsysex`): Host-Test mit AddressSanitizer auf einer FAT32-RAM-Disk, alle Prüfungen bestanden.
 - **Build:** ohne neue Warnungen. Zwei komplette Neubauten ergeben dieselbe SHA-256 (je 465 neu übersetzte Dateien, `cb17bbb3…8e23e6e5`). Die Patches ergeben mit `git am` auf `release_1_2_1` genau diesen Stand.
+
+## v15: lebendige Drone, CPU-Monitor in einer Zeile, drei Korrekturen aus der Community
+
+v15 enthält v14. **Auf dem Gerät ist nichts davon getestet.** Geprüft ist alles im Emulator mit dem Maschinencode der Firmware, auf dem PC mit dem Code der Drone und von einem unabhängigen Gegenprüfer. Mit L2-Cache gibt es v15 als Testversionen in `l2test/`.
+
+**Drone: lebt wie ein gespieltes Instrument** (für den ganzen Drone, im Menü des Drones und auf den Goldknöpfen):
+- **Life 0–50:** Jeder Ton wandert auf eigenen, langsamen Zufallsbahnen, die sich nie wiederholen.
+  - Tonhöhe ±6 Cent, Lautstärke ±3 dB («Atem»), Helligkeit und Stereo-Position («Schimmer»), alles wachsend mit Life.
+  - Beide Seiten eines schwebenden Tons wandern gemeinsam, der Beat bleibt genau wie eingestellt.
+- **Rate 0–50:** wie schnell. 25 ist die Grundeinstellung; je 12,5 Schritte doppelt oder halb so schnell.
+- **FM 0–50:** Ein Modulator knapp neben dem Ton (0,3 Hz daneben) färbt ihn, die Tiefe blüht auf und klingt ab.
+  - **FM form:** Sine (weich) oder Saw (heller, blecherner). Der Wechsel blendet über.
+  - Für hohe Töne wird die Tiefe begrenzt, damit nichts hörbar spiegelt.
+- **Neue Klangfarbe Pulse:** ein bandbegrenzter Puls. **Pulse width 5–50 %** (Standard 30), mit Life wandert die Breite.
+- **Bedienung:** In der Drone-Ansicht die Mod-Taste **Delay** wählen: oberer Goldknopf Life, unterer Rate. Mod-Taste **ModFX**: oben FM (drücken: Sine oder Saw), unten Pulse width. Popups und LED-Ringe wie bei den anderen Sektionen.
+- **Bei Life 0 und FM 0 ohne Pulse klingt der Drone Bit für Bit wie in v14.** Änderungen von Life und FM gleiten, ein Wechsel zu oder von Pulse geht wie bisher durch Stille.
+- **Song-Datei:** neue Attribute am Drone. Ältere Songs laden mit Life und FM 0. Ältere Firmware ignoriert die Attribute, ein Pulse-Ton wird dort Rich.
+- **Rechenlast pro binauralem Ton:**
+  - ohne Leben 0,6 % CPU
+  - Life 0,7–1,0 %
+  - FM 1,3 %
+  - Pulse 1,0 %
+  - alles zusammen 2,1 %
+  - 16 Töne mit allem: gut 30 %
+  - Der Drone wird nicht wie Synth-Stimmen gekürzt. Viele lebendige Töne in einem vollen Song also mit Blick auf den CPU-Monitor.
+
+**CPU-Monitor: eine Zeile, halbe Höhe** (Settings → CPU monitor):
+- Oben links nur noch z. B. «CPU 97% 13V QL VC».
+  - **V:** klingende Stimmen
+  - **QL** (quality lowered): Der Deluge rechnet einfacher, um mitzukommen.
+  - **VC** (voices cut): Er schneidet Stimmen ab. VC blinkt und steht noch 2 s über den letzten Schnitt hinaus.
+- **QL und VC erscheinen nur, solange es passiert.** Modus **Alerts** zeigt nur sie.
+
+**Drei Korrekturen aus der Community-Firmware:**
+- **Section-Start per CC:** Ein Section-Start, der auf einen CC gelernt ist, ging beim Laden des Songs verloren (Noten blieben). Jetzt bleibt er.
+- **USB-MIDI vom Computer:** Kam MIDI schneller als einmal pro Millisekunde (dichte Automationen aus der DAW, SysEx, der Kartenzugriff über USB aus v7), gingen Pakete verloren. Jetzt wartet der Computer, bis der Deluge bereit ist.
+- **Clock-Ausgänge unter externer MIDI-Clock:** Folgte der Deluge einer externen Clock, stoppten Gate-Clock und MIDI-Clock-Ausgang nach einem kurzen Stoss. Jetzt laufen beide im Takt der eingehenden Clock weiter. Mit der eigenen Clock bleibt alles wie bisher.
+
+**Geprüft:**
+- **Drone** (`tests/drone`, Code der Firmware auf dem PC, mit UndefinedBehaviorSanitizer): 116 Prüfungen, alle bestanden.
+  - Life und FM aus: Bit für Bit v14.
+  - Drift 6 Cent, Atem 3 dB, jede Bahn eigenständig.
+  - FM-Seitenbänder, Spiegelung bei hohen Tönen, Pulsbreite.
+  - Keine Klicks bei Änderungen, Song-Datei hin und zurück.
+- **Gegenprüfer** (Code, Messungen auf PC und im Emulator): vier Befunde, alle behoben.
+  - Ein Ton genau an der 18-kHz-Grenze seiner Obertöne (z. B. Rich auf 2250 Hz, Pulse auf 1500 Hz) wechselte beim Wandern die Obertontabelle, etwa zehnmal in 30 s, jedes Mal ein leiser Tick. Jetzt bleibt die Tabelle. Ein neuer Test prüft das: vorher 97–169 von 322 Abschnitten betroffen, jetzt keiner.
+  - Ein Nachklang im Gleichspannungsfilter nach einem Moduswechsel mit FM.
+  - Der LED-Ring von Rate zeigt die Mitte als Grundeinstellung.
+  - Die Anzeige beim Umschalten der FM-Form wird aufgefrischt.
+- **Song im Emulator:** Der Volllast-Song klingt Bit für Bit wie v14, mit Mutable und mit Digital.
+- **Clock** (`tests/clock`, Emulator): externe MIDI-Clock mit 123 BPM über 4 Takte.
+  - v14: 0 Ticks an beiden Ausgängen.
+  - v15: MIDI-Clock 96 pro Takt, so viele wie hereinkommen; die Gate-Clock gleichmässig in jedem Takt.
+  - Mit der eigenen Clock gleich wie v14.
+- **Section-Start** (`tests/sections`, Emulator): Note, CC und MPE-Zone bleiben nach dem Laden erhalten. v14 verlor den CC.
+- **USB-MIDI:** wie in der Community-Firmware übernommen, im Code geprüft. Den USB-Controller bildet der Emulator nicht ab.
+- **CPU-Monitor** (`tests/cpu_stats`): Zeile mit und ohne QL/VC, Decoder von `tools/cpu_monitor.html` unverändert.
+- **Song-Wechsel** (`tests/songchange`): Countdown und Regler wie in v14.
+- **Build:** ohne neue Warnungen. Zwei komplette Neubauten ergeben dieselbe SHA-256 (je 466 neu übersetzte Dateien, `cdce07f3…da7ca652`). Die Patches ergeben mit `git am` auf `release_1_2_1` genau diesen Stand.
 
 ## Bedienung
 
