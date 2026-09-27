@@ -29,6 +29,8 @@ def song(lpf, hpf, route, hpf_freq, hpf_res, lpf_res, synths):
     head_end = xml.index(">", xml.index("<song"))
     head = xml[:head_end].replace('lpfMode="24dB"', f'lpfMode="{lpf}"', 1).replace(
         'hpfMode="HPLadder"', f'hpfMode="{hpf}"', 1).replace('filterRoute="H2L"', f'filterRoute="{route}"', 1)
+    # Affect Entire on: in Song view the gold knobs are the song's own params (Song::getActiveModControllable())
+    head = head.replace('affectEntire="0"', 'affectEntire="1"', 1)
     xml = head + xml[head_end:]
     start = xml.index("<songParams")
     end = xml.index("</songParams>")
@@ -38,6 +40,9 @@ def song(lpf, hpf, route, hpf_freq, hpf_res, lpf_res, synths):
     block = block.replace(f'<hpf frequency="{make_sd.knob(0)}" resonance="{make_sd.knob(0)}" />',
                           f'<hpf frequency="{make_sd.knob(hpf_freq)}" resonance="{make_sd.knob(hpf_res)}" />', 1)
     xml = xml[:start] + block + xml[end:]
+    # Without the drone (mastertune-v12 on), so every version from 1.2.1 on plays the same song
+    if "<drone " in xml:
+        xml = xml[:xml.index("\t<drone ")] + xml[xml.index("</drone>\n") + len("</drone>\n"):]
     files["SONGS/DEFAULT.XML"] = xml.encode()
     return files
 

@@ -85,9 +85,13 @@
 #   to another row and made Euclidean leave the lanes alone; Shift + select while recording records a fine step, Shift +
 #   the upper gold knob deletes the lane and the row goes back to its own pitch; a MIDI pitch bend within the row's
 #   bend range; a row cut when the kit's active clip has no row for it; the saved kit's drone rows after its others.
+#   Then the drone view of a song with the drone on, the song opened again and changed while playing
+#   (drone_reopen_emu.py, with the UI timer running): no hang (v13 to v16 hung 15 ms after the view opened: DroneView had
+#   no graphicsRoutine(), UI::graphicsRoutine() passed it to the root UI, itself, for ever), its pads, knobs, buttons
+#   and menu, and the drone's lines (frequency, level) as before.
 #   Results: <out>/drone-load/ and <out>/drone-saved/ (measured.wav, result.json, saved.xml), <out>/drone-rec/
 #   (drone_rec.wav, saved.xml, saved_made.xml), <out>/drone-save/ (save.wav, save_result.json), <out>/drone-edit/
-#   (drone_edit.wav, saved.xml). About 6 minutes.
+#   (drone_edit.wav, saved.xml), <out>/drone-reopen/ (drone_reopen.json). About 7 minutes.
 #
 # Files: make_sd.py (the song and its samples, generated; its docstring describes the song), fat32.py (the card
 # image), song_emu.py (the emulator harness; its docstring says what is real and what is modelled), blockcount.c
@@ -159,6 +163,8 @@ if [ -n "$DRONE" ]; then
 	python3 "$HERE/drone_save_emu.py" "$ELF" "$OUT/drone-save" --tools "$TOOLS" --build "$OUT" || status=1
 	echo
 	python3 "$HERE/drone_edit_emu.py" "$ELF" "$OUT/drone-edit" --tools "$TOOLS" --build "$OUT" || status=1
+	echo
+	python3 "$HERE/drone_reopen_emu.py" "$ELF" "$OUT/drone-reopen" --tools "$TOOLS" --build "$OUT" || status=1
 	exit ${status:-0}
 fi
 
