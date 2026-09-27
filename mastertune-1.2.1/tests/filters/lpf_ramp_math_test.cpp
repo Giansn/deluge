@@ -55,16 +55,51 @@ Coefs coefsOf(const LpLadderFilter& f) {
 	        (double)f.lpf1Feedback, (double)f.lpf2Feedback,       (double)f.lpf3Feedback,
 	        (double)f.divideBy1PlusTannedFrequency};
 }
-// The set k of n samples into a ramp from a to b, as the firmware steps it: a + k * ((b - a) / n), the step truncated
-Coefs midRamp(const LpLadderFilter& a, const LpLadderFilter& b, int k, int n) {
-	auto at = [&](q31_t x, q31_t y) { return (double)((int64_t)x + (int64_t)k * (((int64_t)y - (int64_t)x) / n)); };
-	return {at(a.moveability, b.moveability),
-	        at(a.processedResonance, b.processedResonance),
-	        at(a.divideByTotalMoveabilityAndProcessedResonance, b.divideByTotalMoveabilityAndProcessedResonance),
-	        at(a.lpf1Feedback, b.lpf1Feedback),
-	        at(a.lpf2Feedback, b.lpf2Feedback),
-	        at(a.lpf3Feedback, b.lpf3Feedback),
-	        at(a.divideBy1PlusTannedFrequency, b.divideBy1PlusTannedFrequency)};
+Coefs coefsOf(const LpLadderFilter::Coefficients& c) {
+	return {(double)c.moveability,  (double)c.processedResonance, (double)c.divideByTotalMoveabilityAndProcessedResonance,
+	        (double)c.lpf1Feedback, (double)c.lpf2Feedback,       (double)c.lpf3Feedback,
+	        (double)c.divideBy1PlusTannedFrequency};
+}
+// The sets of a ramp from a to b over n samples, as the firmware steps them (lpladder.cpp renderLoop()): the knots
+// from Filter::rampKnots() (b moving from a's configuration), within each piece knot + k * steps (truncated). PIECES=0
+// in the environment: one straight line over the block (v18 before the pieces)
+std::vector<Coefs> rampSets(const LpLadderFilter& a, const LpLadderFilter& b, int n, int* piecesOut) {
+	LpLadderFilter f = b;
+	f.lastParams_ = a.params_;
+	LpLadderFilter::Coefficients knots[LpLadderFilter::kMaxPieces + 1];
+	const auto from = a.coefficients<FilterMode::TRANSISTOR_24DB>();
+	const auto to = b.coefficients<FilterMode::TRANSISTOR_24DB>();
+	int pieces;
+	const char* env = getenv("PIECES");
+	if (env && !strcmp(env, "0")) {
+		pieces = 1;
+		knots[0] = from;
+		knots[1] = to;
+	}
+	else {
+		pieces = f.rampKnots(n, from, to, knots);
+	}
+	*piecesOut = pieces;
+	if (getenv("DBG")) {
+		for (int j = 0; j <= pieces; j++) {
+			printf("knot %d: m %d pr %d div %d c1 %d c2 %d c3 %d d1 %d | params f %d r %d\n", j, knots[j].moveability,
+			       knots[j].processedResonance, knots[j].divideByTotalMoveabilityAndProcessedResonance,
+			       knots[j].lpf1Feedback, knots[j].lpf2Feedback, knots[j].lpf3Feedback,
+			       knots[j].divideBy1PlusTannedFrequency, j < pieces ? f.pieceParams(j, pieces).frequency : 0,
+			       j < pieces ? f.pieceParams(j, pieces).resonance : 0);
+		}
+	}
+	std::vector<Coefs> sets;
+	for (int j = 0; j < pieces; j++) {
+		int begin = LpLadderFilter::pieceStart(j, pieces, n), end = LpLadderFilter::pieceStart(j + 1, pieces, n);
+		auto d = knots[j].steps(knots[j + 1], end - begin);
+		auto now = knots[j];
+		for (int k = begin; k < end; k++) {
+			now.step(d);
+			sets.push_back(coefsOf(now));
+		}
+	}
+	return sets;
 }
 
 // One sample of the linear ladder (lpf_precision's model without the tanh): state s (4, or 3 for 12 dB), input x;
@@ -262,57 +297,78 @@ int ramp() {
 	int failures = 0;
 	double worstDev = 0, worstRadius = 0;
 	const std::vector<double> grid = logGrid();
+	// One ramp from (fromHz, resonance resFrom) to (toHz, resTo) in one block
+	auto check = [&](bool twelve, double fromHz, double toHz, double resFrom, double resTo) {
+		FilterMode mode = twelve ? FilterMode::TRANSISTOR_12DB : FilterMode::TRANSISTOR_24DB;
+		const int32_t rA = linearParam(resFrom), rB = linearParam(resTo);
+		LpLadderFilter a = configuredAtHz(mode, fromHz, rA), b = configuredAtHz(mode, toHz, rB);
+		double rad = 0, dev = 0, devAt = 0, devF = 0;
+		bool unstable = false; // a mid-ramp set unstable where the real ladder at its moveability is stable
+		bool linear = a.processedResonance <= 510000000 && b.processedResonance <= 510000000;
+		int pieces = 0;
+		const std::vector<Coefs> sets = rampSets(a, b, kBlock, &pieces);
+		for (int k = 1; k <= kBlock; k++) {
+			const Coefs& mid = sets[k - 1];
+			StateSpace sm = probe(twelve, mid);
+			double rm = radius(sm);
+			rad = std::max(rad, rm);
+			// The real ladder at this moveability, the resonance where the ramp has got to by now
+			const int32_t r = (int32_t)(rA + ((int64_t)rB - rA) * k / kBlock);
+			LpLadderFilter ref = configuredAtMoveability(mode, mid.m, r);
+			StateSpace sr = probe(twelve, coefsOf(ref));
+			unstable |= rm >= 1 && radius(sr) < 1;
+			double peak = 0;
+			std::vector<double> hr(grid.size()), hm(grid.size());
+			for (size_t i = 0; i < grid.size(); i++) {
+				hr[i] = gainAt(sr, grid[i]);
+				hm[i] = gainAt(sm, grid[i]);
+				peak = std::max(peak, hr[i]);
+			}
+			for (size_t i = 0; i < grid.size(); i++) {
+				if (hr[i] >= peak * std::pow(10, -12 / 20.0)) {
+					double d = std::fabs(20 * std::log10(hm[i] / hr[i]));
+					if (d > dev) {
+						dev = d;
+						devAt = k;
+						devF = grid[i];
+					}
+				}
+			}
+		}
+		bool bad = unstable || (linear && dev > kMaxDeviationDb);
+		failures += bad;
+		worstRadius = std::max(worstRadius, rad);
+		if (linear) {
+			worstDev = std::max(worstDev, dev);
+		}
+		printf("ramp %s res %4.1f -> %4.1f %5.0f -> %5.0f Hz in %d samples, %2d pieces: largest radius %.6f, largest "
+		       "difference from the real ladder %.2f dB (sample %3.0f, %5.0f Hz)%s%s%s\n",
+		       twelve ? "12dB" : "24dB", resFrom, resTo, fromHz, toHz, kBlock, pieces, rad, dev, devAt, devF,
+		       linear ? "" : " (saturating: not counted)", rad >= 1 && !unstable ? " (as the real ladder: sings)" : "",
+		       bad ? "  FAIL" : "");
+		fflush(stdout);
+	};
 	struct Jump {
 		double from, to;
 	} jumps[] = {{30, 18000}, {18000, 30}, {200, 2000}, {2000, 200}};
 	for (bool twelve : {false, true}) {
-		FilterMode mode = twelve ? FilterMode::TRANSISTOR_12DB : FilterMode::TRANSISTOR_24DB;
 		for (double res : {0.0, 13.0, 25.0, 38.0}) {
-			int32_t r = linearParam(res);
 			for (Jump j : jumps) {
-				LpLadderFilter a = configuredAtHz(mode, j.from, r), b = configuredAtHz(mode, j.to, r);
-				double rad = 0, dev = 0, devAt = 0, devF = 0;
-				bool linear = a.processedResonance <= 510000000 && b.processedResonance <= 510000000;
-				for (int k = 1; k <= kBlock; k++) {
-					Coefs mid = midRamp(a, b, k, kBlock);
-					StateSpace sm = probe(twelve, mid);
-					rad = std::max(rad, radius(sm));
-					LpLadderFilter ref = configuredAtMoveability(mode, mid.m, r);
-					StateSpace sr = probe(twelve, coefsOf(ref));
-					double peak = 0;
-					std::vector<double> hr(grid.size()), hm(grid.size());
-					for (size_t i = 0; i < grid.size(); i++) {
-						hr[i] = gainAt(sr, grid[i]);
-						hm[i] = gainAt(sm, grid[i]);
-						peak = std::max(peak, hr[i]);
-					}
-					for (size_t i = 0; i < grid.size(); i++) {
-						if (hr[i] >= peak * std::pow(10, -12 / 20.0)) {
-							double d = std::fabs(20 * std::log10(hm[i] / hr[i]));
-							if (d > dev) {
-								dev = d;
-								devAt = k;
-								devF = grid[i];
-							}
-						}
-					}
-				}
-				bool bad = rad >= 1 || (linear && dev > kMaxDeviationDb);
-				failures += bad;
-				worstRadius = std::max(worstRadius, rad);
-				if (linear) {
-					worstDev = std::max(worstDev, dev);
-				}
-				printf("ramp %s res %4.1f %5.0f -> %5.0f Hz in %d samples: largest radius %.6f, largest difference "
-				       "from the real ladder %.2f dB (sample %3.0f, %5.0f Hz)%s%s\n",
-				       twelve ? "12dB" : "24dB", res, j.from, j.to, kBlock, rad, dev, devAt, devF,
-				       linear ? "" : " (saturating: not counted)", bad ? "  FAIL" : "");
-				fflush(stdout);
+				check(twelve, j.from, j.to, res, res);
 			}
 		}
+		// The resonance jumping (and with the cutoff)
+		for (double hz : {100.0, 1000.0, 10000.0}) {
+			check(twelve, hz, hz, 0, 13);
+			check(twelve, hz, hz, 13, 0);
+			check(twelve, hz, hz, 0, 50);
+			check(twelve, hz, hz, 50, 0);
+		}
+		check(twelve, 30, 18000, 0, 13);
+		check(twelve, 18000, 30, 13, 0);
 	}
-	printf("ramp: largest radius %.6f (limit 1), largest difference %.2f dB (limit %.1f)\n", worstRadius, worstDev,
-	       kMaxDeviationDb);
+	printf("ramp: largest radius %.6f, largest difference %.2f dB (limit %.1f) where the ladder is linear\n",
+	       worstRadius, worstDev, kMaxDeviationDb);
 	return failures;
 }
 
@@ -344,7 +400,7 @@ void selfOsc() {
 			// the last second
 			LpLadderFilter h = configuredAtHz(mode, hz, linearParam(50));
 			h.setSaturation(LpLadderFilter::kSaturationVoice);
-			std::vector<int32_t> buf(2 * (int)kFs, 0);
+			std::vector<int32_t> buf((2 * (int)kFs + kBlock - 1) / kBlock * kBlock, 0); // whole blocks
 			buf[0] = 1 << 24;
 			for (size_t o = 0; o < buf.size(); o += kBlock) {
 				h.filterMono(&buf[o], &buf[o] + kBlock, 1);
@@ -368,7 +424,7 @@ void selfOsc() {
 			double fSing = crossings > 0 && level > 1 << 16 ? crossings / (last - first) * kFs : 0;
 			printf("selfosc %s cutoff %6.1f Hz: the linear ladder %s at resonance %5.2f, pole %7.1f Hz (%+6.0f "
 			       "cents); the firmware's at full resonance %s",
-			       twelve ? "12dB" : "24dB", fc, sings ? "sings from" : "doesn't sing even", sings ? hi : 50.0, fPole,
+			       twelve ? "12dB" : "24dB", fc, sings ? "sings" : "doesn't sing even", sings ? hi : 50.0, fPole,
 			       1200 * std::log2(fPole / fc), fSing > 0 ? "sings at " : "doesn't sing");
 			if (fSing > 0) {
 				printf("%7.1f Hz (%+6.0f cents), %.1f dBFS peak", fSing, 1200 * std::log2(fSing / fc),

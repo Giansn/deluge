@@ -57,6 +57,8 @@ F="$D/deluge/dsp/filter"
 # multiplies rounding on the PC as the Deluge's smmulr / smmlar do (the PC's fallback truncates)
 mkdir -p "$B/prec/dsp/filter" "$B/prec/util"
 sed 's/^private:/public:/' "$F/lpladder.h" > "$B/prec/dsp/filter/lpladder.h"
+# (and Filter's protected members: the ramps' pieces, for lpf_ramp_math)
+sed 's/^protected:/public:/' "$F/filter.h" > "$B/prec/dsp/filter/filter.h"
 awk '/_rounded\(q31_t.*\) \{$/ {r = 1} r && /int64_t\)b\) >> 32\)/ {sub(/\* \(int64_t\)b\) >> 32\)/, "* (int64_t)b + 0x80000000LL) >> 32)"); r = 0} /^}/ {r = 0} {print}' \
     "$D/deluge/util/fixedpoint.h" > "$B/prec/util/fixedpoint.h"
 grep -q '0x80000000LL) >> 32)' "$B/prec/util/fixedpoint.h" || { echo "run.sh: fixedpoint.h's rounded multiplies not found"; exit 1; }
