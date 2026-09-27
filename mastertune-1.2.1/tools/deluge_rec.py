@@ -28,6 +28,11 @@ The display shows the bit depth that actually arrives: 24B means bit-exact. 16B 
 Windows mostly an input level below 100 % or audio enhancements: set the level of the input "Deluge" to 100 % or run
 without --shared. The pads show the level of the left and right channel in 3 dB steps from -45 dBFS, the last one
 blinks red at full scale.
+
+Versions (the number is in the window's title and on the display at start, --version prints it):
+  1  the first build: REC, ARM with pre-roll, the pads, the bit depth that arrives
+  2  reviewed (7 fixes): no take lost on STOP, quit, a disk error or at 4 GB; the pre-roll exact to the frame
+  3  the monitor with a choice of output, everything in English, the version number, the Deluge's rain as icon
 """
 import argparse
 import collections
@@ -47,6 +52,7 @@ from pathlib import Path
 
 import numpy as np
 
+VERSION = 3                     # One more with every change of the program, and a line under Versions above
 RATE = 44100
 CHANNELS = 2
 FULL_SCALE = 2 ** 31            # The 24-bit samples arrive left-justified in int32
@@ -63,14 +69,18 @@ NOT_OUTPUTS = ("microsoft sound mapper", "primary sound driver")  # Windows' ali
 PANEL, PLATE, EDGE, BEZEL, LABEL, SMALL = "#0e0e10", "#18181b", "#26262b", "#050506", "#d8d8de", "#8c8c96"
 OLED_ON, OLED_OFF = (226, 238, 255), (7, 9, 13)
 PAD_COLOURS = ["#2fdc6e"] * 9 + ["#b8e636", "#f2d22e", "#f2d22e", "#ff9f1c", "#ff7a1c", "#ff5a1f", "#ff2d2d"]
-ICON_PNG = ("iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAB8klEQVR4nO2bsVLCQBCG/2SsGbVEwZ7KwtoH4BXw8fQVeADH0oIq"
-            "vUTT6vAAaOEsXC6Xu4QElr3sV5HcDbP7sXNzy8wmaMBsdv/bZN+5kWWrJLTHu0Fq4jY+Ec4FO/GiWPcd00kYj6elZ5eIygszeamJ"
-            "25gibAmp+RBj8kA5F7u6U9dCTMkTdRIufBslMMe28m5ZLuwdRbGunAsJsDciKXlK/GUyqawt8hxAvQiSkGWrpFIBEphj60ycoLVF"
-            "ntdKIBJpv34oeZs6CVQFfj1nRtvkgf9qcJ0ThBgBhyRP+CQEz4DR6NK7vtn8lJ6/Jzfe/Vf5V6fv7xsxFXAsVAB3ANyoAO4AmrJE"
-            "urvhtcV3IRIjADhMQug2KEoAALyNrhtLiPIqTHRphoD9VVhkMwTsk3NVQ+hXNxErgGiTrAtxZ0Df9N4LrF9vvfunj5+d9vfdOwy+"
-            "AlQAdwDcqADuALhRAdwBcCO2F+iKyL/Fj4EK4A6Am2AvcPf+5F3/eHg+6X7tBXpGBXAHwI0K4A6AGxXAHQA32gswx8GOCuAOgBtx"
-            "vUDb/SEGXwEqgDsAblQAdwDcqACaobEHCWLGnBcQOzDRBVNASh/MhZgxkwccZ0DMEly57QSY83QxSqibHSxVQKwSfIOTOjrr+4LB"
-            "Dk/bSBXRZHz+D/TV1SQk6UmAAAAAAElFTkSuQmCC")  # 64 x 64, the pads and the REC LED
+# 64 x 64: the Deluge's rain of squares in the meter's colours and the REC dot (made by deluge_rec_icon.py)
+ICON_PNG = ("iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAADC0lEQVR42u2bTYvTUBSG8xMSS5m2aWdqGzr9mg9wJ3WjLkRdqogLra7F"
+            "lQj+AWcnggizdOM/EFyKjIyIOxfWhQt3s5KK4MYRjufEXLmNLblJk8y9mVN4oUzTcN4n9749ydxrWQqvfn97hNpB7aEOUKCpDoIaqdaR"
+            "tewLTzJGTTQ2HCWqfZzEuId6J5+s19sCz+vC2lobGo2TWopqoxqp1hAI8uJZMYb7VHy50xmC666C45TAtk8YIaqVaqbaJQjTyGkRmD8U"
+            "XyKqJhmfB4I8SBAOF0IIhv1UDPdKxTXWeFjkRZoW07nTQZ7zRTIvQ5AzYV7a/xv2RTMvFJoOYxnARASeyXNeJROkYJzIwef/kZJTZwNl"
+            "1KbtwDnUBdv2NcL3Hkr1HORRGgUjK+ia/JDQ+eoP0OR11NNaDfbbbfjU6fh62WzCw3IZLiKMquIokAJxxwpaR7+B0NX8Nhq/jya/drsA"
+            "Gxtz9QpBXMPj6grnI68BgD1L9PbURcUpKlxA2scLtVB3SyX43u8vNC/0ptWCyzgSnIhzkldx72AlTf+8AFxCQ+9xyEeZF3pUqcAwIhPk"
+            "XwOtAdSCq69qnvTB8/xwLASAHl7JJxh6cQD8HAzgah4A8gBCQ3nXdWMBIN0oCoB1BPC4Wo1l/huG5ZWiAFhB3XEc+DUcKgN4i4F5No8Q"
+            "zCsTqOujZkfF/G/UA+wX1rMA8OPj5oyiDKZ1PDU2N3EUfMauLwrA83odziu0xUYBEFlwCyHsL+gHKPmf4a8F9QzlmHeFRgAgrQZNEbXE"
+            "LxoNeI1dH7W/ZPw2wjmNkEoJbouNASDURJ1Cs2fsv6bp7nBliecCiUNQFyDLPhhhAAyAAaTTCGVZcJYPRxkAA2AA2fxDZOvLvRnF/XzZ"
+            "4xkAA2AA2QJIs6C8gTAABsAA0g/BtA1kCYQBMAAGcPSNUNahygAYAAM4WgA6A2EADGAWQKJlciYDCC+T036hZNoKL5Q0Yqlsmgumw0tl"
+            "jVksnYb+Wyx97JfL84YJ3jLDm6Z42xxvnOSts7x5+thun/8Dvi/Nm6uBEpQAAAAASUVORK5CYII=")
 
 # A 5 x 7 pixel font: 7 rows of 5 bits per glyph
 FONT = {
@@ -689,7 +699,7 @@ class App:
         self.menu = None  # The output list on the OLED: {"items": [...], "sel": i}
 
         self.W, self.H = Z(520), Z(366)
-        root.title("DELUGE USB REC")
+        root.title(f"DELUGE USB REC v{VERSION}")
         self.icon = tk.PhotoImage(data=ICON_PNG)
         root.iconphoto(True, self.icon)
         root.configure(bg=PANEL)
@@ -999,9 +1009,9 @@ class App:
         o, e = self.oled, self.engine
         o.clear()
         message = self.message[:21] if self.message and now < self.message_until else ""
-        if now < self.boot_until:  # At start the name, as the Deluge shows its version
+        if now < self.boot_until:  # At start the name and the version, as the Deluge shows its own
             o.text((o.W - o.width("DELUGE", 2)) // 2, 9, "DELUGE", 2)
-            o.text((o.W - o.width("USB REC")) // 2, 30, "USB REC")
+            o.text((o.W - o.width(f"USB REC V{VERSION}")) // 2, 30, f"USB REC V{VERSION}")
             return
         if self.menu:
             self.draw_menu(o)
@@ -1090,6 +1100,7 @@ def main():
     ap.add_argument("--output", help="the monitor's output: part of its name (--list); default: the system's output")
     ap.add_argument("--list", action="store_true", help="list the audio inputs and outputs, then quit")
     ap.add_argument("--demo", action="store_true", help="try it without a Deluge: a test signal instead of the input")
+    ap.add_argument("--version", action="version", version=f"DelugeRec v{VERSION}")
     ap.add_argument("--selftest", type=float, metavar="S", help=argparse.SUPPRESS)  # For the build: see selftest()
     args = ap.parse_args()
     if args.list:
@@ -1140,7 +1151,7 @@ def selftest(root, app, engine, seconds, result):
     to the end, the monitor switched on (the build machine may have no output: no failure), PortAudio loaded. Writes
     selftest.txt into the output folder; exit status 1 if something failed."""
     def check():
-        lines, ok = [], True
+        lines, ok = [f"version: v{VERSION}"], True
         try:
             import sounddevice as sd
             lines.append(f"portaudio: {sd.get_portaudio_version()[1]}, {len(sd.query_devices())} devices")

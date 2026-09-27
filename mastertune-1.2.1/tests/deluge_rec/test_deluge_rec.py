@@ -4,9 +4,11 @@
 Covers the WAV writer (byte for byte, header, header during the take, 4 GB split, stop, quit, disk error), ARM with
 pre-roll (to the frame), file numbering, the meter (dBFS, pads, bit depth), the choice of the input (Windows WASAPI
 exclusive first and the fallbacks, macOS, Linux), the monitor (its buffer, the outputs offered, never the Deluge,
-the choice of the output and its menu) and --demo. Needs only numpy.
+the choice of the output and its menu), --demo and the version. Needs only numpy.
 """
+import contextlib
 import importlib.util
+import io
 import json
 import math
 import os
@@ -326,7 +328,7 @@ class FakeTk(types.ModuleType):
             def __init__(self): self.after_calls = []
             def after(self, ms, f): self.after_calls.append(f)
             def winfo_fpixels(self, s): return 96.0
-            def title(self, *a): pass
+            def title(self, t): self.titled = t
             def configure(self, **kw): pass
             def resizable(self, *a): pass
             def bind(self, key, f): self.bindings = getattr(self, "bindings", {}); self.bindings[key] = f
@@ -395,6 +397,30 @@ class Gui(EngineCase):
         e.state = "idle"
         app.quit()
         self.assertTrue(root.destroyed)
+
+    def test_version(self):
+        """The version: listed under Versions (1 to VERSION, one line each), in the title, on the display at start and
+        with --version."""
+        self.assertIsInstance(dr.VERSION, int)
+        listed = [int(n) for n in re.findall(r"^  (\d+)  \S", dr.__doc__, re.M)]
+        self.assertEqual(listed, list(range(1, dr.VERSION + 1)))
+        root = self.tk.Tk()
+        app = dr.App(root, self.engine(), 1.0)
+        self.assertEqual(root.titled, f"DELUGE USB REC v{dr.VERSION}")
+        drawn, text = [], app.oled.text
+        app.oled.text = lambda x, y, s, *a, **kw: (drawn.append(s), text(x, y, s, *a, **kw))
+        app.tick()
+        self.assertIn(f"USB REC V{dr.VERSION}", drawn)
+        app.quit()
+        argv, out = sys.argv, io.StringIO()
+        sys.argv = ["deluge_rec.py", "--version"]
+        try:
+            with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as ex:
+                dr.main()
+        finally:
+            sys.argv = argv
+        self.assertEqual(ex.exception.code, 0)
+        self.assertEqual(out.getvalue().strip(), f"DelugeRec v{dr.VERSION}")
 
 
 class FakeStream:

@@ -1,7 +1,9 @@
 name: DelugeRec for Windows
 # Builds mastertune-1.2.1/tools/deluge_rec.py into DelugeRec.exe (PyInstaller: one file, no console) after its tests,
-# checks the .exe on Windows with its self-test (the window, the demo signal, a take, the monitor, PortAudio) and puts
-# it on the release "deluge-rec" and as the run's artifact.
+# checks the .exe on Windows with its self-test (the window, the demo signal, a take, the monitor, PortAudio, the
+# version) and puts it on its own release "deluge-rec-vN" (N = VERSION in deluge_rec.py) and on "deluge-rec", which
+# always has the newest one under the same link. A released version is never replaced: if deluge_rec.py or its icon
+# changed since, the build stops until VERSION is raised; if not, it only builds and tests.
 on:
   push:
     branches: [geraet-ergebnisse]
@@ -25,6 +27,31 @@ jobs:
             mastertune-1.2.1/tools
             mastertune-1.2.1/tests/deluge_rec
 
+      - name: Version
+        shell: bash
+        run: |
+          src=mastertune-1.2.1/tools/deluge_rec.py
+          v=$(sed -n 's/^VERSION = \([0-9][0-9]*\).*/\1/p' "$src")
+          change=$(sed -n "s/^  $v  //p" "$src" | tr -d '\r' | head -n 1)
+          if [ -z "$v" ] || [ -z "$change" ]; then
+            echo "::error file=$src::VERSION or its line under Versions is missing"
+            exit 1
+          fi
+          release=yes
+          if git ls-remote --exit-code --tags origin "refs/tags/deluge-rec-v$v" > /dev/null; then
+            git fetch --depth=1 origin "+refs/tags/deluge-rec-v$v:refs/tags/deluge-rec-v$v"
+            for f in "$src" mastertune-1.2.1/tools/deluge_rec.ico; do
+              if [ "$(git rev-parse "deluge-rec-v$v:$f")" != "$(git rev-parse "HEAD:$f")" ]; then
+                echo "::error file=$src::v$v is released already and $f changed since: raise VERSION and add its line under Versions"
+                exit 1
+              fi
+            done
+            release=no
+            echo "v$v is released already and unchanged: build and test only"
+          fi
+          echo "v$v: $change (release: $release)"
+          { echo "V=$v"; echo "CHANGE=$change"; echo "RELEASE=$release"; } >> "$GITHUB_ENV"
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -36,31 +63,56 @@ jobs:
         run: python -B mastertune-1.2.1/tests/deluge_rec/test_deluge_rec.py
 
       - name: Build
-        run: >-
-          pyinstaller --noconfirm --onefile --windowed --name DelugeRec
-          --icon mastertune-1.2.1/tools/deluge_rec.ico mastertune-1.2.1/tools/deluge_rec.py
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/version.txt" << EOF
+          VSVersionInfo(
+            ffi=FixedFileInfo(filevers=($V, 0, 0, 0), prodvers=($V, 0, 0, 0), mask=0x3f, flags=0x0, OS=0x40004,
+                              fileType=0x1, subtype=0x0, date=(0, 0)),
+            kids=[StringFileInfo([StringTable('040904B0', [
+                    StringStruct('FileDescription', 'DelugeRec'), StringStruct('FileVersion', '$V'),
+                    StringStruct('InternalName', 'DelugeRec'), StringStruct('OriginalFilename', 'DelugeRec.exe'),
+                    StringStruct('ProductName', 'DelugeRec'), StringStruct('ProductVersion', '$V')])]),
+                  VarFileInfo([VarStruct('Translation', [1033, 1200])])])
+          EOF
+          pyinstaller --noconfirm --onefile --windowed --name DelugeRec --version-file "$RUNNER_TEMP/version.txt" \
+            --icon mastertune-1.2.1/tools/deluge_rec.ico mastertune-1.2.1/tools/deluge_rec.py
 
       - name: Self-test of the .exe
         shell: pwsh
         run: |
           $out = Join-Path $env:RUNNER_TEMP "selftest"
           $p = Start-Process -FilePath dist\DelugeRec.exe -ArgumentList "--selftest", "6", "--out", $out -Wait -PassThru
-          Get-Content (Join-Path $out "selftest.txt")
-          Get-Item dist\DelugeRec.exe | Select-Object Name, Length
+          $txt = Get-Content (Join-Path $out "selftest.txt")
+          $txt
+          $exe = Get-Item dist\DelugeRec.exe
+          "$($exe.Name): $($exe.Length) bytes, version $($exe.VersionInfo.ProductVersion), SHA-256 $((Get-FileHash $exe.FullName).Hash)"
           if ($p.ExitCode -ne 0) { throw "self-test failed (exit $($p.ExitCode))" }
+          if ($txt -notcontains "version: v$env:V") { throw "the program does not say v$env:V" }
+          if ($exe.VersionInfo.ProductVersion -ne $env:V) { throw "the file's version is not $env:V" }
 
       - uses: actions/upload-artifact@v4
         with:
-          name: DelugeRec-windows
+          name: DelugeRec-v${{ env.V }}-windows
           path: dist/DelugeRec.exe
 
-      - name: Release deluge-rec
+      - name: Release deluge-rec-v${{ env.V }}
+        if: env.RELEASE == 'yes'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes="Records the Deluge's USB audio output (mastertune v8 or later), with a monitor on the computer's headphones or speakers. Download DelugeRec.exe and run it, nothing to install. Windows asks at the first start because the file is not signed: More info, then Run anyway. Built from ${GITHUB_SHA:0:8} (run ${GITHUB_RUN_NUMBER}). Source: mastertune-1.2.1/tools/deluge_rec.py."
-          gh release view deluge-rec > /dev/null 2>&1 || gh release create deluge-rec --prerelease \
-            --target "$GITHUB_SHA" --title "DelugeRec for Windows" --notes "$notes"
-          gh release edit deluge-rec --title "DelugeRec for Windows" --notes "$notes"
+          notes() {
+            printf '%s\n\n%s\n\n%s\n' "$1" \
+              "Records the Deluge's USB audio output (mastertune v8 or later), with a monitor on the computer's headphones or speakers. Download $2 and run it, nothing to install. Windows asks at the first start because the file is not signed: More info, then Run anyway." \
+              "Built from ${GITHUB_SHA:0:8} (run ${GITHUB_RUN_NUMBER}). Source: mastertune-1.2.1/tools/deluge_rec.py, its list Versions says what changed."
+          }
+          cp dist/DelugeRec.exe "dist/DelugeRec-v$V.exe"
+          gh release create "deluge-rec-v$V" "dist/DelugeRec-v$V.exe" --prerelease --target "$GITHUB_SHA" \
+            --title "DelugeRec v$V" --notes "$(notes "v$V: $CHANGE." "DelugeRec-v$V.exe")"
+          # deluge-rec: always the newest version under the same link (its tag stays on the first build, the notes say
+          # which commit it is; the exact one is the tag deluge-rec-vN)
+          gh release view deluge-rec > /dev/null 2>&1 || gh release create deluge-rec --prerelease --target "$GITHUB_SHA" \
+            --title "DelugeRec for Windows" --notes "DelugeRec for Windows"
+          gh release edit deluge-rec --title "DelugeRec for Windows (v$V)" --notes "$(notes "Always the newest version, now v$V: $CHANGE. Each version from v3 on also keeps its own release (deluge-rec-v3, deluge-rec-v4 ...)." "DelugeRec.exe")"
           gh release upload deluge-rec dist/DelugeRec.exe --clobber
