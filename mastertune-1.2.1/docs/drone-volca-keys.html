@@ -145,7 +145,7 @@
 <table>
   <thead><tr><th style="width:28%">Verbindung</th><th style="width:24%">Kabel</th><th>Wozu</th></tr></thead>
   <tr><td>Deluge MIDI OUT → volca MIDI IN</td><td>MIDI-Kabel. Dass die volca eine 5-polige DIN-Buchse hat, ist sehr wahrscheinlich <span class="tag">prüfen</span></td><td>Noten, Pitch Bend, CCs und MIDI-Clock. Das ist die einzige nötige Verbindung.</td></tr>
-  <tr><td>Deluge Gate 4 → volca SYNC IN</td><td>3,5 mm mono</td><td>Nur, wenn der Sequencer der volca per Puls laufen soll. Für Noten vom Deluge nicht nötig. SYNC IN verträgt höchstens 20 V.</td></tr>
+  <tr><td>Deluge Gate 4 → volca SYNC IN</td><td>3,5 mm mono</td><td>Nur, wenn der Sequencer der volca per Puls laufen soll. Gate 4 muss dafür auf <i>Clock</i> stehen (Kapitel 4). Für Noten vom Deluge nicht nötig. SYNC IN verträgt höchstens 20 V.</td></tr>
   <tr><td>volca Kopfhörer → Deluge Line-in</td><td>3,5 mm Stereo, Stecker passend zur Line-in-Buchse</td><td>Aufnahme als Audio-Clip, Input als Oszillator, Resampling (Kapitel 8)</td></tr>
   <tr><td>oder volca Kopfhörer → Mischpult</td><td>3,5 mm Stereo</td><td>wenn die volca nicht durch den Deluge laufen soll</td></tr>
 </table>
@@ -156,15 +156,16 @@
 </ul>
 
 <h2>3. Die volca keys einrichten</h2>
-<p>Die globalen Einstellungen der volca erreichst du laut mehreren Quellen, indem du sie <b>mit gedrückter FUNC-Taste einschaltest</b>. Die Parameter liegen dann auf den Tasten 1–7. <b>REC</b> speichert und startet neu, <b>PLAY</b> bricht ab, ohne zu speichern.</p>
+<p>Die globalen Einstellungen der volca erreichst du laut Korg-Handbuch, indem du sie <b>mit gedrückter FUNC-Taste einschaltest</b>. Die Parameter liegen dann auf den Step-Tasten: <b>1</b> Auto-Power-Off, <b>2</b> Batterietyp, <b>3</b> SYNC-OUT-Polarität, <b>4</b> SYNC-IN-Polarität, <b>6</b> MIDI-Clock, <b>7</b> MIDI ShortMessage. <b>REC</b> speichert und startet neu, <b>PLAY</b> bricht ab, ohne zu speichern.</p>
 <table class="split">
   <thead><tr><th style="width:22%">Einstellung</th><th style="width:34%">Für diesen Aufbau</th><th>Hinweis</th></tr></thead>
   <tr><td>MIDI-Kanal</td><td><b>1</b> lassen, das ist der Standard</td><td>Der Deluge-Clip kommt dann auch auf Kanal 1. Wie genau man den Kanal ändert, beschreiben die Quellen unterschiedlich: Tasten 1–16 direkt, über MEMORY oder mit FUNC + Taste 16 <span class="tag">prüfen</span></td></tr>
   <tr><td>MIDI-Clock</td><td>LED von Step 6 an = <b>Auto</b> (folgt der MIDI-Clock), aus = intern</td><td>Nur wichtig, wenn Sequencer oder Motion Sequence der volca im Tempo des Deluge laufen sollen. Unter MIDI-Clock ist der Tempo-Regler der volca ohne Wirkung.</td></tr>
   <tr><td>SYNC-IN-Polarität</td><td>steigende Flanke (Standard)</td><td>globaler Parameter auf Taste 4; nur mit Sync-Kabel wichtig</td></tr>
-  <tr><td>Auto-Power-Off</td><td>für lange Drones aus</td><td>Die volca schaltet sich sonst nach etwa 4 Stunden ab. Auf welcher Taste der Parameter liegt <span class="tag">prüfen</span></td></tr>
+  <tr><td>Auto-Power-Off</td><td>für lange Drones aus</td><td>Taste 1. Die volca schaltet sich sonst nach etwa 4 Stunden ab.</td></tr>
+  <tr><td>MIDI ShortMessage</td><td><b>an</b> lassen</td><td>Taste 7. Ist der Parameter aus, reagiert die volca nicht auf Noten und CCs vom Deluge.</td></tr>
 </table>
-<p class="small">Steckt ein Kabel in SYNC IN, folgt der Sequencer der volca nur noch den Pulsen und ignoriert seinen eigenen Takt. Den Tempobereich der volca belegt keine der Quellen.</p>
+<p class="small">Steckt ein Kabel in SYNC IN, folgt der Sequencer der volca nur noch den Pulsen und ignoriert seinen eigenen Takt. Das Korg-Handbuch nennt auch den Tempobereich als globalen Parameter. Für diesen Aufbau spielt er keine Rolle, weil das Tempo vom Deluge kommt.</p>
 
 <h2>4. Den Deluge einrichten</h2>
 <h3>MIDI-Clip für die volca</h3>
@@ -179,7 +180,7 @@
 <table>
   <thead><tr><th style="width:36%">Menü</th><th>Was du einstellst</th></tr></thead>
   <tr><td>Settings → MIDI → Clock → Output<br><span class="small">Titel «MIDI clock out»</span></td><td>An, wenn die volca im Tempo mitlaufen soll (ihre MIDI-Clock auf Auto). Seit v15 läuft der MIDI-Clock-Ausgang auch weiter, wenn der Deluge selbst einer externen MIDI-Clock folgt.</td></tr>
-  <tr><td>Settings → Trigger clock → Output → PPQN<br><span class="small">Titel «Output PPQN»</span></td><td>Nur mit Sync-Kabel. Die Trigger-Clock kommt aus <b>Gate 4</b>. Wie viele Pulse die volca pro Step erwartet, ist widersprüchlich belegt: 1 Puls pro Step (das wären 4 PPQN) oder 1 Puls pro 2 Steps (2 PPQN) <span class="tag">prüfen</span>. Vergleiche das Tempo der volca mit dem des Deluge. Einfacher ist MIDI-Clock ohne Sync-Kabel.</td></tr>
+  <tr><td>Settings → Gate → Gate output 4 → <b>Clock</b><br><span class="small">Titel «Gate out4 mode»</span><br>Settings → Trigger clock → Output → PPQN<br><span class="small">Titel «Output PPQN»</span></td><td>Nur mit Sync-Kabel. Die Trigger-Clock kommt aus <b>Gate 4</b>, aber nur, wenn sein Modus auf <b>Clock</b> steht. Standard ist V-trig, dann bleibt das Sync-Kabel stumm. <i>Output PPQN</i> auf <b>2</b> stellen: Die Belege sprechen für 1 Puls pro 2 Steps <span class="tag">prüfen</span>. Vergleiche das Tempo der volca mit dem des Deluge. Einfacher ist MIDI-Clock ohne Sync-Kabel.</td></tr>
   <tr><td>Settings → Tuning → Master tune (Hz)<br><span class="small">7-Segment: <code>TUNE</code> → <code>MTUN</code></span></td><td>Für die volca auf <b>440.0</b> lassen (Kapitel 5). Bereich 415.3 bis 466.2 Hz in 0.1-Hz-Schritten.</td></tr>
 </table>
 
@@ -218,7 +219,7 @@
 <ul>
   <li>Setz im MIDI-Clip lange Noten, für eine Fläche über den ganzen Clip. Die volca hält den Ton, solange die Note dauert.</li>
   <li><b>Eine neue Note startet die Hüllkurve für alle gehaltenen Noten neu</b> (Sekundärquelle). Für eine ruhige Fläche beginnen deshalb alle Töne eines Akkords gleichzeitig. Gestaffelte Einsätze erzeugen jedes Mal einen neuen Anschlag.</li>
-  <li>Ob der Deluge eine Note, die den ganzen Clip füllt, an der Loop-Grenze neu anschlägt, ist für MIDI-Clips nicht belegt <span class="tag">prüfen</span>. Mit einem langen Clip (8 oder 16 Takte) passiert das selten.</li>
+  <li>Eine Note, die bei Step 1 beginnt und den ganzen Clip füllt, hält der Deluge über die Loop-Grenze. Er sendet dort weder Note-Off noch Note-On, die volca schlägt also nicht neu an.</li>
   <li>Im Modus Poly spielt die volca bis zu drei Töne. Was bei mehr als drei Noten geschieht, ist nicht belegt <span class="tag">prüfen</span>. Bleib bei höchstens drei.</li>
 </ul>
 <h3>Stimmmodi (VOICE)</h3>
@@ -284,10 +285,10 @@
   <thead><tr><th style="width:24%">Weg</th><th style="width:44%">Was passiert</th><th>Stimmung</th></tr></thead>
   <tr><td><b>Audio-Clip</b></td><td>Eine Audio-Spur mit <i>Audio source</i> auf dem Input nimmt die volca auf. Mit <i>Monitoring</i> hörst du den Eingang während der Aufnahme.</td><td>Die Aufnahme folgt danach dem Master Tune. Ist die Stimmung beim Aufnehmen nicht 440, bekommt die WAV-Datei einen <code>mtun</code>-Block und wird nie doppelt gestimmt.</td></tr>
   <tr><td><b>Input als Oszillator</b></td><td>Ein Synth des Deluge nutzt den Line-in als Oszillator. Die volca läuft so durch Filter, Hüllkurven und Effekte des Deluge.</td><td>folgt dem Master Tune nicht, weil die volca selbst schon gestimmt ist</td></tr>
-  <tr><td><b>Resampling</b></td><td>Der Deluge nimmt seinen eigenen Ausgang auf, mit der volca über den Line-in.</td><td>wie ein Audio-Clip, mit <code>mtun</code>-Block</td></tr>
+  <tr><td><b>Resampling</b></td><td>Der Deluge nimmt seinen eigenen Ausgang auf, mit der volca über den Line-in.</td><td>wie ein Audio-Clip, mit <code>mtun</code>-Block, wenn Master Tune ≠ 440</td></tr>
 </table>
 <ul>
-  <li><b>Drone in Aufnahmen:</b> Der Song-Drone ist über den Ausgang und USB-Audio zu hören, in <b>Stems fehlt er</b>. Ob er in einer Resampling-Aufnahme landet, beschreiben die Unterlagen nicht <span class="tag">prüfen</span>.</li>
+  <li><b>Drone in Aufnahmen:</b> Der Song-Drone ist über den Ausgang und USB-Audio zu hören und landet auch in <b>Resampling-Aufnahmen</b>. In <b>Stems fehlt er</b>.</li>
   <li><b>432 Hz:</b> Für Weg A aus Kapitel 5 mit Master Tune 440.0 aufnehmen, erst danach umstellen.</li>
 </ul>
 
@@ -311,7 +312,7 @@
   <li>volca: VOICE auf <b>Unison</b>, Detune etwa ein Viertel, Attack lang, Sustain ganz auf, Resonanz mässig.</li>
   <li>Deluge: MIDI-Clip mit 16 Takten, eine Note A1 über den ganzen Clip.</li>
   <li>Im Clip CC 44 (Cutoff) automatisieren: in 8 Takten von tief nach hoch, in 8 Takten zurück.</li>
-  <li>Drone Ton 1: Modus Tone (<span class="key">SYNTH</span>), Note A0, Timbre Sine, Level 30. Er trägt die Tiefe, während das Filter wandert.</li>
+  <li>Drone Ton 1: Modus Tone (<span class="key">SYNTH</span>), <i>Pitch as</i> Note (oberen Goldknopf drücken), Note A0, Timbre Sine, Level 30. Er trägt die Tiefe, während das Filter wandert.</li>
 </ol>
 </div>
 
@@ -319,7 +320,7 @@
 <h3>3. Langsame Schwebung gegen die volca</h3>
 <ol>
   <li>volca: <b>Unison</b>, Detune ganz zu, Sustain ganz auf. MIDI-Clip mit einer langen Note A2.</li>
-  <li>Drone Ton 1: Modus Tone, Timbre Soft, Note A2, dann <span class="key">SHIFT</span> + oberen Goldknopf drehen bis +3 Cent.</li>
+  <li>Drone Ton 1: Modus Tone, Timbre Soft, <i>Pitch as</i> Note (oberen Goldknopf drücken), Note A2, dann <span class="key">SHIFT</span> + oberen Goldknopf drehen bis +3 Cent.</li>
   <li>Level so wählen, dass Drone und volca etwa gleich laut sind. Es entsteht eine Schwebung von rund 0,4 Hz.</li>
   <li>Optional: Life 10 (Sektion Delay, oberer Goldknopf) für zusätzliche Bewegung.</li>
 </ol>
@@ -330,7 +331,7 @@
 <ol>
   <li>volca: VOICE auf <b>Poly Ring</b>, Sustain ganz auf, Delay Time mittel, Feedback gering.</li>
   <li>Deluge: MIDI-Clip mit zwei langen Noten im Quintabstand, zum Beispiel D2 und A2.</li>
-  <li>Drone Ton 1: <span class="key">CV</span> (Isochronic), Note D1, Timbre Soft. Unteren Goldknopf drücken (SYNC) und auf 1/8T drehen. Sektion Attack/Release: Attack 20, Release 30.</li>
+  <li>Drone Ton 1: <span class="key">CV</span> (Isochronic), <i>Pitch as</i> Note (oberen Goldknopf drücken), Note D1, Timbre Soft. Unteren Goldknopf drücken (SYNC) und auf 1/8T drehen. Sektion Attack/Release: Attack 20, Release 30.</li>
   <li>Eine Kick mit <i>Send to sidechain</i> dazu, im Drone-Menü <i>Volume ducking</i> 20.</li>
 </ol>
 </div>
@@ -379,15 +380,15 @@
 <h2>11. Fehlersuche</h2>
 <table class="split">
   <thead><tr><th style="width:30%">Problem</th><th>Ursache und Lösung</th></tr></thead>
-  <tr><td>Die volca spielt nicht</td><td>Kabel an MIDI OUT des Deluge und MIDI IN der volca? Clip auf demselben Kanal wie die volca (Standard 1)? Clip gestartet und nicht stumm? Lautstärke der volca offen?</td></tr>
+  <tr><td>Die volca spielt nicht</td><td>Kabel an MIDI OUT des Deluge und MIDI IN der volca? Clip auf demselben Kanal wie die volca (Standard 1)? Clip gestartet und nicht stumm? Lautstärke der volca offen? Globaler Parameter MIDI ShortMessage (Taste 7) an?</td></tr>
   <tr><td>Der Tempo-Regler der volca tut nichts</td><td>Sie folgt der MIDI-Clock (LED Step 6 an) oder einem Sync-Kabel. Das ist so gewollt.</td></tr>
-  <tr><td>Sequencer der volca läuft doppelt oder halb so schnell</td><td>Mit Sync-Kabel: <i>Output PPQN</i> passt nicht. Anderen Wert versuchen oder MIDI-Clock ohne Kabel nutzen.</td></tr>
-  <tr><td>Die Fläche setzt neu an</td><td>Eine neue Note startet die Hüllkurve für alle Töne neu. Akkordtöne gleichzeitig beginnen lassen. An der Loop-Grenze: längeren Clip nehmen.</td></tr>
+  <tr><td>Sequencer der volca läuft doppelt oder halb so schnell</td><td>Mit Sync-Kabel: <i>Output PPQN</i> passt nicht. Statt 2 den Wert 4 versuchen oder MIDI-Clock ohne Kabel nutzen. Läuft sie gar nicht: Gate 4 auf <i>Clock</i>?</td></tr>
+  <tr><td>Die Fläche setzt neu an</td><td>Eine neue Note startet die Hüllkurve für alle Töne neu. Akkordtöne gleichzeitig beginnen lassen. An der Loop-Grenze: Die Note muss bei Step 1 beginnen und den ganzen Clip füllen.</td></tr>
   <tr><td>Ein Ton fehlt im Akkord</td><td>Mehr als drei Noten gleichzeitig oder ein Mono-Modus aktiv. VOICE auf Poly, höchstens drei Noten.</td></tr>
   <tr><td>volca und Drone passen nicht zusammen</td><td>Master Tune nicht auf 440.0? Die volca folgt ihm nicht. Drone-Töne in Hz statt als Note? Nach langer Spielzeit kann die volca driften: mehr als 10 s Stille geben, dann stimmt sie nach.</td></tr>
   <tr><td>Aufnahme klingt bei 432 Hz zu hoch</td><td>Sie entstand bei Master Tune 432.0 und gilt deshalb als 432-Material. Mit 440.0 neu aufnehmen.</td></tr>
   <tr><td>Filterfahrt klingt stufig</td><td>Bei hoher Resonanz stuft das Filter hörbar ab. Resonanz senken oder die Bewegung mit dem LFO machen.</td></tr>
-  <tr><td>Die volca ist plötzlich aus</td><td>Auto-Power-Off nach etwa 4 Stunden oder leere Batterien. Parameter ausschalten, Netzteil verwenden.</td></tr>
+  <tr><td>Die volca ist plötzlich aus</td><td>Auto-Power-Off nach etwa 4 Stunden oder leere Batterien. Parameter auf Taste 1 ausschalten, Netzteil verwenden.</td></tr>
 </table>
 
 <h2>12. Grenzen und offene Punkte</h2>
@@ -399,8 +400,8 @@
   <li>Auto-Tuning nur in Pausen: Bei stundenlangen Dauertönen kann die volca leicht wandern.</li>
 </ul>
 <h3>Offene Punkte <span class="tag">prüfen</span></h3>
-<p>Nicht oder widersprüchlich belegt sind: die MIDI-IN-Buchse als 5-polige DIN (sehr wahrscheinlich); der genaue Weg zum MIDI-Kanal und die Taste für Auto-Power-Off; die Pulse pro Step an SYNC IN und der Tempobereich; die Wertebereiche von CC 40 und CC 41, die Wirkung von CC 11 und welche Parameter nur per MIDI erreichbar sind; Pitch-Bend-Bereich, Velocity, Program Change, RPN 1 und Local Control; das Verhalten bei mehr als drei Noten und das Dauer-Halten bei Sustain ganz auf; ob ein Dauerton das Auto-Tuning unterdrückt. Auf der Seite des Deluge: der Neuanschlag einer clip-langen MIDI-Note an der Loop-Grenze, ein fester Pitch-Bend-Wert in einem MIDI-Clip und der Drone in Resampling-Aufnahmen.</p>
-<p class="small">Quellen zur volca: MIDI-Tabelle von Korg v1.02, Produktseite korg.com (Anschlüsse, Strom), Auszüge aus dem Korg-Handbuch, Sound On Sound, Sweetwater, sonicstate, zZounds, korgforums.com. Zum Deluge: README und Drone-Handbuch von 1.2.1-mastertune, Quellcode v16 (Menünamen, Gate 4 als Trigger-Clock).</p>
+<p>Nicht oder widersprüchlich belegt sind: die MIDI-IN-Buchse als 5-polige DIN (sehr wahrscheinlich); der genaue Weg zum MIDI-Kanal; die Pulse pro Step an SYNC IN (vermutlich 2 PPQN); die Wertebereiche von CC 40 und CC 41, die Wirkung von CC 11 und welche Parameter nur per MIDI erreichbar sind; Pitch-Bend-Bereich, Velocity, Program Change, RPN 1 und Local Control; das Verhalten bei mehr als drei Noten und das Dauer-Halten bei Sustain ganz auf; ob ein Dauerton das Auto-Tuning unterdrückt. Auf der Seite des Deluge: ein fester Pitch-Bend-Wert in einem MIDI-Clip.</p>
+<p class="small">Quellen zur volca: MIDI-Tabelle von Korg v1.02, Produktseite korg.com (Anschlüsse, Strom), Auszüge aus dem Korg-Handbuch, Sound On Sound, Sweetwater, sonicstate, zZounds, korgforums.com. Zum Deluge: README und Drone-Handbuch von 1.2.1-mastertune, Quellcode v16 (Menünamen, Gate 4 als Trigger-Clock und sein Modus, lange Noten an der Loop-Grenze, Drone beim Resampling).</p>
 
 </body>
 </html>
