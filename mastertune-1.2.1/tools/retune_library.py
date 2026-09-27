@@ -1128,26 +1128,20 @@ def apply_edits(text, edits):
 # Memory: how many files are converted at once
 
 
-# A job's peak memory, measured (tests/retune/pc_test.py, test_streaming()): its worker process with numpy, soxr and
-# Rubber Band loaded, and per sample of a block in flight (read, decoded, resampled, encoded), plus the resampler's
-# and Rubber Band's own state
-WORKER_MEMORY = 80 << 20
-BYTES_PER_SAMPLE = 120
-SOXR_MEMORY = 16 << 20
-RB_MEMORY = 48 << 20
+# A job's peak memory (measured with VmHWM on Linux, see tests/retune/pc_test.py, test_streaming()): its worker
+# process with numpy, soxr and Rubber Band loaded (35 MB), and per sample of a block in flight (read, decoded,
+# resampled or pitch-shifted, encoded; 35 to 90 bytes per sample, counted at the larger of the block's input and
+# output) plus the resampler's and Rubber Band's own state (up to 10 MB). The estimates keep a margin.
+WORKER_MEMORY = 50 << 20
+BYTES_PER_SAMPLE = 100
+JOB_MEMORY = 16 << 20
 
 
 def job_memory(job):
     """A job's estimated peak memory in bytes, beyond its process's own (WORKER_MEMORY): from the file's length up
     to one block, since a longer file is converted block by block."""
     frames = min(job["frames"], job["block"])
-    f = max(1.0, job["f_num"] / job["f_den"])
-    m = frames * job["channels"] * BYTES_PER_SAMPLE * f
-    if job["f_num"] != job["f_den"]:
-        m += SOXR_MEMORY
-    if job["mode"] == "keep_length" and job["pitch_num"] != job["pitch_den"]:
-        m += RB_MEMORY + frames * job["channels"] * 24  # Its input and output blocks (float64, float32)
-    return int(m)
+    return int(JOB_MEMORY + frames * max(1.0, job["f_num"] / job["f_den"]) * job["channels"] * BYTES_PER_SAMPLE)
 
 
 def available_memory():

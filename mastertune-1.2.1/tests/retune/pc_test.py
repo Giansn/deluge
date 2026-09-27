@@ -299,10 +299,33 @@ def run_tool(*args):
     return r.returncode, r.stdout + r.stderr
 
 
+# Linux: a Python command runs under this wrapper, which prints the process's own peak memory (VmHWM) as it exits.
+# ru_maxrss would carry over the peak of the process that started it (Linux keeps it across fork and exec).
+PEAK_WRAPPER = """import atexit, runpy, sys
+def peak():
+    for line in open('/proc/self/status'):
+        if line.startswith('VmHWM:'):
+            sys.stderr.write('\\nVMHWM_KB %s\\n' % line.split()[1])
+            sys.stderr.flush()
+atexit.register(peak)
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name='__main__')
+"""
+
+
 def run_measured(args):
-    """Runs a command: (exit status, output, peak memory in MB or None, how it was measured). Unix: the child's
-    maximum resident set size (os.wait4); Windows: its peak working set (psutil, polled until it ends); without
-    either None, and the caller skips its memory checks."""
+    """Runs a command: (exit status, output, peak memory in MB or None, how it was measured). Linux (a Python
+    command): its own peak (VmHWM, PEAK_WRAPPER); other Unix: the child's maximum resident set size (os.wait4);
+    Windows: its peak working set (psutil, polled until it ends); without either None, and the caller skips its
+    memory checks."""
+    if args[0] == sys.executable and os.path.exists("/proc/self/status"):
+        r = subprocess.run([sys.executable, "-c", PEAK_WRAPPER, *args[1:]], stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT)
+        text = r.stdout.decode("utf-8", "replace")
+        m = re.search(r"\nVMHWM_KB (\d+)\n", text)
+        if m:
+            return r.returncode, text[:m.start()] + text[m.end():], int(m.group(1)) / 1024, "VmHWM"
+        return r.returncode, text, None, None
     with tempfile.TemporaryFile() as out:
         proc = subprocess.Popen(args, stdout=out, stderr=subprocess.STDOUT)
         peak, how = None, None

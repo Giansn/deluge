@@ -3,18 +3,25 @@
 ../songchange: tests/song's Emulator, performLoad() pausing at its yields while the task manager's work runs window by
 window).
 
-The user names versions of a song "TRACK", "TRACK 2", "TRACK 3": files whose names begin with the same word (up to the
-first space, or the extension; case doesn't matter) and that sort next to each other are one row in the song browser,
-the group's first version, shown by that word with an arrow. Pressing it (select encoder or LOAD) folds the group out
-and loads nothing; the select encoder then goes through the versions, pressing one loads it; leaving the group or BACK
-folds it in. A song on its own looks and works as before. The save browser is unchanged.
+The user names versions of a song "New Sitar Grii", "New Sitar Grii 2", "New Sitar Grii 10": files whose names are the
+same without the number at their end (and the ' ', '_', '-' or '.' before it; case doesn't matter; a name without a
+number at its end is a song of its own, "SONG" and a number too: the firmware's name for a new song) and that sort next
+to each other are one row in the song browser, the group's first version, shown by that name with an arrow. Pressing it
+(select encoder or LOAD) folds the group out and loads nothing; the select encoder then goes through the versions,
+pressing one loads it. A group folded out stays so when the encoder moves on (several at once, up to
+LoadSongUI::kMaxOpenGroups: one more folds in the one the selection was in longest ago); BACK on one of its versions
+folds it in, BACK anywhere else goes up a folder or out as before. A song on its own looks and works as before. The save
+browser is unchanged.
 
-The card (SONGS/): A001..A150, BIG 1..BIG 120 (a group larger than the song browser's window of 100 file items),
+The card (SONGS/): A001X..A150X, BIG 1..BIG 120 (a group larger than the song browser's window of 100 file items),
 DEFAULT (the startup song), MID 1..MID 30, OTHER, TRACK, TRACK 2, TRACK 3, track 4, TRACK 10, the folder TRACK DEMOS,
-TRACK LIVE, TRACK!, TRACKS, Z001..Z150; the folder VERS (not in SONGS: the rows above stay as they are): E01..E26,
-F 1..F 26, H001..H060, sorted in the directory too (where the song browser's window of file items starts after a read
-depends on it). Every song is a small one-synth song (a 1-bar clip); those loaded here have their own song LPF, so which
-song got loaded is known from the song itself, not from its name.
+TRACK LIVE, TRACK!, TRACKS, Z001X..Z150X; the folder VERS (not in SONGS: the rows above stay as they are): E01X..E26X,
+F 1..F 26, H001X..H060X, sorted in the directory too (where the song browser's window of file items starts after a read
+depends on it); the folder NEW: New Drum Idea, New Drum Idea 2, New Sitar Grii, 2, 9, 10, the folder OLD (Idea,
+Idea 2, Solo), SONG1, SONG1 2, SONG2, a long name and its version 2, TRACK, TRACK 2, TRACK 2 FINAL, TRACK 3, TRACK 4,
+TRACK FINAL, ZOO; the folder MANY: Ga, Ga 2 .. Gi, Gi 2 (9 groups). Every song is a small one-synth song (a 1-bar
+clip); those loaded here have their own song LPF, so which song got loaded is known from the song itself, not from its
+name.
 
 What's driven, as the user would: the browser opened with openUI(&loadSongUI) (the current song's name set first: the
 browser starts on it), the select encoder is LoadSongUI::selectEncoderAction(), buttons (select encoder, LOAD, BACK)
@@ -26,16 +33,17 @@ Checks (OLED unless said):
  1. from OTHER, +1: TRACK, one row with an arrow; below it the folder TRACK DEMOS (TRACK 2..TRACK 10 not shown)
  2. +1: the folder; -1: TRACK (not TRACK 10)
  3. pressing TRACK: nothing loads, the browser stays, the versions shown indented, TRACK selected, no arrow
- 4. +1 four times: TRACK 2, TRACK 3, track 4, TRACK 10; +1: the folder, the group folded in again
- 5. -1 from the folder: TRACK; pressed, +1: TRACK 2; BACK: folded in, TRACK selected, the browser still open; BACK
-    again: the browser closes (no group open: as before)
+ 4. +1 four times: TRACK 2, TRACK 3, track 4, TRACK 10; +1: the folder, the group still folded out
+ 5. -1 x4 from the folder: back through the versions to TRACK 2; BACK: folded in, TRACK selected, the browser still
+    open; pressed, -1: OTHER (TRACK folded out); BACK on OTHER: the browser closes (as before)
  6. TRACK pressed, +1 +1, LOAD: TRACK 3 loads (the song stopped)
  7. the browser opened on the current song TRACK 3: its group folded out, TRACK 3 selected
  8. while playing: from there -1, LOAD held and released: TRACK 2 loads at the launch
  9. OTHER, TRACK LIVE (after the folder: a group of one), TRACK!, TRACKS: rows of their own (no arrow, not indented),
     LOAD loads each at once
 10. the window: from A150 +1: BIG 1 with an arrow, +1: DEFAULT, the folder read again on the way (the window moved:
-    numFileItemsDeletedAtStart), -1: BIG 1; pressed, +1 119 times: BIG 2..BIG 120 in order, +1: DEFAULT, folded in
+    numFileItemsDeletedAtStart), -1: BIG 1; pressed, +1 119 times: BIG 2..BIG 120 in order, +1: DEFAULT, still folded
+    out; -1: BIG 120; BACK: BIG 1, folded in
 11. the browser opened on BIG 120 (the group across the window's edge): folded out, BIG 120 selected; BACK: BIG 1,
     folded in (the folder read again on the way)
 12. the rows around a group of 30 (its versions' items in the window too): from OTHER -1: MID with an arrow at the top,
@@ -60,6 +68,19 @@ Checks (OLED unless said):
     (before: F 26 not seen as a version, the browser closed). From E26 +1: the folded row F 1, "F 1" typed (the
     group's first version, exactly: the name as it was, no prediction): shown as typed, no arrow; pressed: F 1 loads
     (before: the group folded out, nothing loaded)
+19. NEW, from New Drum Idea +1 step by step: New Drum Idea >, New Sitar Grii >, OLD, SONG1 >, SONG2, the long name >
+    (the whole name), TRACK >, TRACK 2 FINAL (splitting the group), TRACK >, TRACK FINAL (a song of its own)
+20. New Drum Idea pressed, +1 +1: New Sitar Grii > with New Drum Idea still folded out; pressed: both folded out; +1
+    through its versions to OLD, -1 back through both groups' versions
+21. BACK on New Drum Idea 2: only that group folds in (New Sitar Grii stays folded out); BACK on New Sitar Grii 2: it
+    folds in too
+22. BACK elsewhere: NEW/OLD, Idea folded out, on Solo: up to NEW (OLD selected); in NEW, New Sitar Grii folded out, on
+    OLD: the browser closes
+23. with both folded out, New Sitar Grii 9 loads; the browser opened on it: its group folded out; +1: 10 loads
+24. typing: TRACK F: TRACK FINAL, a row of its own, pressed: it loads; TRACK 4: its group folded out, pressed: it loads
+25. SHIFT+SAVE refused on the long name's folded row; on its version 2 (another group folded out too): the prompt
+26. MANY: the 9 groups folded out one after the other: the last 8 stay so, the first is folded in again
+27. 7-segment, NEW: "New Sitar Grii--", "OLD", "SONG1--", ..., the long name and "--" (scrolling)
 
 Usage: song_groups_emu.py <deluge.elf> [--tools PREFIX] [--out DIR] [--build DIR] [--baseline] [--no-7seg]
   --baseline: a build without the grouping: the same steps, reported (the old browser: every file a row), not checked.
@@ -719,8 +740,8 @@ def run_new(b, check):
     b.back()
     s5, f5 = b.state(), b.frame()
     r4, r5 = row(f4, "New Drum Idea"), row(f5, "New Sitar Grii")
-    check("21. BACK on New Drum Idea 2: that group folded in, its row selected, New Sitar Grii still folded out; +1 +1, "
-          "BACK on New Sitar Grii 2: folded in too, the browser open",
+    check("21. BACK on New Drum Idea 2: that group folded in, its row selected, New Sitar Grii still folded out; "
+          "+1 +1, BACK on New Sitar Grii 2: folded in too, the browser open",
           b.is_open() and s4["name"] == "New Drum Idea" and s4["groups"] == ["New Sitar Grii"] and r4 and r4["arrow"]
           and r4["sel"] and ind(f4, "New Sitar Grii") and at5 == "New Sitar Grii 2" and s5["name"] == "New Sitar Grii"
           and s5["groups"] == [] and r5 and r5["arrow"] and r5["sel"] and not any(x["indent"] for x in f5),
@@ -783,8 +804,8 @@ def run_new(b, check):
     b.press(BUTTON_SELECT)
     knob2, name2 = b.loaded()
     r10 = row(f10, "TRACK FINAL")
-    check("24. typed TRACK F: TRACK FINAL (a song of its own: no arrow, not indented), pressed: it loads; typed TRACK 4 "
-          "(a version): its group folded out, pressed: it loads",
+    check("24. typed TRACK F: TRACK FINAL (a song of its own: no arrow, not indented), pressed: it loads; typed "
+          "TRACK 4 (a version): its group folded out, pressed: it loads",
           s10["name"] == "TRACK FINAL" and r10 and not r10["arrow"] and not r10["indent"]
           and knob == NEW_KNOBS["TRACK FINAL"] and name == "TRACK FINAL" and s11["name"] == "TRACK 4"
           and s11["groups"] == ["TRACK"] and knob2 == NEW_KNOBS["TRACK 4"] and name2 == "TRACK 4",

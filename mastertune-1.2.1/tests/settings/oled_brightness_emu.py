@@ -32,6 +32,10 @@ Checks (a card without CommunityFeatures.XML, the song DEFAULT.XML):
    images as in 2
 7. the 7-segment Deluge (no OLED) on the same card: the item not shown; 51 read; a new value (level 8) sends nothing
    (no SPI byte, nothing queued) but is saved: 155
+8. a damaged entry, a card whose CommunityFeatures.XML says oledContrast "abc" (stringToInt() gives 0): it counts as
+   missing, the contrast 255 and the menu on 10 (not the darkest, 1), only oledMainInit()'s 0x81 0xFF; Settings left:
+   saved as 255. The same boot with the entry "", "0", "-5", "-2147483648", "99999": 255 each time; with "1": 1
+   (readSetting() is inlined into the file's reading, so each value is a boot)
 Usage: oled_brightness_emu.py <deluge.elf> [--tools PREFIX] [--out DIR]   (BLOCKCOUNT_DIR: where blockcount.so is)
 Exit status 0 when every check passes."""
 import argparse
@@ -423,6 +427,39 @@ def main():
     d.leave()
     check("CommunityFeatures.XML: oledContrast 155", saved(sd) == 155, f"{saved(sd)}")
     d.close()
+    del d
+
+    print('== 8. a damaged entry: CommunityFeatures.XML with oledContrast "abc"', flush=True)
+
+    def card_with(value):
+        path = os.path.join(a.out, "oledbrightness-entry.img")
+        files["CommunityFeatures.XML"] = ('<?xml version="1.0" encoding="UTF-8"?>\n<runtimeFeatureSettings>\n'
+                                          f'\t<setting name="oledContrast" value="{value}" />\n'
+                                          '</runtimeFeatureSettings>\n').encode()
+        make_sd.fat32.build(path, files)
+        return path
+
+    sd_bad = card_with("abc")
+    d = Deluge(a.elf, sd_bad, tools)
+    d.run(0.2)
+    cmds = d.side.commands()
+    check("read as missing: the contrast 255, the menu on 10 (not the darkest), only oledMainInit()'s 0x81 0xFF",
+          d.contrast() == 255 and d.level() == 10 and [c[1] for c in cmds] == [0xFF],
+          f"{d.contrast()}, level {d.level()}, commands {[c[1] for c in cmds]}")
+    d.open_settings()
+    d.run(0.1)
+    d.leave()
+    check("Settings left: CommunityFeatures.XML says oledContrast 255", saved(sd_bad) == 255, f"{saved(sd_bad)}")
+    d.close()
+    del d
+    got = {}
+    for value in ("", "0", "-5", "-2147483648", "99999", "1"):
+        d = Deluge(a.elf, card_with(value), tools)
+        got[value] = d.contrast()
+        d.close()
+        del d
+    check('the entry "", "0", "-5", "-2147483648", "99999": 255 each; "1": 1',
+          got == {"": 255, "0": 255, "-5": 255, "-2147483648": 255, "99999": 255, "1": 1}, f"{got}")
 
     print(f"OLED brightness ({os.path.basename(a.elf)}): {checks - failures} of {checks} ok", flush=True)
     sys.exit(1 if failures else 0)
