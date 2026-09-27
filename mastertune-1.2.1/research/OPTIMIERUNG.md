@@ -578,6 +578,60 @@ Rohdaten: `raw/reverb-v14.json`. Commit `7c1ffede`, Tests `tests/reverb/modulati
   - Reverb und Master-Kompressor in Stille überspringen (Reverb-Eingang und -Fahne unter der Hörschwelle)
   - im Stillstand in grösseren Blöcken rechnen, was die feste Arbeit pro Aufruf auf mehr Samples verteilt
 
+## 7m. Leerlauf und falsche Culls (v17)
+
+**Ursachen**, gefunden mit dem Emulator (`tests/sdload`) und dem Profiler:
+- **Aufgabenplanung:** Das Intervall der Playback-Routine ist `16 / 44100`, als ganze Zahl also 0. Die Audio-Routine läuft darum etwa alle 12 µs und rechnet je 4–8 Samples. Jeder Durchgang geht alle Spuren durch.
+- **Stille Kits und Audiospuren** richteten ihre ganze Effektkette ein, bevor sie die Stille prüften: rund 550 Befehle pro Spur und Durchgang.
+- **Falsche Culls beim Streamen:** Wartet der Deluge auf die Karte, rechnet er das Audio im Lade-Task. `setDireness` beurteilte die Last dann nach der mittleren Dauer dieses Tasks, samt Kartenzeit.
+  - Mit einer langsamen Karte gab es 17–25 Culls, obwohl der DMA höchstens 9 Samples im Rückstand war.
+
+**Behebung in v17** (Patches 0056–0060):
+- Das Intervall ist jetzt 0,36 ms, wie gedacht.
+- Direness und Culling richten sich nach der gemessenen Zeit der Audio-Routine selbst.
+- **Mindestfenster:** Bei leichter Last (unter 50 %, Direness 0, kein Dateizugriff) rechnet sie erst ab 32 fälligen Samples.
+- Stille Spuren prüfen die Stille zuerst. Das ist dieselbe Bedingung wie bisher, nur vor dem Einrichten, und bleibt bitgleich.
+- Der CPU-Monitor zählt Durchgänge ohne Rechnen nicht als belegt.
+
+**A/B im Emulator** (`tests/sdload`). Die Geräteschätzung rechnet mit 1 Befehl pro Takt bei 400 MHz plus 60 ns pro SDRAM-Zeile:
+
+| Fall | Aufrufe/s | Samples/Render | Monitor | Gerät (Schätzung) | Culls/QL | Reserve |
+|---|---|---|---|---|---|---|
+| Leerlauf v16 | 7132 | 6,2 | 90,2 % | 182 % | 0/0 | 109 |
+| Leerlauf ohne Mindestfenster | 3569 | 12,4 | 29,8 % | 64 % | 0/0 | 106 |
+| Leerlauf v17 | 2943 (735 rechnend) | 60 | 11,7 % | 19 % | 0/0 | 79 |
+| Streaming v16 | 5308 | 8,4 | 92,7 % | 98 % | 37/4 | 83 |
+| Streaming ohne Mindestfenster | 3996 | 11,1 | 94,5 % | 98,5 % | 0/0 | 75 |
+| Streaming v17 | 2592 (733 rechnend) | 60 | 38,6 % | 40 % | 0/0 | 42 |
+
+- **Entscheid:** Das Mindestfenster bleibt.
+  - Ohne es bliebe ein typisches Streaming-Projekt bei rund 95 % Last.
+  - **Sein Preis:** Live-Noten schwanken um bis 1,4 ms (im Mittel gleich), und die Reserve ist kleiner. Es gab keinen Underrun.
+- **Stille Spuren:** Pro stille Spur sinkt der Aufwand von 550 auf 210 Befehle. Im grossen Song sind es −42 % Befehle und −26 % SDRAM-Zeilen pro Durchgang.
+
+## 7n. Erste Messung am Gerät (v16, «New Sitar Grii 10»)
+
+Die Messung machte die lokale Session mit dem Profiler (`geraet/2026-09-27-v16-*` auf dem Branch `geraet-ergebnisse`). Der Song hat 13 Spuren: 7 Kits mit 1–36 Drums, 3 Synths, eine Audiospur mit Monitoring und 2 MIDI-Spuren, dazu Reverb Mutable.
+
+- **Stillstand:**
+  - 86 % Anzeige, die Audio-Routine läuft 87 % der Zeit.
+  - Die stillen Kits und die Audiospur brauchen zusammen 53 %, die Synths je 0,4 %.
+  - Das bestätigt 7m auf dem Gerät.
+- **Spielen:**
+  - Es klingen nur 16–18 Stimmen, trotzdem 96 % Last. QL steht ständig auf 12–14.
+  - In 12 s wurden 173 Stimmen geschnitten. Die längste Lücke war 4,7 ms, der Puffer reicht für 2,9 ms.
+  - Die Kits tragen die Last: 3L3Ctr0 15 % (36 Drums, Phaser), Hihat 11 % (Flanger), Guiro 11 % (Delay), CR-78 10 % (Flanger), KIT1 8,5 %. Der Reverb braucht 6 %, die drei Synths zusammen 10 %.
+  - Geschnitten werden vor allem die gehaltenen Synth-Stimmen, darum sind Oboe und Sitar kaum zu hören.
+- **Folgerungen:**
+  - v17 hilft im Stillstand. Spuren mit Mod-FX und klingendem Delay überspringt es aber bewusst nicht.
+  - Unter Volllast hilft v17 wenig. Die Kosten liegen in den Kits und ihren Effektketten.
+  - Im Stillstand kostet Guiro 14,7 %, Rattle mit ähnlichem Delay nur 2,8 %: noch ungeklärt.
+- **Nächste Schritte:**
+  - den Song im Emulator nach Funktion aufschlüsseln, denn auf dem Gerät sieht der Profiler nicht in die Spuren
+  - Mod-FX- und Delay-Fahnen stiller Spuren überspringen, sobald sie abgeklungen sind
+  - die Effektketten der Kits beim Spielen verbilligen
+  - die L2-Versionen mit demselben Song messen
+
 ## 8. Offen
 
 - [x] Volllast-Test Lauf 1 eingetragen, Priorisierung angepasst.
@@ -585,6 +639,9 @@ Rohdaten: `raw/reverb-v14.json`. Commit `7c1ffede`, Tests `tests/reverb/modulati
 - [ ] Messversion auf dem Gerät mit `MT_LOADTEST`: Emulator kalibrieren, Direness- und Culling-Schwellen prüfen.
 - [ ] Benchmarks für `processReverbSendAndVolume`, den Aufwand pro Fenster in `Sound::render` und die Wavetable-Schleife.
 - [ ] Wavetable-Oszillator, Grain, `hopEnd` und die Stereo-Unison-Pan-Schleife messen, falls der Volllast-Test sie als relevant zeigt.
+- [ ] Den Song «New Sitar Grii 10» im Emulator: Wohin geht die Zeit in den Kits (7n)?
+- [ ] Stille Spuren mit Mod-FX oder Delay-Fahne überspringen, sobald die Fahne abgeklungen ist.
+- [ ] Die Schwelle des Mindestfensters (50 % Last) am Gerät prüfen.
 - [ ] MIDI/Clock-Fix in `routineForSD()` (`9cd09fb7`): Übertragbarkeit am Code bestätigen.
 - [x] MIDI-/Gate-Timer: 2,9 ms zu früh und Zählerrest behoben (7f).
 - [x] Noten 2,5 ms vor dem Ton (7f): bleibt so (Entscheid des Nutzers).
