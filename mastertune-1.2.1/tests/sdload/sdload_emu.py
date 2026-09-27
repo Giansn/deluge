@@ -30,7 +30,8 @@ Scenarios:
          it is backed off the scheduler's fallback runs whatever is past its own back-off, the audio routine (10 us)
          first. --lines: then, for 0.02 s more, the distinct 32-byte lines (the Cortex-A9's L1 line) of SDRAM and
          internal RAM each audio routine call touches (data only), against the L1 data cache's 1,024 lines; the calls
-         that render nothing apart (--lines also after play: the song still playing, the card instant from then on).
+         that render nothing apart (--lines also after play: the song still playing, the card instant from then on, SDRAM
+         only).
   play   loads, then plays (PlaybackHandler::playButtonPressed()) for --seconds with the task manager as for --idle,
          the card instant or, with --sd-latency, taking time (song_emu.SdModel; --sd-wait yield, the default, as the
          firmware built with USE_TASK_MANAGER waits: routineForSD() once, then the driver's waits yield to the task
@@ -54,9 +55,7 @@ import bisect
 import collections
 import json
 import os
-import re
 import struct
-import subprocess
 import sys
 import time
 
@@ -498,9 +497,9 @@ class Run:
         r["playback_target_s"] = dict(original=old, set=16 / 44100.)
         return r
 
-    def lines(self, seconds=0.02):
-        """Distinct 32-byte lines of SDRAM and internal RAM touched by each audio routine call (data accesses); the
-        calls that render nothing apart."""
+    def lines(self, seconds=0.02, internal=True):
+        """Distinct 32-byte lines of SDRAM and (internal) internal RAM touched by each audio routine call (data
+        accesses); the calls that render nothing apart."""
         emu = self.emu
         dma = se.RealTimeDma(emu)
         cur = [None]
@@ -513,36 +512,28 @@ class Run:
             if c is not None:
                 c[0 if address < 0x20000000 or address >= 0x40000000 else 1].add(address >> 5)
 
+        # While playing only SDRAM: hooks on the internal RAM's data (the stack, ...) then crashed the emulation (unicorn
+        # 2.1.4: a Thumb instruction after an IT block taken as invalid, a jump into data), deterministically
+        ranges = ((se.SDRAM, se.SDRAM_SIZE), (se.SDRAM + se.UNCACHED_MIRROR_OFFSET, se.SDRAM_SIZE))
+        if internal:
+            ranges += ((se.INTERNAL_RAM, se.INTERNAL_RAM_SIZE),)
         hooks = [emu.uc.hook_add(UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, on_mem, begin=b, end=b + size - 1)
-                 for b, size in ((se.SDRAM, se.SDRAM_SIZE), (se.SDRAM + se.UNCACHED_MIRROR_OFFSET, se.SDRAM_SIZE),
-                                 (se.INTERNAL_RAM, se.INTERNAL_RAM_SIZE))]
+                 for b, size in ranges]
         timer = emu.sym["_ZN11AudioEngine16audioSampleTimerE"]
-        depth = [0, 0, 0]  # Calls in progress; audioSampleTimer and instructions at the outer one's entry
-        # routine() left at its return instructions (from the toolchain's objdump), all hooked before the translated
-        # code is dropped: se.Regions' return hooks, added as return addresses show up, drop translated code while
-        # it runs, which with the memory hooks here crashed the emulation while playing (the audio routine called
-        # from several places)
-        name = "_ZN11AudioEngine7routineEv"
-        out = subprocess.run([emu.tool_prefix + "objdump", "-d", f"--disassemble={name}", emu.elf],
-                             capture_output=True, text=True).stdout
-        returns = sorted({int(m.group(1), 16) for m in re.finditer(
-            r"^\s*([0-9a-f]+):\s.*\t(?:(?:ldmia\.w\s+sp!,|pop(?:\.w)?\s).*\bpc\}|bx\s+lr)", out, re.M)})
-        if not returns:
-            raise SystemExit(f"no return instructions found in {name}")
+        depth = [0, 0]
+        regions = se.Regions(emu, [("_ZN11AudioEngine7routineEv", "lines")], "other")
 
-        def enter(e):
+        def enter(e, back):
             depth[0] += 1
             if depth[0] == 1:
                 cur[0] = (set(), set())
                 depth[1] = e.u32(timer)
-                depth[2] = e.bc.bc_total()
             return None
 
-        def leave(uc, address, size, _):
+        def leave(e, extra, n):
             depth[0] -= 1
             if depth[0] == 0 and cur[0] is not None:
-                samples = (emu.u32(timer) - depth[1]) & 0xFFFFFFFF
-                n = emu.bc.bc_total() - depth[2]
+                samples = (e.u32(timer) - depth[1]) & 0xFFFFFFFF
                 if samples:
                     per_call.append((len(cur[0][0]), len(cur[0][1]), samples, n))
                     union[0].update(cur[0][0])
@@ -550,13 +541,12 @@ class Run:
                 else:
                     empty.append((len(cur[0][0]), len(cur[0][1]), n))
                 cur[0] = None
-        hooks.append(emu.intercept(emu.sym.find(name), enter))
-        hooks += [emu.uc.hook_add(se.UC_HOOK_CODE, leave, begin=r, end=r) for r in returns]
+        regions.on_enter["lines"] = enter
+        regions.on_exit["lines"] = leave
         emu.uc.ctl_flush_tb()
         se.run_task_manager(emu, seconds)
         for h in hooks:
             emu.uc.hook_del(h)
-        emu.uc.ctl_flush_tb()
         dma.close()
         if not per_call:
             return None
@@ -706,7 +696,7 @@ def main():
                                        else "instant"))
         if args.lines:  # The card instant from here on (a wait in progress ends as modelled)
             run.emu.sd_model = None
-            res["lines"] = run.lines()
+            res["lines"] = run.lines(internal=False)
     if args.scenario == "browse":
         res["browse"] = run.browse(args.steps, args.settle_ms / 1e3)
     path = os.path.join(args.out, (args.name or args.scenario) + ".json")

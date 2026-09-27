@@ -19,7 +19,8 @@
 #             5 s with the target interval fixed
 #     s4      streaming: 16 audio tracks of long stereo samples (2.8 MB/s) + a synth, a kit and a loop, 4 s played
 #             with the card instant / typical (1 ms per command, 12 MB/s) / slow (3 ms, 6 MB/s); the card's waits
-#             yield to the task manager as the firmware's (USE_TASK_MANAGER)
+#             yield to the task manager as the firmware's (USE_TASK_MANAGER); then the lines of SDRAM the audio
+#             routine touches while it plays (0.02 s more)
 #     s4ipc   s4 with the typical card and the CPU at 0.5 instructions per cycle (the emulator counts 1: no caches)
 #     s2play  the big project of s2 played 4 s with the typical card, the CPU at 1 and at 0.5 instructions per cycle
 #             (far beyond the CPU: it is for the load and the idle CPU, not a song to play)
