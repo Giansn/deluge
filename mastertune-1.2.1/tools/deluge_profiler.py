@@ -10,13 +10,22 @@ This tool records them and names the functions from the firmware's symbols.
   deluge_profiler.py symbols <deluge.elf> [-o symbols.json]      the functions of a build (needs arm-none-eabi-nm)
   deluge_profiler.py record [-p PORT] [-s SECONDS] [-o rec.jsonl] record from the Deluge (pip install mido python-rtmidi)
   deluge_profiler.py report rec.jsonl --symbols symbols.json|deluge.elf [--top N] [--csv out.csv]
+  deluge_profiler.py live [-p PORT] [-s SECONDS] [-o rec.jsonl] [--symbols S] [--every N]
+                                                                   the CPU monitor live, one line a second, and with
+                                                                   Profile the busiest tracks and tasks every N s
   deluge_profiler.py ports                                         list the MIDI inputs
 
 Recording: plug the Deluge in over USB, Settings > CPU monitor > Profile, start this, play (or don't), and it stops
 after SECONDS. The report shows where the time goes: by function (with self time and the task it ran in), by task,
 by output (a track's render time, measured exactly on the device), and how much of it is the audio routine.
 
-The same is in tools/profiler.html for a browser (Chrome or Edge) without installing anything."""
+Live: Settings > CPU monitor > On (or Profile) on the Deluge, then this. Each second a line of the CPU monitor: load
+(average and peak of the audio windows), voices, quality lowered (direness), voices cut (culling), SD card loads and the
+longest gap between two audio routines. With Profile, every N seconds the tracks' render times and the tasks too. With
+-o it saves everything as record does, for report afterwards.
+
+The same is in tools/profiler.html and tools/cpu_monitor.html for a browser (Chrome or Edge) without installing
+anything."""
 import argparse
 import bisect
 import collections
@@ -83,6 +92,50 @@ def decode(msg):
             ticks[index] = t
         return dict(kind="output_times", number=number, window=window, ticks=ticks)
     return None
+
+
+CPU_STATS = 0x10
+CPU_STATS_FIELDS = (("version", 1), ("seq", 2), ("windowMs", 2), ("dspAvgPermille", 2), ("dspPeakPermille", 2),
+                    ("voicesNow", 2), ("voicesMax", 2), ("direMax", 1), ("direSharePermille", 2), ("culled", 2),
+                    ("sdLoads", 2), ("sdAvgUs", 4), ("sdMaxUs", 4), ("maxGapUs", 4), ("samples", 4))
+
+
+def decode_cpu_stats(msg):
+    """One CPU monitor SysEx message (bytes, F0 to F7) -> dict of its fields, or None if it isn't one. The same as
+    decodeCpuStats() in tools/cpu_monitor.html: header F0 00 21 7B 01 10 (or F0 7D 10), fields of 7-bit groups, least
+    significant first; format 2 adds the SD card time without the audio rendered meanwhile (None in format 1)."""
+    msg = bytes(msg)
+    if len(msg) >= 6 and msg[:5] == HEADER:
+        pos = 5
+    elif len(msg) >= 3 and msg[0] == 0xF0 and msg[1] == 0x7D:
+        pos = 2
+    else:
+        return None
+    if msg[pos] != CPU_STATS:
+        return None
+    pos += 1
+    end = len(msg) - 1
+    if msg[end] != 0xF7 or end - pos < 36 or msg[pos] < 1 or any(b > 0x7F for b in msg[pos:end]):
+        return None
+    d = {}
+    for name, n in CPU_STATS_FIELDS:
+        d[name], pos = bits(msg, pos, n)
+    d["sdCardAvgUs"] = d["sdCardMaxUs"] = None
+    if d["version"] >= 2 and end - pos >= 8:
+        d["sdCardAvgUs"], pos = bits(msg, pos, 4)
+        d["sdCardMaxUs"], pos = bits(msg, pos, 4)
+    return d
+
+
+def cpu_line(d):
+    """A CPU monitor message as one line of text."""
+    sd = ""
+    if d["sdLoads"]:
+        sd = f"  SD {d['sdLoads']} loads, avg {d['sdAvgUs'] / 1000:.1f} max {d['sdMaxUs'] / 1000:.1f} ms"
+    return (f"CPU {d['dspAvgPermille'] / 10:5.1f} % (peak {d['dspPeakPermille'] / 10:5.1f})  "
+            f"voices {d['voicesNow']:3} (max {d['voicesMax']:3})  "
+            f"QL {d['direMax']} ({d['direSharePermille'] / 10:.1f} % of the time)  cut {d['culled']}  "
+            f"gap {d['maxGapUs'] / 1000:.1f} ms{sd}")
 
 
 # --- symbols
@@ -171,13 +224,78 @@ def record(args):
                 raw = bytes([0xF0, *msg.data, 0xF7])
                 d = decode(raw)
                 if d is None:
-                    continue
+                    if decode_cpu_stats(raw) is None:
+                        continue
+                    d = dict(kind="cpu")
                 counts[d["kind"]] += 1
                 f.write(json.dumps({"t": time.time(), "hex": raw.hex()}) + "\n")
             time.sleep(0.005)
-    print(f"got {counts['samples']} sample messages, {counts['output_times']} output times, {counts['names']} names")
+    print(f"got {counts['samples']} sample messages, {counts['output_times']} output times, {counts['names']} names, "
+          f"{counts['cpu']} CPU monitor lines")
     if not counts["samples"]:
         print("nothing came: is Profile on, and is it port 3 of the Deluge? (deluge_profiler.py ports)")
+
+
+def live(args):
+    port, name = open_input(args.port)
+    namer = Namer(load_symbols(args.symbols)) if args.symbols else (lambda a: f"0x{a:08x}")
+    print(f"live from {name}" + (f" for {args.seconds} s" if args.seconds else ", Ctrl-C to stop")
+          + (f" -> {args.out}" if args.out else "") + " (Settings > CPU monitor > On or Profile on the Deluge)",
+          flush=True)
+    out = open(args.out, "w") if args.out else None
+    start = time.time()
+    end = start + args.seconds if args.seconds else None
+    interval, names, last_summary, last_cpu = [], [], start, start
+    try:
+        while end is None or time.time() < end:
+            for msg in port.iter_pending():
+                if msg.type != "sysex":
+                    continue
+                raw = bytes([0xF0, *msg.data, 0xF7])
+                d = decode(raw)
+                cpu = decode_cpu_stats(raw) if d is None else None
+                if d is None and cpu is None:
+                    continue
+                if out:
+                    out.write(json.dumps({"t": time.time(), "hex": raw.hex()}) + "\n")
+                if cpu:
+                    last_cpu = time.time()
+                    print(f"{time.strftime('%H:%M:%S')}  {cpu_line(cpu)}", flush=True)
+                elif d["kind"] == "names":
+                    names.append(d)
+                else:
+                    interval.append(d)
+            now = time.time()
+            if now - last_summary >= args.every:
+                if any(m["kind"] == "samples" for m in interval):
+                    print_summary(analyse(names + interval, namer), args.top, bool(args.symbols))
+                interval, last_summary = [], now
+                names = names[-4:]  # The names come every 2 s: the latest are enough
+            if now - last_cpu > 5:
+                print("(nothing for 5 s: is the CPU monitor on, and is it port 3 of the Deluge? "
+                      "deluge_profiler.py ports)", flush=True)
+                last_cpu = now
+            time.sleep(0.005)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if out:
+            out.close()
+
+
+def print_summary(r, top, with_functions):
+    total = r["total"]
+    pct = lambda n: 100.0 * n / total  # noqa: E731
+    task = lambda i: r["task_names"].get(i, "(scheduler)" if i == NO_TASK else f"task {i}")  # noqa: E731
+    parts = [f"  profile: audio routine {pct(r['audio']):.0f} %"]
+    if r["window_ticks"]:
+        parts.append("tracks " + ", ".join(
+            f"{r['output_names'].get(o, f'output {o}')} {100.0 * t / r['window_ticks']:.1f} %"
+            for o, t in sorted(r["output_ticks"].items(), key=lambda x: -x[1])[:top]))
+    parts.append("tasks " + ", ".join(f"{task(t)} {pct(n):.0f} %" for t, n in r["by_task"].most_common(top)))
+    if with_functions:
+        parts.append("functions " + ", ".join(f"{n_[:40]} {pct(n):.0f} %" for n_, n in r["by_function"].most_common(top)))
+    print("\n    ".join(parts), flush=True)
 
 
 # --- report
@@ -225,7 +343,8 @@ def analyse(messages, namer):
                 output_names=output_names, output_ticks=output_ticks, window_ticks=window_ticks)
 
 
-def read_recording(path):
+def read_recording(path, cpu=None):
+    """The profiler's messages of a recording; the CPU monitor's go to the list cpu, if given."""
     messages = []
     with open(path) as f:
         for line in f:
@@ -236,15 +355,26 @@ def read_recording(path):
             d = decode(raw)
             if d:
                 messages.append(d)
+            elif cpu is not None:
+                c = decode_cpu_stats(raw)
+                if c:
+                    cpu.append(c)
     return messages
 
 
 def report(args):
     namer = Namer(load_symbols(args.symbols))
-    r = analyse(read_recording(args.recording), namer)
+    cpu = []
+    r = analyse(read_recording(args.recording, cpu), namer)
+    if cpu:
+        n = len(cpu)
+        print(f"CPU monitor, {n} s: load {sum(c['dspAvgPermille'] for c in cpu) / n / 10:.1f} % on average, "
+              f"peak {max(c['dspPeakPermille'] for c in cpu) / 10:.1f} %, voices up to {max(c['voicesMax'] for c in cpu)}, "
+              f"quality lowered {sum(c['direMax'] > 0 for c in cpu)} s, voices cut {sum(c['culled'] for c in cpu)}, "
+              f"longest gap {max(c['maxGapUs'] for c in cpu) / 1000:.1f} ms\n")
     total = r["total"]
     if not total:
-        raise SystemExit("no samples in the recording")
+        raise SystemExit("no profiler samples in the recording (CPU monitor on Profile?)")
     pct = lambda n: 100.0 * n / total  # noqa: E731
     print(f"{total} ms sampled ({total / SAMPLE_RATE:.1f} s), {r['dropped']} samples dropped, "
           f"{r['lost_messages']} messages lost")
@@ -309,6 +439,14 @@ def main():
     p.add_argument("--top", type=int, default=30)
     p.add_argument("--csv")
     p.set_defaults(func=report)
+    p = sub.add_parser("live")
+    p.add_argument("-p", "--port")
+    p.add_argument("-s", "--seconds", type=float, help="stop after this long (default: Ctrl-C)")
+    p.add_argument("-o", "--out", help="save everything, as record does")
+    p.add_argument("--symbols", help="symbols .json or .elf: the busiest functions too")
+    p.add_argument("--every", type=float, default=5, help="seconds between the profile's summaries")
+    p.add_argument("--top", type=int, default=4)
+    p.set_defaults(func=live)
     p = sub.add_parser("ports")
     p.set_defaults(func=ports)
     args = ap.parse_args()

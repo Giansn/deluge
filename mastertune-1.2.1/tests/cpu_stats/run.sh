@@ -12,3 +12,4 @@ g++ -std=c++20 -O2 -Wall -Wextra -Werror -I "$FW/src/deluge" -I "$FW/src" \
 	"$HERE/cpu_stats_test.cpp" "$FW/src/deluge/processing/engines/cpu_stats_core.cpp" "$OUT/printf.o" -o "$OUT/test"
 "$OUT/test" "$OUT/cases.json"
 node "$HERE/decode_test.js" "$OUT/cases.json" "$HERE/../../tools/cpu_monitor.html"
+python3 "$HERE/decode_test.py" "$OUT/cases.json"
