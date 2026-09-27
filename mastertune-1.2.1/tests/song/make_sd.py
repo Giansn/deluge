@@ -587,9 +587,13 @@ def main():
                     help="also a MIDI track on channel 1 (a bass line in 16ths), for song_emu.py --midi-timing")
     ap.add_argument("--files-out", help="also write the song and samples as files for a real SD card, under their own "
                     "names (SONGS/MT_LOADTEST.XML, SAMPLES/MT_LOADTEST/), so nothing on the card is overwritten")
+    ap.add_argument("--lpf-mode", help="every LPF in this mode instead of 24dB (the XML's name: 12dB, 24dB, "
+                    "24dBDrive, SVF_Band, SVF_Notch), e.g. SVF_Band to compare two builds without the LP ladders")
     args = ap.parse_args()
     files, lengths = samples()
     xml = song_xml(lengths, args.reverb_model, args.synths, args.midi_track, args.drone_life, args.drone_track)
+    if args.lpf_mode:
+        xml = xml.replace('lpfMode="24dB"', f'lpfMode="{args.lpf_mode}"')
     files["SONGS/DEFAULT.XML"] = xml.encode()
     if args.xml_out:
         open(args.xml_out, "w").write(xml)
