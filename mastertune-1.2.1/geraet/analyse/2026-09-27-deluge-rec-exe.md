@@ -28,3 +28,18 @@
   - Selbsttest der .exe: «version: v3», die Aufnahme mit 2 Kanälen, 24 Bit, 44'100 Hz und 194'040 Frames ok.
   - `DelugeRec.exe` mit 25'081'413 Bytes, SHA-256 `7fa4ecffbbb4f69b1e13bc4f52e43b5aa13f9c872db8f8be80fb4af7bf03a898`, im Release `deluge-rec-v3` (https://github.com/Giansn/deluge/releases/tag/deluge-rec-v3). Der bisherige Link liefert dieselbe Datei.
 - **Lauf 5** (https://github.com/Giansn/deluge/actions/runs/36347216300): alle Schritte grün. Der Build heisst jetzt `DelugeRec-v3.exe`. v3 war schon veröffentlicht und unverändert, deshalb gab es kein neues Release. `deluge-rec` hat die veröffentlichte Datei von v3 bekommen (gleiche SHA-256) und die alte `DelugeRec.exe` verloren.
+
+## v4: VOL, Boxen, Deluge-Proportionen, Monitor ohne Knacksen
+
+- **Anlass:** Die Pads standen im roten Bereich, obwohl der Deluge ganz leise gestellt war. Beim Start knackste es manchmal im Kopfhörer.
+- **Pegel:** Der VOLUME-Knopf des Deluge ist analog und sitzt nach dem Wandler. Das USB-Signal folgte ihm deshalb nie, wie auch beim Resampling (`usbAudioPushFrames` bekommt `outputBufferForResampling`).
+  - **VOL:** ein neuer senkrechter Regler über THRESH, von 0 dB (bitgenau) bis −30 dB, mit Pfeil hoch/runter, Mausrad, Ziehen, Doppelklick = 0 dB. Er wirkt auf die Aufnahme, die Pads, ARM und den Monitor. Änderungen gleitet er über einen Block.
+  - **Übersteuern:** Was der Deluge selbst übersteuert, kann VOL nicht retten. Das letzte Pad blinkt deshalb nach dem Eingangssignal.
+- **Knacksen:** Der Monitor setzte ohne Blende ein. Er blendet jetzt über 10 ms ein und aus, auch über Blockgrenzen, und springt mit Überblendung vor.
+  - Sein Ausgang öffnet und schliesst mit dem Eingang des Deluge. Vorher startete PortAudio bei jedem Neuverbinden unter dem offenen Ausgang neu.
+- **Oberfläche:** eine Box um jede Taste, um VOL und um THRESH («OUT FOLDER» las sich wie ein Wort), das Fenster im Seitenverhältnis des Deluge (305 × 208 mm).
+- **Prüfung:**
+  - Zwei Prüfer, jeder Befund einmal gegengeprüft. Vier Fehler bestätigt und behoben: kein Ausblenden an Blockgrenzen, zu kurze Überblendung bei kleinen Blöcken, Sprung beim Start mit gespeichertem VOL, ein Test abhängig vom Blinktakt.
+  - 39 Tests. Eine Stream-Simulation mit echten Threads, Taktabweichung bis 20 % und Schwankungen im Takt der Blöcke zeigt keinen Sprung grösser als der Sinus selbst. Die alte v3 sprang dort um 0,44.
+- **Lauf 6** (https://github.com/Giansn/deluge/actions/runs/36349256737): alle Schritte grün. `DelugeRec-v4.exe` mit 25'087'902 Bytes, SHA-256 `a1c6174d868f2934606e7da6b59dcdb07553138c2d9e3eea930a89ee50cb2cb2`, im Release `deluge-rec-v4` und in `deluge-rec`.
+- **Nicht geprüft:** mit dem echten Deluge am PC.
