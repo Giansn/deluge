@@ -1,0 +1,35 @@
+From cad23a722f9491d4020ae2ca467bee6c4c60235a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 17:57:01 +0000
+Subject: [PATCH 72/74] Audio: the minimum window stays on up to 65 % load (was
+ 50 %)
+
+With New Sitar Grii 10 in the emulator at 0.8 instructions per cycle, v17 measured about 47-52 % with the minimum window;
+at the 50 % threshold it switched off, fell back to windows of 12 samples and went to 87 %. At 65 % it stays at 52 %,
+with 2 samples less reserve (71 instead of 73), no underruns (geraet/analyse/2026-09-27-sitar-v17.md, 0.8 and 0.5 IPC).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/processing/engines/audio_engine.cpp | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index 161b7ab6..40165f11 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -591,7 +591,10 @@ constexpr int32_t kMinWindowEndDue = 32;
+ constexpr int32_t kMinWindowStartDueLeast = 8;
+ /// The windows whose load is measured: that long at least
+ constexpr size_t kWindowLoadMinSamples = 32;
+-constexpr uint32_t kMinWindowMaxLoadPermille = 500;
++/// 65 %: at 50 % a song measured at about 47 % with the minimum window (New Sitar Grii 10, 0.8 instructions per cycle)
++/// switched it off, fell back to windows of 12 samples and went to 87 %; at 65 % it stays at 52 % with 2 samples less
++/// reserve (geraet/analyse/2026-09-27-sitar-v17.md)
++constexpr uint32_t kMinWindowMaxLoadPermille = 650;
+ /// While the load keeps it off, no windows that long are rendered to measure it again: after this long it applies again
+ /// until one is, and the load starts afresh from that one (1/8 s)
+ constexpr uint32_t kWindowLoadMaxAge = kSampleRate >> 3;
+-- 
+2.43.0
+

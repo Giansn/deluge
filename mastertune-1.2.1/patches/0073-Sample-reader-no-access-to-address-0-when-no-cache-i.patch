@@ -1,0 +1,34 @@
+From c70febf2c3c197070bfbf4bb40caae09481a5879 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 17:57:02 +0000
+Subject: [PATCH 73/74] Sample reader: no access to address 0 when no cache is
+ written
+
+readSamplesResampled() read *cacheWritePos at its start; with a null cacheWritePos (no cache written) that read address
+0, and the compiler then dropped the null check at the end and wrote the value back to address 0 (found by the retune
+tests in the emulator, 790 writes in 4 bars with stretched and resampled voices). Read it only when it's there.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/model/sample/sample_low_level_reader.cpp | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/deluge/model/sample/sample_low_level_reader.cpp b/src/deluge/model/sample/sample_low_level_reader.cpp
+index 541f55c6..eea12144 100644
+--- a/src/deluge/model/sample/sample_low_level_reader.cpp
++++ b/src/deluge/model/sample/sample_low_level_reader.cpp
+@@ -1002,7 +1002,9 @@ void SampleLowLevelReader::readSamplesResampled(int32_t** __restrict__ oscBuffer
+ 
+ 	int32_t* __restrict__ oscBufferPosNow = *oscBufferPos;
+ 
+-	char* __restrict__ cacheWritePosNow = (char*)*cacheWritePos;
++	// Null when no cache is written: read only then, so the check at the end isn't optimised away (it wrote to address
++	// 0)
++	char* __restrict__ cacheWritePosNow = cacheWritePos ? (char*)*cacheWritePos : nullptr;
+ 
+ 	int32_t const* const oscBufferEnd = oscBufferPosNow + numSamplesTotal * numChannelsAfterCondensing;
+ 
+-- 
+2.43.0
+

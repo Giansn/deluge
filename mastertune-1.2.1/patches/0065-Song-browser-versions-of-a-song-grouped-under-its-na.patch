@@ -1,0 +1,601 @@
+From 5395c24274eac28aaeb92c3e2d04804b3b39cd45 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 14:55:01 +0000
+Subject: [PATCH 65/74] Song browser: versions of a song grouped under its name
+
+Files whose names begin with the same word (up to the first space, or the
+extension; case doesn't matter) and sort next to each other ("TRACK",
+"TRACK 2", "TRACK 3") are one row in the song browser: the group's first
+version, shown by that word with an arrow (7-segment: "TRACK--"). Pressing
+it (select encoder or LOAD) folds the group out and loads nothing; the
+versions are shown indented and the select encoder goes through them;
+pressing one loads it as before (also while playing, with the countdown).
+BACK folds the group in (with none open it goes up a folder or exits as
+before); scrolling out of the group folds it in; arriving on a later
+version (the current song on entry, typing, a deleted file) folds its
+group out. A song on its own looks and works as before; the save browser
+is unchanged. Only a name continuing with '_' or '.', or a folder, can
+sort between versions: the group is then two rows.
+
+The encoder steps over a folded group's versions with
+Browser::selectEncoderAction() without showing or previewing them, so the
+window of file items is read again as before when a step leaves it; at
+the window's edge the folder is read again around the selection, so a
+row's group is known. The song browser keeps 100 file items instead of
+20 (Browser::fileItemsWindow, the other browsers unchanged): the rows
+around a folded group come from the window, and with 20 the row after a
+group of more than about 8 versions was missing. A larger group works the
+same; rows next to it are then filled from above.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/ui/browser/browser.cpp   |   2 +-
+ src/deluge/gui/ui/browser/browser.h     |   3 +
+ src/deluge/gui/ui/load/load_song_ui.cpp | 406 +++++++++++++++++++++++-
+ src/deluge/gui/ui/load/load_song_ui.h   |  22 ++
+ 4 files changed, 430 insertions(+), 3 deletions(-)
+
+diff --git a/src/deluge/gui/ui/browser/browser.cpp b/src/deluge/gui/ui/browser/browser.cpp
+index a3e8b5e9..4b98cdeb 100644
+--- a/src/deluge/gui/ui/browser/browser.cpp
++++ b/src/deluge/gui/ui/browser/browser.cpp
+@@ -493,7 +493,7 @@ Error Browser::readFileItemsFromFolderAndMemory(Song* song, OutputType outputTyp
+ 
+ tryReadingItems:
+ 	Error error = readFileItemsForFolder(filePrefixHere, allowFolders, allowedFileExtensions, filenameToStartAt,
+-	                                     FILE_ITEMS_MAX_NUM_ELEMENTS, newCatalogSearchDirection);
++	                                     fileItemsWindow, newCatalogSearchDirection);
+ 	if (error != Error::NONE) {
+ 
+ 		// If folder didn't exist, try our alternative one if there is one.
+diff --git a/src/deluge/gui/ui/browser/browser.h b/src/deluge/gui/ui/browser/browser.h
+index c98c8756..bd280fb8 100644
+--- a/src/deluge/gui/ui/browser/browser.h
++++ b/src/deluge/gui/ui/browser/browser.h
+@@ -151,6 +151,9 @@ protected:
+ 
+ 	bool mayDefaultToBrandNewNameOnEntry;
+ 	bool qwertyAlwaysVisible;
++	// How many file items readFileItemsFromFolderAndMemory() keeps: a window over the folder, around the file it looks
++	// for (mastertune: the song browser's is larger, LoadSongUI)
++	int32_t fileItemsWindow = FILE_ITEMS_MAX_NUM_ELEMENTS;
+ 	// filePrefix is SONG/SYNT/SAMP etc., signifying the portion of the filesystem you're in
+ 	char const* filePrefix;
+ 	bool shouldInterpretNoteNamesForThisBrowser;
+diff --git a/src/deluge/gui/ui/load/load_song_ui.cpp b/src/deluge/gui/ui/load/load_song_ui.cpp
+index 4d774830..c5fccd68 100644
+--- a/src/deluge/gui/ui/load/load_song_ui.cpp
++++ b/src/deluge/gui/ui/load/load_song_ui.cpp
+@@ -44,6 +44,7 @@
+ #include "storage/storage_manager.h"
+ #include "task_scheduler.h"
+ #include "util/functions.h"
++#include <algorithm>
+ #include <string.h>
+ 
+ LoadSongUI loadSongUI{};
+@@ -57,15 +58,55 @@ extern void setupBlankSong();
+ 
+ using namespace deluge::gui;
+ 
++namespace {
++// mastertune: versions of a song grouped under its name (LoadSongUI::openGroup)
++
++constexpr int32_t kMaxGroupSteps = 4096; // Only against a loop that doesn't end; a group can have any number
++// The song browser's window of file items (Browser::fileItemsWindow; 20 in the other browsers). A folded group takes
++// one row but all its versions' items, and the rows around it come from the window: 100 shows them for a group of up to
++// about 40 versions (a larger one works the same, only a row next to it may be missing)
++constexpr int32_t kSongBrowserWindow = 100;
++constexpr int32_t kNumRows = OLED_HEIGHT_CHARS - 1;
++
++FileItem* itemAt(int32_t i) {
++	return (FileItem*)Browser::fileItems.getElementAddress(i);
++}
++
++// A file's group: its name up to the first space, or else up to the extension's dot ("TRACK.XML", "TRACK 2.XML",
++// "track 3.XML": "TRACK"). The files are sorted by name (strcmpspecial(): case doesn't matter, numbers by value, and a
++// space sorts before any other character but '.' and '_'), so a song's versions come right after its first one.
++// Only a name that continues with '_' or '.' ("TRACK_B", "TRACK.B.XML") or a folder can sort between them: the group
++// is then two rows
++int32_t groupKeyLength(FileItem const* item) {
++	char const* name = item->displayName;
++	char const* dot = strrchr(name, '.');
++	int32_t length = dot ? (int32_t)(dot - name) : (int32_t)strlen(name);
++	char const* space = (char const*)memchr(name, ' ', length);
++	return space ? (int32_t)(space - name) : length;
++}
++
++bool hasGroupKey(FileItem const* item, char const* key, int32_t keyLength) {
++	return !item->isFolder && keyLength > 0 && groupKeyLength(item) == keyLength
++	       && !memcasecmp(item->displayName, key, keyLength);
++}
++
++bool sameGroup(FileItem const* a, FileItem const* b) {
++	return !a->isFolder && hasGroupKey(b, a->displayName, groupKeyLength(a));
++}
++} // namespace
++
+ LoadSongUI::LoadSongUI() {
+ 	qwertyAlwaysVisible = false;
+ 	filePrefix = "SONG";
+ 	title = "Load song";
++	fileItemsWindow = kSongBrowserWindow;
+ }
+ 
+ bool LoadSongUI::opened() {
+ 
+ 	outputTypeToLoad = OutputType::NONE;
++	openGroup.clear();
++	steppingInGroup = false;
+ 	currentDir.set(&currentSong->dirPath);
+ 
+ 	Error error = beginSlotSession(false, true);
+@@ -102,6 +143,9 @@ gotError:
+ 		goto gotError;
+ 	}
+ 
++	syncOpenGroup(); // On a later version (the current song "TRACK 3"): its group folded out
++	fillWindowForRows();
++
+ #if SD_TEST_MODE_ENABLED_LOAD_SONGS
+ 	currentSlot = (currentSlot + 1) % 19;
+ 	currentSubSlot = (currentSlot == 0) ? 0 : -1;
+@@ -134,6 +178,13 @@ gotError:
+ 	return true;
+ }
+ 
++void LoadSongUI::focusRegained() {
++	LoadUI::focusRegained(); // Browser::displayText(): the file's own name on the 7-segment display
++	if (display->have7SEG() && isFoldedHeader(fileIndexSelected)) {
++		displayText();
++	}
++}
++
+ void LoadSongUI::folderContentsReady(int32_t entryDirection) {
+ 
+ 	drawSongPreview(storageManager, currentUIMode == UI_MODE_VERTICAL_SCROLL);
+@@ -148,6 +199,7 @@ void LoadSongUI::enterKeyPress() {
+ 
+ 	// If it's a directory...
+ 	if (currentFileItem && currentFileItem->isFolder) {
++		openGroup.clear();
+ 
+ 		Error error = goIntoFolder(currentFileItem->filename.get());
+ 
+@@ -159,6 +211,18 @@ void LoadSongUI::enterKeyPress() {
+ 	}
+ 
+ 	else {
++		// mastertune: a folded group of versions folds out, nothing loads; the cursor stays on its first version
++		if (currentFileItem) {
++			fillWindowAroundSelection(); // Whether the next file is one of its versions (may read the folder again)
++			syncOpenGroup();
++			if (isFoldedHeader(fileIndexSelected)) {
++				FileItem* header = getCurrentFileItem();
++				openGroup.set(header->displayName, groupKeyLength(header));
++				fillWindowForRows();
++				displayText();
++				return;
++			}
++		}
+ 		LoadUI::enterKeyPress();     // Converts name to numeric-only if it was typed as text
+ 		performLoad(storageManager); // May fail
+ 		if (FlashStorage::defaultStartupSongMode == StartupSongMode::LASTOPENED) {
+@@ -667,6 +731,10 @@ ignoring the file extension.
+ */
+ 
+ void LoadSongUI::currentFileChanged(int32_t movementDirection) {
++	if (steppingInGroup) {
++		stepCompleted = true;
++		return;
++	}
+ 
+ 	if (movementDirection) {
+ 		qwertyVisible = false;
+@@ -719,7 +787,47 @@ void LoadSongUI::selectEncoderAction(int8_t offset) {
+ 
+ 		if (currentUIMode == UI_MODE_NONE || currentUIMode == UI_MODE_HORIZONTAL_SCROLL) {
+ 
++			// mastertune: a folded group of versions is one row. The steps over its versions happen without showing
++			// or previewing them; the file list is a window over the folder (kSongBrowserWindow items), read again
++			// when a step leaves it (Browser::selectEncoderAction()), so where the files are is counted from the
++			// folder's first one
++			int32_t topBefore = numFileItemsDeletedAtStart + scrollPosVertical;
++			int32_t start = numFileItemsDeletedAtStart + fileIndexSelected;
++			int8_t direction = (offset >= 0) ? 1 : -1;
++			int32_t skipped = 0;
++			steppingInGroup = true;
++			stepCompleted = false;
+ 			LoadUI::selectEncoderAction(offset);
++			while (selectedItem() && skipped < kMaxGroupSteps) {
++				fillWindowAroundSelection();
++				if (!isHiddenVersion(fileIndexSelected)) {
++					break;
++				}
++				int32_t before = numFileItemsDeletedAtStart + fileIndexSelected;
++				LoadUI::selectEncoderAction(direction);
++				skipped++;
++				int32_t now = numFileItemsDeletedAtStart + fileIndexSelected;
++				if (now == before || now == start) {
++					break; // At the end (without wrapping), or all the way round
++				}
++			}
++			if (isHiddenVersion(fileIndexSelected)) {
++				selectGroupTop(); // Stopped inside a folded group: its first version
++			}
++			steppingInGroup = false;
++			if (stepCompleted && (!skipped || numFileItemsDeletedAtStart + fileIndexSelected != start)) {
++				if (skipped) {
++					// The rows on the screen stay where they were (fixScrollPos() moves them as far as needed)
++					int32_t top = topBefore - numFileItemsDeletedAtStart;
++					if (top >= 0 && top < fileItems.getNumElements()) {
++						scrollPosVertical = top;
++					}
++				}
++				syncOpenGroup();
++				fillWindowForRows();
++				displayText();
++				currentFileChanged(offset);
++			}
+ 			/*
+ goAgain:
+ 			qwertyVisible = false;
+@@ -861,8 +969,24 @@ stopLoadingPreview:
+ }
+ 
+ void LoadSongUI::displayText(bool blinkImmediately) {
+-
+-	LoadUI::displayText();
++	if (steppingInGroup) {
++		stepCompleted = true;
++		return;
++	}
++	syncOpenGroup();
++
++	// mastertune: a folded group on the 7-segment display: its name and "--" ("TRACK--")
++	if (display->have7SEG() && !qwertyVisible && !arrivedAtFileByTyping && isFoldedHeader(fileIndexSelected)) {
++		FileItem* header = getCurrentFileItem();
++		String label;
++		if (label.set(header->displayName, groupKeyLength(header)) == Error::NONE
++		    && label.concatenate("--") == Error::NONE) {
++			scrollingText = display->setScrollingText(label.get(), 0);
++		}
++	}
++	else {
++		LoadUI::displayText();
++	}
+ 
+ 	if (qwertyVisible) {
+ 		FileItem* currentFileItem = getCurrentFileItem();
+@@ -891,3 +1015,281 @@ ActionResult LoadSongUI::padAction(int32_t x, int32_t y, int32_t on) {
+ 	}
+ 	return ActionResult::DEALT_WITH;
+ }
++
++// mastertune: versions of a song grouped under its name
++
++FileItem* LoadSongUI::selectedItem() {
++	return (fileIndexSelected >= 0 && fileIndexSelected < fileItems.getNumElements()) ? itemAt(fileIndexSelected)
++	                                                                                  : nullptr;
++}
++
++bool LoadSongUI::isInOpenGroup(FileItem* item) {
++	return !openGroup.isEmpty() && hasGroupKey(item, openGroup.get(), openGroup.getLength());
++}
++
++// A version after a group's first one, with the group folded in: not shown, the encoder steps over it
++bool LoadSongUI::isHiddenVersion(int32_t i) {
++	if (i <= 0 || i >= fileItems.getNumElements()) {
++		return false;
++	}
++	FileItem* item = itemAt(i);
++	return sameGroup(itemAt(i - 1), item) && !isInOpenGroup(item);
++}
++
++// A group's first version, with the group folded in: the row that stands for the group
++bool LoadSongUI::isFoldedHeader(int32_t i) {
++	if (i < 0 || i + 1 >= fileItems.getNumElements()) {
++		return false;
++	}
++	FileItem* item = itemAt(i);
++	return !isInOpenGroup(item) && !isHiddenVersion(i) && sameGroup(item, itemAt(i + 1));
++}
++
++// The group folded out is the selected version's, or none: leaving it folds it in, arriving on one of its later
++// versions (the current song on entry, typing, a deleted file) folds it out
++void LoadSongUI::syncOpenGroup() {
++	FileItem* item = selectedItem();
++	if (!item || item->isFolder) {
++		openGroup.clear();
++		return;
++	}
++	if (!openGroup.isEmpty() && !isInOpenGroup(item)) {
++		openGroup.clear();
++	}
++	if (openGroup.isEmpty() && isHiddenVersion(fileIndexSelected)) {
++		openGroup.set(item->displayName, groupKeyLength(item));
++	}
++}
++
++// The OLED's rows: scrollPosVertical is the top row's item, the selection on the screen, counted in rows shown
++void LoadSongUI::fixScrollPos(bool fillFromAbove) {
++	int32_t numItems = fileItems.getNumElements();
++	if (fileIndexSelected < 0 || fileIndexSelected >= numItems) {
++		return;
++	}
++	scrollPosVertical = std::clamp<int32_t>(scrollPosVertical, 0, fileIndexSelected);
++	while (scrollPosVertical > 0 && isHiddenVersion(scrollPosVertical)) {
++		scrollPosVertical--;
++	}
++	int32_t rows = 0;
++	for (int32_t i = scrollPosVertical; i <= fileIndexSelected; i++) {
++		rows += !isHiddenVersion(i);
++	}
++	while (rows > kNumRows) {
++		do {
++			scrollPosVertical++;
++		} while (isHiddenVersion(scrollPosVertical));
++		rows--;
++	}
++	// At the end of the folder, or of the window (past a group of more versions than it holds), rows above rather
++	// than empty rows below
++	if (!fillFromAbove) {
++		return;
++	}
++	for (int32_t i = fileIndexSelected + 1; i < numItems; i++) {
++		rows += !isHiddenVersion(i);
++	}
++	while (rows < kNumRows && scrollPosVertical > 0) {
++		do {
++			scrollPosVertical--;
++		} while (scrollPosVertical > 0 && isHiddenVersion(scrollPosVertical));
++		rows++;
++	}
++}
++
++// The folder read again with the selected file in the middle of the window of items
++void LoadSongUI::recentreWindow() {
++	FileItem* item = selectedItem();
++	if (!item) {
++		return;
++	}
++	String name;
++	if (name.set(item->displayName) != Error::NONE) {
++		return;
++	}
++	int32_t top = numFileItemsDeletedAtStart + scrollPosVertical;
++	Error error = readFileItemsFromFolderAndMemory(currentSong, outputTypeToLoad, filePrefix, name.get(), NULL, true,
++	                                               Availability::ANY, CATALOG_SEARCH_BOTH);
++	if (error != Error::NONE) {
++		emptyFileItems();
++		fileIndexSelected = -1;
++		scrollPosVertical = 0;
++		display->displayError(error);
++		return;
++	}
++	shouldInterpretNoteNames = shouldInterpretNoteNamesForThisBrowser;
++	octaveStartsFromA = false;
++	fileIndexSelected = std::min<int32_t>(fileItems.search(name.get()), fileItems.getNumElements() - 1);
++	scrollPosVertical =
++	    std::clamp<int32_t>(top - numFileItemsDeletedAtStart, 0, std::max<int32_t>(fileIndexSelected, 0));
++}
++
++// Whether the selected file is a group's first version, a later one or on its own depends on its neighbours: at the
++// window's edge, with more files beyond it, the folder is read again around it
++void LoadSongUI::fillWindowAroundSelection() {
++	FileItem* item = selectedItem();
++	if (!item || item->isFolder) {
++		return;
++	}
++	if ((fileIndexSelected == 0 && numFileItemsDeletedAtStart)
++	    || (fileIndexSelected == fileItems.getNumElements() - 1 && numFileItemsDeletedAtEnd)) {
++		recentreWindow();
++	}
++}
++
++// The rows shown around the selection (fixScrollPos()) are items of the window: when they run to its edge, with more
++// files beyond it, the folder is read again around the selection. On the 7-segment display there's just the selection
++void LoadSongUI::fillWindowForRows() {
++	FileItem* item = selectedItem();
++	if (!item || !display->haveOLED()) {
++		return;
++	}
++	fixScrollPos(false);
++	int32_t numItems = fileItems.getNumElements();
++	int32_t i = scrollPosVertical;
++	for (int32_t rows = 0; i < numItems && rows < kNumRows; i++) {
++		rows += !isHiddenVersion(i);
++	}
++	// Below: the rows (or the last row's group) may go on beyond the window. Above: the top row may be a version whose
++	// group's first one is beyond it
++	if ((i >= numItems && numFileItemsDeletedAtEnd)
++	    || (scrollPosVertical == 0 && numFileItemsDeletedAtStart && !itemAt(0)->isFolder)) {
++		recentreWindow();
++		fixScrollPos();
++	}
++}
++
++// The selected version's group's first version. Returns whether the selection moved
++bool LoadSongUI::selectGroupTop() {
++	FileItem* item = selectedItem();
++	if (!item || item->isFolder) {
++		return false;
++	}
++	int32_t start = numFileItemsDeletedAtStart + fileIndexSelected;
++	for (int32_t n = 0; n < kMaxGroupSteps; n++) {
++		if (fileIndexSelected == 0 && numFileItemsDeletedAtStart) {
++			recentreWindow();
++		}
++		if (fileIndexSelected <= 0 || !sameGroup(itemAt(fileIndexSelected - 1), itemAt(fileIndexSelected))) {
++			break;
++		}
++		fileIndexSelected--;
++	}
++	if (!selectedItem() || numFileItemsDeletedAtStart + fileIndexSelected == start) {
++		return false;
++	}
++	setEnteredTextFromCurrentFilename();
++	enteredTextEditPos = 0;
++	if (display->haveOLED()) {
++		scrollPosHorizontal = 0;
++	}
++	return true;
++}
++
++// BACK: an open group folds in, its first version selected; otherwise up a folder, or out, as before
++ActionResult LoadSongUI::backButtonAction() {
++	syncOpenGroup();
++	if (openGroup.isEmpty()) {
++		return LoadUI::backButtonAction();
++	}
++	if (sdRoutineLock) {
++		return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE; // selectGroupTop() may read the folder
++	}
++	openGroup.clear();
++	bool moved = selectGroupTop();
++	fillWindowForRows();
++	displayText();
++	if (moved) {
++		currentFileChanged(-1);
++	}
++	return ActionResult::DEALT_WITH;
++}
++
++// Browser::renderOLED(), with a group's later versions not shown while it's folded in, the folded group's row showing
++// its name and an arrow (as a submenu), and the versions of the group folded out indented by a character
++void LoadSongUI::renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas) {
++	using deluge::hid::display::OLED;
++	if (!steppingInGroup) {
++		syncOpenGroup();
++		fixScrollPos();
++	}
++	canvas.drawScreenTitle(title);
++
++	int32_t textStartX = 14;
++	int32_t iconStartX = 1;
++
++	int32_t yPixel = (OLED_MAIN_HEIGHT_PIXELS == 64) ? 15 : 14;
++	yPixel += OLED_MAIN_TOPMOST_PIXEL;
++
++	int32_t maxChars = (uint32_t)(OLED_MAIN_WIDTH_PIXELS - textStartX) / (uint32_t)kTextSpacingX;
++
++	auto drawIcon = [&](bool isFolder, int32_t x) {
++		int32_t iconWidth = 8;
++		canvas.drawGraphicMultiLine(isFolder ? OLED::folderIcon : fileIcon, x, yPixel + 0, iconWidth);
++		if (!isFolder && fileIconPt2 && fileIconPt2Width) {
++			canvas.drawGraphicMultiLine(fileIconPt2, x + iconWidth, yPixel + 0, fileIconPt2Width);
++		}
++	};
++	auto drawSelectedName = [&](int32_t x, int32_t chars) {
++		drawTextForOLEDEditing(x, OLED_MAIN_WIDTH_PIXELS, yPixel, chars, canvas);
++		if (!enteredTextEditPos) {
++			OLED::setupSideScroller(0, enteredText.get(), x, OLED_MAIN_WIDTH_PIXELS, yPixel, yPixel + 8, kTextSpacingX,
++			                        kTextSpacingY, true);
++		}
++	};
++
++	// If we're currently typing a filename which doesn't (yet?) have a file...
++	if (fileIndexSelected == -1) {
++		drawIcon(false, iconStartX);
++		drawSelectedName(textStartX, maxChars);
++		return;
++	}
++
++	int32_t numItems = fileItems.getNumElements();
++	int32_t row = 0;
++	for (int32_t i = scrollPosVertical; i < numItems && row < OLED_HEIGHT_CHARS - 1; i++) {
++		if (isHiddenVersion(i)) {
++			continue;
++		}
++		FileItem* thisFile = itemAt(i);
++		bool isSelectedIndex = (i == fileIndexSelected);
++		bool folded = isFoldedHeader(i) && !(isSelectedIndex && qwertyVisible); // Typing: the name typed
++		bool inOpenGroup = !folded && isInOpenGroup(thisFile)
++		                   && ((i > 0 && sameGroup(itemAt(i - 1), thisFile))
++		                       || (i + 1 < numItems && sameGroup(thisFile, itemAt(i + 1))));
++		int32_t indent = inOpenGroup ? kTextSpacingX : 0;
++		int32_t x = textStartX + indent;
++		drawIcon(thisFile->isFolder, iconStartX + indent);
++
++		if (folded) {
++			int32_t keyLength = groupKeyLength(thisFile);
++			int32_t arrowX = OLED_MAIN_WIDTH_PIXELS - kSubmenuIconSpacingX - 3;
++			canvas.drawString(std::string_view{thisFile->displayName, static_cast<size_t>(keyLength)}, x, yPixel,
++			                  kTextSpacingX, kTextSpacingY, 0, arrowX - kTextSpacingX);
++			canvas.drawGraphicMultiLine(OLED::submenuArrowIcon, arrowX, yPixel, kSubmenuIconSpacingX);
++			if (isSelectedIndex) {
++				canvas.invertArea(x - 1, OLED_MAIN_WIDTH_PIXELS - x + 1, yPixel, yPixel + kTextSpacingY - 1);
++				if (headerLabel.set(thisFile->displayName, keyLength) == Error::NONE) {
++					OLED::setupSideScroller(0, headerLabel.get(), x, arrowX - 2, yPixel, yPixel + 8, kTextSpacingX,
++					                        kTextSpacingY, true);
++				}
++			}
++		}
++		else if (isSelectedIndex) {
++			drawSelectedName(x, maxChars - (indent ? 1 : 0));
++		}
++		else {
++			// Draw filename
++			char const* displayName = thisFile->filename.get();
++			char const* finalCharAddress = thisFile->isFolder ? nullptr : strrchr(displayName, '.');
++			if (!finalCharAddress) {
++				finalCharAddress = strchr(displayName, 0);
++			}
++			canvas.drawString(std::string_view{displayName, static_cast<size_t>(finalCharAddress - displayName)}, x,
++			                  yPixel, kTextSpacingX, kTextSpacingY);
++		}
++
++		yPixel += kTextSpacingY;
++		row++;
++	}
++}
+diff --git a/src/deluge/gui/ui/load/load_song_ui.h b/src/deluge/gui/ui/load/load_song_ui.h
+index 698504e0..173e0e27 100644
+--- a/src/deluge/gui/ui/load/load_song_ui.h
++++ b/src/deluge/gui/ui/load/load_song_ui.h
+@@ -31,7 +31,9 @@ public:
+ 	void scrollFinished();
+ 	ActionResult padAction(int32_t x, int32_t y, int32_t velocity);
+ 	bool opened();
++	void focusRegained();
+ 	void selectEncoderAction(int8_t offset);
++	void renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas) override;
+ 	void performLoad(StorageManager& bdsm);
+ 	// mastertune-v14: the song-change countdown while the loaded song is armed to start (OLED: on the title row,
+ 	// 7-segment: the number); without force only when what it shows has changed
+@@ -49,11 +51,31 @@ protected:
+ 	void folderContentsReady(int32_t entryDirection);
+ 	void currentFileChanged(int32_t movementDirection);
+ 	void exitAction();
++	ActionResult backButtonAction() override;
+ 
+ private:
+ 	void drawSongPreview(StorageManager& bdsm, bool toStore = true);
+ 	void removeCountdown();
+ 
++	// mastertune: versions of a song grouped under its name. Files whose names begin with the same word ("TRACK",
++	// "TRACK 2", "TRACK 3": up to the first space, or the extension's dot; case doesn't matter) and that sort next to
++	// each other are one row, the group's first version, shown by that word with an arrow; pressing it folds the group
++	// out (nothing loads), BACK folds it in. The group that's folded out: always the selected version's, or none.
++	String openGroup;
++	bool steppingInGroup = false; // selectEncoderAction() steps over folded versions: no display, no preview yet
++	bool stepCompleted = false;   // ... and a step would have shown the file it got to
++	String headerLabel;           // The selected group's name, for the OLED's side scroller
++	FileItem* selectedItem();
++	bool isInOpenGroup(FileItem* item);
++	bool isHiddenVersion(int32_t i);
++	bool isFoldedHeader(int32_t i);
++	void syncOpenGroup();
++	void fixScrollPos(bool fillFromAbove = true);
++	void recentreWindow();
++	void fillWindowAroundSelection();
++	void fillWindowForRows();
++	bool selectGroupTop();
++
+ 	Session::LaunchCountdown shownCountdown;
+ 	bool countdownOnOLED = false; // The title row shows the countdown instead of the title
+ 
+-- 
+2.43.0
+

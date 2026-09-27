@@ -1,0 +1,204 @@
+From 8747f59cf25998d0fede204a19c799e216d111b9 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 15:59:05 +0000
+Subject: [PATCH 67/74] Song browser: a file known by its name across folder
+ reads; typed names load
+
+The steps over a folded group, BACK's walk to the group's first version and
+the check whether a turn got anywhere compared numFileItemsDeletedAtStart
+plus the index across reads of the folder. That isn't where a file is: a
+read that culls the window's start drops one more file than it counts
+(deleteFolderAndDuplicateItems()). After a one-step move across such a
+read (BACK from a group's second version at the window's start)
+selectGroupTop() saw "not moved" and kept the previous version's name in
+enteredText, which the selected row shows, which names the song LOAD loads
+and which delete unlinks: F 1's file loaded as "F 2". The file is now
+compared by its name.
+
+Typing: a group's first version typed exactly (the row shows the name
+typed, no arrow) folded the group out when pressed; now a typed name loads
+(qwertyVisible or arrived at by typing, on both displays; BACK folding a
+group in ends that). BACK after typing onto a later version at the window's
+first item didn't see it as one (the file before it isn't in the window)
+and left the browser; the window is now read back from it first.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/ui/load/load_song_ui.cpp | 61 ++++++++++++++++++-------
+ src/deluge/gui/ui/load/load_song_ui.h   |  5 +-
+ 2 files changed, 49 insertions(+), 17 deletions(-)
+
+diff --git a/src/deluge/gui/ui/load/load_song_ui.cpp b/src/deluge/gui/ui/load/load_song_ui.cpp
+index e2328d66..bd218e10 100644
+--- a/src/deluge/gui/ui/load/load_song_ui.cpp
++++ b/src/deluge/gui/ui/load/load_song_ui.cpp
+@@ -217,11 +217,12 @@ void LoadSongUI::enterKeyPress() {
+ 	}
+ 
+ 	else {
+-		// mastertune: a folded group of versions folds out, nothing loads; the cursor stays on its first version
++		// mastertune: a folded group of versions folds out, nothing loads; the cursor stays on its first version. A
++		// name typed loads, the group's first version too (the row shows what was typed)
+ 		if (currentFileItem) {
+ 			fillWindowAroundSelection(); // Whether the next file is one of its versions (may read the folder again)
+ 			syncOpenGroup();
+-			if (isFoldedHeader(fileIndexSelected)) {
++			if (selectionShownFolded()) {
+ 				FileItem* header = getCurrentFileItem();
+ 				openGroup.set(header->displayName, groupKeyLength(header));
+ 				fillWindowForRows();
+@@ -825,7 +826,10 @@ void LoadSongUI::selectEncoderAction(int8_t offset) {
+ 				}
+ 				topBefore.set(itemAt(direction > 0 ? keep : scrollPosVertical)->displayName);
+ 			}
+-			int32_t start = numFileItemsDeletedAtStart + fileIndexSelected;
++			String start; // The file the turn began on, by name (selectionIs())
++			if (selectedItem()) {
++				start.set(&selectedItem()->filename);
++			}
+ 			int32_t skipped = 0;
+ 			steppingInGroup = true;
+ 			stepCompleted = false;
+@@ -835,11 +839,11 @@ void LoadSongUI::selectEncoderAction(int8_t offset) {
+ 				if (!isHiddenVersion(fileIndexSelected)) {
+ 					break;
+ 				}
+-				int32_t before = numFileItemsDeletedAtStart + fileIndexSelected;
++				String before;
++				before.set(&selectedItem()->filename);
+ 				LoadUI::selectEncoderAction(direction);
+ 				skipped++;
+-				int32_t now = numFileItemsDeletedAtStart + fileIndexSelected;
+-				if (now == before || now == start) {
++				if (selectionIs(before) || selectionIs(start)) {
+ 					break; // At the end (without wrapping), or all the way round
+ 				}
+ 			}
+@@ -847,7 +851,7 @@ void LoadSongUI::selectEncoderAction(int8_t offset) {
+ 				selectGroupTop(); // Stopped inside a folded group: its first version
+ 			}
+ 			steppingInGroup = false;
+-			if (stepCompleted && (!skipped || numFileItemsDeletedAtStart + fileIndexSelected != start)) {
++			if (stepCompleted && (!skipped || !selectionIs(start))) {
+ 				if (skipped) {
+ 					// The rows on the screen stay where they were (fixScrollPos() moves them as far as needed)
+ 					bool found = false;
+@@ -1277,13 +1281,22 @@ void LoadSongUI::fillWindowForRows() {
+ 	rowsSidesTried = rowsBeyondWindow();
+ }
+ 
++// Whether the selected file is the one named. Across reads of the folder a file is known by its name: the window's
++// items are new, and numFileItemsDeletedAtStart plus an index isn't where a file is in the folder (a read that culls
++// the window's start drops one more file than it counts, deleteFolderAndDuplicateItems())
++bool LoadSongUI::selectionIs(String& name) {
++	FileItem* item = selectedItem();
++	return item && !name.isEmpty() && !strcmp(item->filename.get(), name.get());
++}
++
+ // The selected version's group's first version. Returns whether the selection moved
+ bool LoadSongUI::selectGroupTop() {
+ 	FileItem* item = selectedItem();
+ 	if (!item || item->isFolder) {
+ 		return false;
+ 	}
+-	int32_t start = numFileItemsDeletedAtStart + fileIndexSelected;
++	String start;
++	start.set(&item->filename);
+ 	for (int32_t n = 0; n < kMaxGroupSteps; n++) {
+ 		if (fileIndexSelected == 0 && numFileItemsDeletedAtStart) {
+ 			readWindow(fileIndexSelected, -1);
+@@ -1293,7 +1306,7 @@ bool LoadSongUI::selectGroupTop() {
+ 		}
+ 		fileIndexSelected--;
+ 	}
+-	if (!selectedItem() || numFileItemsDeletedAtStart + fileIndexSelected == start) {
++	if (!selectedItem() || selectionIs(start)) {
+ 		return false;
+ 	}
+ 	setEnteredTextFromCurrentFilename();
+@@ -1304,26 +1317,42 @@ bool LoadSongUI::selectGroupTop() {
+ 	return true;
+ }
+ 
+-// The selection shown as its folded group ("TRACK >", "TRACK--"), not by its own name (typed, or arrived at by typing
+-// on the 7-segment display)
++// The selection typed: the keyboard shown, or arrived at by typing. It's shown by the name typed, and pressing it loads
++// it, a group's first version too
++bool LoadSongUI::selectionTyped() {
++	return qwertyVisible || arrivedAtFileByTyping;
++}
++
++// The selection shown as its folded group ("TRACK >", "TRACK--"), not by its own name
+ bool LoadSongUI::selectionShownFolded() {
+-	return !qwertyVisible && !(display->have7SEG() && arrivedAtFileByTyping) && isFoldedHeader(fileIndexSelected);
++	return !selectionTyped() && isFoldedHeader(fileIndexSelected);
+ }
+ 
+ // BACK: an open group folds in, its first version selected; otherwise up a folder, or out, as before
+ ActionResult LoadSongUI::backButtonAction() {
++	if (sdRoutineLock) {
++		return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE; // The folder may be read
++	}
++	// Typed onto a file at the window's start: whether it's a later version depends on the file before it
++	FileItem* item = selectedItem();
++	if (item && !item->isFolder && fileIndexSelected == 0 && numFileItemsDeletedAtStart) {
++		readWindow(0, -1);
++	}
+ 	syncOpenGroup();
+ 	if (openGroup.isEmpty()) {
+ 		return LoadUI::backButtonAction();
+ 	}
+-	if (sdRoutineLock) {
+-		return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE; // selectGroupTop() may read the folder
++	// Folded in: the group's row, not what was typed (the keyboard off the pads, the song's preview on them)
++	bool typed = selectionTyped();
++	arrivedAtFileByTyping = false;
++	if (!qwertyAlwaysVisible) {
++		qwertyVisible = false;
+ 	}
+ 	openGroup.clear();
+ 	bool moved = selectGroupTop();
+ 	fillWindowForRows();
+ 	displayText();
+-	if (moved) {
++	if (moved || typed) {
+ 		currentFileChanged(-1);
+ 	}
+ 	return ActionResult::DEALT_WITH;
+@@ -1377,7 +1406,7 @@ void LoadSongUI::renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas) {
+ 		}
+ 		FileItem* thisFile = itemAt(i);
+ 		bool isSelectedIndex = (i == fileIndexSelected);
+-		bool folded = isFoldedHeader(i) && !(isSelectedIndex && qwertyVisible); // Typing: the name typed
++		bool folded = isFoldedHeader(i) && !(isSelectedIndex && selectionTyped()); // Typed: the name typed
+ 		bool inOpenGroup = !folded && isInOpenGroup(thisFile)
+ 		                   && ((i > 0 && sameGroup(itemAt(i - 1), thisFile))
+ 		                       || (i + 1 < numItems && sameGroup(thisFile, itemAt(i + 1))));
+diff --git a/src/deluge/gui/ui/load/load_song_ui.h b/src/deluge/gui/ui/load/load_song_ui.h
+index 4d0e45c9..949b4232 100644
+--- a/src/deluge/gui/ui/load/load_song_ui.h
++++ b/src/deluge/gui/ui/load/load_song_ui.h
+@@ -60,7 +60,8 @@ private:
+ 	// mastertune: versions of a song grouped under its name. Files whose names begin with the same word ("TRACK",
+ 	// "TRACK 2", "TRACK 3": up to the first space, or the extension's dot; case doesn't matter) and that sort next to
+ 	// each other are one row, the group's first version, shown by that word with an arrow; pressing it folds the group
+-	// out (nothing loads), BACK folds it in. The group that's folded out: always the selected version's, or none.
++	// out (nothing loads; a name typed loads, the first version's too), BACK folds it in. The group that's folded out:
++	// always the selected version's, or none.
+ 	String openGroup;
+ 	bool steppingInGroup = false; // selectEncoderAction() steps over folded versions: no display, no preview yet
+ 	bool stepCompleted = false;   // ... and a step would have shown the file it got to
+@@ -79,7 +80,9 @@ private:
+ 	void readWindow(int32_t anchor, int32_t towards);
+ 	void fillWindowAroundSelection(int32_t direction = 0, String* topRow = nullptr);
+ 	void fillWindowForRows();
++	bool selectionIs(String& name);
+ 	bool selectGroupTop();
++	bool selectionTyped();
+ 	bool selectionShownFolded();
+ 
+ 	Session::LaunchCountdown shownCountdown;
+-- 
+2.43.0
+

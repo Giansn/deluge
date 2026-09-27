@@ -1,0 +1,366 @@
+From 163a198104ccbdf2b99e50272366040044dd4030 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 15:39:09 +0000
+Subject: [PATCH 66/74] Song browser: fewer folder reads next to a large group;
+ no delete on a folded row
+
+Next to a group of versions larger than the window of file items, every
+encoder step re-read the folder (fillWindowForRows() re-read whenever the
+top row was the window's first item, and a read around the selection
+left it so), and stepping across the group took 5-6 reads.
+Now the rows re-read only when the top file's own row depends on what lies
+above the window (it isn't followed by a version of its own group), at most
+once per window and side, and the window is read reaching ahead of the
+steps over a group (from the row that stays at the top of the screen, or up
+to the file after the selection) instead of around the selection. The top
+row is kept by name, not by counted index. Next to the group: 0 reads per
+step (was 1); across 120 versions: 2-4 (was 4-6).
+
+SHIFT+SAVE on a folded group's row would delete the group's first version,
+which the row doesn't show and the prompt doesn't name. It's refused with a
+popup ("Open the group first", 7-segment "OPEN"); on a version shown by its
+name the prompt opens as before.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/ui/load/load_song_ui.cpp | 190 ++++++++++++++++++++----
+ src/deluge/gui/ui/load/load_song_ui.h   |  10 +-
+ 2 files changed, 165 insertions(+), 35 deletions(-)
+
+diff --git a/src/deluge/gui/ui/load/load_song_ui.cpp b/src/deluge/gui/ui/load/load_song_ui.cpp
+index c5fccd68..e2328d66 100644
+--- a/src/deluge/gui/ui/load/load_song_ui.cpp
++++ b/src/deluge/gui/ui/load/load_song_ui.cpp
+@@ -45,6 +45,7 @@
+ #include "task_scheduler.h"
+ #include "util/functions.h"
+ #include <algorithm>
++#include <cstdlib>
+ #include <string.h>
+ 
+ LoadSongUI loadSongUI{};
+@@ -67,6 +68,9 @@ constexpr int32_t kMaxGroupSteps = 4096; // Only against a loop that doesn't end
+ // about 40 versions (a larger one works the same, only a row next to it may be missing)
+ constexpr int32_t kSongBrowserWindow = 100;
+ constexpr int32_t kNumRows = OLED_HEIGHT_CHARS - 1;
++// How far from the selection a read of the window may start or end (LoadSongUI::readWindow()): within the half of the
++// window it keeps at least, with a margin
++constexpr int32_t kWindowReach = kSongBrowserWindow / 2 - 8;
+ 
+ FileItem* itemAt(int32_t i) {
+ 	return (FileItem*)Browser::fileItems.getElementAddress(i);
+@@ -107,6 +111,7 @@ bool LoadSongUI::opened() {
+ 	outputTypeToLoad = OutputType::NONE;
+ 	openGroup.clear();
+ 	steppingInGroup = false;
++	rowsWindowTried[2] = -1;
+ 	currentDir.set(&currentSong->dirPath);
+ 
+ 	Error error = beginSlotSession(false, true);
+@@ -200,6 +205,7 @@ void LoadSongUI::enterKeyPress() {
+ 	// If it's a directory...
+ 	if (currentFileItem && currentFileItem->isFolder) {
+ 		openGroup.clear();
++		rowsWindowTried[2] = -1;
+ 
+ 		Error error = goIntoFolder(currentFileItem->filename.get());
+ 
+@@ -339,6 +345,22 @@ ActionResult LoadSongUI::buttonAction(deluge::hid::Button b, bool on, bool inCar
+ 		}
+ 	}
+ 
++	// mastertune: SHIFT+SAVE deletes the selected file; on a folded group's row that would be its first version, which
++	// the row doesn't show (the prompt doesn't name the file): the group is folded out first
++	else if (b == SAVE && on && Buttons::isShiftButtonPressed() && !currentUIMode && getCurrentFileItem()
++	         && !getCurrentFileItem()->isFolder) {
++		if (inCardRoutine) {
++			return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE; // fillWindowAroundSelection() may read the folder
++		}
++		fillWindowAroundSelection();
++		syncOpenGroup();
++		if (selectionShownFolded()) {
++			display->displayPopup(display->haveOLED() ? "Open the group first" : "OPEN");
++			return ActionResult::DEALT_WITH;
++		}
++		return LoadUI::buttonAction(b, on, inCardRoutine);
++	}
++
+ 	else {
+ 		return LoadUI::buttonAction(b, on, inCardRoutine);
+ 	}
+@@ -790,16 +812,26 @@ void LoadSongUI::selectEncoderAction(int8_t offset) {
+ 			// mastertune: a folded group of versions is one row. The steps over its versions happen without showing
+ 			// or previewing them; the file list is a window over the folder (kSongBrowserWindow items), read again
+ 			// when a step leaves it (Browser::selectEncoderAction()), so where the files are is counted from the
+-			// folder's first one
+-			int32_t topBefore = numFileItemsDeletedAtStart + scrollPosVertical;
+-			int32_t start = numFileItemsDeletedAtStart + fileIndexSelected;
++			// folder's first one. The row that stays at the top of the screen (by name): stepping up, the top row;
++			// down, the one above the selection's, or the top row if that's the selection's
+ 			int8_t direction = (offset >= 0) ? 1 : -1;
++			String topBefore;
++			if (display->haveOLED() && selectedItem() && scrollPosVertical >= 0
++			    && scrollPosVertical <= fileIndexSelected) {
++				int32_t keep = fileIndexSelected;
++				for (int32_t rows = 1; direction > 0 && rows < kNumRows - 1 && keep > scrollPosVertical;) {
++					keep--;
++					rows += !isHiddenVersion(keep);
++				}
++				topBefore.set(itemAt(direction > 0 ? keep : scrollPosVertical)->displayName);
++			}
++			int32_t start = numFileItemsDeletedAtStart + fileIndexSelected;
+ 			int32_t skipped = 0;
+ 			steppingInGroup = true;
+ 			stepCompleted = false;
+ 			LoadUI::selectEncoderAction(offset);
+ 			while (selectedItem() && skipped < kMaxGroupSteps) {
+-				fillWindowAroundSelection();
++				fillWindowAroundSelection(direction, &topBefore);
+ 				if (!isHiddenVersion(fileIndexSelected)) {
+ 					break;
+ 				}
+@@ -818,8 +850,11 @@ void LoadSongUI::selectEncoderAction(int8_t offset) {
+ 			if (stepCompleted && (!skipped || numFileItemsDeletedAtStart + fileIndexSelected != start)) {
+ 				if (skipped) {
+ 					// The rows on the screen stay where they were (fixScrollPos() moves them as far as needed)
+-					int32_t top = topBefore - numFileItemsDeletedAtStart;
+-					if (top >= 0 && top < fileItems.getNumElements()) {
++					bool found = false;
++					shouldInterpretNoteNames = shouldInterpretNoteNamesForThisBrowser;
++					octaveStartsFromA = false;
++					int32_t top = topBefore.isEmpty() ? -1 : fileItems.search(topBefore.get(), &found);
++					if (found) {
+ 						scrollPosVertical = top;
+ 					}
+ 				}
+@@ -976,7 +1011,7 @@ void LoadSongUI::displayText(bool blinkImmediately) {
+ 	syncOpenGroup();
+ 
+ 	// mastertune: a folded group on the 7-segment display: its name and "--" ("TRACK--")
+-	if (display->have7SEG() && !qwertyVisible && !arrivedAtFileByTyping && isFoldedHeader(fileIndexSelected)) {
++	if (display->have7SEG() && selectionShownFolded()) {
+ 		FileItem* header = getCurrentFileItem();
+ 		String label;
+ 		if (label.set(header->displayName, groupKeyLength(header)) == Error::NONE
+@@ -1097,19 +1132,39 @@ void LoadSongUI::fixScrollPos(bool fillFromAbove) {
+ 	}
+ }
+ 
+-// The folder read again with the selected file in the middle of the window of items
+-void LoadSongUI::recentreWindow() {
++// The folder read again: a new window of file items (fileItemsWindow at most, about half of it at least, where the
++// folder has them). towards 0: around the selected file; -1: reaching as far back as it can from the file after anchor
++// (an index in the window); 1: as far on as it can from the file before it. Those neighbours stay for isHiddenVersion()
++// and isFoldedHeader(): stepping over a group's versions takes fewer reads, and the rows get the files they show. The
++// selected file and the top row stay, found by name (the top row as near as it can be if it's no longer in the window)
++void LoadSongUI::readWindow(int32_t anchor, int32_t towards) {
+ 	FileItem* item = selectedItem();
+ 	if (!item) {
+ 		return;
+ 	}
++	int32_t numItems = fileItems.getNumElements();
++	int32_t limit = fileIndexSelected;
++	int32_t searchDirection = CATALOG_SEARCH_BOTH;
++	bool near = std::abs(fileIndexSelected - anchor) <= kWindowReach; // The selection stays in the window
++	if (towards < 0 && near && anchor + 2 < numItems) {
++		limit = anchor + 2; // The window: the files before this one
++		searchDirection = CATALOG_SEARCH_LEFT;
++	}
++	else if (towards > 0 && near && anchor >= 2) {
++		limit = anchor - 2; // ... after this one
++		searchDirection = CATALOG_SEARCH_RIGHT;
++	}
+ 	String name;
+-	if (name.set(item->displayName) != Error::NONE) {
++	String startAt;
++	String topName;
++	if (name.set(item->displayName) != Error::NONE || startAt.set(itemAt(limit)->displayName) != Error::NONE) {
+ 		return;
+ 	}
+-	int32_t top = numFileItemsDeletedAtStart + scrollPosVertical;
+-	Error error = readFileItemsFromFolderAndMemory(currentSong, outputTypeToLoad, filePrefix, name.get(), NULL, true,
+-	                                               Availability::ANY, CATALOG_SEARCH_BOTH);
++	if (scrollPosVertical >= 0 && scrollPosVertical < numItems) {
++		topName.set(itemAt(scrollPosVertical)->displayName);
++	}
++	Error error = readFileItemsFromFolderAndMemory(currentSong, outputTypeToLoad, filePrefix, startAt.get(), NULL, true,
++	                                               Availability::ANY, searchDirection);
+ 	if (error != Error::NONE) {
+ 		emptyFileItems();
+ 		fileIndexSelected = -1;
+@@ -1120,43 +1175,106 @@ void LoadSongUI::recentreWindow() {
+ 	shouldInterpretNoteNames = shouldInterpretNoteNamesForThisBrowser;
+ 	octaveStartsFromA = false;
+ 	fileIndexSelected = std::min<int32_t>(fileItems.search(name.get()), fileItems.getNumElements() - 1);
+-	scrollPosVertical =
+-	    std::clamp<int32_t>(top - numFileItemsDeletedAtStart, 0, std::max<int32_t>(fileIndexSelected, 0));
++	scrollPosVertical = topName.isEmpty() ? 0 : fileItems.search(topName.get());
++	scrollPosVertical = std::clamp<int32_t>(scrollPosVertical, 0, std::max<int32_t>(fileIndexSelected, 0));
+ }
+ 
+ // Whether the selected file is a group's first version, a later one or on its own depends on its neighbours: at the
+-// window's edge, with more files beyond it, the folder is read again around it
+-void LoadSongUI::fillWindowAroundSelection() {
++// window's edge, with more files beyond it, the folder is read again around it, or, stepping that way (direction),
++// with the window reaching ahead: stepping down, from the row that stays at the top of the screen on (topRow, its
++// file's name) if that's near, so the rows can stay where they were
++void LoadSongUI::fillWindowAroundSelection(int32_t direction, String* topRow) {
+ 	FileItem* item = selectedItem();
+ 	if (!item || item->isFolder) {
+ 		return;
+ 	}
+-	if ((fileIndexSelected == 0 && numFileItemsDeletedAtStart)
+-	    || (fileIndexSelected == fileItems.getNumElements() - 1 && numFileItemsDeletedAtEnd)) {
+-		recentreWindow();
++	if (fileIndexSelected == 0 && numFileItemsDeletedAtStart) {
++		readWindow(fileIndexSelected, std::min<int32_t>(direction, 0));
++	}
++	else if (fileIndexSelected == fileItems.getNumElements() - 1 && numFileItemsDeletedAtEnd) {
++		int32_t anchor = fileIndexSelected;
++		if (direction > 0 && topRow && !topRow->isEmpty()) {
++			bool found = false;
++			shouldInterpretNoteNames = shouldInterpretNoteNamesForThisBrowser;
++			octaveStartsFromA = false;
++			int32_t top = fileItems.search(topRow->get(), &found);
++			if (found && top <= fileIndexSelected && fileIndexSelected - top <= kWindowReach) {
++				anchor = top;
++			}
++		}
++		readWindow(anchor, std::max<int32_t>(direction, 0));
+ 	}
+ }
+ 
+-// The rows shown around the selection (fixScrollPos()) are items of the window: when they run to its edge, with more
+-// files beyond it, the folder is read again around the selection. On the 7-segment display there's just the selection
++// Where the rows shown (from scrollPosVertical; lastRow: the last one's item) need files beyond the window: 1, below
++// (the rows run to its end, with more files after it); 2, above (the top row is its first file, followed by no version
++// of its own: that may be a later version, of a group whose first one is before the window, and then shown as the
++// group). A first file followed by one of its versions is shown right either way, the group (folded in) or a version
++// (folded out)
++int32_t LoadSongUI::rowsBeyondWindow(int32_t* lastRow) {
++	int32_t numItems = fileItems.getNumElements();
++	int32_t i = scrollPosVertical;
++	for (int32_t rows = 0; i < numItems && rows < kNumRows; i++) {
++		if (!isHiddenVersion(i)) {
++			rows++;
++			if (lastRow) {
++				*lastRow = i;
++			}
++		}
++	}
++	int32_t sides = 0;
++	if (i >= numItems && numFileItemsDeletedAtEnd) {
++		sides |= 1;
++	}
++	if (scrollPosVertical == 0 && numFileItemsDeletedAtStart && numItems && !itemAt(0)->isFolder
++	    && !(numItems > 1 && sameGroup(itemAt(0), itemAt(1)))) {
++		sides |= 2;
++	}
++	return sides;
++}
++
++// The rows shown around the selection (fixScrollPos()) are items of the window: when they need files beyond it, the
++// folder is read again. Once per window and side: what that read doesn't bring in (next to a group larger than the
++// window) another one doesn't either, and every step of the encoder would read the folder. On the 7-segment display
++// there's just the selection
+ void LoadSongUI::fillWindowForRows() {
+ 	FileItem* item = selectedItem();
+ 	if (!item || !display->haveOLED()) {
+ 		return;
+ 	}
+ 	fixScrollPos(false);
+-	int32_t numItems = fileItems.getNumElements();
+-	int32_t i = scrollPosVertical;
+-	for (int32_t rows = 0; i < numItems && rows < kNumRows; i++) {
+-		rows += !isHiddenVersion(i);
++	int32_t window[3] = {numFileItemsDeletedAtStart, numFileItemsDeletedAtEnd, fileItems.getNumElements()};
++	int32_t lastRow = fileIndexSelected;
++	int32_t sides = rowsBeyondWindow(&lastRow);
++	if (std::equal(window, window + 3, rowsWindowTried)) {
++		sides &= ~rowsSidesTried;
+ 	}
+-	// Below: the rows (or the last row's group) may go on beyond the window. Above: the top row may be a version whose
+-	// group's first one is beyond it
+-	if ((i >= numItems && numFileItemsDeletedAtEnd)
+-	    || (scrollPosVertical == 0 && numFileItemsDeletedAtStart && !itemAt(0)->isFolder)) {
+-		recentreWindow();
+-		fixScrollPos();
++	if (!sides) {
++		return;
++	}
++	// Below: the window from the top row on (and the rows above it, for fixScrollPos() if there aren't enough below);
++	// above: up to the last row; both: around the selection
++	if (sides == 1) {
++		int32_t anchor = scrollPosVertical;
++		for (int32_t rows = 1; anchor > 0 && rows < kNumRows; rows++) {
++			anchor--;
++			if (isHiddenVersion(anchor)) {
++				break; // A folded group's row: from its last versions on, the window shows it
++			}
++		}
++		readWindow(anchor, 1);
+ 	}
++	else if (sides == 2) {
++		readWindow(lastRow, -1);
++	}
++	else {
++		readWindow(fileIndexSelected, 0);
++	}
++	fixScrollPos();
++	rowsWindowTried[0] = numFileItemsDeletedAtStart;
++	rowsWindowTried[1] = numFileItemsDeletedAtEnd;
++	rowsWindowTried[2] = fileItems.getNumElements();
++	rowsSidesTried = rowsBeyondWindow();
+ }
+ 
+ // The selected version's group's first version. Returns whether the selection moved
+@@ -1168,7 +1286,7 @@ bool LoadSongUI::selectGroupTop() {
+ 	int32_t start = numFileItemsDeletedAtStart + fileIndexSelected;
+ 	for (int32_t n = 0; n < kMaxGroupSteps; n++) {
+ 		if (fileIndexSelected == 0 && numFileItemsDeletedAtStart) {
+-			recentreWindow();
++			readWindow(fileIndexSelected, -1);
+ 		}
+ 		if (fileIndexSelected <= 0 || !sameGroup(itemAt(fileIndexSelected - 1), itemAt(fileIndexSelected))) {
+ 			break;
+@@ -1186,6 +1304,12 @@ bool LoadSongUI::selectGroupTop() {
+ 	return true;
+ }
+ 
++// The selection shown as its folded group ("TRACK >", "TRACK--"), not by its own name (typed, or arrived at by typing
++// on the 7-segment display)
++bool LoadSongUI::selectionShownFolded() {
++	return !qwertyVisible && !(display->have7SEG() && arrivedAtFileByTyping) && isFoldedHeader(fileIndexSelected);
++}
++
+ // BACK: an open group folds in, its first version selected; otherwise up a folder, or out, as before
+ ActionResult LoadSongUI::backButtonAction() {
+ 	syncOpenGroup();
+diff --git a/src/deluge/gui/ui/load/load_song_ui.h b/src/deluge/gui/ui/load/load_song_ui.h
+index 173e0e27..4d0e45c9 100644
+--- a/src/deluge/gui/ui/load/load_song_ui.h
++++ b/src/deluge/gui/ui/load/load_song_ui.h
+@@ -70,11 +70,17 @@ private:
+ 	bool isHiddenVersion(int32_t i);
+ 	bool isFoldedHeader(int32_t i);
+ 	void syncOpenGroup();
++	// The window fillWindowForRows() last read, when it didn't bring in all the rows (a group larger than the window
++	// next to them): not read again for them while it's the same (numFileItemsDeletedAtStart, ...AtEnd, items)
++	int32_t rowsWindowTried[3] = {-1, -1, -1};
++	int32_t rowsSidesTried = 0; // ... and the sides (rowsBeyondWindow()) it didn't get
++	int32_t rowsBeyondWindow(int32_t* lastRow = nullptr);
+ 	void fixScrollPos(bool fillFromAbove = true);
+-	void recentreWindow();
+-	void fillWindowAroundSelection();
++	void readWindow(int32_t anchor, int32_t towards);
++	void fillWindowAroundSelection(int32_t direction = 0, String* topRow = nullptr);
+ 	void fillWindowForRows();
+ 	bool selectGroupTop();
++	bool selectionShownFolded();
+ 
+ 	Session::LaunchCountdown shownCountdown;
+ 	bool countdownOnOLED = false; // The title row shows the countdown instead of the title
+-- 
+2.43.0
+

@@ -1,0 +1,259 @@
+From 0c11cdecc5204b5d37617e55311e932a6c4641f9 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 17:02:06 +0000
+Subject: [PATCH 69/74] CPU monitor: LEARN + tempo encoder press switches it
+ off and on, and its mode survives a restart
+
+Settings > CPU monitor was off after every power-up and only reachable through the menu. Now:
+
+- Shortcut: LEARN held and the tempo encoder pressed (hid/buttons.cpp, before the view gets the button, so it works in
+  every view, playing or stopped; with Shift the press still clears the tempo automation). It switches between Off and
+  the last of On and Alerts (at first On); from Profile it goes to Off (a profiler measurement is chosen in the menu).
+  Popup "CPU monitor: On/Off/Alerts" on the OLED, "C-ON", "COFF", "C-AL" on the 7-segment display.
+- Saved: a hidden entry cpuMonitor in CommunityFeatures.XML, written and read like masterTune (no new
+  RuntimeFeatureSettingType, no flash byte); firmware that doesn't know it keeps it as an unknown setting. The shortcut
+  saves at once; while the card is busy (sdRoutineLock) it leaves the save to cpu_stats::routine(), which does it once
+  the card is free. The menu saves it when left, as all settings. At boot readSettingsFromFile() sets the mode; a saved
+  Profile starts as On (USB isn't open yet), no entry leaves it Off.
+
+Unlike the design, the press is not deferred with REMIND_ME_OUTSIDE_CARD_ROUTINE in the card routine: inCardRoutine is
+sdRoutineLock (deluge.cpp), so the pending save would never be reached, and the press would hold up all later input
+until the SD routine ends. Switching the mode only sets flags and shows a popup (as the tempo popup does there).
+
+Test: mastertune tests/settings/cpu_monitor_shortcut_emu.py (four boots on one card: Song view stopped, clip view
+playing, the card busy, restart with the OLED line and SysEx, the menu on Alerts and Profile, keyboard and drone view):
+30 of 30; the v16 release: 8 of 30 (the feature's checks fail). usb_audio_setting_emu.py 2 of 2, profiler_emu.py 21 of
+21, tests/song/run.sh (--init-sounds --seed 1): demand 87a7df292189e341, digital 4473b3155dcfa0e8, as before.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/menu_item/cpu_monitor_mode.h   |  4 +-
+ src/deluge/hid/buttons.cpp                    | 10 ++++
+ .../settings/runtime_feature_settings.cpp     | 10 +++-
+ src/deluge/processing/engines/cpu_stats.cpp   | 46 +++++++++++++++++++
+ src/deluge/processing/engines/cpu_stats.h     | 27 ++++++++---
+ 5 files changed, 88 insertions(+), 9 deletions(-)
+
+diff --git a/src/deluge/gui/menu_item/cpu_monitor_mode.h b/src/deluge/gui/menu_item/cpu_monitor_mode.h
+index 9d131900..3d99d505 100644
+--- a/src/deluge/gui/menu_item/cpu_monitor_mode.h
++++ b/src/deluge/gui/menu_item/cpu_monitor_mode.h
+@@ -23,7 +23,9 @@
+ namespace deluge::gui::menu_item {
+ /// Settings > CPU monitor (mastertune-v13): Off, On (the line along the top of the OLED, a popup on the 7-segment
+ /// display, the SysEx), Alerts (only the warnings, when voices are cut or the quality is lowered), Profile
+-/// (mastertune-v15-prof: as On, and the sampling profiler, see processing/engines/profiler.h). Off after every power-up
++/// (mastertune-v15-prof: as On, and the sampling profiler, see processing/engines/profiler.h). Saved with the community
++/// features when the menu is left and read at boot (cpu_stats::readSetting(), Profile as On); LEARN + tempo encoder
++/// press switches it off and on (cpu_stats::shortcut())
+ class CpuMonitorMode final : public Selection {
+ public:
+ 	using Selection::Selection;
+diff --git a/src/deluge/hid/buttons.cpp b/src/deluge/hid/buttons.cpp
+index c1b7b142..86eacb1a 100644
+--- a/src/deluge/hid/buttons.cpp
++++ b/src/deluge/hid/buttons.cpp
+@@ -29,6 +29,7 @@
+ #include "playback/mode/playback_mode.h"
+ #include "playback/playback_handler.h"
+ #include "processing/engines/audio_engine.h"
++#include "processing/engines/cpu_stats.h"
+ #include "storage/flash_storage.h"
+ #include "testing/hardware_testing.h"
+ #include <map>
+@@ -143,6 +144,15 @@ ActionResult buttonAction(deluge::hid::Button b, bool on, bool inCardRoutine) {
+ 			considerCrossScreenReleaseForCrossScreenMode = true;
+ 		}
+ 	}
++	// LEARN held and the tempo encoder pressed: the CPU monitor off and on, in every view, playing or not. Neither the
++	// view nor the tempo popup gets the press, nor its release while LEARN is still held. With Shift it clears the
++	// tempo automation, as ever.
++	else if (b == TEMPO_ENC && isButtonPressed(LEARN) && !isShiftButtonPressed()) {
++		if (on) {
++			cpu_stats::shortcut();
++		}
++		goto dealtWith;
++	}
+ 
+ 	result = getCurrentUI()->buttonAction(b, on, inCardRoutine);
+ 
+diff --git a/src/deluge/model/settings/runtime_feature_settings.cpp b/src/deluge/model/settings/runtime_feature_settings.cpp
+index 73293fa9..27ca854f 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.cpp
++++ b/src/deluge/model/settings/runtime_feature_settings.cpp
+@@ -20,6 +20,7 @@
+ #include "hid/display/display.h"
+ #include "model/song/song.h"
+ #include "model/tuning/master_tune.h"
++#include "processing/engines/cpu_stats.h"
+ #include "storage/storage_manager.h"
+ #include "util/d_string.h"
+ #include <cstring>
+@@ -255,7 +256,8 @@ void RuntimeFeatureSettings::readSettingsFromFile(StorageManager& bdsm) {
+ 			currentValue = reader.readTagOrAttributeValueInt();
+ 			reader.exitTag();
+ 
+-			bool found = MasterTune::readSetting(currentName.get(), currentValue);
++			bool found = MasterTune::readSetting(currentName.get(), currentValue)
++			             || cpu_stats::readSetting(currentName.get(), currentValue);
+ 			for (auto& setting : settings) {
+ 				if (strcmp(setting.xmlName.data(), currentName.get()) == 0) {
+ 					found = true;
+@@ -309,6 +311,12 @@ void RuntimeFeatureSettings::writeSettingsToFile(StorageManager& bdsm) {
+ 	writer.writeOpeningTagEnd(false);
+ 	writer.writeClosingTag(TAG_RUNTIME_FEATURE_SETTING, false);
+ 
++	writer.writeOpeningTagBeginning(TAG_RUNTIME_FEATURE_SETTING);
++	writer.writeAttribute(TAG_RUNTIME_FEATURE_SETTING_ATTR_NAME, cpu_stats::kSettingName, false);
++	writer.writeAttribute(TAG_RUNTIME_FEATURE_SETTING_ATTR_VALUE, cpu_stats::mode, false);
++	writer.writeOpeningTagEnd(false);
++	writer.writeClosingTag(TAG_RUNTIME_FEATURE_SETTING, false);
++
+ 	// Write unknown elements
+ 	for (uint32_t idxUnknownSetting = 0; idxUnknownSetting < unknownSettings.getNumElements(); idxUnknownSetting++) {
+ 		UnknownSetting* unknownSetting = (UnknownSetting*)unknownSettings.getElementAddress(idxUnknownSetting);
+diff --git a/src/deluge/processing/engines/cpu_stats.cpp b/src/deluge/processing/engines/cpu_stats.cpp
+index 3f2be82f..46d7fc32 100644
+--- a/src/deluge/processing/engines/cpu_stats.cpp
++++ b/src/deluge/processing/engines/cpu_stats.cpp
+@@ -16,14 +16,18 @@
+  */
+ 
+ #include "processing/engines/cpu_stats.h"
++#include "extern.h"
+ #include "hid/display/display.h"
+ #include "hid/display/oled.h"
+ #include "io/midi/midi_device.h"
+ #include "io/midi/midi_device_manager.h"
+ #include "io/midi/sysex.h"
+ #include "lib/printf.h" // Not stdio: the firmware's snprintf, which doesn't allocate
++#include "model/settings/runtime_feature_settings.h"
+ #include "processing/engines/audio_engine.h"
+ #include "processing/engines/profiler.h"
++#include "storage/storage_manager.h"
++#include <cstring>
+ 
+ extern "C" {
+ #include "RZA1/ostm/ostm.h"
+@@ -37,9 +41,25 @@ uint8_t mode = OFF;
+ bool enabled = false;
+ Collector collector;
+ 
++namespace {
++uint8_t lastOnMode = ON; ///< What the shortcut switches back on: the last of On and Alerts
++bool savePending = false;
++
++void saveIfPending() {
++	// Not while the card is busy (a file being read or written), as the menu's USB audio setting
++	if (savePending && !sdRoutineLock) {
++		savePending = false;
++		runtimeFeatureSettings.writeSettingsToFile(storageManager);
++	}
++}
++} // namespace
++
+ void setMode(uint8_t newMode) {
+ 	mode = (newMode <= PROFILE) ? newMode : OFF;
+ 	enabled = (mode != OFF);
++	if (mode == ON || mode == ALERTS) {
++		lastOnMode = mode;
++	}
+ 	if (mode == PROFILE) {
+ 		profiler::start();
+ 	}
+@@ -48,6 +68,31 @@ void setMode(uint8_t newMode) {
+ 	}
+ }
+ 
++void shortcut() {
++	setMode(mode == OFF ? lastOnMode : OFF);
++	char const* text[2] = {"COFF", "CPU monitor: Off"}; // 7-segment, OLED
++	if (mode == ON) {
++		text[0] = "C-ON";
++		text[1] = "CPU monitor: On";
++	}
++	else if (mode == ALERTS) {
++		text[0] = "C-AL";
++		text[1] = "CPU monitor: Alerts";
++	}
++	display->displayPopup(text);
++	savePending = true;
++	saveIfPending();
++}
++
++bool readSetting(char const* name, int32_t value) {
++	if (strcmp(name, kSettingName) != 0) {
++		return false;
++	}
++	uint8_t saved = (value >= 0 && value <= PROFILE) ? (uint8_t)value : (uint8_t)OFF;
++	setMode((saved == PROFILE) ? (uint8_t)ON : saved);
++	return true;
++}
++
+ namespace {
+ 
+ /// Room that must stay free in the USB MIDI send buffer, so the numbers never crowd out notes or clock
+@@ -110,6 +155,7 @@ void clusterLoaded(ReadStart start) {
+ }
+ 
+ void routine() {
++	saveIfPending();
+ 	if (!enabled) {
+ 		if (wasEnabled) {
+ 			wasEnabled = false;
+diff --git a/src/deluge/processing/engines/cpu_stats.h b/src/deluge/processing/engines/cpu_stats.h
+index 25937814..3601da82 100644
+--- a/src/deluge/processing/engines/cpu_stats.h
++++ b/src/deluge/processing/engines/cpu_stats.h
+@@ -17,12 +17,12 @@
+ 
+ #pragma once
+ 
+-// CPU monitor (mastertune-v12-diag): Settings > CPU monitor, off after every power-up. While on, it measures how long
+-// AudioEngine::routine() takes for the audio it renders, counts voices, direness, culled voices and SD cluster reads,
+-// shows a line on the OLED (a short popup on the 7-segment display) and sends the numbers once a second as SysEx to
+-// the computer over USB MIDI (port 3, never to DIN). It only measures: no sound is changed. While off, each hook costs
+-// one flag test. The SysEx format is in cpu_stats_core.h, the page that shows it is
+-// mastertune-1.2.1/tools/cpu_monitor.html.
++// CPU monitor (mastertune-v12-diag): Settings > CPU monitor, or LEARN held and the tempo encoder pressed (shortcut());
++// the mode is kept on the card across a restart (readSetting()). While on, it measures how long AudioEngine::routine()
++// takes for the audio it renders, counts voices, direness, culled voices and SD cluster reads, shows a line on the OLED
++// (a short popup on the 7-segment display) and sends the numbers once a second as SysEx to the computer over USB MIDI
++// (port 3, never to DIN). It only measures: no sound is changed. While off, each hook costs one flag test. The SysEx
++// format is in cpu_stats_core.h, the page that shows it is mastertune-1.2.1/tools/cpu_monitor.html.
+ 
+ #include "processing/engines/cpu_stats_core.h"
+ 
+@@ -38,6 +38,19 @@ enum Mode : uint8_t {
+ extern uint8_t mode;
+ void setMode(uint8_t newMode);
+ 
++/// LEARN held and the tempo encoder pressed (hid/buttons.cpp): Off, and back on in the last of On and Alerts (at first
++/// On); from Profile to Off (a measurement is chosen in the menu). Shows the mode in a popup and saves it to the card
++/// at once, or, while the card is busy, from routine() soon after.
++void shortcut();
++
++/// The mode's entry in CommunityFeatures.XML on the SD card (written with the community features, as MasterTune's), so
++/// it survives a restart. Firmware that doesn't know it keeps it as an unknown setting.
++constexpr char const* kSettingName = "cpuMonitor";
++
++/// Reads our entry from the community settings file at boot. Profile starts as On: the profiler sends to the computer,
++/// and USB isn't open yet. Returns false if the entry is not ours.
++bool readSetting(char const* name, int32_t value);
++
+ /// Measuring: On or Alerts
+ extern bool enabled;
+ extern Collector collector;
+@@ -67,7 +80,7 @@ ReadStart readStart();
+ /// while the read waited for the card (it yields to the task manager meanwhile).
+ void clusterLoaded(ReadStart start);
+ 
+-/// Task, a few times a second: display and SysEx
++/// Task, a few times a second: display and SysEx, and a save the shortcut left for when the card is free
+ void routine();
+ 
+ /// What goes in the top left corner of every image sent to the OLED, nullptr if nothing: one short line
+-- 
+2.43.0
+

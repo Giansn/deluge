@@ -608,6 +608,13 @@ Rohdaten: `raw/reverb-v14.json`. Commit `7c1ffede`, Tests `tests/reverb/modulati
   - Ohne es bliebe ein typisches Streaming-Projekt bei rund 95 % Last.
   - **Sein Preis:** Live-Noten schwanken um bis 1,4 ms (im Mittel gleich), und die Reserve ist kleiner. Es gab keinen Underrun.
 - **Stille Spuren:** Pro stille Spur sinkt der Aufwand von 550 auf 210 Befehle. Im grossen Song sind es −42 % Befehle und −26 % SDRAM-Zeilen pro Durchgang.
+- **Nach dem Gegenprüfer:**
+  - **Reserve:** Das Mindestfenster beginnt um die erwartete Renderzeit früher. Die grösste Lücke sinkt so von 81 auf 65 Samples, bei gleicher Last.
+  - **Externe Clock:** Ein spät gelesenes Clock-Byte tickt sofort, statt 128 Samples zu spät.
+  - **`bypassCulling`:** gilt nur noch für den eigenen Render.
+- **Schwelle 65 % statt 50 %** (Helfer-Session, «New Sitar Grii 10», `geraet/analyse/2026-09-27-sitar-v17.md`):
+  - Bei 0,8 Befehlen pro Takt lag die Fensterlast knapp über 50 %. v17 fiel dann in 12er-Blöcke zurück und landete bei 87 % statt 52 %.
+  - Mit 65 % bleibt das Mindestfenster an. Die Reserve sinkt dabei um 2 Samples (71 statt 73).
 
 ## 7n. Erste Messung am Gerät (v16, «New Sitar Grii 10»)
 
@@ -622,10 +629,14 @@ Die Messung machte die lokale Session mit dem Profiler (`geraet/2026-09-27-v16-*
   - In 12 s wurden 173 Stimmen geschnitten. Die längste Lücke war 4,7 ms, der Puffer reicht für 2,9 ms.
   - Die Kits tragen die Last: 3L3Ctr0 15 % (36 Drums, Phaser), Hihat 11 % (Flanger), Guiro 11 % (Delay), CR-78 10 % (Flanger), KIT1 8,5 %. Der Reverb braucht 6 %, die drei Synths zusammen 10 %.
   - Geschnitten werden vor allem die gehaltenen Synth-Stimmen, darum sind Oboe und Sitar kaum zu hören.
-- **Folgerungen:**
-  - v17 hilft im Stillstand. Spuren mit Mod-FX und klingendem Delay überspringt es aber bewusst nicht.
-  - Unter Volllast hilft v17 wenig. Die Kosten liegen in den Kits und ihren Effektketten.
-  - Im Stillstand kostet Guiro 14,7 %, Rattle mit ähnlichem Delay nur 2,8 %: noch ungeklärt.
+- **Folgerungen** (korrigiert nach der Analyse des Songs im Emulator, `geraet/analyse/2026-09-27-sitar-*.md`):
+  - **432 gegen 440 Hz:** kaum ein Unterschied, 37,2 gegen 37,0 % CPU. Die Samples dieses Songs klingen ohnehin transponiert, werden also auch bei 440 Hz umgerechnet. Die erste Vermutung, 432 Hz mache die Kits teuer, trifft für diesen Song nicht zu.
+  - **Die kleinen Rechenblöcke von v16 sind der Treiber:**
+    - Mit Blöcken von 8 Samples kostet derselbe Song 103 % statt 37 % bei 128 Samples. Die Kits wachsen dabei am stärksten, Hihat von 3,5 auf 15,7 %.
+    - Mit der echten Aufgabenplanung: v16 93 % Monitor (Gerät geschätzt 117 %), v17 41 % (47 %). Die fünf Kits sinken von 38 auf 14 % der Zeit.
+  - **Offen:**
+    - Im Stillstand kostet Guiro 14,7 %, Rattle mit ähnlichem Delay nur 2,8 %.
+    - Mod-FX- und Delay-Fahnen stiller Spuren überspringt v17 nicht.
 - **Nächste Schritte:**
   - den Song im Emulator nach Funktion aufschlüsseln, denn auf dem Gerät sieht der Profiler nicht in die Spuren
   - Mod-FX- und Delay-Fahnen stiller Spuren überspringen, sobald sie abgeklungen sind
@@ -639,9 +650,9 @@ Die Messung machte die lokale Session mit dem Profiler (`geraet/2026-09-27-v16-*
 - [ ] Messversion auf dem Gerät mit `MT_LOADTEST`: Emulator kalibrieren, Direness- und Culling-Schwellen prüfen.
 - [ ] Benchmarks für `processReverbSendAndVolume`, den Aufwand pro Fenster in `Sound::render` und die Wavetable-Schleife.
 - [ ] Wavetable-Oszillator, Grain, `hopEnd` und die Stereo-Unison-Pan-Schleife messen, falls der Volllast-Test sie als relevant zeigt.
-- [ ] Den Song «New Sitar Grii 10» im Emulator: Wohin geht die Zeit in den Kits (7n)?
+- [x] Den Song «New Sitar Grii 10» im Emulator: Wohin geht die Zeit in den Kits (7n)? In den kleinen Rechenblöcken von v16, siehe 7n.
 - [ ] Stille Spuren mit Mod-FX oder Delay-Fahne überspringen, sobald die Fahne abgeklungen ist.
-- [ ] Die Schwelle des Mindestfensters (50 % Last) am Gerät prüfen.
+- [ ] Die Schwelle des Mindestfensters (seit v17 65 % Last) am Gerät prüfen.
 - [ ] MIDI/Clock-Fix in `routineForSD()` (`9cd09fb7`): Übertragbarkeit am Code bestätigen.
 - [x] MIDI-/Gate-Timer: 2,9 ms zu früh und Zählerrest behoben (7f).
 - [x] Noten 2,5 ms vor dem Ton (7f): bleibt so (Entscheid des Nutzers).
