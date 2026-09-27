@@ -163,7 +163,7 @@
   <tr><td>MIDI-Clock</td><td>LED von Step 6 an = <b>Auto</b> (folgt der MIDI-Clock), aus = intern</td><td>Nur wichtig, wenn Sequencer oder Motion Sequence der volca im Tempo des Deluge laufen sollen. Unter MIDI-Clock ist der Tempo-Regler der volca ohne Wirkung.</td></tr>
   <tr><td>SYNC-IN-Polarität</td><td>steigende Flanke (Standard)</td><td>globaler Parameter auf Taste 4; nur mit Sync-Kabel wichtig</td></tr>
   <tr><td>Auto-Power-Off</td><td>für lange Drones aus</td><td>Taste 1. Die volca schaltet sich sonst nach etwa 4 Stunden ab.</td></tr>
-  <tr><td>MIDI ShortMessage</td><td><b>an</b> lassen</td><td>Taste 7. Ist der Parameter aus, reagiert die volca nicht auf Noten und CCs vom Deluge.</td></tr>
+  <tr><td>MIDI ShortMessage</td><td>Standard lassen</td><td>Taste 7. Was der Parameter genau bewirkt, ist nicht belegt <span class="tag">prüfen</span>. Reagiert die volca nicht auf Noten oder CCs vom Deluge, ihn umschalten.</td></tr>
 </table>
 <p class="small">Steckt ein Kabel in SYNC IN, folgt der Sequencer der volca nur noch den Pulsen und ignoriert seinen eigenen Takt. Das Korg-Handbuch nennt auch den Tempobereich als globalen Parameter. Für diesen Aufbau spielt er keine Rolle, weil das Tempo vom Deluge kommt.</p>
 
@@ -380,7 +380,7 @@
 <h2>11. Fehlersuche</h2>
 <table class="split">
   <thead><tr><th style="width:30%">Problem</th><th>Ursache und Lösung</th></tr></thead>
-  <tr><td>Die volca spielt nicht</td><td>Kabel an MIDI OUT des Deluge und MIDI IN der volca? Clip auf demselben Kanal wie die volca (Standard 1)? Clip gestartet und nicht stumm? Lautstärke der volca offen? Globaler Parameter MIDI ShortMessage (Taste 7) an?</td></tr>
+  <tr><td>Die volca spielt nicht</td><td>Kabel an MIDI OUT des Deluge und MIDI IN der volca? Clip auf demselben Kanal wie die volca (Standard 1)? Clip gestartet und nicht stumm? Lautstärke der volca offen? Globalen Parameter MIDI ShortMessage (Taste 7) umschalten <span class="tag">prüfen</span>.</td></tr>
   <tr><td>Der Tempo-Regler der volca tut nichts</td><td>Sie folgt der MIDI-Clock (LED Step 6 an) oder einem Sync-Kabel. Das ist so gewollt.</td></tr>
   <tr><td>Sequencer der volca läuft doppelt oder halb so schnell</td><td>Mit Sync-Kabel: <i>Output PPQN</i> passt nicht. Statt 2 den Wert 4 versuchen oder MIDI-Clock ohne Kabel nutzen. Läuft sie gar nicht: Gate 4 auf <i>Clock</i>?</td></tr>
   <tr><td>Die Fläche setzt neu an</td><td>Eine neue Note startet die Hüllkurve für alle Töne neu. Akkordtöne gleichzeitig beginnen lassen. An der Loop-Grenze: Die Note muss bei Step 1 beginnen und den ganzen Clip füllen.</td></tr>
