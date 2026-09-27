@@ -46,14 +46,55 @@ def expected_bytes(blocks):
     return b"".join(int(s).to_bytes(3, "little", signed=True) for b in blocks for s in (b.reshape(-1) >> 8))
 
 
+def chunks(raw):
+    """The RIFF chunks of a WAV: {id: (offset of the body, size)}; data last, it runs to the end."""
+    assert raw[:4] == b"RIFF" and raw[8:12] == b"WAVE", raw[:16]
+    found, pos = {}, 12
+    while pos + 8 <= len(raw):
+        key, size = raw[pos:pos + 4], struct.unpack("<I", raw[pos + 4:pos + 8])[0]
+        found[key] = (pos + 8, size)
+        if key == b"data":
+            break
+        pos += 8 + size + (size & 1)
+    return found
+
+
 def parse_wav(path):
     raw = Path(path).read_bytes()
-    assert raw[:4] == b"RIFF" and raw[8:16] == b"WAVEfmt ", raw[:16]
     riff, = struct.unpack("<I", raw[4:8])
-    fmt = struct.unpack("<IHHIIHH", raw[16:36])
-    assert raw[36:40] == b"data"
-    size, = struct.unpack("<I", raw[40:44])
-    return riff, fmt, size, raw[44:]
+    c = chunks(raw)
+    fmt = struct.unpack("<IHHIIHH", raw[c[b"fmt "][0] - 4:c[b"fmt "][0] + 16])
+    start, size = c[b"data"]
+    return riff, fmt, size, raw[start:]
+
+
+def wav_info(path):
+    """The RIFF INFO list of a WAV: {b"INAM": "...", ...}."""
+    raw = Path(path).read_bytes()
+    start, size = chunks(raw)[b"LIST"]
+    assert raw[start:start + 4] == b"INFO"
+    info, pos = {}, start + 4
+    while pos < start + size:
+        key, n = raw[pos:pos + 4], struct.unpack("<I", raw[pos + 4:pos + 8])[0]
+        value = raw[pos + 8:pos + 8 + n]
+        assert value.endswith(b"\0")
+        info[key] = value[:-1].decode("utf-8")
+        pos += 8 + n + (n & 1)
+    return info
+
+
+def pack7(data):
+    """The Deluge's pack_8bit_to_7bit (util/pack.c), for SysEx from a made-up Deluge."""
+    out = bytearray()
+    for i in range(0, len(data), 7):
+        group = data[i:i + 7]
+        out.append(sum(1 << j for j, b in enumerate(group) if b & 0x80))
+        out += bytes(b & 0x7F for b in group)
+    return bytes(out)
+
+
+def song_info(song, firmware):
+    return dr.SONG_INFO + pack7(json.dumps({"song": song, "fw": firmware}, ensure_ascii=False).encode()) + b"\xf7"
 
 
 def wait(cond, timeout=5.0):
@@ -121,11 +162,10 @@ class Writer(EngineCase):
         e = self.engine()
         blocks = [samples24(n) for n in (1024, 1, 441, 1024, 7, 1024, 3000)]
         path = self.take(e, blocks)
-        self.assertEqual(path.name, "USB00001.WAV")
         riff, fmt, size, data = parse_wav(path)
         frames = sum(map(len, blocks))
         self.assertEqual(fmt, (16, 1, 2, 44100, 44100 * 6, 6, 24))
-        self.assertEqual((size, riff, len(data)), (frames * 6, 36 + frames * 6, frames * 6))
+        self.assertEqual((size, riff, len(data)), (frames * 6, path.stat().st_size - 8, frames * 6))
         self.assertEqual(data, expected_bytes(blocks))
         with wave.open(str(path)) as w:
             self.assertEqual((w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()),
@@ -163,7 +203,7 @@ class Writer(EngineCase):
         feed(e, blocks)
         e.shutdown()
         self.assertFalse(e.writer.is_alive())
-        self.assertEqual(parse_wav(self.dir / "USB00001.WAV")[3], expected_bytes(blocks))
+        self.assertEqual(parse_wav(self.dir / e.last_take[0])[3], expected_bytes(blocks))
 
     def test_4gb_goes_on_in_the_next_file(self):
         old = dr.MAX_DATA_BYTES
@@ -174,8 +214,9 @@ class Writer(EngineCase):
             self.take(e, blocks)
         finally:
             dr.MAX_DATA_BYTES = old
-        files = sorted(self.dir.iterdir())
-        self.assertEqual([p.name for p in files], ["USB00001.WAV", "USB00002.WAV", "USB00003.WAV"])
+        files = sorted(self.dir.iterdir(), key=lambda p: p.stat().st_mtime_ns)
+        base = files[0].name[:-4]
+        self.assertEqual([p.name for p in files], [base + ".WAV", base + " part 2.WAV", base + " part 3.WAV"])
         self.assertEqual([parse_wav(p)[2] // 6 for p in files], [1200, 1200, 300])
         self.assertEqual(b"".join(parse_wav(p)[3] for p in files), expected_bytes(blocks))
 
@@ -232,28 +273,114 @@ class Volume(EngineCase):
         self.assertEqual(e.take_bits(), 24)
 
 
-class Numbering(EngineCase):
-    def test_next_number_and_no_overwrite(self):
-        for name in ("USB00007.WAV", "usb00003.wav", "USB12.WAV", "REC00050.WAV", "USB00009.WAV.tmp"):
-            (self.dir / name).write_bytes(b"keep " + name.encode())
-        e = self.engine()
-        self.assertEqual(self.take(e, [samples24(10)]).name, "USB00008.WAV")
-        self.assertEqual(self.take(e, [samples24(10)]).name, "USB00009.WAV")
-        for name in ("USB00007.WAV", "usb00003.wav", "USB12.WAV", "REC00050.WAV", "USB00009.WAV.tmp"):
-            self.assertEqual((self.dir / name).read_bytes(), b"keep " + name.encode())
+class Naming(EngineCase):
+    WHEN = time.mktime((2026, 9, 27, 21, 30, 5, 0, 0, -1))
 
-    def test_existing_name_is_skipped(self):
+    def engine_at(self, song=None, firmware=None):
         e = self.engine()
-        (self.dir / "USB00001.WAV").write_bytes(b"keep")
-        e.next_number = lambda: 1  # Another program took the number in between
-        self.assertEqual(self.take(e, [samples24(10)]).name, "USB00002.WAV")
-        self.assertEqual((self.dir / "USB00001.WAV").read_bytes(), b"keep")
+        e.now = lambda: self.WHEN
+        e.info.song, e.info.firmware = song, firmware
+        return e
 
-    def test_past_99999(self):
-        (self.dir / "USB99999.WAV").write_bytes(b"keep")
-        e = self.engine()
-        self.assertEqual(self.take(e, [samples24(10)]).name, "USB100000.WAV")
-        self.assertEqual(self.take(e, [samples24(10)]).name, "USB100001.WAV")
+    def test_song_date_firmware(self):
+        """The name: the song as the Deluge told it, the date and time, the firmware in short; inside, the INFO list
+        with the full firmware."""
+        e = self.engine_at("Rescue 3", "1.2.1-mastertune-v17-4e3d2075")
+        path = self.take(e, [samples24(10)])
+        self.assertEqual(path.name, "Rescue 3 2026-09-27 21-30-05 v17.WAV")
+        info = wav_info(path)
+        self.assertEqual((info[b"INAM"], info[b"ICRD"], info[b"ISFT"]),
+                         ("Rescue 3", "2026-09-27", f"DelugeRec v{dr.VERSION}"))
+        self.assertIn("Deluge firmware: 1.2.1-mastertune-v17-4e3d2075", info[b"ICMT"])
+        self.assertIn("2026-09-27 21:30:05", info[b"ICMT"])
+        self.assertIn("VOL 0 dB (bit-exact)", info[b"ICMT"])
+        self.assertEqual(e.last_take[3], "Rescue 3")
+        with wave.open(str(path)) as w:  # Other programs read past the INFO list
+            self.assertEqual(w.getnframes(), 10)
+
+    def test_without_the_deluge_telling(self):
+        """An older firmware tells nothing: the date and time alone; a new song not saved yet: no song."""
+        e = self.engine_at()
+        self.assertEqual(self.take(e, [samples24(10)]).name, "2026-09-27 21-30-05.WAV")
+        self.assertEqual(wav_info(self.dir / e.last_take[0])[b"INAM"], "Deluge USB audio")
+        e.info.song, e.info.firmware = "", "1.2.1-mastertune-v18"
+        self.assertEqual(self.take(e, [samples24(10)]).name, "2026-09-27 21-30-05 v18.WAV")
+
+    def test_no_overwrite(self):
+        e = self.engine_at("Rescue 3", "1.2.1-mastertune-v17-l2d-b3385d83")
+        (self.dir / "Rescue 3 2026-09-27 21-30-05 v17-l2d.WAV").write_bytes(b"keep")
+        self.assertEqual(self.take(e, [samples24(10)]).name, "Rescue 3 2026-09-27 21-30-05 v17-l2d (2).WAV")
+        self.assertEqual(self.take(e, [samples24(10)]).name, "Rescue 3 2026-09-27 21-30-05 v17-l2d (3).WAV")
+        self.assertEqual((self.dir / "Rescue 3 2026-09-27 21-30-05 v17-l2d.WAV").read_bytes(), b"keep")
+
+    def test_names_safe_on_every_system(self):
+        self.assertEqual(dr.clean_name('a<b>c:d"e/f\\g|h?i*j\x01. '), "a_b_c_d_e_f_g_h_i_j_")
+        self.assertEqual(dr.clean_name("x" * 200), "x" * 80)
+        self.assertEqual(dr.short_firmware("1.2.1-mastertune-v16-l2d-dronefix-ba499a93"), "v16-l2d-dronefix")
+        self.assertEqual(dr.short_firmware(None), "")
+        e = self.engine_at("Grüezi/../Welt", "c1.2.1")
+        self.assertEqual(self.take(e, [samples24(10)]).name, "Grüezi_.._Welt 2026-09-27 21-30-05 c1.2.1.WAV")
+
+
+class SongInfo(unittest.TestCase):
+    def test_parse(self):
+        """The SysEx from the Deluge: JSON packed 7 into 8, UTF-8; anything else is not it."""
+        self.assertEqual(dr.DelugeInfo.parse(song_info("Grüezi Mitenand 2", "1.2.1-mastertune-v18")),
+                         ("Grüezi Mitenand 2", "1.2.1-mastertune-v18"))
+        for n in range(0, 40):  # Every length of the packing's last group
+            self.assertEqual(dr.DelugeInfo.parse(song_info("x" * n, "fw"))[0], "x" * n)
+        good = song_info("Rescue", "v17")
+        for bad in (good[:-1], b"\xf0\x00\x21\x7b\x01\x10" + good[6:], good[:6] + b"\x00\x7f" + b"\xf7",
+                    dr.SONG_INFO + pack7(b'{"song": 3, "fw": "x"}') + b"\xf7", dr.SONG_INFO + pack7(b"[]") + b"\xf7"):
+            self.assertIsNone(dr.DelugeInfo.parse(bad), bad)
+
+    def test_port_3_only(self):
+        """The Deluge's port 3 as Windows, macOS and Linux name it; never port 1, which a DAW uses."""
+        pick = dr.DelugeInfo.pick
+        self.assertEqual(pick(["Deluge 0", "MIDIIN2 (Deluge) 1", "MIDIIN3 (Deluge) 2"]), 2)
+        self.assertEqual(pick(["IAC Bus 1", "Deluge Port 1", "Deluge Port 2", "Deluge Port 3"]), 3)
+        self.assertEqual(pick(["Midi Through:Midi Through Port-0 14:0", "Deluge:Deluge MIDI 1 20:0",
+                               "Deluge:Deluge MIDI 2 20:1", "Deluge:Deluge MIDI 3 20:2"]), 3)
+        self.assertEqual(pick(["Deluge", "Deluge 2", "Deluge 3"]), 2)
+        self.assertIsNone(pick(["Deluge 0"]))
+        self.assertIsNone(pick(["Launchpad", "loopMIDI Port 3"]))
+
+    def test_listens_only(self):
+        """With python-rtmidi: port 3 opened as an input, SysEx let through, the song and firmware taken from it;
+        closing forgets them. No output port is ever made."""
+        made = []
+
+        class MidiIn:
+            def __init__(self): made.append(self); self.opened, self.sysex = None, None
+            def get_ports(self): return ["Deluge 0", "MIDIIN2 (Deluge) 1", "MIDIIN3 (Deluge) 2"]
+            def ignore_types(self, sysex=True, **kw): self.sysex = not sysex
+            def set_callback(self, f): self.callback = f
+            def open_port(self, i): self.opened = i
+            def close_port(self): self.opened = None
+            def delete(self): pass
+        fake = types.ModuleType("rtmidi")
+        fake.MidiIn = MidiIn
+        old = sys.modules.get("rtmidi")
+        sys.modules["rtmidi"] = fake
+        try:
+            info = dr.DelugeInfo()
+            self.assertTrue(info.open())
+            self.assertEqual((made[0].opened, made[0].sysex, info.port), (2, True, "MIDIIN3 (Deluge) 2"))
+            made[0].callback((list(song_info("Rescue 3", "1.2.1-mastertune-v17-4e3d2075")), 0.0), None)
+            self.assertEqual((info.song, info.firmware), ("Rescue 3", "1.2.1-mastertune-v17-4e3d2075"))
+            made[0].callback(([0x90, 60, 100], 0.0), None)  # Anything else changes nothing
+            self.assertEqual(info.song, "Rescue 3")
+            info.close()
+            self.assertEqual((made[0].opened, info.song, info.firmware), (None, None, None))
+            fake.MidiIn.get_ports = lambda self: ["Deluge 0"]
+            self.assertFalse(info.open())  # No port 3: nothing opened
+            self.assertIsNone(made[-1].opened)
+        finally:
+            if old is None:
+                sys.modules.pop("rtmidi", None)
+            else:
+                sys.modules["rtmidi"] = old
+        self.assertNotIn("MidiOut", SRC.read_text(encoding="utf-8"))
 
 
 class PreRoll(EngineCase):
@@ -639,11 +766,12 @@ class Devices(EngineCase):
         self.assertEqual((ok, e.connected, sd.opened), (False, False, []))
 
     def test_never_to_the_deluge(self):
-        """Nothing goes to the Deluge: no MIDI or SysEx at all, no stream that plays and records at once, and the
-        monitor's outputs leave out every device with Deluge in its name (also a Deluge that could play what the
-        computer sends, as a later USB audio could)."""
+        """Nothing goes to the Deluge: MIDI only as an input (its port 3), no stream that plays and records at once,
+        and the monitor's outputs leave out every device with Deluge in its name (also a Deluge that could play what
+        the computer sends, as a later USB audio could)."""
         code = SRC.read_text(encoding="utf-8")
-        self.assertIsNone(re.search(r"RawStream|sd\.Stream\b|\.play\(|rtmidi|mido|sysex", code, re.I))
+        self.assertIsNone(re.search(r"RawStream|sd\.Stream\b|\.play\(|MidiOut|send_message|mido|open_virtual", code))
+        self.assertLessEqual(set(re.findall(r"rtmidi\.\w+", code)), {"rtmidi.MidiIn", "rtmidi.get_rtmidi_version"})
         self.assertEqual(len(re.findall(r"OutputStream\(", code)), 1)  # Only the monitor's
         sys.modules["sounddevice"] = FakeSd(WINDOWS_OUT)
         try:
@@ -912,8 +1040,9 @@ class Demo(EngineCase):
         self.assertGreater(max(e.take_levels()), -30)
         e.command("stop")
         wait(lambda: e.state == "idle")
-        riff, fmt, size, data = parse_wav(self.dir / "USB00001.WAV")
-        self.assertEqual((size, riff), (len(data), 36 + len(data)))
+        path = self.dir / e.last_take[0]
+        riff, fmt, size, data = parse_wav(path)
+        self.assertEqual((size, riff), (len(data), path.stat().st_size - 8))
         self.assertGreater(size // 6, 44100 * 0.4)
         e.disconnect()
         self.assertFalse(e.connected)

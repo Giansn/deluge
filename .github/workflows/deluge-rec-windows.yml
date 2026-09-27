@@ -1,10 +1,10 @@
 name: DelugeRec for Windows
 # Builds mastertune-1.2.1/tools/deluge_rec.py into DelugeRec-vN.exe (N = VERSION in deluge_rec.py; PyInstaller: one
 # file, no console) after its tests, checks the .exe on Windows with its self-test (the window, the demo signal, a
-# take, the monitor, PortAudio, the version) and puts it on its own release "deluge-rec-vN". The release "deluge-rec"
-# always has the newest one as its only file. A released version is never replaced: if deluge_rec.py or its icon
-# changed since, the build stops until VERSION is raised; if not, it only builds and tests, and deluge-rec gets the
-# released file.
+# take, the monitor, PortAudio, rtmidi, the version) and puts it on its own release "deluge-rec-vN". The release
+# "deluge-rec" always has the newest one as its only file. A released version is never replaced: if deluge_rec.py or
+# its icon changed since, the build stops until VERSION is raised; if not, it only builds and tests, and deluge-rec
+# gets the released file.
 on:
   push:
     branches: [geraet-ergebnisse]
@@ -59,7 +59,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install
-        run: python -m pip install --upgrade pip pyinstaller sounddevice numpy
+        run: python -m pip install --upgrade pip pyinstaller sounddevice numpy python-rtmidi
 
       - name: Tests
         run: python -B mastertune-1.2.1/tests/deluge_rec/test_deluge_rec.py

@@ -5,7 +5,7 @@ The Deluge (mastertune v8 or later: Settings > Community features > USB audio on
 computer as an audio input called "Deluge": stereo, 24 bits, 44.1 kHz. This program records exactly that into WAV
 files of 24 bits, without any conversion. It never sends anything to the Deluge.
 
-Install:  pip install sounddevice numpy        (tkinter comes with Python)
+Install:  pip install sounddevice numpy python-rtmidi   (tkinter comes with Python; rtmidi only for the song name)
 Run:      python deluge_rec.py                 (--out FOLDER, --list, --demo without a Deluge, --help)
 
 Controls (mouse or keys):
@@ -19,8 +19,11 @@ Controls (mouse or keys):
   VOL     up/down, mouse wheel or drag on the fader: the level of the take, the pads and the monitor, 0 dB
           (bit-exact) down to -30 dB; a double-click on the fader: back to 0 dB
   THRESH  + -, mouse wheel or drag on the knob: the ARM threshold, -60 to -12 dBFS
-The files are called USB00001.WAV, USB00002.WAV ... like the Deluge's own recordings (REC00001.WAV). Default
-folder: Music/Deluge USB in the user's folder. The output, monitor on or off, the threshold and VOL are remembered.
+The files are called by the song, the date and time and the firmware: "Rescue 3 2026-09-27 21-30-05 v17.WAV". The
+Deluge tells its song and firmware over USB MIDI port 3 (a firmware that sends SysEx 0x12, see DelugeInfo; the
+program only listens there); without that, the name is the date and time. Each file also carries them inside (RIFF
+INFO: title, date, software, and a comment with the full firmware and VOL). Default folder: Music/Deluge USB in the
+user's folder. The output, monitor on or off, the threshold and VOL are remembered.
 
 Monitoring plays what arrives, about 50 ms later, on the chosen output (or the system's default output); a device
 with "Deluge" in its name is never offered. The recording is not affected by it. The monitor fades in and out
@@ -43,6 +46,7 @@ Versions (the number is in the window's title and on the display at start, --ver
   2  reviewed (7 fixes): no take lost on STOP, quit, a disk error or at 4 GB; the pre-roll exact to the frame
   3  the monitor with a choice of output, everything in English, the version number, the Deluge's rain as icon
   4  VOL, a fader against the red; a box around each control; the monitor without clicks (fades in and out)
+  5  the files named by song, date and time and firmware, which the Deluge tells on MIDI port 3; RIFF INFO inside
 """
 import argparse
 import collections
@@ -62,7 +66,7 @@ from pathlib import Path
 
 import numpy as np
 
-VERSION = 4                     # One more with every change of the program, and a line under Versions above
+VERSION = 5                     # One more with every change of the program, and a line under Versions above
 RATE = 44100
 CHANNELS = 2
 FULL_SCALE = 2 ** 31            # The 24-bit samples arrive left-justified in int32
@@ -76,6 +80,7 @@ MONITOR_TARGET = 2048           # Monitor: frames buffered before it plays (46 m
 MONITOR_LIMIT = 6144            # More than this (139 ms, the two clocks drifting apart): back to MONITOR_TARGET
 MONITOR_FADE = 441              # Monitor: 10 ms fades where it starts, runs dry or skips ahead, so it does not click
 NOT_OUTPUTS = ("microsoft sound mapper", "primary sound driver")  # Windows' aliases of the default output
+SONG_INFO = bytes([0xF0, 0x00, 0x21, 0x7B, 0x01, 0x12])  # The Deluge's SysEx with its song and firmware (port 3)
 
 # --- the look: panel, OLED, pads (the Deluge's colours), lettering
 
@@ -214,19 +219,56 @@ def pack24(block):
     return v.astype("<i4").view(np.uint8).reshape(-1, 4)[:, :3].tobytes()
 
 
-class WavFile:
-    """A WAV file, stereo, 24 bits, 44.1 kHz. Never overwrites a file. The header gets the current size every 2 s, so
-    after a crash or a closed console the file holds everything up to shortly before."""
+def unpack7(data):
+    """SysEx data packed 7 bytes into 8 (the Deluge's pack_8bit_to_7bit): each group's first byte holds the high
+    bits of the next seven."""
+    out = bytearray()
+    for i in range(0, len(data), 8):
+        high = data[i]
+        out += bytes(b | (0x80 if high >> j & 1 else 0) for j, b in enumerate(data[i + 1:i + 8]))
+    return bytes(out)
 
-    def __init__(self, path):
+
+def clean_name(text, limit=80):
+    """A song's name as part of a file name on Windows, macOS and Linux: no <>:"/\\|?* or control characters, no
+    dots or spaces at the ends."""
+    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", text)[:limit]
+    return text.strip(" .")
+
+
+def short_firmware(firmware):
+    """The firmware in a file name: "1.2.1-mastertune-v17-4e3d2075" becomes "v17", "...-v17-l2d-b3385d83" "v17-l2d"."""
+    if not firmware:
+        return ""
+    m = re.search(r"-(v\d+(?:-[a-z0-9]+)*?)(?:-[0-9a-f]{8})?$", firmware)
+    return clean_name(m.group(1) if m else firmware, 24)
+
+
+def info_chunk(tags):
+    """RIFF LIST/INFO with (id, text) pairs, UTF-8, each ended by a zero byte and padded to an even length."""
+    body = b"INFO"
+    for key, text in tags:
+        value = text.encode("utf-8") + b"\0"
+        body += key + struct.pack("<I", len(value)) + value + (b"\0" if len(value) % 2 else b"")
+    return b"LIST" + struct.pack("<I", len(body)) + body
+
+
+class WavFile:
+    """A WAV file, stereo, 24 bits, 44.1 kHz, with a RIFF INFO list (tags). Never overwrites a file. The header gets
+    the current size every 2 s, so after a crash or a closed console the file holds everything up to shortly
+    before."""
+
+    def __init__(self, path, tags=()):
         self.f = open(path, "xb")
+        self.info = info_chunk(tags) if tags else b""  # Between fmt and data: the header keeps its length
         self.frames, self.next_header = 0, HEADER_EVERY
         self.f.write(self.header())
 
     def header(self):
         data = self.frames * CHANNELS * 3
-        return b"RIFF%sWAVEfmt %sdata%s" % (struct.pack("<I", 36 + data), struct.pack(
-            "<IHHIIHH", 16, 1, CHANNELS, RATE, RATE * CHANNELS * 3, CHANNELS * 3, 24), struct.pack("<I", data))
+        fmt = struct.pack("<IHHIIHH", 16, 1, CHANNELS, RATE, RATE * CHANNELS * 3, CHANNELS * 3, 24)
+        return (b"RIFF" + struct.pack("<I", 36 + len(self.info) + data) + b"WAVEfmt " + fmt + self.info + b"data"
+                + struct.pack("<I", data))
 
     def write(self, block):
         self.f.write(pack24(block))
@@ -515,6 +557,83 @@ class Monitor:
         return False
 
 
+class DelugeInfo:
+    """What the Deluge tells about itself: its song's name and its firmware, in SysEx F0 00 21 7B 01 12 <JSON
+    {"song": ..., "fw": ...}, UTF-8, packed 7 into 8> F7 on its USB MIDI port 3, while USB audio streams (a firmware
+    that sends it). Only listens: it opens port 3 as an input and never sends anything. Port 1, the one a DAW uses,
+    stays free."""
+
+    def __init__(self):
+        self.song = self.firmware = None  # None: not told (yet); "" for the song: a new song, not saved yet
+        self.midi, self.port = None, ""
+
+    @staticmethod
+    def pick(names):
+        """The Deluge's port 3 among the MIDI inputs, or None: never another of its ports."""
+        deluge = [(i, n) for i, n in enumerate(names) if "deluge" in n.lower()]
+        for i, n in deluge:
+            if re.search(r"(midiin|port|midi) ?3\b", n.lower()):
+                return i
+        return deluge[2][0] if len(deluge) == 3 else None
+
+    @staticmethod
+    def parse(message):
+        """(song, firmware) from one SysEx, or None if it is not the Deluge's song info."""
+        message = bytes(message)
+        if not message.startswith(SONG_INFO) or message[-1:] != b"\xf7":
+            return None
+        try:
+            info = json.loads(unpack7(message[len(SONG_INFO):-1]).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return None
+        if not isinstance(info, dict):
+            return None
+        song, firmware = info.get("song"), info.get("fw")
+        return (song, firmware) if isinstance(song, str) and isinstance(firmware, str) else None
+
+    def received(self, event, data=None):
+        """python-rtmidi's callback: (message, delta time)."""
+        info = self.parse(event[0])
+        if info:
+            self.song, self.firmware = info
+
+    def open(self):
+        """Listens on the Deluge's port 3 if python-rtmidi is there and the port is free; True if it does."""
+        if self.midi is not None:
+            return True
+        try:
+            import rtmidi
+            midi = rtmidi.MidiIn()
+        except Exception:
+            return False
+        try:
+            names = midi.get_ports()
+            i = self.pick(names)
+            if i is None:
+                raise LookupError("no port 3 of a Deluge")
+            midi.ignore_types(sysex=False)
+            midi.set_callback(self.received)
+            midi.open_port(i)
+        except Exception:
+            self.close_midi(midi)
+            return False
+        self.midi, self.port = midi, names[i]
+        return True
+
+    def close(self):
+        midi, self.midi, self.song, self.firmware = self.midi, None, None, None
+        if midi is not None:
+            self.close_midi(midi)
+
+    @staticmethod
+    def close_midi(midi):
+        try:
+            midi.close_port()
+            midi.delete()
+        except Exception:
+            pass
+
+
 class Engine:
     """Opens the Deluge's input and records it. The audio callback only measures and queues the blocks; a writer
     thread keeps the pre-roll and writes the file."""
@@ -533,7 +652,11 @@ class Engine:
         self.overflows, self.gaps = 0, 0  # Overflows: for the display; gaps: all, for the take's line in the console
         self.take_gaps = 0
         self.wav, self.name, self.frames = None, "", 0
-        self.last_take = None          # (name, seconds, bytes)
+        self.base, self.part = "", 1   # The take's name without .WAV, and which of its files (a new one every 4 GB)
+        self.label = ""                # The take on the display: the song, or the time it began
+        self.last_take = None          # (name, seconds, bytes, label)
+        self.info = DelugeInfo()       # The Deluge's song and firmware, for the file's name and its INFO list
+        self.now = time.time
         self.events = collections.deque(maxlen=8)
         self.monitor = Monitor()
         self.stop_writer = False
@@ -569,6 +692,7 @@ class Engine:
             return True
         import sounddevice as sd
         self.monitor.close()
+        self.info.open()  # Port 3 first: the Deluge tells its song and firmware once its audio streams
         try:
             sd._terminate()  # PortAudio lists the devices only when it starts: a Deluge plugged in later shows up so
             sd._initialize()
@@ -618,6 +742,7 @@ class Engine:
         if self.state != "idle":
             self.command("stop")
         self.monitor.close()
+        self.info.close()
         stream, self.stream, self.connected = self.stream, None, False
         if stream is not None:
             try:
@@ -680,22 +805,38 @@ class Engine:
 
     # --- the writer thread
 
-    def next_number(self):
-        used = [int(m.group(1)) for p in self.out_dir.iterdir()
-                if (m := re.fullmatch(r"USB(\d{5,})\.WAV", p.name, re.I))]
-        return max(used, default=0) + 1
+    def take_name(self, when):
+        """The song (if the Deluge told it), the date and time, the firmware in short: "Rescue 3 2026-09-27 21-30-05
+        v17"."""
+        stamp = time.strftime("%Y-%m-%d %H-%M-%S", time.localtime(when))
+        return " ".join(p for p in (clean_name(self.info.song or ""), stamp, short_firmware(self.info.firmware)) if p)
 
-    def open_file(self):
+    def tags(self, when):
+        song, firmware = self.info.song, self.info.firmware
+        level = "0 dB (bit-exact)" if self.volume_db == 0 else f"{self.volume_db} dB"
+        return [(b"INAM", song or "Deluge USB audio"), (b"ICRD", time.strftime("%Y-%m-%d", time.localtime(when))),
+                (b"ISFT", f"DelugeRec v{VERSION}"),
+                (b"ICMT", f"Recorded {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(when))} from the Deluge's USB "
+                          f"audio. Song: {song if song else 'not told'}. Deluge firmware: {firmware or 'not told'}. "
+                          f"VOL {level}.")]
+
+    def open_file(self, part=1):
+        """A new take (part 1), or its next file after 4 GB. A file of the same name is never overwritten: then
+        " (2)", " (3)" ..."""
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        n = self.next_number()
-        while True:  # A file of the same name (another program, another case) is never overwritten
-            name = f"USB{n:05d}.WAV"
+        when = self.now()
+        if part == 1:
+            self.base = self.take_name(when)
+            self.label = clean_name(self.info.song or "") or time.strftime("%H:%M:%S", time.localtime(when))
+        stem, n = self.base + (f" part {part}" if part > 1 else ""), 1
+        while True:
+            name = stem + (f" ({n})" if n > 1 else "") + ".WAV"
             try:
-                self.wav = WavFile(self.out_dir / name)
+                self.wav = WavFile(self.out_dir / name, self.tags(when))
                 break
             except FileExistsError:
                 n += 1
-        self.name, self.frames, self.take_gaps, self.state = name, 0, self.gaps, "rec"
+        self.name, self.part, self.frames, self.take_gaps, self.state = name, part, 0, self.gaps, "rec"
 
     def write(self, block):
         if self.wav is None or not len(block):
@@ -704,15 +845,15 @@ class Engine:
         self.frames += len(block)
         if self.frames * CHANNELS * 3 >= MAX_DATA_BYTES:  # The take goes on without a gap in the next file
             self.close_file()
-            self.open_file()
+            self.open_file(self.part + 1)
             self.events.append("4GB: NEXT FILE")
 
     def close_file(self):
         wav, self.wav = self.wav, None
         if wav is not None:
             wav.close()
-            self.last_take = (self.name, self.seconds(), self.frames * CHANNELS * 3)
-            self.events.append("SAVED " + self.name[:-4])
+            self.last_take = (self.name, self.seconds(), self.frames * CHANNELS * 3, self.label)
+            self.events.append(("SAVED " + self.label)[:21])
             gaps = self.gaps - self.take_gaps
             print(f"saved: {self.out_dir / self.name} ({self.seconds():.1f} s"
                   + (f", {gaps} gaps: the computer was too slow)" if gaps else ")"), flush=True)
@@ -809,6 +950,7 @@ class App:
         self.message, self.message_until = "", 0.0
         self.next_connect = 0.0
         self.pad_fill, self.api_text, self.drag_y = {}, None, None
+        self.song_shown = None
         self.warned_import = False
         self.menu = None  # The output list on the OLED: {"items": [...], "sel": i}
 
@@ -1127,6 +1269,10 @@ class App:
             self.say("DELUGE LOST", 3)
         while e.events:
             self.say(e.events.popleft(), 2.5)
+        if e.info.song != self.song_shown:  # The Deluge told another song
+            self.song_shown = e.info.song
+            if self.song_shown:
+                self.say(("SONG " + self.song_shown)[:21], 2.5)
         if e.overflows:
             e.overflows = 0
             self.say("OVERFLOW: PC TOO SLOW", 2)
@@ -1222,11 +1368,13 @@ class App:
             o.rect(0, 39, o.W, 9)
             o.text(1, 40, message, invert=True)
         elif e.state == "rec":
-            o.text(0, 40, f"{e.name[:8]} {e.frames * CHANNELS * 3 / 1e6:7.1f}MB")
+            o.text(0, 40, f"{e.label[:11]:11} {e.frames * CHANNELS * 3 / 1e6:6.1f}MB")
         elif e.state == "armed":
             o.text(0, 40, f"WAIT FOR > {e.threshold_db} DB")
         elif e.last_take:
-            o.text(0, 40, f"{e.last_take[0][:8]} {e.last_take[2] / 1e6:7.1f}MB")
+            o.text(0, 40, f"{e.last_take[3][:11]:11} {e.last_take[2] / 1e6:6.1f}MB")
+        elif e.info.song:
+            o.text(0, 40, e.info.song[:21])
         else:
             o.text(0, 40, "R: REC   A: ARM")
 
@@ -1289,6 +1437,15 @@ def main():
             for i, d in enumerate(sd.query_devices()):
                 if d[key] > 0:
                     print(f"{i:4d}  {d['name']}  ({apis[d['hostapi']]['name']}, {d[key]} channels)")
+        try:
+            import rtmidi
+            names = rtmidi.MidiIn().get_ports()
+            port3 = DelugeInfo.pick(names)
+            print("midi inputs (only listens, on the Deluge's port 3: the song and the firmware):")
+            for i, name in enumerate(names):
+                print(f"{i:4d}  {name}" + ("  <- port 3 of the Deluge" if i == port3 else ""))
+        except ImportError:
+            print("midi: pip install python-rtmidi, for the song and the firmware in the file names")
         return
     if sys.platform.startswith("win"):
         try:  # Sharp pixels on scaled Windows displays
@@ -1331,7 +1488,8 @@ def main():
 
 def selftest(root, app, engine, seconds, result):
     """The build's check of the finished program (also the .exe): the window with the demo signal, a take from 1 s
-    to the end, the monitor switched on (the build machine may have no output: no failure), PortAudio loaded. Writes
+    to the end, the monitor switched on (the build machine may have no output: no failure), PortAudio and rtmidi
+    loaded. Writes
     selftest.txt into the output folder; exit status 1 if something failed."""
     def check():
         lines, ok = [f"version: v{VERSION}"], True
@@ -1341,6 +1499,18 @@ def selftest(root, app, engine, seconds, result):
         except Exception as ex:
             ok = False
             lines.append(f"portaudio: FAILED {ex!r}")
+        try:  # The build must have rtmidi; a machine without any MIDI system is no failure
+            import rtmidi
+            try:
+                names = rtmidi.MidiIn().get_ports()
+                port3 = DelugeInfo.pick(names)
+                lines.append(f"midi: rtmidi {rtmidi.get_rtmidi_version()}, {len(names)} inputs, port 3 of a Deluge: "
+                             + ("none" if port3 is None else names[port3]))
+            except Exception as ex:
+                lines.append(f"midi: rtmidi {rtmidi.get_rtmidi_version()}, no MIDI system here ({ex})")
+        except Exception as ex:
+            ok = False
+            lines.append(f"midi: FAILED {ex!r}")
         take = engine.last_take
         try:
             with wave.open(str(engine.out_dir / take[0]), "rb") as w:
