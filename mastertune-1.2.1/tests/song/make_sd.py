@@ -557,9 +557,10 @@ def song_xml(lengths, reverb_model, num_synths=8, midi=False, drone_life=False, 
                        tempo="0x00002EE0")
     out += global_params_block("songParams", song_params, 1)
     instruments, clips = [], []
-    parts = synths()[:num_synths] + [kit(lengths), audio_track(lengths)] + ([midi_track()] if midi else [])
     if drone_track:
         parts = drone_tracks()
+    else:
+        parts = synths()[:num_synths] + [kit(lengths), audio_track(lengths)] + ([midi_track()] if midi else [])
     for part in parts:
         instruments.append(part[0])
         clips.append(part[1])

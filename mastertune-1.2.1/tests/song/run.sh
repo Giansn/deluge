@@ -71,6 +71,16 @@
 #   within -1.4..+0.2. As run, both: up to 33 (normal) and 41 (saving) samples late while Song::renderAudio() has
 #   interrupts masked (DISABLE_ALL_INTERRUPTS() around each output's rendering).
 #
+# DRONE=1 ./run.sh <tree | deluge.elf> [out dir]: instead of the three runs, drone tracks (mastertune-v16): the song of
+#   make_sd.py --drone-track (two kits of drone rows whose clips overlap, one row with an Hz lane, and the drone as the
+#   reference for their level) played for 4 bars after a 1-bar warm-up, as loaded and after a save round trip
+#   (song_emu.py --write-back: the firmware saves the song and loads it again), and drone_check.py checks what played:
+#   each row when its notes say, at its lane's Hz (FFT per window), its level against the drone's, the saved XML, and
+#   that both runs play the same. Then REC on a drone track (drone_rec_emu.py): its pitch turned on the clip view while
+#   recording writes the row's Hz lane, which plays back, and turned while not recording moves the row's own pitch.
+#   Results: <out>/drone-load/ and <out>/drone-saved/ (measured.wav, result.json, saved.xml), <out>/drone-rec/
+#   (drone_rec.wav, saved.xml). About 5 minutes.
+#
 # Files: make_sd.py (the song and its samples, generated; its docstring describes the song), fat32.py (the card
 # image), song_emu.py (the emulator harness; its docstring says what is real and what is modelled), blockcount.c
 # (instruction counting per translated block).
@@ -115,6 +125,29 @@ if [ -n "$MIDI" ]; then
 	done
 	echo "results in $OUT"
 	exit 0
+fi
+
+if [ -n "$DRONE" ]; then
+	for mode in load saved; do
+		dir="$OUT/drone-$mode"
+		mkdir -p "$dir"
+		python3 "$HERE/make_sd.py" "$dir/sd.img" --drone-track --xml-out "$dir/song.xml" > /dev/null
+		if [ $mode = load ]; then
+			echo "== drone tracks: the song as loaded"
+			set --
+		else
+			echo "== drone tracks: the song saved by the firmware and loaded again"
+			set -- --write-back "$dir/saved.xml"
+		fi
+		python3 "$HERE/song_emu.py" "$ELF" "$dir/sd.img" "$dir" --tools "$TOOLS" --build "$OUT" --warmup-bars 1 \
+			--bars 4 --init-sounds --seed 1 "$@" $EMU_OPTS | grep -E "^per 128|drone|^output"
+		rm -f "$dir/sd.img"
+	done
+	echo
+	python3 "$HERE/drone_check.py" "$OUT/drone-load" "$OUT/drone-saved" || status=1
+	echo
+	python3 "$HERE/drone_rec_emu.py" "$ELF" "$OUT/drone-rec" --tools "$TOOLS" --build "$OUT" || status=1
+	exit ${status:-0}
 fi
 
 if [ -n "$SAVE" ]; then

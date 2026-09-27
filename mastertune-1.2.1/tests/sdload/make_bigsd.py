@@ -5,6 +5,8 @@ the rest of every big file is sparse (reads as zeros), so gigabytes of card take
 
 Usage: make_bigsd.py <image> <kind> [--fsinfo valid|invalid|stale] [--fragment K]
   small  the song tests' card (make_sd.py's song: 8 synths, a kit, the audio loop) on a 2 GB card: the reference
+  bigidle  the song of the earlier idle measurement (64 synths: make_sd.py's 8 synths 8 times, 4 copies of its kit,
+         the audio loop) on the 2 GB card: the reference for s2 without its 200 samples and full card
   s1     the same song on a 32 GB card (1,048,576 clusters of 32 KB, a FAT of 4 MB per copy) holding 20 GB of other
          files (5,000 of 4 MB in 50 folders SAMPLES/ARCHIVE00..49, nothing written); --fsinfo: the FSInfo sector as
          a computer may leave it (fat32.build())
@@ -14,7 +16,7 @@ Usage: make_bigsd.py <image> <kind> [--fsinfo valid|invalid|stale] [--fragment K
          stretching). The 200 samples are in SAMPLES/BIG among 3,000 files with long names (~31 characters: 3 long-name
          entries + 1 short each, 12,000 entries in 12 clusters), every 15th one used. Other files as for s1 (16 GB).
          --fragment K: the 200 used samples' clusters interleaved in runs of K clusters
-  s4     streaming: 3 of make_sd.py's synths, its kit and loop, plus 16 audio tracks playing long stereo samples (the
+  s4     streaming: 1 of make_sd.py's synths (PADA), its kit and loop, plus 16 audio tracks playing long stereo samples (the
          first 2 MB of each is real audio, then zeros) from SAMPLES/BIG as in s2, on the 32 GB card
   s5     the song browser: SONGS with 1,200 songs (SONG001..SONG400, each with versions A and B; every 10th
          with a long name instead, e.g. "SONG 012 final mix B.XML"), 1 KB each (nothing written), plus the
@@ -149,7 +151,7 @@ def song(synth_parts, kits, extra_tracks):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("image")
-    ap.add_argument("kind", choices=["small", "s1", "s2", "s4", "s5"])
+    ap.add_argument("kind", choices=["small", "bigidle", "s1", "s2", "s4", "s5"])
     ap.add_argument("--fsinfo", default="valid", choices=["valid", "invalid", "stale"])
     ap.add_argument("--fragment", type=int, default=0)
     args = ap.parse_args()
@@ -160,6 +162,11 @@ def main():
         files["SONGS/DEFAULT.XML"] = make_sd.song_xml(lengths, 1).encode()
         if args.kind == "s1":
             opts.update(clusters=CARD_32GB, fillers=archive_fillers(20))
+    elif args.kind == "bigidle":
+        files0, lengths0 = make_sd.samples()
+        one = make_sd.kit(lengths0)
+        files, lengths = song(big_synths(8), [rename(one, "KIT", f"KIT{c}") for c in range(4)], ("", ""))
+        notes = dict(synths=64, kits=4)
     elif args.kind in ("s2", "s4"):
         names = big_dir_names()
         used = [i for i in range(len(names)) if i % 15 == 7]  # 200
@@ -185,8 +192,8 @@ def main():
                 big[f"{BIG_DIR}/{names[i]}"] = sample_file(LONG_FRAMES, 2, i, 2 * MB)
             files0, lengths0 = make_sd.samples()
             tracks = audio_tracks([f"{BIG_DIR}/{names[i]}" for i in streams])
-            files, lengths = song(make_sd.synths()[:3], [make_sd.kit(lengths0)], tracks)
-            notes = dict(synths=3, kits=1, audio_tracks_big=len(streams))
+            files, lengths = song(make_sd.synths()[:1], [make_sd.kit(lengths0)], tracks)
+            notes = dict(synths=1, kits=1, audio_tracks_big=len(streams))
         files.update(big)
         fillers = [(f"{BIG_DIR}/{n}", (64 + 37 * i % 2000) * 1024) for i, n in enumerate(names)
                    if f"{BIG_DIR}/{n}" not in big]

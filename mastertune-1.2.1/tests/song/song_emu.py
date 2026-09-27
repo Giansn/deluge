@@ -1710,7 +1710,7 @@ def run_task_manager(emu, seconds):
     emu.uc.mem_write(at, struct.pack("<b", slot))
     drain_uarts(emu)
     emu.uc.reg_write(UC_ARM_REG_D0, struct.unpack("<Q", struct.pack("<d", seconds))[0])
-    emu.call(yield_, NEVER)
+    emu.call(yield_, NEVER | 1)  # Thumb
 
 
 CPU_STATS_FIELDS = ["ticks", "busyTicks", "samples", "peakTicks", "peakSamples", "voicesNow", "voicesMax", "direMax",
