@@ -89,6 +89,26 @@ Alle Lautstärkeregler (Song, Kit, Kit-Reihe, Synth, 0–50) folgen derselben Pa
   - Ein Synth auf 34,8, nicht gemessen.
   - Im Master steht die Resonanz des Tiefpasses auf dem Maximum. Solange der Tiefpass ganz offen ist, läuft der Filter nicht. Dreht man ihn zu, arbeitet er mit voller Resonanz.
 
+## Alle Songs prüfen
+
+`tools/baseline_check.py` prüft alle Songs einer Karte gegen diese Baseline. Es liest nur und braucht nichts ausser Python 3.8.
+
+```
+py mastertune-1.2.1/tools/baseline_check.py E:\ --out baseline-karte.md
+```
+
+- **Es meldet:**
+  - Song, Kit oder Audio-Spur über 35
+  - den Master-Kompressor, wenn er an ist
+  - Synths und Kit-Reihen über 40
+  - Stufen nach den Reglern, die mit dem Pegel stärker verzerren: SATURATION, Kompressor, Analog-Delay mit Feedback, Tiefpass mit Drive, aktive Filter mit Resonanz ab 25
+- **Leise Samples:** Eine Reihe über 40 ist erlaubt, wenn ihr Sample leise genug ist. Das Skript liest dazu die Spitze des Samples im gespielten Ausschnitt. «Wirkt wie» ist der Regler, den ein voll ausgesteuertes Sample für denselben Pegel bräuchte: Regler mal 10^(Spitze/40). Ein Sample mit −4,6 dBFS auf 50 wirkt wie 38,4 und ist in Ordnung.
+- **Ohne diese Erlaubnis:** Spielt die Stimme auch einen Oszillator, Rauschen oder FM, zählt der Regler allein.
+- **Auf der Kartenkopie:**
+  - «New Sitar Grii 10»: fünf Reihen im Kit 3L3Ctr0 (Kicks und Bässe, wirken wie 40,8 bis 49,9) und die Reihe «hihatlong» auf 50, deren Sample hier fehlt
+  - «Rescue»: in Ordnung
+- **Grenze:** Ob ein Song clippt, sagt es nicht. Das zeigt nur das Messen.
+
 ## Das VU-Meter des Deluge
 
 - **Es zeigt keine Spitzen.** Es zeigt den Mittelwert, und seine dB sind gestaucht: `(ln(Mittelwert) − 16,7) × 4`. Ein angezeigtes dB sind etwa 2,2 echte dB (`view.cpp`, `envelope_follower.cpp`).
