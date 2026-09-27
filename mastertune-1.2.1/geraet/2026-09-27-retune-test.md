@@ -43,6 +43,28 @@ Kurze Loops in `SAMPLES/RESAMPLE/Chrigu Jam*/output_*.wav`: 10 Hinweise auf die 
 
 **Speicher:** Spitze **3,4 GB** schon beim Probelauf (PC mit 15,7 GB: geht). Das Audio ist es nicht. Der Plan hält alle 968 XML-Texte (295 Mio. Zeichen, als Python-str mit surrogateescape 2 Byte pro Zeichen) und ihre Parse-Bäume gleichzeitig. Vorschlag: pro XML nur die Referenzen und Positionen behalten und den Text beim Schreiben neu lesen.
 
+## Auftrag des Nutzers vor der Umwandlung seiner Bibliothek
+
+Der Nutzer will seine ganze Sammlung dauerhaft auf 432 Hz umwandeln, nicht nur einen Song. Die Bibliothek ist `deluge topics`. Vorher wünscht er:
+
+1. **Keine abgeschnittenen Spitzen:** Eine Datei, deren Umrechnung über 0 dBFS geht, soll als 32-bit Float geschrieben werden statt abgeschnitten. Die Firmware liest 32-bit Float. Im Test betraf das 15 von 136 Dateien, meist 1–6 Samples, höchstens +1,36 dB.
+2. Wenn es passt: weniger Speicher beim Planen (siehe oben, 3,4 GB) und `paths_memory_test.py` auch unter Windows.
+
+**Probelauf über `deluge topics`** (6816 Dateien, 149 s, nichts geschrieben):
+
+| | Anzahl |
+|---|---|
+| umgewandelt | 5608 Dateien, 23,5 GB: 5467 umgerechnet, 191 mit gleicher Länge (Rubber Band), davon 51 `_ts`-Kopien |
+| XML mit geänderten Positionen | 875 von 1171, zusammen 52 660 Werte |
+| fehlend | 31 |
+| «unknown use» | 8, aus `KITS/041 Jonathan Snipes (Waterfalls).XML` (nicht lesbar, bleibt unverändert) |
+| Wavetables / vielleicht Wavetables | 2 / 2 |
+| WAVE_FORMAT_EXTENSIBLE | 1 |
+
+Keine macOS-Begleitdateien und keine leeren Dateien. 10 Loop-Hinweise in `SAMPLES/RESAMPLE/Chrigu Jam*/output_*.wav`. Die 191 Dateien mit gleicher Länge wären ein guter Fall für den Emulator: Audio-Clips und Samples mit Time-Stretch nach der Umwandlung.
+
+Nach der Korrektur mache ich die Umwandlung in einen neuen Ordner. Der Nutzer schreibt sie auf eine zweite Karte.
+
 ## Für den Gerätetest
 
 - Eine Teil-Umwandlung darf nicht auf die Karte: Samples, die auch andere Songs benutzen, wären dort umgewandelt, deren Positionen aber nicht. Also immer die ganze Karte umwandeln und auf eine zweite Karte schreiben. Das Original bleibt unberührt.
