@@ -173,8 +173,9 @@ def run(emu, prof, seconds, label, checks):
           f"no message lost ({r['lost_messages']}), no sample dropped ({r['dropped']})")
     check(all(s["other_mode"] == prof.expected_other_mode for s in samples),
           "every sample from the mode the firmware runs in")
-    # Samples still in the ring when a phase ends go out in the next: up to a CPU monitor period (50 ms) either way
-    check(abs(total - elapsed_ms) <= 60, f"weights add up to the time: {total} of {elapsed_ms:.0f} ms")
+    # Samples still in the ring when a phase ends go out in the next: up to the CPU monitor task's longest interval
+    # (0.1 s, deluge.cpp; while the audio takes nearly all the time it runs that late) either way
+    check(abs(total - elapsed_ms) <= 110, f"weights add up to the time: {total} of {elapsed_ms:.0f} ms")
     checks_totals.append((total, elapsed_ms))
     weights = collections.Counter(s["weight"] for s in samples)
     print(f"  weights: {dict(sorted(weights.items()))}")
@@ -247,9 +248,9 @@ def main():
     dma.close()
     total = sum(t for t, _ in checks_totals)
     elapsed = sum(e for _, e in checks_totals)
-    ok = elapsed - 60 <= total <= elapsed
+    ok = elapsed - 110 <= total <= elapsed
     checks.append(ok)
-    print(f"\n{'ok  ' if ok else 'FAIL'} all phases: weights {total} for {elapsed:.0f} ms (the last up to 50 ms still in the "
+    print(f"\n{'ok  ' if ok else 'FAIL'} all phases: weights {total} for {elapsed:.0f} ms (the last up to 0.1 s still in the "
           f"ring); unmasking sites hooked: {len(prof.unmask_sites)}")
     failed = checks.count(False)
     print(f"\nprofiler in the emulator: {len(checks)} checks, {failed} failed")

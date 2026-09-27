@@ -87,12 +87,15 @@ def decode(msg):
 
 # --- symbols
 
-def find_nm():
+def find_nm(elf=None):
     for name in ("arm-none-eabi-nm",):
         if shutil.which(name):
             return name
     here = os.path.dirname(os.path.abspath(__file__))
-    for root in (os.path.join(here, "..", ".."), os.getcwd()):
+    roots = [os.path.join(here, "..", ".."), os.getcwd()]
+    if elf:  # A firmware tree's build/Release/deluge.elf: its toolchain
+        roots.insert(0, os.path.join(os.path.dirname(os.path.abspath(elf)), "..", ".."))
+    for root in roots:
         candidate = os.path.join(root, "toolchain/v16/linux-x86_64/arm-none-eabi-gcc/bin/arm-none-eabi-nm")
         if os.path.exists(candidate):
             return candidate
@@ -101,7 +104,7 @@ def find_nm():
 
 def symbols_from_elf(elf, nm=None):
     """The functions of a firmware build: [(start, size, name)], sorted by start."""
-    out = subprocess.run([nm or find_nm(), "-C", "-S", "--defined-only", "-n", elf], capture_output=True, text=True,
+    out = subprocess.run([nm or find_nm(elf), "-C", "-S", "--defined-only", "-n", elf], capture_output=True, text=True,
                          check=True).stdout
     functions = []
     for line in out.splitlines():

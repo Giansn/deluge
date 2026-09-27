@@ -345,6 +345,10 @@ Das OLED zeigt Ton, Modus, Tonhöhe und den Beat mit seinem Bereich (Delta, Thet
 - **`l2test/`:** zwei Testversionen von v15 mit eingeschaltetem L2-Cache, einmal nur für Code, einmal auch für Daten. Mit v14 zeigte die erste Messung am Gerät: keine abgeschnittenen Stimmen mehr.
   - Zum Messen mit dem CPU-Monitor am Gerät, noch nicht für Auftritte.
   - Anleitung, Risiken und Prüfungen: `l2test/README.md`.
+- **`prof/`:** die Profiler-Messversion v15-prof, einmal ohne L2 und einmal mit L2 für Code.
+  - Settings → CPU monitor → Profile schickt 1000-mal pro Sekunde an den Computer, wo die CPU gerade arbeitet, dazu die genaue Rechenzeit jeder Spur.
+  - `tools/profiler.html` (Chrome/Edge) oder `tools/deluge_profiler.py` zeigen die Zeit pro Spur, Task und Funktion.
+  - Anleitung und Prüfungen: `prof/README.md`.
 - **`research/OPTIMIERUNG.md`:** alle Messungen und Erkenntnisse zur Optimierung.
 
 ## v13: mehr Leistung, Ping-Pong-Arp, flimmerfreies Dimmen, genaueres MIDI, Drone-Feinschliff
