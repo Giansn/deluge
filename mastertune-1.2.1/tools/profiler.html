@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="de-CH">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deluge Profiler</title>
+<style>
+:root {
+	--bg: #f6f6f4; --panel: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --line: #dcdcd8;
+	--bar: #1f6feb; --bar2: #2b8a3e; --warn: #c92a2a;
+}
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg: #151517; --panel: #1f1f22; --text: #ececef; --muted: #9a9aa2; --line: #333338;
+		--bar: #5b9cff; --bar2: #5cc26e; --warn: #ff6b6b;
+	}
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
+h1 { font-size: 1.35rem; margin: 0 0 4px; }
+h2 { font-size: 1.05rem; margin: 18px 0 6px; }
+p.lead { margin: 0 0 16px; color: var(--muted); }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+select, button, label.file { font: inherit; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+button, label.file { cursor: pointer; }
+button:disabled { opacity: .5; cursor: default; }
+label.file input { display: none; }
+#status { color: var(--muted); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-bottom: 8px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.tile .k { color: var(--muted); font-size: .8rem; }
+.tile .v { font-size: 1.5rem; font-variant-numeric: tabular-nums; font-weight: 600; }
+.tile .s { color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; }
+.warn .v { color: var(--warn); }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 800px) { .cols { grid-template-columns: 1fr; } }
+.table { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; font-size: .85rem; }
+td.pct { width: 8.5em; white-space: nowrap; }
+td.name { word-break: break-all; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .85rem; }
+.meter { display: inline-block; height: 8px; border-radius: 2px; background: var(--bar); vertical-align: middle; margin-right: 6px; }
+.meter.o { background: var(--bar2); }
+td.sub { color: var(--muted); font-size: .8rem; }
+details { margin-top: 16px; color: var(--muted); }
+details p { margin: 6px 0; }
+</style>
+</head>
+<body>
+<main>
+<h1>Deluge Profiler</h1>
+<p class="lead">Wofür der Deluge seine Rechenzeit braucht, gemessen auf dem Gerät. Für die Messversion mastertune-v15-prof: Settings → CPU monitor → Profile, Deluge per USB verbinden, die Symbol-Datei derselben Firmware laden. Braucht Chrome oder Edge (Web MIDI mit SysEx).</p>
+
+<div class="bar">
+	<button id="connect">Verbinden</button>
+	<select id="input" disabled><option value="">Alle Eingänge</option></select>
+	<label class="file">Symbole laden (.json)<input type="file" id="symbols" accept=".json"></label>
+	<button id="pause" disabled>Pause</button>
+	<button id="clear" disabled>Zurücksetzen</button>
+	<button id="save" disabled>Aufnahme speichern</button>
+	<button id="csv" disabled>CSV exportieren</button>
+	<span id="status">Nicht verbunden</span>
+</div>
+
+<div class="tiles">
+	<div class="tile"><div class="k">Gemessen</div><div class="v" id="time">–</div><div class="s" id="time-s"></div></div>
+	<div class="tile"><div class="k">Audio-Routine</div><div class="v" id="audio">–</div><div class="s">Anteil der Zeit</div></div>
+	<div class="tile"><div class="k">In den Spuren</div><div class="v" id="outputs">–</div><div class="s">Rechenzeit aller Spuren</div></div>
+	<div class="tile" id="t-lost"><div class="k">Verloren</div><div class="v" id="lost">0</div><div class="s" id="lost-s"></div></div>
+	<div class="tile"><div class="k">Symbole</div><div class="v" id="syms">–</div><div class="s" id="syms-s">noch keine geladen</div></div>
+</div>
+
+<div class="cols">
+	<div>
+		<h2>Nach Spur</h2>
+		<div class="table"><table><thead><tr><th>Anteil</th><th>Spur</th></tr></thead><tbody id="by-output"></tbody></table></div>
+		<h2>Nach Task</h2>
+		<div class="table"><table><thead><tr><th>Anteil</th><th>Task</th></tr></thead><tbody id="by-task"></tbody></table></div>
+	</div>
+	<div>
+		<h2>Nach Funktion</h2>
+		<div class="table"><table><thead><tr><th>Anteil</th><th>Funktion</th></tr></thead><tbody id="by-function"></tbody></table></div>
+	</div>
+</div>
+
+<details>
+	<summary>Was die Zahlen bedeuten</summary>
+	<p><b>Stichproben:</b> 1000-mal pro Sekunde schaut der Deluge nach, an welcher Stelle im Code er gerade steht. Der Anteil einer Funktion an den Stichproben ist ihr Anteil an der Rechenzeit.</p>
+	<p><b>Nach Spur:</b> Die Rechenzeit jeder Spur, auf dem Gerät genau gemessen, als Anteil der Zeit. Das zeigt, welche Spur wie viel kostet, auch wenn sie gerade still ist.</p>
+	<p><b>Song::renderAudio:</b> Während eine Spur rechnet, sind die Interrupts gesperrt. Die Stichproben dieser Zeit landen gesammelt in Song::renderAudio. Welche Spur es war, steht unter «Nach Spur». Welche Funktionen darin arbeiten, zeigt das Profil im Emulator (tests/song).</p>
+	<p><b>Audio-Routine:</b> Anteil der Zeit in AudioEngine::routine. Im Stillstand füllt sie die freie Zeit mit sehr kleinen Blöcken. Das ist Beschäftigung, keine Überlast.</p>
+	<p><b>Verloren:</b> Stichproben, die nicht zum Computer kamen (USB zu voll). Ein paar schaden nicht.</p>
+</details>
+</main>
+
+<script>
+"use strict";
+
+// BEGIN decode (tests/profiler/decode_test.js runs exactly this code)
+/// Decodes one SysEx message of the Deluge's sampling profiler (mastertune-v15-prof) or returns null.
+/// Header F0 00 21 7B 01, then 11 (samples), 12 (names) or 13 (output times), fields of 7-bit groups, least
+/// significant first, then F7. The formats: src/deluge/processing/engines/profiler_core.h.
+function decodeProfiler(data) {
+	if (data.length < 8 || data[0] !== 0xF0 || data[1] !== 0x00 || data[2] !== 0x21 || data[3] !== 0x7B
+		|| data[4] !== 0x01 || data[data.length - 1] !== 0xF7) {
+		return null;
+	}
+	let p = 6;
+	const bits = (n) => {
+		let v = 0;
+		for (let i = 0; i < n; i++) {
+			v += (data[p + i] & 0x7F) * 2 ** (7 * i);
+		}
+		p += n;
+		return v;
+	};
+	const cmd = data[5];
+	if (cmd === 0x11) {
+		const seq = bits(2);
+		const dropped = bits(3);
+		const count = data[p++];
+		const samples = [];
+		for (let i = 0; i < count; i++) {
+			const address = bits(5) % 4294967296;
+			const c = bits(3);
+			samples.push({
+				address, task: c & 31, audio: (c & 0x20) !== 0, otherMode: (c & 0x40) !== 0,
+				output: (c >> 8) & 0xFF, weight: Math.max(1, (c >> 16) & 31),
+			});
+		}
+		return p === data.length - 1 ? { kind: "samples", seq, dropped, samples } : null;
+	}
+	if (cmd === 0x12) {
+		const which = data[p++] === 0 ? "tasks" : "outputs";
+		const count = data[p++];
+		const names = {};
+		for (let i = 0; i < count; i++) {
+			const index = bits(2);
+			let s = "";
+			while (p < data.length - 1 && data[p] !== 0) {
+				s += String.fromCharCode(data[p++]);
+			}
+			p++;
+			names[index] = s;
+		}
+		return { kind: "names", which, names };
+	}
+	if (cmd === 0x13) {
+		const number = data[p++];
+		const window = bits(5);
+		const count = data[p++];
+		const ticks = {};
+		for (let i = 0; i < count; i++) {
+			const index = bits(2);
+			ticks[index] = bits(5);
+		}
+		return { kind: "outputTimes", number, window, ticks };
+	}
+	return null;
+}
+// END decode
+
+const $ = (id) => document.getElementById(id);
+const NO_TASK = 31, NO_OUTPUT = 255, SAMPLE_RATE = 1000;
+let access = null;
+let paused = false;
+let recording = [];   // Raw messages, for "Aufnahme speichern" (deluge_profiler.py report reads it)
+let functions = [];   // [start, size, name] sorted by start
+let starts = [];
+let byAddress = new Map(); // address -> weight, named when drawing (symbols may come later)
+let byTask = new Map();
+let taskNames = {}, outputNames = {};
+let outputTicks = new Map();
+let windowTicks = 0, lastWindowNumber = null;
+let total = 0, audio = 0, dropped = 0, lostMessages = 0, lastSeq = null;
+let dirty = false;
+
+function nameOf(address) {
+	let lo = 0, hi = starts.length - 1, found = -1;
+	while (lo <= hi) {
+		const mid = (lo + hi) >> 1;
+		if (starts[mid] <= address) {
+			found = mid;
+			lo = mid + 1;
+		} else {
+			hi = mid - 1;
+		}
+	}
+	if (found >= 0 && address < functions[found][0] + functions[found][1]) {
+		return functions[found][2];
+	}
+	return "? 0x" + address.toString(16).padStart(8, "0");
+}
+
+function taskName(t) {
+	return taskNames[t] || (t === NO_TASK ? "(Scheduler)" : "Task " + t);
+}
+
+function add(map, key, w) {
+	map.set(key, (map.get(key) || 0) + w);
+}
+
+function onMessage(event) {
+	if (paused) {
+		return;
+	}
+	const d = decodeProfiler(event.data);
+	if (!d) {
+		return;
+	}
+	recording.push({ t: Date.now() / 1000, hex: Array.from(event.data, (b) => b.toString(16).padStart(2, "0")).join("") });
+	if (d.kind === "names") {
+		Object.assign(d.which === "tasks" ? taskNames : outputNames, d.names);
+	} else if (d.kind === "outputTimes") {
+		if (d.number !== lastWindowNumber) {
+			windowTicks += d.window;
+			lastWindowNumber = d.number;
+		}
+		for (const [o, t] of Object.entries(d.ticks)) {
+			add(outputTicks, Number(o), t);
+		}
+	} else {
+		if (lastSeq !== null) {
+			lostMessages += (d.seq - lastSeq - 1 + 16384) % 16384;
+		}
+		lastSeq = d.seq;
+		dropped += d.dropped;
+		for (const s of d.samples) {
+			total += s.weight;
+			if (s.audio) {
+				audio += s.weight;
+			}
+			add(byAddress, s.address, s.weight);
+			add(byTask, s.task, s.weight);
+		}
+	}
+	dirty = true;
+	for (const id of ["pause", "clear", "save", "csv"]) {
+		$(id).disabled = false;
+	}
+	$("status").textContent = "Daten kommen";
+}
+
+function rowsHtml(entries, whole, meterClass) {
+	return entries.map(([name, n]) => {
+		const pct = 100 * n / whole;
+		const width = Math.max(1, Math.round(Math.min(pct, 100) * 0.6));
+		return "<tr><td class=\"pct\"><span class=\"meter " + meterClass + "\" style=\"width:" + width + "px\"></span>"
+			+ pct.toFixed(1) + " %</td><td class=\"name\">" + escapeHtml(name) + "</td></tr>";
+	}).join("");
+}
+
+function escapeHtml(s) {
+	return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]));
+}
+
+function byFunction() {
+	const m = new Map();
+	for (const [a, w] of byAddress) {
+		add(m, nameOf(a), w);
+	}
+	return [...m.entries()].sort((a, b) => b[1] - a[1]);
+}
+
+function draw() {
+	if (!dirty) {
+		return;
+	}
+	dirty = false;
+	$("time").textContent = (total / SAMPLE_RATE).toFixed(1) + " s";
+	$("time-s").textContent = total + " Stichproben";
+	$("audio").textContent = total ? (100 * audio / total).toFixed(1) + " %" : "–";
+	let outputSum = 0;
+	for (const t of outputTicks.values()) {
+		outputSum += t;
+	}
+	$("outputs").textContent = windowTicks ? (100 * outputSum / windowTicks).toFixed(1) + " %" : "–";
+	$("lost").textContent = String(dropped);
+	$("lost-s").textContent = lostMessages ? lostMessages + " Meldungen verloren" : "Stichproben";
+	$("t-lost").classList.toggle("warn", dropped > total / 100);
+	if (total) {
+		$("by-task").innerHTML = rowsHtml([...byTask.entries()].sort((a, b) => b[1] - a[1])
+			.map(([t, n]) => [taskName(t), n]), total, "");
+		$("by-function").innerHTML = rowsHtml(byFunction().slice(0, 60), total, "");
+	}
+	if (windowTicks) {
+		$("by-output").innerHTML = rowsHtml([...outputTicks.entries()].sort((a, b) => b[1] - a[1]).slice(0, 60)
+			.map(([o, t]) => [outputNames[o] || "Spur " + (o + 1), t]), windowTicks, "o");
+	}
+}
+setInterval(draw, 500);
+
+function listen() {
+	if (!access) {
+		return;
+	}
+	const chosen = $("input").value;
+	access.inputs.forEach((input) => {
+		input.onmidimessage = (!chosen || chosen === input.id) ? onMessage : null;
+	});
+}
+
+function fillInputs() {
+	const select = $("input");
+	const chosen = select.value;
+	select.innerHTML = "<option value=\"\">Alle Eingänge</option>";
+	access.inputs.forEach((input) => {
+		const o = document.createElement("option");
+		o.value = input.id;
+		o.textContent = input.name;
+		select.appendChild(o);
+	});
+	select.value = [...select.options].some((o) => o.value === chosen) ? chosen : "";
+	select.disabled = false;
+	if (!total) {
+		$("status").textContent = access.inputs.size ? "Warte auf Daten (CPU monitor auf Profile?)" : "Keine MIDI-Eingänge gefunden";
+	}
+	listen();
+}
+
+$("connect").addEventListener("click", async () => {
+	if (!navigator.requestMIDIAccess) {
+		$("status").textContent = "Dieser Browser kann kein Web MIDI. Bitte Chrome oder Edge verwenden.";
+		return;
+	}
+	try {
+		access = await navigator.requestMIDIAccess({ sysex: true });
+	} catch (err) {
+		$("status").textContent = "Kein Zugriff auf MIDI mit SysEx: " + err.message;
+		return;
+	}
+	$("connect").disabled = true;
+	access.onstatechange = fillInputs;
+	fillInputs();
+});
+
+$("input").addEventListener("change", listen);
+
+$("symbols").addEventListener("change", async (e) => {
+	const file = e.target.files[0];
+	if (!file) {
+		return;
+	}
+	try {
+		const data = JSON.parse(await file.text());
+		functions = data.functions.slice().sort((a, b) => a[0] - b[0]);
+		starts = functions.map((f) => f[0]);
+		$("syms").textContent = String(functions.length);
+		$("syms-s").textContent = data.elf || file.name;
+		dirty = true;
+		draw();
+	} catch (err) {
+		$("syms-s").textContent = "Datei unlesbar: " + err.message;
+	}
+});
+
+$("pause").addEventListener("click", () => {
+	paused = !paused;
+	$("pause").textContent = paused ? "Weiter" : "Pause";
+});
+
+$("clear").addEventListener("click", () => {
+	recording = [];
+	byAddress = new Map();
+	byTask = new Map();
+	outputTicks = new Map();
+	windowTicks = 0;
+	lastWindowNumber = null;
+	total = audio = dropped = lostMessages = 0;
+	lastSeq = null;
+	for (const id of ["by-output", "by-task", "by-function"]) {
+		$(id).innerHTML = "";
+	}
+	dirty = true;
+	draw();
+});
+
+function download(text, name, type) {
+	const a = document.createElement("a");
+	a.href = URL.createObjectURL(new Blob([text], { type }));
+	a.download = name;
+	a.click();
+	setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+const stamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+
+$("save").addEventListener("click", () => {
+	download(recording.map((r) => JSON.stringify(r)).join("\n") + "\n", "deluge-profile-" + stamp() + ".jsonl",
+		"application/jsonl");
+});
+
+$("csv").addEventListener("click", () => {
+	const lines = ["kind;name;percent"];
+	for (const [t, n] of [...byTask.entries()].sort((a, b) => b[1] - a[1])) {
+		lines.push("task;\"" + taskName(t) + "\";" + (100 * n / total).toFixed(2));
+	}
+	for (const [o, t] of [...outputTicks.entries()].sort((a, b) => b[1] - a[1])) {
+		lines.push("output;\"" + (outputNames[o] || "Spur " + (o + 1)).replace(/"/g, "\"\"") + "\";"
+			+ (100 * t / Math.max(windowTicks, 1)).toFixed(2));
+	}
+	for (const [name, n] of byFunction()) {
+		lines.push("function;\"" + name.replace(/"/g, "\"\"") + "\";" + (100 * n / total).toFixed(2));
+	}
+	download(lines.join("\r\n") + "\r\n", "deluge-profile-" + stamp() + ".csv", "text/csv");
+});
+</script>
+</body>
+</html>
