@@ -12,8 +12,17 @@ Nutzt die Emulator-Umgebung von tests/song (song_emu.py, fat32.py) aus dem Entwi
   profile_by_function(). Pro Spur zusätzlich die Renderzeit, die die Firmware selbst misst (profiler::timingOutputs an,
   profiler::outputTicks[], OS-Timer 0 = emulierte Zeit), wie der Profiler am Gerät.
 
+--tasks S: statt fester Fenster läuft der Task-Manager der Firmware (song_emu.run_task_manager(), der DMA in
+  Echtzeit), wie in tests/sdload (Szenario play, Run.run_tasks()): die Firmware wählt ihre Blockgrössen selbst,
+  Direness und Culling wie auf dem Gerät, der CPU-Monitor (cpu_stats) an. Erst --warmup-s Vorlauf, dann S Sekunden
+  gemessen, danach --lines-s Sekunden die SDRAM-Zeilen pro Aufruf (Run.lines()) für die Geräteschätzung: Befehle bei
+  400 MHz plus 60 ns (24 Befehle) pro SDRAM-Zeile. --sd-latency CMD_US,SECTOR_US: die Karte braucht Zeit
+  (song_emu.SdModel, die Wartezeiten geben an den Task-Manager ab). --ipc X: die CPU mit X Befehlen pro Takt
+  (song_emu.set_instructions_per_cycle(), wie tests/sdload s4ipc), dann ohne Zeilenzählung.
+
 Usage: sitar_emu.py <deluge.elf> <karte> <out> --song-dir <tests/song> --build <dir mit blockcount.so>
                     [--tenths 4320] [--all-kits] [--culling] [--bars 4] [--window 128]
+                    [--tasks S [--warmup-s S] [--lines-s S] [--sd-latency CMD_US,SECTOR_US] [--ipc X]]
 """
 import argparse
 import collections
@@ -100,6 +109,11 @@ def main():
     ap.add_argument("--window", type=int, default=128,
                     help="samples per AudioEngine::routine() call (the DMA shows window - 1 free samples); v16 renders "
                          "4-8 a call when idle (patch 0053, found in the emulator)")
+    ap.add_argument("--tasks", type=float, default=0, help="seconds with the firmware's task manager")
+    ap.add_argument("--warmup-s", type=float, default=SONG_BAR / 44100)
+    ap.add_argument("--lines-s", type=float, default=0.1)
+    ap.add_argument("--sd-latency", help="CMD_US,SECTOR_US (song_emu.SdModel, the waits yield)")
+    ap.add_argument("--ipc", type=float, default=1.0, help="instructions per cycle at 400 MHz (song_emu, tests/sdload)")
     args = ap.parse_args()
     sys.path.insert(0, args.song_dir)
     import fat32  # noqa: E402
@@ -111,6 +125,8 @@ def main():
     def log(s):
         print(s, flush=True)
 
+    if args.ipc != 1:
+        E.set_instructions_per_cycle(args.ipc)
     files, replaced, song_names, playing = card_files(args.karte, args.tenths, args.all_kits)
     log(f"card: {len(files)} files, replaced {replaced}; clips playing: {', '.join(playing)}")
     image = os.path.join(args.out, "sd.img")
@@ -162,6 +178,10 @@ def main():
     def ticks():
         return np.frombuffer(bytes(emu.uc.mem_read(ticks_at, 4 * len(outputs))), "<u4").astype(np.float64)
 
+    if args.tasks:
+        measure_tasks(emu, E, args, outputs, ticks, tuned, playing, replaced, null_writes, log)
+        os.remove(image)
+        return
     player = E.Player(emu, culling=args.culling)
     snaps = []
     play = player.play
@@ -221,6 +241,83 @@ def main():
     log(f"  the five kits ({len(five)}): {sum(result['outputs'][n]['cpu_percent'] for n in five):.1f}% CPU, "
         f"{sum(result['outputs'][n]['percent_of_routine'] for n in five):.1f}% of routine; null writes {null_writes[0]}")
     os.remove(image)
+
+
+def measure_tasks(emu, E, args, outputs, ticks, tuned, playing, replaced, null_writes, log):
+    """The song played with the firmware's own task manager, measured as tests/sdload's play scenario."""
+    sys.path.insert(0, os.path.join(args.song_dir, "..", "sdload"))
+    import sdload_emu as SL  # noqa: E402
+
+    class Card:  # No layout of areas here: commands and sectors only
+        def summarize(self, entries):
+            out = collections.Counter()
+            for kind, _, count, _ in entries:
+                out[f"{kind}_commands"] += 1
+                out[f"{kind}_sectors"] += count
+            return dict(out)
+    emu.sd_log = []
+    run = SL.Run.__new__(SL.Run)
+    run.args, run.emu, run.card, run.regions, run.ui_renders, run.result = args, emu, Card(), None, None, {}
+    if args.sd_latency:
+        E.SdModel(emu, *(float(x) for x in args.sd_latency.split(",")), wait="yield")
+    emu.call(emu.sym.find("_ZN15PlaybackHandler17playButtonPressedEl"), 0)
+    run.run_tasks(args.warmup_s, f"warm-up {args.warmup_s:g} s")
+    before = ticks()
+    r = run.run_tasks(args.tasks, f"playing {args.tasks:g} s")
+    after = ticks()
+    a, dma, win = r["audio"], r["dma"], r["cpu_stats"][1:] or r["cpu_stats"]
+
+    def wmax(key, scale=1):
+        return max(w[key] for w in win) / scale if win else None
+    total = r["instructions"]
+    per_track = (after - before) / (r["seconds"] * E.PERIPHERAL_HZ) * 100
+    summary = dict(
+        master_tune_hz=tuned / 10, clips_playing=playing, replaced_samples=replaced, null_writes=null_writes[0],
+        sd_latency=args.sd_latency, ipc=args.ipc, seconds=r["seconds"],
+        monitor_percent=r.get("cpu_stats_avg_percent"),
+        monitor_peak_percent=wmax("dspPeakPermille", 10),
+        render_percent=sum(x[5] for x in r["renders"]) / total * 100,
+        routine_percent=a["share_of_time"] * 100,
+        device_estimate_percent=None, sdram_lines_per_render=None, sdram_lines_per_empty_call=None,
+        samples_per_render=a["samples_per_rendering_call"],
+        samples_per_render_most_often=a["samples_per_call_most_often"],
+        calls_per_s=a["calls"] / r["seconds"], rendering_calls_per_s=a["rendering_calls"] / r["seconds"],
+        voices_max=wmax("voicesMax"), culls=r["culls"], culls_total=sum(r["culls"].values()),
+        cull_context=r["cull_context"],
+        ql_windows=sum(w["direMax"] > 0 for w in win), windows=len(win), direness_max=wmax("direMax"),
+        ql_share_percent=float(np.mean([w["direSharePermille"] for w in win])) / 10 if win else None,
+        max_gap_samples=dma["max_gap"], max_gap_ms=dma["max_gap"] / 44.1, reserve_samples=128 - dma["max_gap"],
+        monitor_max_gap_ms=wmax("maxGapUs", 1000), over_64=dma["over_64"],
+        underrun_samples=dma["underrun_samples"], cluster_loads=r["cluster_loads"], sd=r["sd"],
+        tracks_percent_of_time={name: float(v) for name, v in sorted(zip(outputs, per_track), key=lambda kv: -kv[1])},
+        worst_gap_events=r.get("worst_gap_events", [])[-14:], cpu_stats=r["cpu_stats"], lines=None)
+    json.dump(summary, open(os.path.join(args.out, "tasks.json"), "w"), indent=1, default=str)
+    # The lines of SDRAM per call (Run.lines(): memory hooks, which unicorn 2.1.4 sometimes chokes on; saved above)
+    if args.lines_s and args.ipc == 1:
+        try:
+            lines = run.lines(seconds=args.lines_s, internal=False)
+        except BaseException as e:  # noqa: B036 (SystemExit from the emulator's error)
+            lines = None
+            summary["lines_error"] = str(e)
+            log(f"lines: {e}")
+        if lines:
+            empty = a["calls"] - a["rendering_calls"]
+            sdram = lines["sdram_lines_mean"] * a["rendering_calls"] + lines["empty_sdram_lines_mean"] * empty
+            summary.update(device_estimate_percent=(a["instructions"] + 24 * sdram) / total * 100,
+                           sdram_lines_per_render=lines["sdram_lines_mean"],
+                           sdram_lines_per_empty_call=lines["empty_sdram_lines_mean"], lines=lines)
+        json.dump(summary, open(os.path.join(args.out, "tasks.json"), "w"), indent=1, default=str)
+    s = {k: (v if v is not None else float("nan")) for k, v in summary.items()}
+    log(f"\nsummary: monitor {s['monitor_percent']:.1f} % (peak {s['monitor_peak_percent']:.1f}), rendering "
+        f"{s['render_percent']:.1f} %, routine {s['routine_percent']:.1f} %, device estimate "
+        f"{s['device_estimate_percent']:.1f} % ({s['sdram_lines_per_render']:,.0f} SDRAM lines per render); "
+        f"{s['samples_per_render']:.1f} samples per render, {s['calls_per_s']:,.0f} calls/s "
+        f"({s['rendering_calls_per_s']:,.0f} rendering); voices max {s['voices_max']}, culls {s['culls_total']}, "
+        f"QL in {s['ql_windows']}/{s['windows']} windows ({s['ql_share_percent']:.0f} % of the time, direness max "
+        f"{s['direness_max']}); max gap {s['max_gap_samples']} samples = {s['max_gap_ms']:.2f} ms (monitor "
+        f"{s['monitor_max_gap_ms']:.2f} ms), reserve {s['reserve_samples']}, underrun samples {s['underrun_samples']}")
+    log("tracks (% of the time): " + ", ".join(f"{k} {v:.1f}" for k, v in s["tracks_percent_of_time"].items()
+                                               if v >= 0.05))
 
 
 if __name__ == "__main__":
