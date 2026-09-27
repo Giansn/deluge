@@ -42,6 +42,13 @@ Erledigt: der Bericht zu v16, l2d, der Song für den Emulator, der Retune-Test u
    - eine Aufnahme mit USB audio an. Zeigt das Display `24B`?
    - Die Tasten R, A, S, F.
 
+### Dringend (27.09.2026, abends)
+
+- **Song «Rescue» (Name bitte genau): Das LPF wirkt nicht.** Bitte die Song-XML aus `SONGS/` nach `geraet/karte/SONGS/` pushen. Samples sind nur nötig, wenn der Song ohne sie stumm wäre, sonst genügt die CSV-Liste wie beim Sitar-Song. Dazu notieren:
+  - welches LPF: das des Song-Masters in der Song-Ansicht oder das einer Spur
+  - was «wirkt nicht» heisst: Der Klang ändert sich beim Drehen nicht, der Wert bewegt sich nicht, oder er springt zurück
+  - ob es mit v16-l2d auch so war
+
 ## Stand (27.09.2026)
 
 | Datei | Was |
