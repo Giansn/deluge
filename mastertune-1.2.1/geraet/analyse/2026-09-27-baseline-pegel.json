@@ -1,0 +1,42 @@
+{
+ "firmware": "1.2.1-mastertune-v17-l2d-b3385d83 (build/Release/deluge.elf aus release_1_2_1 + patches/0001-0074 + l2test/0001-0003)",
+ "song": "geraet/karte/SONGS/New Sitar Grii 10.XML",
+ "clips_playing": [
+  "Hihat",
+  "Guiro",
+  "170 Sitar 2",
+  "Oboe",
+  "3L3Ctr0",
+  "014 CR-78",
+  "KIT1"
+ ],
+ "measurement": "sitar_emu.py --all-kits --tenths 4400: 1 Takt Vorlauf, dann 302400 Samples (6.86 s); Spitze und RMS vor dem Clip am Ausgang, clipped_samples = Samples ueber 0 dBFS",
+ "variants": {
+  "ref": "wie gespeichert: Kits 21.1-27.0, Reihen meist 40",
+  "kits35": "alle kitParams volume = 0x3504F334 (35.4, Standard)",
+  "kits40": "alle kitParams volume = 0x4CCCCCA8 (40)",
+  "rows50": "alle soundParams volume 0x4CCCCCA8 (40) auf 0x7FFFFFFF (50)"
+ },
+ "results": {
+  "ref": {
+   "peak_dbfs": -6.15,
+   "rms_dbfs": -25.78,
+   "clipped_samples": 0
+  },
+  "kits35": {
+   "peak_dbfs": -1.51,
+   "rms_dbfs": -20.68,
+   "clipped_samples": 0
+  },
+  "kits40": {
+   "peak_dbfs": 0.55,
+   "rms_dbfs": -18.57,
+   "clipped_samples": 30
+  },
+  "rows50": {
+   "peak_dbfs": -5.15,
+   "rms_dbfs": -25.38,
+   "clipped_samples": 0
+  }
+ }
+}
