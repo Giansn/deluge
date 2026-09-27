@@ -16,7 +16,8 @@ its own frequency (at least 230 Hz apart) so that it can be measured in the mix:
   transposed +5: never native), STRETCH (a 1700 Hz note, time stretch on: its length is kept, the 7th 16th);
 - synth SMP: a sample (1400 Hz) played at 60 (native) for half a bar and at 67 (never native) for the other half;
 - synth MULTI: a multisample, range A (300 Hz, transpose +12) played at 48, range B (3000 Hz) at 60: both native;
-- audio clip LOOP: 2 bars (176400 samples: native at 440 Hz), 2400 Hz notes on every beat.
+- audio clip LOOP: 2 bars (176400 samples: native at 440 Hz), 2400 Hz notes every half second, 0.37 s after the
+  beats (away from the other parts' attacks, whose spread into its band would move its onsets).
 
 Measured:
 - VoiceSample::render() intercepted: per file its calls, the phaseIncrement (stack+12) and timeStretchRatio (stack+16),
@@ -90,7 +91,7 @@ def samples():
     f[D + "SMP.WAV"] = wav(sine(1400, SR, 2.0, 0.3), SR, 16)
     f[D + "MULTIA.WAV"] = wav(sine(300, SR, 2.0, 0.3), SR, 16)
     f[D + "MULTIB.WAV"] = wav(sine(3000, SR, 2.0, 0.3), SR, 16)
-    clip = notes(2400, SR, 4.0, [0.5 * i + 0.01 for i in range(8)], amp=0.3, decay=0.2)
+    clip = notes(2400, SR, 4.0, [0.5 * i + 0.37 for i in range(8)], amp=0.3, decay=0.2)  # Off the kit's notes
     f[D + "CLIP.WAV"] = wav(np.stack([clip, clip], axis=1), SR, 16)
     return f
 
@@ -586,7 +587,10 @@ def report(results, ana, work, log):
         # notes start at the file's start and end at note-off: only reported
         limit = 60 if name in KEEP_LENGTH else 4
         if not name.startswith(("SMP", "MULTI")):
-            worst_marker = max(on.max() if on.size and name != "LOOPROW" else 0, off.max() if off.size else 0)
+            # The one-shots' onsets are their note-ons (they start at the file's start), not a position: only the
+            # KICK's (zone start 50 ms into it) and the length-kept notes' count
+            onsets_count = name in ("KICK",) + KEEP_LENGTH
+            worst_marker = max(on.max() if on.size and onsets_count else 0, off.max() if off.size else 0)
             check(worst_marker <= limit, f"{name}: markers moved by {worst_marker:.1f} samples (limit {limit})")
     lo, lc = ana["LOOPROW"]["loop_period_orig432"], ana["LOOPROW"]["loop_period_conv432"]  # 850 cycles
     log(f"  LOOPROW loop period (median of {ana['LOOPROW']['loop_periods_conv432']} wraps): original {lo:.2f} samples "
