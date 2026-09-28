@@ -171,7 +171,7 @@ int selfOsc() {
 	int bad = 0;
 	for (bool global : {false, true}) {
 		for (double res : {30.0, 40.0, 50.0}) {
-			double cut = displayForHz(500);
+		for (double cut : {displayForHz(500), 40.0}) {
 			Drive d(global, cut, res);
 			int n = 128 * 400;
 			std::vector<double> in(n, 0.0);
@@ -190,8 +190,12 @@ int selfOsc() {
 			double rms = std::sqrt(e / (n / 2));
 			double f = crossings / 2.0 / ((n / 2) / kFs);
 			double cents = rms > 1e-7 ? 1200 * std::log2(f / cutoffHz(cut)) : 0;
-			printf("selfosc %-8s cutoff %.0f Hz resonance %2.0f: %6.1f dBFS RMS at %6.1f Hz (%+.0f cents)\n",
-			       global ? "kit" : "kit row", cutoffHz(cut), res, db(rms), rms > 1e-7 ? f : 0.0, cents);
+			bool fail = rms > 1e-7 && std::fabs(cents) > 25;
+			bad += fail;
+			printf("selfosc %-8s cutoff %4.0f Hz resonance %2.0f: %6.1f dBFS RMS at %6.1f Hz (%+.0f cents)%s\n",
+			       global ? "kit" : "kit row", cutoffHz(cut), res, db(rms), rms > 1e-7 ? f : 0.0, cents,
+			       fail ? "  FAIL" : "");
+		}
 		}
 	}
 	return bad;
