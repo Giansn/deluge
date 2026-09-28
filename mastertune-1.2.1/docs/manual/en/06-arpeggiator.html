@@ -1,0 +1,125 @@
+<h2 class="chapter" id="ch-arp">6. Arpeggiator</h2>
+
+<p class="lead">mastertune has the complete arpeggiator of community firmware 1.3, with the menus in the familiar 1.2.1 style: one list, no horizontal menu. New items sit where they belong by topic. On top come latch, ratchet bounce and the ping-pong roll, which 1.3 doesn't have. <span class="tag">v5</span> <span class="tag">v6</span> <span class="tag">v13</span></p>
+
+<h3 id="arp-overview">6.1 What's new</h3>
+<table>
+  <tr><th style="width:23%">Feature</th><th style="width:27%">Where</th><th>What it does</th></tr>
+  <tr><td>Kit arpeggiator</td><td>Kit with <span class="key">AFFECT ENTIRE</span> pressed → menu → Kit arpeggiator</td><td>Plays a kit's rows like the notes of a chord (Up, Down, Random, Walk, Pattern …). Switch it off per row with "Include in kit arp".</td></tr>
+  <tr><td>Arp for MIDI and gate rows</td><td>Select the row → menu</td><td>Its own arpeggiator and randomizer, with the shortcut column 11 as on MIDI tracks. Before, there was only a warning LED.</td></tr>
+  <tr><td>Preset, with Walk</td><td>Arpeggiator → Preset</td><td>Now also in the list, not only on the pad.</td></tr>
+  <tr><td>Latch <span class="tag">new</span></td><td>Arpeggiator → Latch</td><td>The arp keeps playing after you let go (6.2).</td></tr>
+  <tr><td>Step repeat</td><td>Arpeggiator → Step repeat</td><td>Each step is repeated 1–8 times.</td></tr>
+  <tr><td>Note modes</td><td>Arpeggiator → Note mode</td><td>Walk 1–3: randomly one step forward or back. Pattern: a random but repeating order; select it again to roll a new one.</td></tr>
+  <tr><td>Chord simulator</td><td>Kit row → Arpeggiator</td><td>A drum row plays a chord: 5th, sus2, minor, major, sus4, m7, 7, maj7.</td></tr>
+  <tr><td>Ratchets and bounce <span class="tag">new</span></td><td>Arpeggiator → Ratchet notes, Ratchet bounce, Bounce length, Bounce velocity</td><td>Ratchet hits that speed up or slow down like a bouncing ball, up to a ping-pong roll (6.3).</td></tr>
+  <tr><td>Randomizer</td><td>Its own menu right after Arpeggiator</td><td>Lock, spreads and probabilities (6.5).</td></tr>
+  <tr><td>Automation</td><td>Automation view, <span class="key">SELECT</span> encoder</td><td>All new arp parameters of synths and kit rows; for the kit (Affect Entire) also those of the kit arp.</td></tr>
+</table>
+<p class="small">"new" marks what community firmware 1.3 doesn't have either.</p>
+
+<h3 id="arp-latch">6.2 Latch</h3>
+<p>With <b>Arpeggiator → Latch</b> on, the arp keeps playing after you let go of the keys. The next note you play after releasing all keys replaces the held notes, without the arp falling out of time. Switching Latch off stops the held notes.</p>
+
+<h3 id="arp-ratchet">6.3 Ratchets, bounce and roll</h3>
+<table>
+  <tr><th style="width:21%">Setting</th><th style="width:17%">Values</th><th>What it does</th></tr>
+  <tr><td>Ratchet notes <span class="tag">v6</span></td><td>Auto, 2 … 8, Roll</td><td><b>Auto</b>, as in 1.3: randomly 2, 4 or 8 hits, weighted by Number of ratchets. <b>2 … 8:</b> always exactly that many; whether a step ratchets is then decided only by Ratchet probability. <b>Roll</b> <span class="tag">v13</span>: as many hits as it takes until the span is used up (below).</td></tr>
+  <tr><td>Ratchet bounce</td><td>−10 … +10</td><td>The hits of a ratchet like a bouncing ball. Each gap is r times the one before: r = 0.95 at +1, 0.8 at +4, 0.7 at +6, 0.5 at +10. Positive values get faster, negative ones slower. 0 = even, as before.</td></tr>
+  <tr><td>Bounce length <span class="tag">v13</span></td><td>1 … 16</td><td>Over how many arp steps one ratchet lasts. The note holds, then the arp continues with the next note. Rhythm and sequence length stay in time.</td></tr>
+  <tr><td>Bounce velocity <span class="tag">v13</span></td><td>Even, Fade, Rise</td><td><b>Even:</b> all hits equally loud. <b>Fade</b> (default): the faster, the quieter, like a ball. <b>Rise:</b> the faster, the louder, like ping-pong. It was called "Bounce fade" (on/off) in v6.</td></tr>
+  <tr><td>Ratchet probability</td><td>0 … 100%</td><td>How often a step ratchets.</td></tr>
+</table>
+<ul>
+  <li><b>Short syncs:</b> with a fixed number of ratchet notes, sync 1/128 and 1/256 allow at most 2, sync 1/64 at most 4. Otherwise the gaps would hardly be longer than an audio block (2.9 ms).</li>
+  <li><b>Even ratchets</b> divide the step by the number of notes. For 2, 4 and 8 that gives exactly the same times as before.</li>
+  <li><b>Compatible:</b> with the defaults (Auto, Fade), Bounce length 1 and without Roll, the arp plays exactly as in v5 and v12.</li>
+</ul>
+
+<figure class="figure">
+<svg width="640" height="244" viewBox="0 0 640 244" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="11">
+  <text x="8" y="16" font-weight="bold">Ratchet notes 8, bounce +6 (r = 0.7), Fade: one arp step</text>
+  <line x1="60" y1="92" x2="560" y2="92" stroke="#9aa0a6"/>
+  <g stroke="#2d5bd7" stroke-width="4">
+    <line x1="60" y1="92" x2="60" y2="36"/><line x1="219" y1="92" x2="219" y2="45.1"/><line x1="330.5" y1="92" x2="330.5" y2="52.8"/>
+    <line x1="408.5" y1="92" x2="408.5" y2="59.2"/><line x1="463" y1="92" x2="463" y2="64.6"/><line x1="501.5" y1="92" x2="501.5" y2="69"/>
+    <line x1="528" y1="92" x2="528" y2="72.8"/><line x1="547" y1="92" x2="547" y2="75.9"/>
+  </g>
+  <line x1="560" y1="92" x2="560" y2="36" stroke="#9aa0a6" stroke-width="4" stroke-dasharray="4 3"/>
+  <text x="60" y="31" text-anchor="middle" font-size="10">100%</text>
+  <text x="547" y="70" text-anchor="end" font-size="10">29%</text>
+  <text x="566" y="44" font-size="10" fill="#5f6368">next step</text>
+  <g text-anchor="middle" font-size="9.5" fill="#3c4043">
+    <text x="60" y="105">0</text><text x="219" y="105">32</text><text x="330.5" y="105">54</text><text x="408.5" y="105">70</text>
+    <text x="463" y="105">81</text><text x="501.5" y="105">88</text><text x="528" y="105">94</text><text x="547" y="105">97</text>
+    <text x="560" y="118" fill="#5f6368">100% of the step</text>
+  </g>
+  <line x1="8" y1="128" x2="632" y2="128" stroke="#e3e5e8"/>
+  <text x="8" y="146" font-weight="bold">Roll, bounce +4 (r = 0.8), Bounce length 4, 120 BPM: the preset PINGPONG ROLL</text>
+  <text x="8" y="161" font-size="10" fill="#5f6368">Hit j falls at S·(1 − rʲ) of the span S. The gaps shrink by r each time and converge on the end of the span.</text>
+  <line x1="60" y1="210" x2="560" y2="210" stroke="#9aa0a6"/>
+  <g stroke="#2d5bd7" stroke-width="3">
+    <line x1="60" y1="210" x2="60" y2="174"/><line x1="160" y1="210" x2="160" y2="174"/><line x1="240" y1="210" x2="240" y2="174"/>
+    <line x1="304" y1="210" x2="304" y2="174"/><line x1="355.2" y1="210" x2="355.2" y2="174"/><line x1="396.2" y1="210" x2="396.2" y2="174"/>
+    <line x1="429" y1="210" x2="429" y2="174"/><line x1="455.2" y1="210" x2="455.2" y2="174"/><line x1="476.1" y1="210" x2="476.1" y2="174"/>
+    <line x1="492.9" y1="210" x2="492.9" y2="174"/><line x1="506.3" y1="210" x2="506.3" y2="174"/><line x1="517.1" y1="210" x2="517.1" y2="174"/>
+    <line x1="525.7" y1="210" x2="525.7" y2="174"/>
+  </g>
+  <g stroke="#b0703f" stroke-width="3">
+    <line x1="533.7" y1="210" x2="533.7" y2="174"/><line x1="541.7" y1="210" x2="541.7" y2="174"/><line x1="549.7" y1="210" x2="549.7" y2="174"/>
+  </g>
+  <line x1="560" y1="210" x2="560" y2="174" stroke="#9aa0a6" stroke-width="3" stroke-dasharray="4 3"/>
+  <text x="566" y="182" font-size="10" fill="#5f6368">next hit</text>
+  <text x="566" y="194" font-size="10" fill="#5f6368">on the grid</text>
+  <g text-anchor="middle" font-size="9.5" fill="#3c4043">
+    <text x="110" y="196">200 ms</text><text x="200" y="196">160</text><text x="272" y="196">128</text><text x="329.6" y="196">102</text><text x="375.7" y="196">82</text><text x="412.6" y="196">66</text>
+  </g>
+  <g stroke="#9aa0a6"><line x1="185" y1="210" x2="185" y2="215"/><line x1="310" y1="210" x2="310" y2="215"/><line x1="435" y1="210" x2="435" y2="215"/></g>
+  <g text-anchor="middle" font-size="9.5" fill="#5f6368">
+    <text x="60" y="225">0</text><text x="185" y="225">250</text><text x="310" y="225">500</text><text x="435" y="225">750</text><text x="560" y="225">1000 ms</text>
+  </g>
+  <text x="530" y="239" text-anchor="end" font-size="10" fill="#b0703f">… 21, 17 ms, then a 16 ms roll</text>
+</svg>
+<figcaption>Top: a fixed number of hits in one step, each gap 0.7 times the one before, getting quieter from 100% to 29%. Bottom: Roll over four eighths. Once a gap would fall below 16 ms, the hits continue every 16 ms (brown) up to the next hit on the grid: 16 hits in all.</figcaption>
+</figure>
+<p><b>Negative bounce</b> plays the same pattern backwards: the hits start dense and spread out.</p>
+
+<h3 id="arp-presets">6.4 The ping-pong presets</h3>
+<p>Two synth presets show the roll. Copy <code>PINGPONG ROLL.XML</code> and <code>PETTRA PINGPONG.XML</code> from <code>mastertune-1.2.1/presets/SYNTHS/</code> into the <code>SYNTHS</code> folder of your card. Load them in a synth clip like any other preset; the arp settings come with them. They need v13 or later.</p>
+<table>
+  <tr><th style="width:25%">Setting</th><th>PINGPONG ROLL</th><th>PETTRA PINGPONG</th></tr>
+  <tr><td>What it is</td><td>A ping-pong ball between two paddles that close in: per ratchet 16 hits over 4 eighths, ever faster and louder</td><td>The figure from Pettra, "You Are The Seeds": 3 equally loud hits in one eighth, each gap ×0.7</td></tr>
+  <tr><td>Sync</td><td>1/8</td><td>1/8</td></tr>
+  <tr><td>Ratchet notes</td><td>Roll</td><td>3</td></tr>
+  <tr><td>Ratchet bounce</td><td>+4</td><td>+6</td></tr>
+  <tr><td>Bounce length</td><td>4</td><td>1</td></tr>
+  <tr><td>Bounce velocity</td><td>Rise</td><td>Even</td></tr>
+  <tr><td>Ratchet probability</td><td>100%</td><td>100%</td></tr>
+</table>
+<p>The presets store no tempo. Pettra runs at 138 BPM; there the three hits fall 0, 99 and 169 ms after the start of the eighth.</p>
+<ul>
+  <li><b>A fill only now and then:</b> lower the Ratchet probability. Or, in automation view, set it only on the steps before which the fill should come, and 0 elsewhere.</li>
+  <li><b>Longer or shorter:</b> change Bounce length or Sync. At 1/16 and Bounce length 8 the fill also lasts half a note.</li>
+  <li><b>Softer or harder acceleration:</b> Ratchet bounce +1 … +10.</li>
+  <li><b>The hit after the fill should bang:</b> set Ratchet probability below 100%. The landing step is then a normal note at full velocity. At 100% the next fill starts right there, and Rise starts it at half velocity.</li>
+</ul>
+
+<h3 id="arp-random">6.5 Randomizer</h3>
+<p>The randomizer has its own menu right after Arpeggiator:</p>
+<ul>
+  <li><b>Lock:</b> repeatable randomness over 16 steps.</li>
+  <li><b>Spreads:</b> gate, octave and velocity.</li>
+  <li><b>Chord</b> polyphony and probability.</li>
+  <li><b>Probabilities</b> for note, swap, bass, glide and reverse.</li>
+</ul>
+<p><b>Reverse probability</b> plays single arp notes with their sample backwards. Unlike in 1.3 this applies per voice, so notes sounding at the same time don't reverse each other.</p>
+
+<h3 id="arp-files">6.6 Songs, presets and compatibility</h3>
+<ul>
+  <li><b>1.2.1 songs and presets</b> load unchanged, including MIDI and CV tracks with arp settings.</li>
+  <li><b>Stock 1.2.1</b> loads mastertune files but skips the new entries (kit arp, randomizer, latch, bounce) and loses them at the next save. Walk and Pattern become Up there.</li>
+  <li><b>Automation view:</b> the internal parameter numbers now match those of 1.3. This only changes which parameter is preselected when you first open an old song in automation view. Values, automations, mod knob and MIDI learn assignments are saved by name and are not affected.</li>
+  <li><b>Same start every time:</b> in 1.2.1 LFOs, mod FX and the arp started at a random point after loading. Now they always start the same way. <span class="tag">v13</span></li>
+  <li><b>deluge-editor</b> doesn't show the arp additions (8.7). Set them on the Deluge; they are kept in the file when the editor saves.</li>
+</ul>
+<p class="small">Not taken over from 1.3: the pad shortcuts in column 15 (velocity spread, Lock, Note probability), because 1.2.1 uses these pads for patching; and the MIDI Follow CCs for arp parameters, because they would have shifted existing assignments.</p>

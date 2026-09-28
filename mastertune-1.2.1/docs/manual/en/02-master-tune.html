@@ -1,0 +1,171 @@
+<h2 class="chapter" id="ch-tune">2. Master tune</h2>
+
+<p class="lead">The master tune moves the whole Deluge away from 440 Hz, for example to 432 Hz, or to match an acoustic instrument or an external synth. At 440.0 Hz the firmware behaves exactly like 1.2.1. <span class="tag">v2</span></p>
+
+<h3 id="tune-set">2.1 Setting the master tune</h3>
+<div class="grid2">
+<div>
+<ol>
+  <li>Open <b>Settings → Tuning → Master tune (Hz)</b>. The 7-segment display shows <code>TUNE</code>, then <code>MTUN</code>.</li>
+  <li>Turn <span class="key">SELECT</span> to change the value. The cursor starts on the 1 Hz digit. Move it to the 0.1 Hz digit with the horizontal encoder.</li>
+  <li>Leave the Settings menu with <span class="key">BACK</span>. The value is saved when you leave it (2.6).</li>
+</ol>
+</div>
+<figure class="figure">
+  <img class="shot oled" src="../../../screenshots/oled_master_tune.png" alt="Master tune (Hz) at 432.0">
+  <figcaption>Settings → Tuning → Master tune (Hz) at 432.0 Hz.</figcaption>
+</figure>
+</div>
+<table>
+  <tr><th style="width:22%">Range</th><td>415.3 to 466.2 Hz, that is ±1 semitone around 440 Hz</td></tr>
+  <tr><th>Steps</th><td>0.1 Hz</td></tr>
+  <tr><th>Default</th><td>440.0 Hz. At this value the firmware behaves exactly like 1.2.1. The only exception: recordings made at another tuning (2.3).</td></tr>
+</table>
+
+<figure class="figure">
+<svg width="640" height="150" viewBox="0 0 640 150" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="11">
+  <text x="14" y="54" fill="#5f6368">Hz</text>
+  <text x="14" y="111" fill="#5f6368">cents</text>
+  <rect x="70" y="70" width="520" height="16" rx="3" fill="#e8eeff" stroke="#2d5bd7" stroke-width="0.8"/>
+  <g stroke="#5f6368" stroke-width="1">
+    <line x1="70" y1="60" x2="70" y2="70"/><line x1="120.6" y1="60" x2="120.6" y2="70"/><line x1="226.5" y1="60" x2="226.5" y2="70"/>
+    <line x1="430.9" y1="60" x2="430.9" y2="70"/><line x1="529.8" y1="60" x2="529.8" y2="70"/><line x1="590" y1="60" x2="590" y2="70"/>
+    <line x1="70" y1="86" x2="70" y2="96"/><line x1="200" y1="86" x2="200" y2="96"/><line x1="329.9" y1="86" x2="329.9" y2="96"/>
+    <line x1="459.8" y1="86" x2="459.8" y2="96"/><line x1="589.7" y1="86" x2="589.7" y2="96"/>
+  </g>
+  <g text-anchor="middle">
+    <text x="70" y="54">415.3</text><text x="120.6" y="54">420</text><text x="226.5" y="54">430</text>
+    <text x="430.9" y="54">450</text><text x="529.8" y="54">460</text><text x="590" y="54">466.2</text>
+    <text x="70" y="111">−100</text><text x="200" y="111">−50</text><text x="329.9" y="111">0</text>
+    <text x="459.8" y="111">+50</text><text x="589.7" y="111">+100</text>
+  </g>
+  <line x1="247.3" y1="28" x2="247.3" y2="98" stroke="#2d5bd7" stroke-width="2"/>
+  <circle cx="247.3" cy="78" r="4.5" fill="#2d5bd7" stroke="#fff" stroke-width="1.5"/>
+  <text x="242" y="24" text-anchor="end" fill="#2d5bd7" font-weight="bold">432.0 Hz = −31.77 cents</text>
+  <line x1="329.9" y1="28" x2="329.9" y2="98" stroke="#1d1d1f" stroke-width="2"/>
+  <circle cx="329.9" cy="78" r="4.5" fill="#1d1d1f" stroke="#fff" stroke-width="1.5"/>
+  <text x="335" y="24" font-weight="bold">440.0 Hz = 0 cents: default, as 1.2.1</text>
+  <g font-size="10" fill="#5f6368">
+    <text x="70" y="136">415.3 Hz: one semitone down</text>
+    <text x="330" y="136" text-anchor="middle">steps of 0.1 Hz ≈ 0.4 cents</text>
+    <text x="590" y="136" text-anchor="end">466.2 Hz: one semitone up</text>
+  </g>
+</svg>
+<figcaption>The range of the master tune, in Hz above and in cents below. Pitch is shown on a cents scale, so equal distances are equal musical intervals.</figcaption>
+</figure>
+
+<p class="small">Baroque pitch, A = 415.0 Hz, lies just outside the range. 415.3 Hz, one semitone below 440 Hz, is possible.</p>
+
+<h3 id="tune-follows">2.2 What follows the master tune</h3>
+<p>Everything that sounds follows the master tune, and held notes change at once when you turn the value. The math is exact: the deviation is below 0.002 cents.</p>
+
+<figure class="figure">
+<svg width="640" height="352" viewBox="0 0 640 352" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="11">
+  <defs>
+    <marker id="arr-follow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2d5bd7"/></marker>
+    <marker id="arr-follow-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#5f6368"/></marker>
+  </defs>
+  <rect x="10" y="92" width="150" height="80" rx="6" fill="#2d5bd7"/>
+  <text x="85" y="122" text-anchor="middle" fill="#fff" font-weight="bold" font-size="13">Master tune</text>
+  <text x="85" y="141" text-anchor="middle" fill="#fff">415.3–466.2 Hz</text>
+  <text x="85" y="158" text-anchor="middle" fill="#dfe6fb" font-size="10">Settings → Tuning</text>
+  <g fill="none" stroke="#2d5bd7" stroke-width="1.2" marker-end="url(#arr-follow)">
+    <path d="M160,132 C186,132 184,22 207,22"/>
+    <path d="M160,132 C186,132 184,58 207,58"/>
+    <path d="M160,132 C186,132 184,94 207,94"/>
+    <path d="M160,132 C186,132 184,130 207,130"/>
+    <path d="M160,132 C186,132 184,166 207,166"/>
+    <path d="M160,132 C186,132 184,202 207,202"/>
+  </g>
+  <path d="M160,132 C186,132 184,238 207,238" fill="none" stroke="#9aa0a6" stroke-width="1.2" stroke-dasharray="3 3"/>
+  <g font-size="10.5">
+    <rect x="210" y="8" width="420" height="28" rx="4" fill="#e8eeff" stroke="#2d5bd7" stroke-width="0.8"/>
+    <text x="220" y="26"><tspan font-weight="bold">Synths and kits:</tspan> waveforms, wavetables, samples, drum samples, FM, DX7</text>
+    <rect x="210" y="44" width="420" height="28" rx="4" fill="#e8eeff" stroke="#2d5bd7" stroke-width="0.8"/>
+    <text x="220" y="62"><tspan font-weight="bold">Audio clips:</tspan> pitch shifted by time-stretch, the tempo stays in sync</text>
+    <rect x="210" y="80" width="420" height="28" rx="4" fill="#e8eeff" stroke="#2d5bd7" stroke-width="0.8"/>
+    <text x="220" y="98"><tspan font-weight="bold">Held notes:</tspan> retuned at once (synth, kit, CV and MIDI)</text>
+    <rect x="210" y="116" width="420" height="28" rx="4" fill="#e8eeff" stroke="#2d5bd7" stroke-width="0.8"/>
+    <text x="220" y="134"><tspan font-weight="bold">CV outputs:</tspan> follow and are output again at once</text>
+    <rect x="210" y="152" width="420" height="28" rx="4" fill="#e8eeff" stroke="#2d5bd7" stroke-width="0.8"/>
+    <text x="220" y="170"><tspan font-weight="bold">External MIDI gear:</tspan> RPN 1 fine tuning on every channel used (2.4)</text>
+    <rect x="210" y="188" width="420" height="28" rx="4" fill="#e8eeff" stroke="#2d5bd7" stroke-width="0.8"/>
+    <text x="220" y="206"><tspan font-weight="bold">Drone:</tspan> tones set as a note (chapter 9)</text>
+    <rect x="210" y="224" width="420" height="28" rx="4" fill="#f3f5f9" stroke="#9aa0a6" stroke-width="0.8" stroke-dasharray="3 2"/>
+    <text x="220" y="242" fill="#5f6368"><tspan font-weight="bold">Live input as oscillator:</tspan> unchanged, it is already in tune</text>
+  </g>
+  <line x1="10" y1="266" x2="630" y2="266" stroke="#d9dce1"/>
+  <text x="10" y="286" font-weight="bold">Recordings keep their tuning</text>
+  <rect x="10" y="296" width="170" height="48" rx="4" fill="#f3f5f9" stroke="#9aa0a6" stroke-width="0.8"/>
+  <text x="95" y="316" text-anchor="middle">Recorded at 432 Hz</text>
+  <text x="95" y="333" text-anchor="middle" font-size="9.5" fill="#5f6368">clip, resampling, sample, stem</text>
+  <line x1="180" y1="320" x2="217" y2="320" stroke="#5f6368" stroke-width="1.2" marker-end="url(#arr-follow-g)"/>
+  <rect x="220" y="296" width="180" height="48" rx="4" fill="#f3f5f9" stroke="#9aa0a6" stroke-width="0.8"/>
+  <text x="310" y="316" text-anchor="middle">WAV file</text>
+  <text x="310" y="333" text-anchor="middle" font-size="9.5" fill="#5f6368">+ mtun chunk: 432.0 Hz</text>
+  <path d="M400,320 C420,320 418,300 437,300" fill="none" stroke="#5f6368" stroke-width="1.2" marker-end="url(#arr-follow-g)"/>
+  <path d="M400,320 C420,320 418,334 437,334" fill="none" stroke="#5f6368" stroke-width="1.2" marker-end="url(#arr-follow-g)"/>
+  <rect x="440" y="286" width="190" height="28" rx="4" fill="#eef7f0" stroke="#2b8a3e" stroke-width="0.8"/>
+  <text x="535" y="304" text-anchor="middle">at 432 Hz: plays unchanged</text>
+  <rect x="440" y="320" width="190" height="28" rx="4" fill="#eef7f0" stroke="#2b8a3e" stroke-width="0.8"/>
+  <text x="535" y="338" text-anchor="middle">at 440 Hz: +31.77 cents</text>
+</svg>
+<figcaption>Everything that sounds follows the master tune. A recording remembers the tuning it was made in, so it is shifted only by the difference and never tuned twice.</figcaption>
+</figure>
+
+<table>
+  <tr><th style="width:28%">Area</th><th>Behaviour</th></tr>
+  <tr><td>Synth and kit tracks</td><td>Waveforms, wavetables, samples, drum samples, FM including its modulators, DX7: all follow.</td></tr>
+  <tr><td>Audio clips</td><td>Follow. The pitch is shifted by time-stretch, so the tempo stays in sync.</td></tr>
+  <tr><td>Held notes</td><td>Retuned immediately when you change the value: synth, kit, CV and MIDI.</td></tr>
+  <tr><td>CV outputs</td><td>Follow and are output again immediately.</td></tr>
+  <tr><td>External MIDI devices</td><td>MIDI tracks and MIDI drums in kits send "Channel Fine Tuning" (RPN 1) on every channel used, with MPE on the member channels (2.4).</td></tr>
+  <tr><td>Drone</td><td>A tone set as a note follows the master tune (chapter 9). Set the master tune to match an external instrument, for example a volca keys, and the drone fits it (chapter 10).</td></tr>
+  <tr><td>Live input as oscillator</td><td>Unchanged: it already sounds in the current tuning, because the instrument is tuned to it.</td></tr>
+</table>
+
+<h3 id="tune-mtun">2.3 Recordings keep their tuning</h3>
+<ul>
+  <li><b>Tagged when recording:</b> whatever you record on the Deluge at a tuning other than 440 Hz gets a small <code>mtun</code> chunk (12 bytes) with this tuning in its WAV file. That covers audio clips, resampling, sample recording and stem export.</li>
+  <li><b>Played back by the difference:</b> the Deluge shifts a recording only by the difference to the current tuning. A recording made at 432 Hz sounds unchanged at 432 Hz, and at 440 Hz it is raised by exactly +31.77 cents.</li>
+  <li><b>Root note detection</b> computes relative to the recording's tuning. Recording, detection, transposition and tuning together hit the target pitch to within 0.001 cents.</li>
+  <li><b>Other software</b> skips the chunk and reads the same audio. Tested: Python <code>wave</code>, libsndfile (the basis of many DAWs and editors) and scipy.</li>
+  <li><b>Files without the chunk</b>, for example samples from other sources, count as 440 Hz material. Some editors remove unknown chunks when they save a copy. Such a copy then counts as 440 Hz material too.</li>
+  <li><b>Converted samples:</b> DelugeTuner writes the chunk too (8.3). A file whose <code>mtun</code> equals the current tuning plays exactly, without resampling.</li>
+</ul>
+
+<h3 id="tune-midi">2.4 External MIDI gear (RPN 1)</h3>
+<p>The Deluge sends the tuning as RPN 1, "Channel Fine Tuning" (6 control change messages), to MIDI tracks and MIDI drums in kits:</p>
+<table>
+  <tr><th style="width:28%">When</th><th>What is sent</th></tr>
+  <tr><td>You change the value</td><td>Immediately, to all channels the song uses. This also retunes held notes.</td></tr>
+  <tr><td>After play start</td><td>Once more, for devices switched on in the meantime. It goes out after the first notes, so it never delays them.</td></tr>
+  <tr><td>Before the first note on a channel</td><td>When the channel doesn't have the current tuning yet, for example after loading a song with new channels.</td></tr>
+  <tr><td>Shared channels</td><td>If several tracks or drums share a channel, it is tuned only once.</td></tr>
+  <tr><td>Never detuned</td><td>If no tuning other than 440 Hz has been active since power-on, nothing extra goes out. After a return to 440 Hz the devices are reset to 0 cents once.</td></tr>
+</table>
+<p>The DIN MIDI output has no overflow protection. The Deluge therefore sends only while there is room and the rest a few milliseconds later. Even fast turning with many MPE channels produces no MIDI garbage.</p>
+<div class="box warn">
+  <ul>
+    <li><b>Your device must evaluate RPN 1.</b> Many synths and DAWs do, but not all.</li>
+    <li>RPN 1 covers −100 to +99.99 cents. Only at the two extremes, 415.3 Hz (−100.02 cents) and 466.2 Hz (+100.13 cents), a deviation of at most 0.15 cents remains.</li>
+    <li>A device switched on later gets the tuning a few milliseconds after the next play start. If it applies the tuning only at note-on, the very first notes of that run still play at 440 Hz.</li>
+  </ul>
+</div>
+
+<h3 id="tune-cpu">2.5 CPU cost and sample libraries</h3>
+<p>Away from 440 Hz the Deluge resamples every sample voice, even an untransposed drum hit, just like a transposition by a fraction of a semitone.</p>
+<ul>
+  <li><b>Cost:</b> with sinc interpolation a resampled stereo voice costs about six times as much as direct playback. Audio clips run through the time-stretcher all the time. That is the biggest item, noticeable only with many audio clips at once. Recordings made at the current tuning play natively.</li>
+  <li><b>Cheaper since v3:</b> every retuned, transposed or time-stretched sample voice without a cache hit costs about 40% less than in 1.2.1.</li>
+  <li><b>Often small in practice:</b> in the emulator "New Sitar Grii 10" costs only 0.2% more at 432 Hz than at 440 Hz, because its samples play transposed anyway.</li>
+  <li><b>Sound quality:</b> the pitch shift uses the same interpolation and time-stretcher as transposing. Samples in "Pitch/speed independent" mode and audio clips therefore have the usual, very quiet time-stretch artifacts.</li>
+</ul>
+<div class="box good"><b>To remove the cost,</b> convert your sample library once to the master tune with DelugeTuner (8.3). The samples then play directly again. On the test card in the emulator the whole card needed 34% less work without the sample cache, 6% less with it.</div>
+
+<h3 id="tune-store">2.6 Where the setting is stored</h3>
+<ul>
+  <li>In <code>CommunityFeatures.XML</code> in the root folder of the SD card, entry <code>masterTune</code>, in tenths of a Hz: <code>4320</code> is 432.0 Hz. It is saved when you leave the Settings menu.</li>
+  <li>The official firmware does not know the entry. It keeps it anyway and writes it back unchanged.</li>
+  <li>The earlier fork version <code>c1.2.0</code> kept the value in flash memory. mastertune takes it over at the first start.</li>
+</ul>

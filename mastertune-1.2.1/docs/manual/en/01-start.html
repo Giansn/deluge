@@ -1,0 +1,80 @@
+<h2 class="chapter" id="ch-start">1. Getting started</h2>
+
+<p class="lead">mastertune is the official Deluge community firmware 1.2.1 with a set of changes on top. This chapter tells you which file to install, how to install and check it, and how to go back. Everything this manual does not describe works exactly as in 1.2.1.</p>
+
+<h3 id="start-glance">1.1 What changes against 1.2.1</h3>
+<table>
+  <tr><th style="width:17%">Topic</th><th>What you get</th><th style="width:10%">Chapter</th></tr>
+  <tr><td>Tuning</td><td>A master tune from 415.3 to 466.2 Hz in 0.1 Hz steps, for example 432 Hz. Everything that sounds follows it, external MIDI gear included.</td><td>2</td></tr>
+  <tr><td>Load</td><td>About 20–25% less CPU work per sample than 1.2.1, more voices before any are cut, smarter sample streaming, a RAM saver for kits.</td><td>3</td></tr>
+  <tr><td>CPU monitor</td><td>One line on the OLED with the load and the voices, plus a warning while the Deluge lowers its quality or cuts voices.</td><td>3</td></tr>
+  <tr><td>USB audio</td><td>The Deluge as a stereo audio input on the computer: 24 bit, 44.1 kHz, no driver, bit-exact.</td><td>4</td></tr>
+  <tr><td>Sound</td><td>Filters without rustle, steps or clicks, a real shelving EQ, volume in 0.5 dB steps shown in dB, an output limiter, a filter crossing guard, a reworked reverb and delay.</td><td>5</td></tr>
+  <tr><td>Arpeggiator</td><td>The arpeggiator of community firmware 1.3, plus latch, ratchet bounce and a ping-pong roll.</td><td>6</td></tr>
+  <tr><td>Workflow</td><td>Song browser with versions, countdown on song change, saving without crackle, OLED brightness, flicker-free pad dimming and a list of fixes.</td><td>7</td></tr>
+  <tr><td>Computer</td><td>DelugeRec, DelugeTuner, DelugeBaseline, the CPU monitor page, the profiler and file access over USB.</td><td>8</td></tr>
+  <tr><td>Drone</td><td>A frequency drone with up to 16 tones, drone tracks, and the drone together with a Korg volca keys.</td><td>9, 10</td></tr>
+</table>
+
+<h3 id="start-file">1.2 Which file to install</h3>
+<p>The current version is <b>v18.3</b>. All firmware files are in the folder <code>mastertune-1.2.1/</code> of the repository <code>github.com/Giansn/deluge</code>. You need one of these:</p>
+<table>
+  <tr><th style="width:47%">File</th><th>What it is</th></tr>
+  <tr><td><code>deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin</code></td><td><b>The current version.</b> With the L2 cache for code and data (1.5). v18.3 exists only in this variant.</td></tr>
+  <tr><td><code>deluge-1.2.1-mastertune-v18-124aeaa2.bin</code></td><td>v18 without the L2 cache, for switching back if the L2 variant crashes or behaves strangely. It lacks the fixes of v18.2 and v18.3.</td></tr>
+  <tr><td><code>deluge-1.2.1-mastertune-v17-2cb5e31b.bin</code></td><td>v17 without the L2 cache.</td></tr>
+</table>
+<p>Every earlier version from v2 on is in the same folder (history in 11.7). Next to the newer files lies a <code>.symbols.json</code> of the same name. It holds the function names for the profiler (8.6) and fits only exactly that <code>.bin</code>.</p>
+
+<h3 id="start-install">1.3 Installing</h3>
+<div class="box warn"><b>Keep a copy of your SD card</b> before you install. <b>v18.x has not been played on a real Deluge yet</b> (1.7).</div>
+<ol>
+  <li>Copy the <code>.bin</code> file into the <b>root folder</b> of the SD card. Leave no other <code>.bin</code> file there.</li>
+  <li>Hold <span class="key">SHIFT</span> while you switch the Deluge on. The Deluge installs the firmware.</li>
+  <li>Check the version (1.4).</li>
+</ol>
+<p>This is the same procedure as for any Deluge firmware.</p>
+
+<h3 id="start-version">1.4 Checking the version</h3>
+<div class="grid2">
+<div>
+<p>Open <b>Settings → Firmware version</b>. From v18 on the OLED shows the name in the normal font, on up to three lines and without the hash: <code>1.2.1-mastertune-</code> / <code>v18.3-l2d</code>. The hash stays in the file name.</p>
+<p>Up to v17 the name included the hash, for example <code>1.2.1-mastertune-v17-l2d-b3385d83</code>.</p>
+<p>When you report a problem, always give this name (11.8).</p>
+</div>
+<figure class="figure">
+  <img class="shot oled" src="../../../screenshots/oled_firmware_version.png" alt="Settings, Firmware version: 1.2.1-mastertune- v18.3-l2d">
+  <figcaption>Settings → Firmware version with v18.3 installed.</figcaption>
+</figure>
+</div>
+
+<h3 id="start-l2">1.5 The L2 cache files <span class="tag">v17</span></h3>
+<p><code>l2d</code> in a file name means: this firmware uses the processor's L2 cache for code and data. From v17 on this is the main file, and v18.2 and v18.3 exist only this way.</p>
+<ul>
+  <li><b>Why:</b> every pass of the audio routine reads more data than fits into the processor's small first-level cache. The L2 cache holds it closer. With v16-l2d the song "New Sitar Grii 10" sounded audibly better on the device, and there was no crash.</li>
+  <li><b>Not in the numbers:</b> the CPU comparison with 1.2.1 in chapter 3 comes from an emulator without a cache model. The L2 cache should add to the gain on the device, but that is not measured yet.</li>
+  <li><b>If it crashes or behaves strangely:</b> install <code>deluge-1.2.1-mastertune-v18-124aeaa2.bin</code>, v18 without L2, and report what happened (11.8).</li>
+</ul>
+
+<h3 id="start-back">1.6 Going back</h3>
+<p>To go back, install the other firmware exactly as in 1.3: to v18 without L2 with the file from 1.2, to 1.2.1 with its official file. Your songs keep loading. What happens to the new things:</p>
+<table>
+  <tr><th style="width:30%">Saved with mastertune</th><th>In an older mastertune version or in 1.2.1</th></tr>
+  <tr><td>Master tune</td><td>The official firmware does not know the entry in <code>CommunityFeatures.XML</code>. It keeps it anyway and writes it back unchanged.</td></tr>
+  <tr><td>Volume in dB</td><td>Saved as before. Songs sound equally loud and still load in v17.</td></tr>
+  <tr><td>Arpeggiator additions</td><td>1.2.1 loads the song but skips the kit arp, randomizer, latch and bounce, and loses them at the next save. Walk and Pattern become Up.</td></tr>
+  <tr><td>Reverb model Digital</td><td>The song plays without reverb in 1.2.1.</td></tr>
+  <tr><td>Reverb damping</td><td>Stored as in 1.2.1, so songs stay interchangeable.</td></tr>
+  <tr><td>Drone and drone tracks</td><td>Older firmware skips the drone and the drone rows. Don't save such a song there: the drone rows get lost (chapter 9).</td></tr>
+  <tr><td>Community settings</td><td>v18.3 keeps settings it doesn't know. 1.2.1 and v17 don't: after switching to v17 and back, Output limiter, Filter crossing guard and OLED brightness are back at their defaults.</td></tr>
+</table>
+
+<h3 id="start-tests">1.7 How it's tested</h3>
+<ul>
+  <li><b>Reproducible:</b> every release is built twice, and both builds are byte for byte the same.</li>
+  <li><b>In an emulator:</b> the firmware's own machine code for the Deluge's processor (an ARM Cortex-A9) runs in an emulator. It boots, loads songs, renders audio and goes through hundreds of checks and stress tests. Reverb, delay and drone are also measured on the PC.</li>
+  <li><b>Reviewed:</b> independent reviewers checked the larger changes with their own test cases.</li>
+  <li><b>The limit:</b> the emulator is not the hardware. Timing, the SD card and USB can behave differently on a real Deluge. USB does not run in the emulator at all.</li>
+  <li><b>On the device:</b> earlier versions ran on a real Deluge, v16 and its L2 variant among them. <b>v18.x has not been played on a real Deluge yet.</b> The listening tests for it are in 5.12.</li>
+</ul>
+<div class="box">mastertune is a personal fork, written with Claude (AI), not a contribution to the official firmware. Please don't report its bugs to the community developers. Report them at <code>github.com/Giansn/deluge/issues</code> (11.8).</div>

@@ -1,0 +1,157 @@
+<h2 class="chapter" id="ch-load">3. Lighter load and the CPU monitor</h2>
+
+<p class="lead">mastertune does the same work with fewer instructions and wastes less time between audio blocks. The CPU monitor shows you the load, the voices, and when the Deluge has to save on quality or cut voices.</p>
+
+<h3 id="load-vs121">3.1 Measured against 1.2.1</h3>
+<p>Stock 1.2.1 and v18.3 rendered the same songs in the emulator, both at 440 Hz. The first measure counts the instructions the Deluge needs per window of 128 samples (2.9 ms). That is its DSP work.</p>
+
+<figure class="figure">
+<svg width="640" height="214" viewBox="0 0 640 214" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="11">
+  <rect x="180" y="6" width="12" height="12" rx="2" fill="#b0703f"/><text x="197" y="16">1.2.1 (stock)</text>
+  <rect x="290" y="6" width="12" height="12" rx="2" fill="#2d5bd7"/><text x="307" y="16">mastertune v18.3</text>
+  <g stroke="#e3e5e8" stroke-width="1">
+    <line x1="297.9" y1="32" x2="297.9" y2="190"/><line x1="415.7" y1="32" x2="415.7" y2="190"/>
+  </g>
+  <line x1="180" y1="32" x2="180" y2="190" stroke="#9aa0a6" stroke-width="1"/>
+  <g text-anchor="end">
+    <text x="170" y="56" font-weight="bold">Full-load song</text><text x="170" y="70" fill="#5f6368" font-size="10">17 tracks</text>
+    <text x="170" y="111" font-weight="bold">3-synth song</text>
+    <text x="170" y="164" font-weight="bold">New Sitar Grii 10</text><text x="170" y="178" fill="#5f6368" font-size="10">a real song, many kits</text>
+  </g>
+  <path d="M180,42 H493.3 A4,4 0 0 1 497.3,46 V54 A4,4 0 0 1 493.3,58 H180 Z" fill="#b0703f"/>
+  <path d="M180,60 H421.2 A4,4 0 0 1 425.2,64 V72 A4,4 0 0 1 421.2,76 H180 Z" fill="#2d5bd7"/>
+  <path d="M180,96 H341.1 A4,4 0 0 1 345.1,100 V108 A4,4 0 0 1 341.1,112 H180 Z" fill="#b0703f"/>
+  <path d="M180,114 H300.7 A4,4 0 0 1 304.7,118 V126 A4,4 0 0 1 300.7,130 H180 Z" fill="#2d5bd7"/>
+  <path d="M180,150 H315.9 A4,4 0 0 1 319.9,154 V162 A4,4 0 0 1 315.9,166 H180 Z" fill="#b0703f"/>
+  <path d="M180,168 H280.3 A4,4 0 0 1 284.3,172 V180 A4,4 0 0 1 280.3,184 H180 Z" fill="#2d5bd7"/>
+  <g font-size="10" fill="#3c4043">
+    <text x="502" y="54">1,346,221</text><text x="430" y="72">1,040,334</text>
+    <text x="350" y="108">700,575</text><text x="310" y="126">529,128</text>
+    <text x="325" y="162">593,459</text><text x="289" y="180">442,346</text>
+  </g>
+  <g text-anchor="end" font-weight="bold" font-size="12">
+    <text x="632" y="63">−22.7%</text><text x="632" y="117">−24.5%</text><text x="632" y="171">−25.5%</text>
+  </g>
+  <g text-anchor="middle" fill="#5f6368" font-size="10">
+    <text x="180" y="203">0</text><text x="297.9" y="203">500,000</text><text x="415.7" y="203">1,000,000</text>
+  </g>
+  <text x="632" y="203" text-anchor="end" fill="#5f6368" font-size="10">instructions per 128 samples</text>
+</svg>
+<figcaption>DSP work per 128 samples in the emulator, stock 1.2.1 against v18.3, same songs, same settings. Shorter is lighter.</figcaption>
+</figure>
+
+<p>The second measure runs the firmware's own task manager and records how much of the time goes into the audio routine:</p>
+<table>
+  <tr><th>Song</th><th>Measure</th><th>1.2.1</th><th>v18.3</th><th>Change</th></tr>
+  <tr><td>Full-load song</td><td>instructions per 128 samples</td><td>1,346,221</td><td>1,040,334</td><td><b>−22.7%</b></td></tr>
+  <tr><td>same, with culling as on the device</td><td>voices on average (voices cut in 4 bars)</td><td>20.4 (380)</td><td>32.0 (113)</td><td><b>+57% voices</b></td></tr>
+  <tr><td>3-synth song</td><td>instructions per 128 samples</td><td>700,575</td><td>529,128</td><td><b>−24.5%</b></td></tr>
+  <tr><td>"New Sitar Grii 10"</td><td>instructions per 128 samples</td><td>593,459</td><td>442,346</td><td><b>−25.5%</b></td></tr>
+  <tr><td>same, IPC 1.0</td><td>share of the time in the audio routine</td><td>94.7%</td><td>43.8%</td><td><b>−54%</b></td></tr>
+  <tr><td>same, IPC 0.8</td><td>same</td><td>97.1%</td><td>54.8%</td><td><b>−44%</b></td></tr>
+  <tr><td>same, IPC 0.7</td><td>same</td><td>97.3%</td><td>97.5%</td><td>±0</td></tr>
+  <tr><td>3-synth song, IPC 1.0</td><td>same</td><td>97.1%</td><td>92.1–94.8%</td><td>−2 to −5%</td></tr>
+</table>
+<p class="small">IPC is the number of instructions per clock cycle. The value on the device is unknown. Lower values stand in, roughly, for cache misses and memory waits. At IPC 0.7 the Sitar song lowers its quality in 32% of the renders with v18.3 and in all of them with 1.2.1.</p>
+
+<p><b>What it means:</b></p>
+<ul>
+  <li><b>About 20–25% less DSP work per sample,</b> the same in all three songs.</li>
+  <li><b>At moderate load the audio routine's time can roughly halve</b> (the Sitar song: −44 to −54%). 1.2.1 computed in tiny blocks with a fixed overhead per track (3.2). Near full load this advantage disappears: both then use nearly all the time and differ only in how often they lower the quality and cut voices.</li>
+  <li><b>More voices before cutting:</b> 32 instead of 20.4 on average in the full-load song. Part of it comes from the lighter DSP, part from the gentler culling taken over from the current community firmware.</li>
+  <li><b>"Half the load" is not right as a general claim.</b> It holds only at moderate load.</li>
+</ul>
+<div class="box"><b>Caveats.</b> The emulator has no memory or cache model, so the L2 cache is not in these numbers; on the device it should add to the gain. The audio of v18.3 is not bit-identical to 1.2.1, because v18 changed filters and saturation (chapter 5); voices and level match. Streaming songs, 432 Hz and UI or MIDI load were not part of this comparison.</div>
+
+<h3 id="load-why">3.2 Where the savings come from</h3>
+<table>
+  <tr><th style="width:26%">Change</th><th style="width:9%">Since</th><th>What it does</th></tr>
+  <tr><td>Scheduling fixed</td><td>v17</td><td>A calculation error in 1.2.1 set the audio task's interval to 0. The audio routine ran about every 12 µs on 4–12 samples, and every pass went through all tracks. Now, up to 65% load, it computes in blocks of at least 60 samples. Lowered quality and card accesses switch this minimum window off.</td></tr>
+  <tr><td>Silent tracks skipped</td><td>v4, v17</td><td>A kit or audio track that has output only silence for 4096 samples skips its effects chain, as long as mod FX, delay, stutter, sample rate reduction, saturation and compressor are off and nothing records. v17 checks this before setting up the chain. The sound is bit for bit the same.</td></tr>
+  <tr><td>Gentler culling</td><td>v4</td><td>As in the current community firmware: less often, fewer voices, and half of them faded out instead of cut.</td></tr>
+  <tr><td>No needless cuts while streaming</td><td>v17</td><td>Culling and quality reduction judge the audio routine's own CPU time, no longer the loading task including the wait for the card.</td></tr>
+  <tr><td>Faster DSP</td><td>v3, v13</td><td>Resampled sample voices about 40% cheaper; faster filters, oscillators and track effects. All bit-identical.</td></tr>
+  <tr><td>L2 cache</td><td>v17</td><td>For code and data, in the main file (1.5).</td></tr>
+</table>
+<div class="box warn"><b>The price of the minimum window.</b> Under light load, notes you play live start with the next block, on average about 0.5 ms later. The reserve against dropouts is smaller: at least 63 samples (1.4 ms) in the emulator, with no dropout in any test.</div>
+
+<h3 id="load-stream">3.3 Sample streaming and the Kit RAM saver <span class="tag">v9</span></h3>
+<p>The SD card does not get faster, but its throughput now goes where it is needed:</p>
+<ul>
+  <li><b>Loading by urgency.</b> 1.2.1 sorted its load jobs by memory address instead of priority. Now what a playing voice needs next comes first. You get fewer voices breaking off and fewer "card too slow" messages under load, for example when you change kits while playing.</li>
+  <li><b>Double reserve.</b> A playing voice keeps three clusters ahead instead of two: with 32 KB clusters about 250–370 ms instead of 120–190 ms (stereo). It costs 32 KB of RAM per voice that is streaming.</li>
+  <li><b>Short samples stay in RAM.</b> Samples of up to four clusters (128 KB with 32 KB clusters) now really stay in memory, as intended in 1.2.1.</li>
+  <li><b>No lost hits.</b> If a sample's start is not in RAM when you strike it, the voice waits until it is loaded (usually a few milliseconds, at most 100 ms) and plays from the beginning. 1.2.1 dropped the hit.</li>
+</ul>
+<p><b>Kit RAM saver:</b> Settings → Community features → <b>Kit RAM saver</b> (7-segment <code>KRAM</code>), on by default. Kit rows without notes in all of the song's clips release the held start of their samples, usually 64 KB per sample. A kit with 50 samples of which the song uses 5 frees around 3 MB. The samples stay in the kit. When a row gets notes, the Deluge fetches its start back within one second. Not affected: kits with the kit arpeggiator or with MIDI learn for the whole kit, and rows with their own MIDI learn, because they can play without notes.</p>
+<div class="box warn">If you audition a row that has no notes, or play it over MIDI, its very first hit can come a few milliseconds late. Sequenced notes are not affected. If this bothers you, switch the Kit RAM saver off.</div>
+
+<h3 id="load-monitor">3.4 The CPU monitor</h3>
+<div class="grid2">
+<div>
+<p>The CPU monitor puts one short line at the top left of the OLED, over whatever view you are in.</p>
+<ul>
+  <li><b>Menu:</b> Settings → <b>CPU monitor</b> (7-segment <code>CPU</code>): Off, On, Alerts or Profile.</li>
+  <li><b>Shortcut:</b> hold <span class="key">LEARN</span> and press the <span class="key">TEMPO</span> knob. <span class="tag">v17</span></li>
+</ul>
+</div>
+<figure class="figure">
+  <img class="shot oled" src="../../../screenshots/oled_cpu_monitor.png" alt="CPU 39% 14V over song view">
+  <figcaption>The monitor's line over song view: 39% load, 14 voices.</figcaption>
+</figure>
+</div>
+
+<figure class="figure">
+<svg width="640" height="190" viewBox="0 0 640 190" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="11">
+  <rect x="150" y="8" width="340" height="58" rx="6" fill="#111214" stroke="#3c4043" stroke-width="1.5"/>
+  <g font-family="DejaVu Sans Mono, Liberation Mono, monospace" font-size="22" fill="#f1f3f4">
+    <text x="166" y="46">CPU 39%</text><text x="272" y="46">14V</text><text x="328" y="46">QL</text><text x="372" y="46">VC</text>
+  </g>
+  <g fill="none" stroke="#5f6368" stroke-width="1">
+    <polyline points="212,68 212,80 80,80 80,98"/>
+    <polyline points="292,68 292,88 240,88 240,98"/>
+    <polyline points="341,68 341,88 400,88 400,98"/>
+    <polyline points="385,68 385,80 560,80 560,98"/>
+  </g>
+  <g text-anchor="middle">
+    <text x="80" y="114" font-weight="bold">CPU 39%</text>
+    <text x="80" y="130">load of the</text><text x="80" y="144">audio routine</text>
+    <text x="240" y="114" font-weight="bold">14V</text>
+    <text x="240" y="130">voices</text><text x="240" y="144">sounding now</text>
+    <text x="400" y="114" font-weight="bold">QL</text>
+    <text x="400" y="130">quality lowered:</text><text x="400" y="144">it computes more</text><text x="400" y="158">simply to keep up</text>
+    <text x="560" y="114" font-weight="bold" fill="#b3261e">VC</text>
+    <text x="560" y="130">voices cut: blinks,</text><text x="560" y="144">stays 2 s after</text><text x="560" y="158">the last cut</text>
+  </g>
+  <text x="320" y="184" text-anchor="middle" fill="#5f6368" font-size="10">QL and VC appear only while it happens. The mode Alerts shows only them.</text>
+</svg>
+<figcaption>The four parts of the monitor's line. The example shows all of them at once.</figcaption>
+</figure>
+
+<table>
+  <tr><th style="width:18%">Mode</th><th>What you see</th></tr>
+  <tr><td>Off</td><td>Nothing. Switched off, the monitor costs a single check per pass of the audio routine.</td></tr>
+  <tr><td>On</td><td>The line, for example <code>CPU 39% 14V</code>, plus <code>QL</code> and <code>VC</code> while they happen.</td></tr>
+  <tr><td>Alerts</td><td>Only <code>QL</code> and <code>VC</code>, and only while they happen.</td></tr>
+  <tr><td>Profile</td><td>The line as with On. In addition the Deluge sends measurements for the profiler to the computer (8.6). <span class="tag">v16</span></td></tr>
+</table>
+<ul>
+  <li><b>The shortcut</b> switches between Off and the mode you used last (On or Alerts), in every view and also while playing. It confirms briefly, on the 7-segment display <code>C-ON</code>, <code>COFF</code> or <code>C-AL</code>.</li>
+  <li><b>Saved at once:</b> the mode goes to the card immediately (<code>CommunityFeatures.XML</code>) and applies again after a restart. Profile is chosen in the menu; after a restart it counts as On. The startup song is left untouched.</li>
+  <li><b>The real load:</b> from v17 on, passes that compute nothing don't count as busy. Up to v16 an idle Deluge showed 85–90%. That was busy waiting, not overload.</li>
+  <li><b>To the computer:</b> with the monitor on, the Deluge sends one message per second on USB MIDI port 3 only. DIN MIDI never gets anything. If the USB send buffer is full, the message is skipped, so notes and clock keep priority. Chapter 8 shows how to log it.</li>
+</ul>
+
+<h3 id="load-ql">3.5 When QL or VC appear</h3>
+<p><code>QL</code> means the audio routine is behind the output. The Deluge then saves on quality: simpler oscillator tables, linear instead of sinc interpolation. From about 80 samples behind it switches voices off: that is <code>VC</code>. What costs CPU:</p>
+<table>
+  <tr><th style="width:27%">What</th><th>Cost and what you can do</th></tr>
+  <tr><td>Master tune away from 440 Hz</td><td>Every sample voice is resampled. Convert the library once with DelugeTuner (8.3).</td></tr>
+  <tr><td>Drone</td><td>A binaural tone 0.6%, with Life, FM and Pulse together 2.1%; 16 such tones a good 30%. The drone is not culled like synth voices, so use many living tones with an eye on the monitor (chapter 9).</td></tr>
+  <tr><td>Drone tracks</td><td>0.3–0.45% per sounding row. Rows with a closed gate cost nothing.</td></tr>
+  <tr><td>Song reverb</td><td>Computed once for the whole song. Digital needs about a third more than Mutable.</td></tr>
+  <tr><td>Delay</td><td>Since v14 about 0.8% more per delay at rest and 1.1% more during a time change. A modulated time costs more, because the delay then resamples.</td></tr>
+  <tr><td>Drive LPF</td><td>Oversampled only high up with resonance (5.4). Under load the oversampling switches off.</td></tr>
+  <tr><td>EQ</td><td>Since v18 twice as much as before with both bands in use.</td></tr>
+</table>
+<p class="small">The percentages are estimates from the emulator at 1 instruction per clock cycle. They are good for comparisons, not exact for the device.</p>

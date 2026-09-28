@@ -1,0 +1,86 @@
+<h2 class="chapter" id="ch-workflow">7. Songs and workflow</h2>
+
+<p class="lead">A song browser that keeps a song's versions together, a countdown when you change songs, saving without crackle, a dimmer OLED and pads that don't flicker, plus a list of fixes for MIDI, clock and the card.</p>
+
+<h3 id="wf-browser">7.1 Song browser with versions <span class="tag">v17</span> <span class="tag">v18</span></h3>
+<div class="grid2">
+<div>
+<p>Songs whose names differ only by a number at the end are versions of one song: "New Sitar Grii", "New Sitar Grii 2" … "New Sitar Grii 10" appear as <b>one line with an arrow</b>. The line shows the whole name.</p>
+<p>A number after "-" or "." belongs to the name: "TR-808" and "Jam 2026-09-27" stay songs of their own.</p>
+</div>
+<figure class="figure">
+  <img class="shot oled" src="../../../screenshots/oled_song_browser.png" alt="Load song: a group opened, its versions indented">
+  <figcaption>The versions of "New Sitar Grii", folded out and indented. A line with an arrow is a group that is still closed.</figcaption>
+</figure>
+</div>
+<table>
+  <tr><th style="width:30%">To …</th><th>do this</th></tr>
+  <tr><td>open a group</td><td>Click: press <span class="key">SELECT</span> or <span class="key">LOAD</span>. The versions appear indented below it.</td></tr>
+  <tr><td>load a version</td><td>Turn to it and click. This also works during playback, with the countdown (7.2).</td></tr>
+  <tr><td>close a group</td><td><span class="key">BACK</span> on one of its versions. Groups you opened stay open while you keep turning, up to 8.</td></tr>
+  <tr><td>find the loaded song</td><td>Open the browser: the group of the loaded song is already open.</td></tr>
+  <tr><td>load by name</td><td>Type the name; it loads directly.</td></tr>
+  <tr><td>delete</td><td><span class="key">SHIFT</span> + <span class="key">SAVE</span> on a version. On a closed group line it is blocked: "Open the group first".</td></tr>
+</table>
+<p>Saving and the other browsers are unchanged. The browser reads the folder less often than before, and while you browse during playback the audio routine pauses for at most 0.39 ms.</p>
+
+<h3 id="wf-songchange">7.2 Song change with a countdown <span class="tag">v14</span></h3>
+<div class="grid2">
+<div>
+<p>Load a song while another one is playing, and the Deluge counts down to the change:</p>
+<ul>
+  <li>as long as repeats remain, it counts the <b>loops</b>;</li>
+  <li>in the last loop the <b>bars</b>;</li>
+  <li>in the last bar the <b>beats</b>, 4-3-2-1.</li>
+</ul>
+<p>It stays right with swing and with an external MIDI clock.</p>
+</div>
+<figure class="figure">
+  <img class="shot oled" src="../../../screenshots/oled_songchange.png" alt="Bars remaining 2, the song list below">
+  <figcaption>Song change armed: 2 bars remaining. The list with the next song stays visible.</figcaption>
+</figure>
+</div>
+<ul>
+  <li><b>OLED:</b> the countdown stays in the title line, for example "Bars remaining 3".</li>
+  <li><b>7-segment display:</b> the number, blinking while it counts loops. Beats carry a dot, so you can tell them from bars.</li>
+  <li><b>Until the change</b> the gold knobs and mod buttons control the master effects of the <b>playing</b> song, from the moment you press <span class="key">LOAD</span>, even with Affect Entire off. The new song keeps its own values.</li>
+</ul>
+
+<h3 id="wf-save">7.3 Saving without crackle <span class="tag">v11</span> <span class="tag">v13</span></h3>
+<ul>
+  <li><b>No crackle:</b> in 1.2.1 the audio engine stood still while the Deluge wrote a song or preset to the card. The output repeated its last buffer: a short crackle at every save. Now the audio keeps running, and the samples that are playing keep loading. This applies to songs, synth and kit presets and settings.</li>
+  <li><b>Faster:</b> saving during playback takes 22 instead of 344 ms in the emulator (a song with 3 synths), or 66 instead of 716 ms (5 synths).</li>
+  <li><b>No loading window while you browse:</b> a small animation runs at the top right of the OLED while loading and saving, as in community firmware 1.3. The preset name stays visible.</li>
+</ul>
+
+<h3 id="wf-oled">7.4 OLED brightness <span class="tag">v18</span></h3>
+<p><b>Settings → OLED brightness</b>, levels 1–10. 10 is as bright as before, 1 is still readable. Each turn takes effect at once, and the level applies again after a restart. The readable firmware version is described in 1.4.</p>
+
+<h3 id="wf-dim">7.5 Flicker-free pad dimming <span class="tag">v13</span></h3>
+<p>Settings → Community features → <b>Flicker-free dimming</b>, on by default.</p>
+<ul>
+  <li><b>Why the pads flickered:</b> 1.2.1 dims the pads through the LED controller with dark pauses. Below 40% brightness the pauses get so long that the whole refresh slows down, 6.8 times at 0%.</li>
+  <li><b>Now:</b> the LED controller always refreshes at full speed and dims only down to 43.5%. The firmware dims the rest through the colours of the pads, the sidebar and the gold knob LEDs. Every level gives the same amount of light as before.</li>
+  <li><b>Trade-off:</b> the button LEDs, the 7-segment display and pads that the LED controller blinks by itself (the fast play cursor, blinking shortcuts in menus) dim only down to 43.5%. At very low brightness they are brighter than before.</li>
+  <li><b>Off</b> sends byte for byte the same as 1.2.1.</li>
+</ul>
+
+<h3 id="wf-settings">7.6 Settings that survive <span class="tag">v18.3</span></h3>
+<p>When the Deluge saves its community settings, it now keeps those it doesn't know, for example from a newer version, with their name and value. 1.2.1, v17 and the current community firmware wrote them back under a wrong name. So switching to v17 and back still resets Output limiter, Filter crossing guard and OLED brightness to their defaults. Set them again after such a switch.</p>
+
+<h3 id="wf-midi">7.7 MIDI, clock and sync fixes</h3>
+<table>
+  <tr><th style="width:26%">Fix</th><th style="width:9%">Since</th><th>What changed</th></tr>
+  <tr><td>MIDI and gate outputs on time</td><td>v13</td><td>Events late in an audio block went out a whole block (2.9 ms) too early, especially while saving. And the timer of the MIDI and gate outputs was never reset before the start: a run could come up to 38 samples early, or after an overflow about 127 ms late. Now every run is accurate to ±1.4 samples.</td></tr>
+  <tr><td>Late clock bytes</td><td>v17</td><td>A clock byte that is read late now ticks at once instead of up to 2.9 ms late.</td></tr>
+  <tr><td>Clock outputs under external clock</td><td>v15</td><td>When the Deluge followed an external MIDI clock, its gate clock and MIDI clock outputs stopped after a short burst. Now both keep running in time with the incoming clock. With the internal clock everything stays as before.</td></tr>
+  <tr><td>Section launch by CC</td><td>v15</td><td>A section launch learned to a CC was lost when the song was loaded; learned notes were kept. Now the CC is kept too.</td></tr>
+  <tr><td>USB MIDI from the computer</td><td>v15</td><td>If MIDI came faster than once per millisecond (dense automation from the DAW, SysEx, file access over USB), packets were lost. Now the computer waits until the Deluge is ready.</td></tr>
+</table>
+<p class="small">The three fixes of v15 were taken over from the current community firmware.</p>
+
+<h3 id="wf-card">7.8 Two rare card bugs fixed <span class="tag">v14</span></h3>
+<ul>
+  <li>Around every transfer from and to the SD card, a write happening at the same time right next to the buffer could get lost. This bug is from 1.2.1.</li>
+  <li>With file access over USB (8.7), wrong bytes could in rare cases end up in a copied file.</li>
+</ul>

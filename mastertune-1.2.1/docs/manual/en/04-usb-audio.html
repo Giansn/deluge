@@ -1,0 +1,85 @@
+<h2 class="chapter" id="ch-usb">4. The Deluge as a USB audio interface</h2>
+
+<p class="lead">Connect the Deluge to a computer by USB, and the computer sees a stereo audio input next to the usual MIDI ports. It receives exactly what is at the Deluge's outputs, bit-exact, without a driver. <span class="tag">v8</span></p>
+
+<h3 id="usb-what">4.1 What the computer receives</h3>
+<ul>
+  <li><b>Stereo, 24 bit, 44.1 kHz</b>, as a standard USB audio device (USB Audio Class 1.0). No driver needed.</li>
+  <li><b>The Deluge's output signal, bit-exact:</b> the same signal the Deluge records when resampling, with the master volume and input monitoring. The drone is in it too (chapter 9).</li>
+  <li><b>The Deluge controls the level.</b> The computer has no volume control for this input. The Deluge's analog VOLUME knob acts after the converter, so it doesn't change the USB signal either.</li>
+  <li><b>One direction only:</b> from the Deluge to the computer. Audio from the computer to the Deluge is not there yet.</li>
+</ul>
+
+<figure class="figure">
+<svg width="640" height="250" viewBox="0 0 640 250" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="11">
+  <defs>
+    <marker id="arr-usb-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2d5bd7"/></marker>
+    <marker id="arr-usb-d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#3c4043"/></marker>
+    <marker id="arr-usb-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5f6368"/></marker>
+  </defs>
+  <rect x="8" y="30" width="130" height="210" rx="8" fill="#f3f5f9" stroke="#9aa0a6"/>
+  <text x="73" y="54" text-anchor="middle" font-weight="bold" font-size="13">Deluge</text>
+  <text x="73" y="70" text-anchor="middle" fill="#5f6368" font-size="10">as a USB device</text>
+  <text x="73" y="206" text-anchor="middle" fill="#5f6368" font-size="10">USB audio (UAUD):</text>
+  <text x="73" y="220" text-anchor="middle" fill="#5f6368" font-size="10">on, then restart</text>
+  <rect x="502" y="30" width="130" height="210" rx="8" fill="#f3f5f9" stroke="#9aa0a6"/>
+  <text x="567" y="54" text-anchor="middle" font-weight="bold" font-size="13">Computer</text>
+  <line x1="140" y1="86" x2="494" y2="86" stroke="#2d5bd7" stroke-width="5" marker-end="url(#arr-usb-a)"/>
+  <text x="150" y="76" font-weight="bold">Audio input: stereo, 24 bit, 44.1 kHz</text>
+  <text x="512" y="90" font-size="10.5">DAW, DelugeRec</text>
+  <line x1="144" y1="124" x2="494" y2="124" stroke="#5f6368" stroke-width="1.5" marker-start="url(#arr-usb-g)" marker-end="url(#arr-usb-g)"/>
+  <text x="150" y="116">MIDI ports 1 and 2, as in 1.2.1</text>
+  <text x="150" y="138" fill="#5f6368" font-size="9.5">Windows: Deluge 0, MIDIIN2 (Deluge) 1</text>
+  <text x="512" y="128" font-size="10.5">DAW</text>
+  <line x1="140" y1="170" x2="494" y2="170" stroke="#3c4043" stroke-width="2" marker-end="url(#arr-usb-d)"/>
+  <text x="150" y="162" font-weight="bold">MIDI port 3, the monitor port</text>
+  <text x="150" y="184" font-size="10">CPU monitor · profiler · song name and firmware</text>
+  <text x="150" y="197" fill="#5f6368" font-size="9.5">Windows: MIDIIN3 (Deluge) 2</text>
+  <text x="512" y="168" font-size="10.5">CPU monitor page,</text>
+  <text x="512" y="182" font-size="10.5">profiler, DelugeRec</text>
+  <line x1="144" y1="226" x2="494" y2="226" stroke="#5f6368" stroke-width="1.5" stroke-dasharray="5 3" marker-start="url(#arr-usb-g)" marker-end="url(#arr-usb-g)"/>
+  <text x="150" y="218">File access to the SD card over USB MIDI</text>
+  <text x="512" y="230" font-size="10.5">DEx, deluge-editor</text>
+</svg>
+<figcaption>What runs over the one USB cable. Audio goes only from the Deluge to the computer. Port 3 carries the CPU monitor, the profiler and the song name for DelugeRec.</figcaption>
+</figure>
+
+<h3 id="usb-on">4.2 Switching it on</h3>
+<ol>
+  <li>Open Settings → Community features → <b>USB audio</b> (7-segment <code>UAUD</code>) and set it to on.</li>
+  <li>Restart the Deluge. The setting only takes effect at startup, and only when the Deluge is connected to the computer as a USB device, not as a USB host.</li>
+</ol>
+<ul>
+  <li>From v16 on the Deluge saves this setting immediately. Up to v15 it was saved only when you left the menu: leave it with <span class="key">BACK</span> before you restart.</li>
+  <li>Off is the default. Then the Deluge behaves as without USB audio.</li>
+</ul>
+
+<h3 id="usb-computer">4.3 On the computer</h3>
+<table>
+  <tr><th style="width:18%">System</th><th>Where the Deluge shows up</th></tr>
+  <tr><td>macOS</td><td>Audio MIDI Setup shows "Deluge" with 2 inputs.</td></tr>
+  <tr><td>Windows</td><td>Settings → System → Sound → Input: "Deluge".</td></tr>
+  <tr><td>Linux</td><td><code>arecord -l</code> lists "Deluge".</td></tr>
+  <tr><td>DAW</td><td>Choose "Deluge" as the input and set the project to 44.1 kHz.</td></tr>
+</table>
+<p>To record without a DAW, use DelugeRec (8.2). It names each take after the song.</p>
+
+<h3 id="usb-timing">4.4 Timing and latency</h3>
+<ul>
+  <li><b>The Deluge sets the clock.</b> Each USB packet carries 44 or 45 frames, depending on how full its buffer is. If its crystal drifts against the computer's clock, it sends one frame more or less. Nothing is resampled; the samples arrive bit-exact.</li>
+  <li><b>Latency:</b> about 6 ms of buffer plus 1–2 ms for USB.</li>
+  <li><b>Hiccups:</b> if the computer stops reading for a while, the Deluge discards the stale buffer and starts again after 6 ms of silence. If the audio engine stalls, a short silence comes instead of crackles.</li>
+  <li><b>MIDI is not affected</b> by the audio stream.</li>
+</ul>
+
+<h3 id="usb-songname">4.5 The song name for recordings <span class="tag">v18</span></h3>
+<p>While the computer has the audio stream open, the Deluge reports the song name and the firmware version on USB MIDI port 3. DelugeRec uses this to name its takes, for example "Song name, 28.09.2026 - 1.2.1 v18.3.WAV" (8.2). The Deluge only sends this; it never waits for an answer. Because USB doesn't run in the emulator, this has to be confirmed on the device.</p>
+
+<h3 id="usb-limits">4.6 Limitations and messages</h3>
+<table>
+  <tr><th style="width:30%">Situation</th><th>What to know</th></tr>
+  <tr><td>Other sample rates</td><td>Only 44.1 kHz. If the DAW runs at another rate, the operating system resamples. In exclusive mode or with ASIO the project must be at 44.1 kHz.</td></tr>
+  <tr><td>MIDI ports moved</td><td>With USB audio on, the computer sees the Deluge as a new device. You may have to assign the MIDI ports in your DAW again.</td></tr>
+  <tr><td>Not recognised or hangs</td><td>Unplug the USB cable, start the Deluge, switch USB audio off.</td></tr>
+  <tr><td><code>UGAP</code>, "USB audio gap"</td><td>The computer got an empty packet: a 1 ms gap in the recording. This can happen under very high load, because the Deluge disables all interrupts while it computes each track. The message comes at most every 10 seconds. Please report it (11.8).</td></tr>
+</table>

@@ -1,0 +1,313 @@
+<h2 class="chapter" id="ch-sound">5. Sound: filters, EQ, volume and effects</h2>
+
+<p class="lead">v18 reworks how a sound moves through the filters, the EQ and the volume stages. Every change now glides sample by sample, nothing steps or clicks, and the level controls speak dB. v18.2 and v18.3 fix what the first v18 missed. The reverb and the delay were reworked earlier, in v10, v11 and v14.</p>
+
+<h3 id="sound-path">5.1 The signal path</h3>
+<figure class="figure">
+<svg width="640" height="200" viewBox="0 0 640 200" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="11">
+  <defs>
+    <marker id="arr-path" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#5f6368"/></marker>
+  </defs>
+  <path d="M280,26 V21 H446 V26" fill="none" stroke="#2d5bd7" stroke-width="1"/>
+  <text x="363" y="15" text-anchor="middle" font-size="9.5" fill="#2d5bd7">one per-sample ramp (v18)</text>
+  <line x1="543" y1="12" x2="543" y2="49" stroke="#5f6368" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#arr-path)"/>
+  <text x="543" y="9" text-anchor="middle" font-size="9.5" fill="#5f6368">drone</text>
+  <g stroke-width="1">
+    <rect x="8" y="30" width="80" height="44" rx="5" fill="#f3f5f9" stroke="#9aa0a6"/>
+    <rect x="98" y="30" width="80" height="44" rx="5" fill="#e8eeff" stroke="#2d5bd7"/>
+    <rect x="188" y="30" width="80" height="44" rx="5" fill="#e8eeff" stroke="#2d5bd7"/>
+    <rect x="278" y="30" width="80" height="44" rx="5" fill="#e8eeff" stroke="#2d5bd7"/>
+    <rect x="368" y="30" width="80" height="44" rx="5" fill="#e8eeff" stroke="#2d5bd7"/>
+    <rect x="458" y="30" width="80" height="44" rx="5" fill="#f3f5f9" stroke="#9aa0a6"/>
+    <rect x="548" y="30" width="80" height="44" rx="5" fill="#e8eeff" stroke="#2d5bd7"/>
+  </g>
+  <g stroke="#5f6368" stroke-width="1.2" marker-end="url(#arr-path)">
+    <line x1="88" y1="52" x2="97" y2="52"/><line x1="178" y1="52" x2="187" y2="52"/><line x1="268" y1="52" x2="277" y2="52"/>
+    <line x1="358" y1="52" x2="367" y2="52"/><line x1="448" y1="52" x2="457" y2="52"/><line x1="538" y1="52" x2="547" y2="52"/>
+  </g>
+  <g text-anchor="middle" font-size="10.5">
+    <text x="48" y="56" font-weight="bold">Oscillators</text>
+    <text x="138" y="49" font-weight="bold">LPF / HPF</text><text x="138" y="63">routing</text>
+    <text x="228" y="49" font-weight="bold">EQ</text><text x="228" y="63">bass, treble</text>
+    <text x="318" y="49" font-weight="bold">Volume</text><text x="318" y="63">pan</text>
+    <text x="408" y="56" font-weight="bold">Sidechain</text>
+    <text x="498" y="49" font-weight="bold">Song effects</text><text x="498" y="63">reverb, delay</text>
+    <text x="588" y="49" font-weight="bold">Output</text><text x="588" y="63">limiter</text>
+  </g>
+  <g text-anchor="middle" font-size="9.5" fill="#3c4043">
+    <text x="48" y="92">follow the</text><text x="48" y="104">master tune</text><text x="48" y="116">(v2)</text>
+    <text x="138" y="92">no rustle</text><text x="138" y="104">10 ms glide</text><text x="138" y="116">7 ms crossfades</text><text x="138" y="128">Parallel −6 dB</text><text x="138" y="140">Drive as 1.2.1</text><text x="138" y="152">(v18.3)</text><text x="138" y="164">crossing guard</text>
+    <text x="228" y="92">real shelves</text><text x="228" y="104">199 Hz, 2.8 kHz</text><text x="228" y="116">bit-exact</text><text x="228" y="128">when neutral</text>
+    <text x="318" y="92">0.5 dB steps,</text><text x="318" y="104">shown in dB</text><text x="318" y="116">jumps over 6 dB</text><text x="318" y="128">take ≥ 5 ms</text>
+    <text x="408" y="92">no click (v3)</text><text x="408" y="104">ducks over</text><text x="408" y="116">≥ 5 ms (v18)</text>
+    <text x="498" y="92">reverb:</text><text x="498" y="104">v10, v14</text><text x="498" y="116">delay:</text><text x="498" y="128">v11, v14</text>
+    <text x="588" y="92">Output limiter,</text><text x="588" y="104">optional</text><text x="588" y="116">otherwise hard</text><text x="588" y="128">clip at 0 dBFS</text>
+  </g>
+  <rect x="150" y="181" width="12" height="10" rx="2" fill="#e8eeff" stroke="#2d5bd7"/><text x="167" y="190" font-size="10">changed in v18 to v18.3</text>
+  <rect x="330" y="181" width="12" height="10" rx="2" fill="#f3f5f9" stroke="#9aa0a6"/><text x="347" y="190" font-size="10">changed in earlier versions</text>
+</svg>
+<figcaption>The path of a sound, simplified, and what changed on the way. Volume, pan and sidechain share one ramp that moves per sample. The drone joins after the song effects.</figcaption>
+</figure>
+
+<h3 id="sound-filters">5.2 Filters without rustle, steps and clicks <span class="tag">v18</span></h3>
+<table>
+  <tr><th style="width:27%">Change</th><th>What you hear</th></tr>
+  <tr><td>No rustle at low cutoff</td><td>The ladder filters (12 dB, 24 dB, Drive) carried a deliberate "analog noise" on their cutoff, already in the original firmware: 0.44% of fluctuation, audible as a band of noise around every note. It is gone.</td></tr>
+  <tr><td>Silence after the music</td><td>Below 4.5 kHz the ladder computes with more precision. When the music stops, the filter really goes silent.</td></tr>
+  <tr><td>Low resonance as in the original</td><td>Below about 310 Hz, the 12 and 24 dB ladders lower their resonance again by up to 9%, and song, kit and track filters saturate as in the original. Self-oscillation there is 6 dB quieter, and the hum at 32 Hz (for example in "New Sitar Grii 10") disappears.</td></tr>
+  <tr><td>Per sample, not per block</td><td>Cutoff, resonance, morph and the level compensation move sample by sample. Large jumps pass through real intermediate settings. The zipper noise drops by 7 to 72 dB, depending on the filter. A filter that stands still computes bit for bit as in v17.</td></tr>
+  <tr><td>10 ms glide</td><td>Every new filter value glides over 10 ms, wherever it comes from: knob, automation, MIDI or patch cable, in voices and in song, kit and track filters. Before, only the knob in synths glided.</td></tr>
+  <tr><td>Crossfades</td><td>7 ms when you change the mode or the routing and when you switch a filter off; a linear fade-in when you switch it on. The clicks drop from up to 254 times to 1.7 times the normal step between two samples.</td></tr>
+  <tr><td>Fresh voice state</td><td>A new note inherits nothing from the previous one.</td></tr>
+  <tr><td>After a silence <span class="tag">v18.2</span></td><td>A kit or audio track that comes back in after a pause starts right away with its current filter, EQ and volume. v18 still ran old movements over the first milliseconds: a short tick or a brighter attack. If you installed v18, take v18.3.</td></tr>
+</table>
+<div class="box warn"><b>Parallel routing is 6 dB quieter.</b> With routing <b>Parallel</b>, a filter that is switched off no longer adds dry signal, and the sum of both filters has half the volume (−6 dB). Songs with this routing therefore play 6 dB quieter than before v18. Raise their volume if you miss the level.</div>
+
+<h3 id="sound-res">5.3 Resonance and self-oscillation</h3>
+<p>The filters can still sing by themselves at high resonance, as in 1.2.1 and in the original firmware. The firmware does not limit the resonance.</p>
+<ul>
+  <li><b>HPF whistle</b> <span class="tag">v17</span>: with a lot of resonance the HP ladder self-oscillates. Since the community's filter rework it limited 12–18 dB higher than the original firmware; in the song master that gave a whistle up to 27 dB above the music. It now limits like the original again: about 17 dB quieter in song, kit and track, about 12 dB in synths. The tone is not completely gone; it sits at about the level of the music. Below about 39% HPF resonance the sound is bit for bit the same as before.</li>
+  <li><b>24 dB ladder:</b> it self-oscillates flat, as in 1.2.1: −19 cents at 600 Hz, −52 at 1.9 kHz, −127 from 5.7 kHz. The 12 dB ladder hits the pitch.</li>
+  <li><b>Drive LPF:</b> it self-oscillates from about 50% resonance, at around 9–21 kHz, as in 1.2.1. Below the oversampling threshold its tone is 56 cents flat at 2 kHz (5.4).</li>
+</ul>
+<div class="box"><b>Example: "the LPF has no effect".</b> In one song the song LPF's resonance was at maximum. From about 36 on the cutoff knob, the filter oscillated by itself, about 10 dB above the music, and its tone followed the knob down. Fix: in song view, with the filter button on LPF, turn the lower gold knob (resonance) below about 35, then save. To delete an automation of the filter as well, hold <span class="key">SHIFT</span> and press the upper gold knob ("Automation deleted"); without <span class="key">SHIFT</span> the press changes the filter type.</div>
+
+<h3 id="sound-drive">5.4 Drive <span class="tag">v18</span> <span class="tag">v18.3</span></h3>
+<ul>
+  <li><b>The bass stays:</b> with resonance, Drive now loses at most 0.53 dB of bass. Before v18 it lost up to 13 dB.</li>
+  <li><b>Real 2× oversampling</b> with half-band filters: the mirror images drop to −88 dB. 1.2.1 only doubled samples.</li>
+  <li><b>Only where it matters</b> <span class="tag">v18.3</span>: Drive oversamples where 1.2.1 did, high up with resonance. There, resonance and saturation would otherwise alias audibly.</li>
+  <li><b>Switching is crossfaded.</b> A little hysteresis keeps an LFO that moves around the threshold from switching back and forth.</li>
+  <li><b>Under load</b> the oversampling switches off, as in 1.2.1.</li>
+</ul>
+
+<figure class="figure">
+<svg width="640" height="252" viewBox="0 0 640 252" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="11">
+  <defs>
+    <pattern id="hatch-drive" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#c4c8ce" stroke-width="1.2"/></pattern>
+    <marker id="arr-drive" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2d5bd7"/></marker>
+  </defs>
+  <text x="70" y="12" fill="#5f6368" font-size="10">LPF cutoff</text>
+  <rect x="70" y="20" width="108" height="200" fill="url(#hatch-drive)"/>
+  <path d="M214,20 L214,48.8 Q230,86 250,112.6 L430,112.6 L430,20 Z" fill="#e8eeff"/>
+  <g stroke="#e3e5e8" stroke-width="1">
+    <line x1="70" y1="66.3" x2="430" y2="66.3"/><line x1="70" y1="112.6" x2="430" y2="112.6"/><line x1="70" y1="173.7" x2="430" y2="173.7"/>
+  </g>
+  <path d="M196,20 Q205,33 214,48.8" fill="none" stroke="#2d5bd7" stroke-width="2" stroke-dasharray="4 3"/>
+  <path d="M214,48.8 Q230,86 250,112.6" fill="none" stroke="#2d5bd7" stroke-width="2.5"/>
+  <path d="M250,112.6 Q268,138 290,160" fill="none" stroke="#2d5bd7" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#arr-drive)"/>
+  <circle cx="214" cy="48.8" r="4.5" fill="#2d5bd7" stroke="#fff" stroke-width="1.5"/>
+  <circle cx="250" cy="112.6" r="4.5" fill="#2d5bd7" stroke="#fff" stroke-width="1.5"/>
+  <line x1="70" y1="20" x2="70" y2="220" stroke="#9aa0a6"/><line x1="70" y1="220" x2="430" y2="220" stroke="#9aa0a6"/>
+  <g text-anchor="end" fill="#5f6368" font-size="10">
+    <text x="64" y="24">20 kHz</text><text x="64" y="70">10 kHz</text><text x="64" y="116">5 kHz</text><text x="64" y="177">2 kHz</text><text x="64" y="224">1 kHz</text>
+  </g>
+  <g text-anchor="middle" fill="#5f6368" font-size="10">
+    <text x="70" y="234">0</text><text x="142" y="234">10</text><text x="214" y="234">20</text><text x="286" y="234">30</text><text x="358" y="234">40</text><text x="430" y="234">50</text>
+    <text x="250" y="248">LPF resonance</text>
+  </g>
+  <text x="124" y="112" text-anchor="middle" font-size="10.5" fill="#3c4043">below 15:</text>
+  <text x="124" y="126" text-anchor="middle" font-size="10.5" fill="#3c4043">never</text>
+  <text x="222" y="44" font-size="10.5" font-weight="bold">20: from ≈13 kHz</text>
+  <text x="258" y="108" font-size="10.5" font-weight="bold">25: from ≈5 kHz</text>
+  <text x="350" y="62" text-anchor="middle" font-weight="bold" fill="#2d5bd7">2× oversampled</text>
+  <text x="296" y="176" font-size="10" fill="#2d5bd7">more resonance:</text>
+  <text x="296" y="189" font-size="10" fill="#2d5bd7">from lower cutoffs</text>
+  <text x="222" y="206" text-anchor="middle" font-size="10.5" fill="#5f6368">not oversampled</text>
+  <g font-size="10" fill="#3c4043">
+    <text x="452" y="34" font-weight="bold" font-size="10.5">Above the line</text>
+    <text x="452" y="50">2× with real half-band filters,</text>
+    <text x="452" y="63">images at −88 dB</text>
+    <text x="452" y="79">switching crossfaded,</text>
+    <text x="452" y="92">with a little hysteresis</text>
+    <text x="452" y="108">off under load, as in 1.2.1</text>
+    <text x="452" y="140" font-weight="bold" font-size="10.5">Below the line</text>
+    <text x="452" y="156">as in 1.2.1: self-oscillation</text>
+    <text x="452" y="169">56 cents flat at 2 kHz</text>
+  </g>
+</svg>
+<figcaption>Where Drive runs 2× oversampled in v18.3: the same place as in 1.2.1. The two points and the limit at resonance 15 are from the tests; the lines between and beyond them only guide the eye.</figcaption>
+</figure>
+
+<p><b>Why v18.3 changed it.</b> v18 oversampled Drive at every setting. A song with many Drive filters then needed 3.5 times real time at the start of the bar (1.2.1: 1.7 times) and lost almost all its voices before the load protection could step in. In the stress test with every LPF on Drive, v18 kept 6 voices on average, v18.3 keeps 15 and v17 kept 20. The price: below the threshold Drive self-oscillates as in 1.2.1 again, 56 cents flat at 2 kHz (v18: 30 cents).</p>
+<p class="small">Drive's half-band filter delays the signal by 2.3 samples. In a parallel sum with Drive this is not compensated.</p>
+
+<h3 id="sound-cross">5.5 Filter crossing guard <span class="tag">v18</span></h3>
+<p>Settings → Community features → <b>Filter crossing guard</b> (7-segment <code>CROS</code>), off by default. When the HPF and the LPF come close or cross, it lowers both resonances smoothly, so their peaks don't add up to a painful jump in level.</p>
+<table>
+  <tr><th>HPF position</th><th>Combined peak, with the guard</th><th>Without</th></tr>
+  <tr><td>less than half an octave below the LPF, or above it</td><td>at most 0.7 dB above the larger single peak</td><td>up to 39 dB</td></tr>
+  <tr><td>half an octave to an octave and a half below</td><td>at most 1.7 dB</td><td></td></tr>
+</table>
+<ul>
+  <li>It starts acting from two octaves apart. A self-oscillating ladder stops singing at the crossing.</li>
+  <li>Less resonance raises the passband slightly. In single cases (LP12 with the SVF as HPF) the overall level can rise by up to 3 dB.</li>
+</ul>
+
+<h3 id="sound-eq">5.6 EQ with real shelves <span class="tag">v18</span></h3>
+<ul>
+  <li>Bass and treble are now real shelving filters instead of one-pole crossovers. The knobs and the corner frequencies stay: 199 Hz and 2.8 kHz.</li>
+  <li>The noise floor drops from −77 to −141 dBFS. Clicks when you turn drop from −24 to −70 dBc.</li>
+  <li>Set to neutral, the EQ passes the signal through bit for bit.</li>
+  <li>With both bands in use it needs twice as much CPU as before.</li>
+</ul>
+
+<h3 id="sound-volume">5.7 Volume in dB <span class="tag">v18</span></h3>
+<div class="grid2">
+<div>
+<ul>
+  <li><b>Every detent is 0.5 dB,</b> in the menus and on the gold knobs. The display shows dB: "−3.5 dB" on the OLED, <code>-3.5</code> on the 7-segment display, <code>OFF</code> at the very bottom.</li>
+  <li><b>Songs are saved as before.</b> They sound equally loud and still load in v17. Their values simply lie between the old positions 0–50.</li>
+</ul>
+</div>
+<figure class="figure">
+  <img class="shot oled" src="../../../screenshots/oled_volume_db.png" alt="Master level: -8.5 dB">
+  <figcaption>The song's volume knob: master level −8.5 dB.</figcaption>
+</figure>
+</div>
+
+<figure class="figure">
+<svg width="640" height="104" viewBox="0 0 640 104" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="10">
+  <g fill="#5f6368" font-size="9.5">
+    <text x="4" y="25">1.2.1 value</text><text x="4" y="54">0.5 dB detents</text>
+    <text x="4" y="74">synth, kit row</text><text x="4" y="92">song, kit, track</text>
+  </g>
+  <line x1="130" y1="26" x2="610" y2="26" stroke="#9aa0a6"/>
+  <path d="M130.0,18V26 M139.6,18V22 M149.2,18V22 M158.8,18V22 M168.4,18V22 M178.0,18V26 M187.6,18V22 M197.2,18V22 M206.8,18V22 M216.4,18V22 M226.0,18V26 M235.6,18V22 M245.2,18V22 M254.8,18V22 M264.4,18V22 M274.0,18V26 M283.6,18V22 M293.2,18V22 M302.8,18V22 M312.4,18V22 M322.0,18V26 M331.6,18V22 M341.2,18V22 M350.8,18V22 M360.4,18V22 M370.0,18V26 M379.6,18V22 M389.2,18V22 M398.8,18V22 M408.4,18V22 M418.0,18V26 M427.6,18V22 M437.2,18V22 M446.8,18V22 M456.4,18V22 M466.0,18V26 M475.6,18V22 M485.2,18V22 M494.8,18V22 M504.4,18V22 M514.0,18V26 M523.6,18V22 M533.2,18V22 M542.8,18V22 M552.4,18V22 M562.0,18V26 M571.6,18V22 M581.2,18V22 M590.8,18V22 M600.4,18V22 M610.0,18V26" stroke="#5f6368" stroke-width="1" fill="none"/>
+  <g text-anchor="middle" fill="#1d1d1f">
+    <text x="130" y="13">0</text><text x="178" y="13">5</text><text x="226" y="13">10</text><text x="274" y="13">15</text><text x="322" y="13">20</text><text x="370" y="13">25</text>
+    <text x="418" y="13">30</text><text x="466" y="13">35</text><text x="514" y="13">40</text><text x="562" y="13">45</text><text x="610" y="13">50</text>
+  </g>
+  <path d="M172.7,44V56 M173.9,47V53 M175.2,47V53 M176.5,47V53 M177.9,47V53 M179.3,47V53 M180.7,47V53 M182.2,47V53 M183.7,47V53 M185.3,47V53 M186.9,47V53 M188.6,47V53 M190.3,44V56 M192.0,47V53 M193.9,47V53 M195.7,47V53 M197.6,47V53 M199.6,47V53 M201.6,47V53 M203.7,47V53 M205.9,47V53 M208.1,47V53 M210.4,47V53 M212.7,47V53 M215.2,44V56 M217.6,47V53 M220.2,47V53 M222.8,47V53 M225.5,47V53 M228.3,47V53 M231.2,47V53 M234.2,47V53 M237.2,47V53 M240.3,47V53 M243.6,47V53 M246.9,47V53 M250.3,44V56 M253.8,47V53 M257.4,47V53 M261.1,47V53 M265.0,47V53 M268.9,47V53 M273.0,47V53 M277.1,47V53 M281.4,47V53 M285.9,47V53 M290.4,47V53 M295.1,47V53 M299.9,44V56 M304.9,47V53 M310.0,47V53 M315.2,47V53 M320.6,47V53 M326.2,47V53 M331.9,47V53 M337.8,47V53 M343.9,47V53 M350.1,47V53 M356.6,47V53 M363.2,47V53 M370.0,44V56 M377.0,47V53 M384.2,47V53 M391.6,47V53 M399.3,47V53 M407.1,47V53 M415.2,47V53 M423.6,47V53 M432.1,47V53 M441.0,47V53 M450.0,47V53 M459.4,47V53 M469.0,44V56 M478.9,47V53 M489.1,47V53 M499.6,47V53 M510.4,47V53 M521.5,47V53 M532.9,47V53 M544.7,47V53 M556.8,47V53 M569.2,47V53 M582.1,47V53 M595.3,47V53 M608.9,44V56" stroke="#2d5bd7" stroke-width="1" fill="none"/>
+  <g text-anchor="middle">
+    <text x="190.3" y="74">−24</text><text x="215.2" y="74">−18</text><text x="250.3" y="74">−12</text><text x="299.9" y="74">−6</text><text x="370" y="74">0 dB</text><text x="469" y="74">+6</text><text x="608.9" y="74">+12</text>
+    <text x="190.3" y="92">−30</text><text x="215.2" y="92">−24</text><text x="250.3" y="92">−18</text><text x="299.9" y="92">−12</text><text x="370" y="92">−6</text><text x="469" y="92">0 dB</text><text x="608.9" y="92">+6</text>
+  </g>
+</svg>
+<figcaption>Where the old values 0–50 lie in dB. Each blue tick is one detent of 0.5 dB, drawn from −30 dB up. Low down, one old step spans several dB; high up it spans less than one.</figcaption>
+</figure>
+
+<ul>
+  <li><b>One ramp for everything:</b> sound, kit row, kit, audio track and song ramp volume × pan × sidechain × filter compensation per sample, exactly onto the target. A jump of more than 6 dB takes at least 5 ms, also from automation and when several parameters change at once.</li>
+  <li><b>So the sidechain also ducks over at least 5 ms.</b> Very hard pumping effects in old songs sound a bit softer.</li>
+  <li><b>More precise:</b> quiet settings no longer lose resolution. The level before the filters stays as in v17, so turning up doesn't change how much they saturate.</li>
+</ul>
+<table>
+  <tr><th>Old value</th><th>20</th><th>25</th><th>30</th><th>35</th><th>40</th><th>45</th><th>50</th></tr>
+  <tr><td>Synth, kit row (default 40)</td><td>−3.9</td><td>0.0</td><td>+3.2</td><td>+5.8</td><td>+8.2</td><td>+10.2</td><td>+12.0</td></tr>
+  <tr><td>Song, kit, audio track (default 35)</td><td>−9.9</td><td>−6.0</td><td>−2.9</td><td>−0.2</td><td>+2.1</td><td>+4.2</td><td>+6.0</td></tr>
+</table>
+<p class="small">In dB as the display shows it. From one value a to another b the level changes by 40·log10(b/a) dB. A kit also has a fixed +1.9 dB as compensation for the filter resonance.</p>
+
+<h3 id="sound-levels">5.8 Levels, headroom and the output limiter</h3>
+<p>No volume control in the Deluge distorts by itself: each is a pure multiplication in 32 bits with over 30 dB of headroom. <b>Only the sum at the output clips</b>, hard at 0 dBFS, the same on headphones, line out, USB and resampling. You hear it first on the track you are turning up.</p>
+<ul>
+  <li><b>The VU meter shows the mean, not the peaks.</b> It can already clip while the meter shows yellow. The only official target: not above the 3rd pad from the top (−4.5).</li>
+  <li><b>A baseline</b> from the level analysis of real songs; there is no official one:</li>
+</ul>
+<table>
+  <tr><th style="width:30%">What</th><th>Suggested value</th></tr>
+  <tr><td>Song volume</td><td>35 to start, then down until the peak lies at −6 dBFS. Turning down in 32 bits costs no quality.</td></tr>
+  <tr><td>Kit, audio track</td><td>At most 35.</td></tr>
+  <tr><td>Synth, kit row</td><td>40 as the upper limit for loud things like kick and bass; 45–50 only for quiet samples.</td></tr>
+  <tr><td>Master compressor</td><td>Off. Switched on, it makes up its reduction with make-up gain, so it creates no headroom.</td></tr>
+  <tr><td>Peak</td><td>At most −6 dBFS. In DelugeRec the pad at −3 stays dark (8.2).</td></tr>
+  <tr><td>VOLUME knob</td><td>Any. It is analog, after the converter, and doesn't act on USB and resampling.</td></tr>
+</table>
+<p>DelugeBaseline checks all songs of a card against this baseline and can set them to it (8.4).</p>
+<p><b>Output limiter</b> <span class="tag">v18</span>: Settings → Community features → <b>Output limiter</b> (7-segment <code>LIMT</code>), off by default. A peak limiter that looks ahead 0.7 ms and sets in softly 1 dB below full scale, without aliasing. It acts only where the output would otherwise clip hard.</p>
+<ul>
+  <li>When it is on, the output comes 0.7 ms later. When you switch it on or off, the output jumps once by this time, which can click briefly.</li>
+  <li>When it is off, everything stays bit for bit the same.</li>
+</ul>
+
+<h3 id="sound-sidechain">5.9 Sidechain <span class="tag">v3</span> <span class="tag">v18</span></h3>
+<ul>
+  <li><b>No click when ducking.</b> In 1.2.1 the volume ramp of each buffer started at the new value and overshot; with more than 6 dB of ducking within one buffer, the gain even flipped polarity. Now the ramp runs from the old to the new value, and the reverb return follows smoothly. The bug is also in the current community firmware.</li>
+  <li><b>At least 5 ms</b> for jumps over 6 dB since v18 (5.7).</li>
+  <li><b>The song's reverb sidechain keeps its sync level</b> <span class="tag">v18.3</span>. Since 1.2.1 it slipped one step lower at every save and load. Existing songs load with the saved value.</li>
+</ul>
+
+<h3 id="sound-reverb">5.10 Reverb <span class="tag">v10</span> <span class="tag">v14</span></h3>
+<p>All settings are in the reverb menu as before, for the song and in every sound.</p>
+<table>
+  <tr><th style="width:21%">Setting</th><th style="width:20%">Models</th><th>Values and effect</th></tr>
+  <tr><td>Model → <b>Digital</b> (<code>DIGI</code>)</td><td>new</td><td>A plate after Jon Dattorro (1997), built like the Lexicon 224: dense and smooth, without metallic ringing. As loud as Mutable (within 0.5 dB), so switching the model doesn't jump in volume.</td></tr>
+  <tr><td>Room size</td><td>Digital</td><td>The time: 0 ≈ 0.6 s, 30 (default) ≈ 4.5 s, 45 ≈ 18 s, 50 almost endless.</td></tr>
+  <tr><td>Width</td><td>Digital</td><td>Stereo width, 0 = mono.</td></tr>
+  <tr><td>Damping</td><td>Mutable, Digital</td><td>0 bright, 50 dark, stepless. On Mutable it ran backwards in 1.2.1. Songs sound the same; only the number shown is now 50 minus the old one (default 36 → 14).</td></tr>
+  <tr><td>HPF</td><td>Mutable, Digital</td><td>Repaired: 0 = 20 Hz, 25 = 190 Hz, 50 = 540 Hz, saved and loaded with the song. Old songs load with the frequency they really had (old 50 → new 12).</td></tr>
+  <tr><td>LPF</td><td>Mutable, Digital</td><td>New: 0 = 500 Hz, 25 = 3.2 kHz, 49 = 18.6 kHz, 50 = off (default). It darkens the whole reverb; damping darkens the tail more and more over time.</td></tr>
+  <tr><td>Modulation <span class="tag">v14</span></td><td>Mutable, Digital</td><td>0–50, default 0. At 0 the reverb stands still: a held tone stays steady in it. 50 sounds like v10 to v13, with the slow movement that fluctuated up to about 16 dB in level and some cents in pitch.</td></tr>
+  <tr><td>Pre-delay <span class="tag">v14</span></td><td>all</td><td>0–100 ms, default 0. The reverb starts later, and the dry sound stands on its own first.</td></tr>
+</table>
+<ul>
+  <li><b>Mutable</b> at Modulation 50 moves at the speed of the original Mutable Instruments modules (about 0.45 and 0.28 Hz). 1.2.1 ran it 16 times slower, almost static.</li>
+  <li><b>Freeverb:</b> with width below the maximum the right channel was louder (by 3.6 dB at width 0); now balanced. A long, loud reverb no longer wraps around with a loud click. Freeverb has no HPF, LPF or modulation.</li>
+</ul>
+<div class="box good"><b>Against muddiness:</b> 10–30 ms of pre-delay make the reverb much clearer without sounding detached. HPF at about 25 (190 Hz) takes the bass out of the reverb. A bit more damping darkens the tail. Without modulation the highs ring a bit longer on Mutable; raise damping a few steps if that is too bright.</div>
+<div class="box warn">
+  <ul>
+    <li><b>Old songs sound stiller:</b> songs without these settings load with Modulation 0 and no pre-delay. Set Modulation to 50 for the old sound.</li>
+    <li>Digital needs about a third more CPU than Mutable, computed once for the whole song.</li>
+    <li>A song saved with Digital plays without reverb in 1.2.1.</li>
+  </ul>
+</div>
+
+<h3 id="sound-delay">5.11 Delay <span class="tag">v11</span> <span class="tag">v14</span></h3>
+<p>For sounds, kits, audio tracks and the song. Two new menu items:</p>
+<ul>
+  <li><b>Time change</b> (after Type) <span class="tag">v14</span>: <b>Fade</b> (default) or <b>Tape</b>.</li>
+  <li><b>LPF</b> and <b>HPF</b> in the feedback (after Sync) <span class="tag">v11</span>: each repeat gets darker or thinner than the one before, as with tape and bucket-brigade delays. LPF: 0 = 500 Hz, 25 = 3.2 kHz, 49 = 18.6 kHz, 50 = off (default). HPF: 0 = off (default), 1 = 25 Hz, 25 = 190 Hz, 50 = 540 Hz. They are saved only when switched on.</li>
+</ul>
+
+<figure class="figure">
+<svg width="640" height="200" viewBox="0 0 640 200" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="11">
+  <defs>
+    <symbol id="echo-lo" viewBox="0 0 26 22" width="26" height="22"><rect x="0.5" y="0.5" width="25" height="21" rx="4" fill="#fff" stroke="currentColor"/><path d="M3,11 q1.67,-7 3.33,0 t3.33,0 t3.33,0 t3.33,0 t3.33,0 t3.33,0" fill="none" stroke="currentColor" stroke-width="1.3"/></symbol>
+    <symbol id="echo-hi" viewBox="0 0 26 22" width="26" height="22"><rect x="0.5" y="0.5" width="25" height="21" rx="4" fill="#fff" stroke="currentColor"/><path d="M3,11 q1.25,-7 2.5,0 t2.5,0 t2.5,0 t2.5,0 t2.5,0 t2.5,0 t2.5,0 t2.5,0" fill="none" stroke="currentColor" stroke-width="1.3"/></symbol>
+  </defs>
+  <line x1="290" y1="24" x2="290" y2="172" stroke="#1d1d1f" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <text x="290" y="16" text-anchor="middle" font-weight="bold">time change: 25% shorter</text>
+  <text x="8" y="52" font-weight="bold">Tape</text><text x="8" y="66" fill="#5f6368" font-size="10">as before</text>
+  <g color="#5f6368"><use href="#echo-lo" x="110" y="40"/><use href="#echo-lo" x="174" y="40"/><use href="#echo-lo" x="238" y="40"/></g>
+  <g color="#b0703f"><use href="#echo-hi" x="302" y="40"/><use href="#echo-hi" x="350" y="40"/><use href="#echo-hi" x="398" y="40"/><use href="#echo-hi" x="446" y="40"/><use href="#echo-hi" x="494" y="40"/><use href="#echo-hi" x="542" y="40"/><use href="#echo-hi" x="590" y="40"/></g>
+  <text x="302" y="78" font-size="10" fill="#3c4043">the echoes already in the buffer play faster: they bend in pitch,</text>
+  <text x="302" y="91" font-size="10" fill="#3c4043">and the feedback carries the bend on</text>
+  <line x1="8" y1="102" x2="632" y2="102" stroke="#e3e5e8"/>
+  <text x="8" y="132" font-weight="bold">Fade</text><text x="8" y="146" fill="#5f6368" font-size="10">default</text>
+  <g color="#5f6368"><use href="#echo-lo" x="110" y="112"/><use href="#echo-lo" x="174" y="112"/><use href="#echo-lo" x="238" y="112"/>
+    <use href="#echo-lo" x="302" y="112" opacity="0.75"/><use href="#echo-lo" x="366" y="112" opacity="0.55"/><use href="#echo-lo" x="430" y="112" opacity="0.38"/><use href="#echo-lo" x="494" y="112" opacity="0.24"/><use href="#echo-lo" x="558" y="112" opacity="0.14"/></g>
+  <g color="#2d5bd7"><use href="#echo-lo" x="338" y="142"/><use href="#echo-lo" x="386" y="142"/><use href="#echo-lo" x="434" y="142"/><use href="#echo-lo" x="482" y="142"/><use href="#echo-lo" x="530" y="142"/><use href="#echo-lo" x="578" y="142"/></g>
+  <text x="120" y="148" font-size="10" fill="#3c4043">old buffer: plays out</text>
+  <text x="120" y="161" font-size="10" fill="#3c4043">with old time and pitch</text>
+  <text x="338" y="180" font-size="10" fill="#2d5bd7">new buffer: new time, the pitch stays</text>
+  <text x="290" y="194" text-anchor="middle" font-size="10" fill="#3c4043">the input crossfades to the new buffer in 23 ms</text>
+</svg>
+<figcaption>What happens to the echoes when the delay time gets shorter. With Tape they bend in pitch, as before. With Fade the old echoes play out unchanged while the new time starts in a fresh buffer; the pitch stays accurate to 0.01 cents.</figcaption>
+</figure>
+
+<ul>
+  <li><b>Old songs:</b> delays with a modulated or automated delay rate load as Tape, so they sound as before. All others load as Fade.</li>
+  <li><b>Clean repeats</b> <span class="tag">v11</span>: in 1.2.1 the delay could stay in its resampling mode for good after a time change, even if you only moved the knob briefly and back. Every repeat then lost 9 dB at 10 kHz. Now the repeats are bit-exact again after a change.</li>
+  <li><b>While the time moves</b> (LFO, envelope, automation) the delay resamples with a cubic kernel: a repeat loses 0.6 dB instead of 6.9 dB at 10 kHz, and the resampling noise drops from −59 to −80 dB.</li>
+  <li><b>No clicks</b> when the time changes, and no click on the first echo after a pause. The end of the echoes fades out instead of cutting off.</li>
+  <li><b>Up to 4 s</b> of delay without aliasing (buffer up to 4 s instead of 2 s).</li>
+  <li><b>Analog mode</b> saturates with less aliasing.</li>
+  <li><b>Fixed from 1.2.1:</b> below 3% feedback the delay threw its buffer away on every round. A copied sound keeps triplet or dotted in its delay sync.</li>
+</ul>
+<p class="small">The delay is 1 sample (0.02 ms) longer than in 1.2.1, because all its write paths now use the same position.</p>
+
+<h3 id="sound-ear">5.12 Try it by ear</h3>
+<p>v18.x has not been played on a real Deluge yet. These short checks, ideally with headphones, show the changes. Please report anything that sounds wrong (11.8).</p>
+<table>
+  <tr><th style="width:22%">Check</th><th>What to do and what to expect</th></tr>
+  <tr><td>Rustle</td><td>A synth with LPF 24 dB, cutoff low (about 10–20), resonance medium, a long note. The band of noise around the note is gone. The same with 12 dB and Drive.</td></tr>
+  <tr><td>Transitions</td><td>Turn cutoff and resonance quickly; switch the filter mode and routing while a note sounds. No steps, no clicks.</td></tr>
+  <tr><td>Drive</td><td>LPF mode Drive with a lot of resonance: the bass stays. A song with several Drive filters doesn't lose voices at the start of the bar.</td></tr>
+  <tr><td>EQ</td><td>Turn bass and treble while music plays. No clicks.</td></tr>
+  <tr><td>Volume</td><td>Every detent changes 0.5 dB, the display shows dB, at the very bottom <code>OFF</code>. Tracks set quiet sound clean.</td></tr>
+  <tr><td>Output limiter</td><td>On a song that clips: no more hard distortion. Switching it may click once.</td></tr>
+  <tr><td>Crossing guard</td><td>Turn HPF and LPF with resonance towards each other: no painful jump in level.</td></tr>
+  <tr><td>After a silence</td><td>Let a kit pause (a gap in the clip, or muted), change its LPF, EQ or volume meanwhile, let it play again. The first hit comes without a tick or a bright attack, right away with the new sound.</td></tr>
+</table>
