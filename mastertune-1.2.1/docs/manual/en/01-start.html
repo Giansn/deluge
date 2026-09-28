@@ -60,7 +60,7 @@
 <p>To go back, install the other firmware exactly as in §1.3: to v18 without L2 with the file from §1.2, to 1.2.1 with its official file. Your songs keep loading. What happens to the new things:</p>
 <table>
   <tr><th style="width:30%">Saved with mastertune</th><th>In an older mastertune version or in 1.2.1</th></tr>
-  <tr><td>Master tune</td><td>The official firmware does not know the entry in <code>CommunityFeatures.XML</code>. It keeps it anyway and writes it back unchanged.</td></tr>
+  <tr><td>Master tune</td><td>1.2.1 doesn't know the entry in <code>CommunityFeatures.XML</code>. When it rewrites the file (after you change a setting, or when you load or save a song with Startup song set to Last opened or Last saved song), a bug in 1.2.1 writes entries it doesn't know back under a wrong name. Back on mastertune the master tune is then at 440.0 Hz: set it again.</td></tr>
   <tr><td>Volume in dB</td><td>Saved as before. Songs sound equally loud and still load in v17.</td></tr>
   <tr><td>Arpeggiator additions</td><td>1.2.1 loads the song but skips the kit arp, randomizer, latch and bounce, and loses them at the next save. Walk and Pattern become Up.</td></tr>
   <tr><td>Reverb model Digital</td><td>The song plays without reverb in 1.2.1.</td></tr>
@@ -75,6 +75,6 @@
   <li><b>In an emulator:</b> the firmware's own machine code for the Deluge's processor (an ARM Cortex-A9) runs in an emulator. It boots, loads songs, renders audio and goes through hundreds of checks and stress tests. Reverb, delay and drone are also measured on the PC.</li>
   <li><b>Reviewed:</b> independent reviewers checked the larger changes with their own test cases.</li>
   <li><b>The limit:</b> the emulator is not the hardware. Timing, the SD card and USB can behave differently on a real Deluge. USB does not run in the emulator at all.</li>
-  <li><b>On the device:</b> earlier versions ran on a real Deluge, v16 and its L2 variant among them. <b>v18.x has not been played on a real Deluge yet.</b> The listening tests for it are in 5.12.</li>
+  <li><b>On the device:</b> earlier versions ran on a real Deluge, v16 and its L2 variant among them. <b>v18.x has not been played on a real Deluge yet.</b> The listening tests for it are in §5.12.</li>
 </ul>
 <div class="box">mastertune is a personal fork, written with Claude (AI), not a contribution to the official firmware. Please don't report its bugs to the community developers. Report them at <code>github.com/Giansn/deluge/issues</code> (§11.8).</div>

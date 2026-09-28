@@ -581,7 +581,7 @@ Raw data: `raw/reverb-v14.json`. Commit `7c1ffede`, tests `tests/reverb/modulati
 ## 7m. Idling and false culls (v17)
 
 **Causes**, found with the emulator (`tests/sdload`) and the profiler:
-- **Scheduling:** The interval of the playback routine is `16 / 44100`, which is 0 as an integer. The audio routine therefore runs about every 12 µs and computes 4–8 samples each time. Every pass goes through all tracks.
+- **Scheduling:** The interval of the playback routine is `16 / 44100`, which is 0 as an integer. The playback task is then always due, and the task manager runs the audio routine again about 10 µs after each pass, for 4–8 samples each time. Every pass goes through all tracks.
 - **Silent kits and audio tracks** set up their whole effects chain before they checked for silence: around 550 instructions per track and pass.
 - **False culls when streaming:** When the Deluge waits for the card, it computes the audio in the loading task. `setDireness` then judged the load by the mean duration of this task, card time included.
   - With a slow card there were 17–25 culls, although the DMA was at most 9 samples behind.

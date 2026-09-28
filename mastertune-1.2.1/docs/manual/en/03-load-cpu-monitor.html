@@ -66,7 +66,7 @@
 <h3 id="load-why">3.2 Where the savings come from</h3>
 <table>
   <tr><th style="width:26%">Change</th><th style="width:9%">Since</th><th>What it does</th></tr>
-  <tr><td>Scheduling fixed</td><td>v17</td><td>A calculation error in 1.2.1 set the audio task's interval to 0. The audio routine ran about every 12 µs on 4–12 samples, and every pass went through all tracks. Now, up to 65% load, it computes in blocks of at least 60 samples. Lowered quality and card accesses switch this minimum window off.</td></tr>
+  <tr><td>Scheduling fixed</td><td>v17</td><td>A calculation error in 1.2.1 set the playback task's interval to 0. It was always due, so the task manager called the audio routine again about 10 µs after each pass, each time for only 4–12 samples, and every pass went through all tracks. Now, up to 65% load, it computes in blocks of at least 60 samples. Lowered quality and card accesses switch this minimum window off.</td></tr>
   <tr><td>Silent tracks skipped</td><td>v4, v17</td><td>A kit or audio track that has output only silence for 4096 samples skips its effects chain, as long as mod FX, delay, stutter, sample rate reduction, saturation and compressor are off and nothing records. v17 checks this before setting up the chain. The sound is bit for bit the same.</td></tr>
   <tr><td>Gentler culling</td><td>v4</td><td>As in the current community firmware: less often, fewer voices, and half of them faded out instead of cut.</td></tr>
   <tr><td>No needless cuts while streaming</td><td>v17</td><td>Culling and quality reduction judge the audio routine's own CPU time, no longer the loading task including the wait for the card.</td></tr>

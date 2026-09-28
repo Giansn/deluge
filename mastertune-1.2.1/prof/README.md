@@ -42,8 +42,8 @@ python3 tools/deluge_profiler.py report profile.jsonl --symbols prof/deluge-1.2.
 ## What the emulator already shows (and the measurement on the device should confirm)
 
 - **The 87% when idle is not overload.**
-  - A calculation error in the task scheduling (`16 / 44100` as an integer gives 0) makes the audio routine run again about every 12 µs, with 4–8 samples each time.
-  - Every pass goes through all tracks. Silent kits and audio tracks set up their whole effect chain before they notice that nothing sounds. That costs about 550 instructions per track, every 12 µs.
+  - A calculation error in the task scheduling (the playback task's `16 / 44100` as an integer gives 0) makes the audio routine run again about 10 µs after each pass, with 4–8 samples each time.
+  - Every pass goes through all tracks. Silent kits and audio tracks set up their whole effect chain before they notice that nothing sounds. That costs about 550 instructions per track, on every pass.
   - In the emulator that is 90% busy waiting at only about 12% real load.
   - On the device there's more: every pass reads about 99 KB of data, three times what fits into the L1 cache. That's why the L2 cache helps so clearly.
 - **Voices cut needlessly (VC) while samples stream.**

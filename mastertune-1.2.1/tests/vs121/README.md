@@ -11,7 +11,7 @@ How much lighter mastertune v18.3-l2d is than the unchanged community firmware 1
 ## Two measures
 
 - **A. DSP work per window:** `tests/song/run.sh`, the real firmware renders the song in fixed windows of 128 samples. It counts the instructions per window. The device run adds the CPU protection (culling) as on the Deluge.
-- **B. With the task manager:** `tasks_emu.py` (here), the firmware's own task manager runs, with the audio DMA in emulated real time. It measures the share of the time spent in the audio routine. This is where 1.2.1's scheduling bug shows: the audio task's interval is `16 / 44100` as an integer, i.e. 0, so the audio routine runs about every 12 µs on 4–12 samples. The CPU monitor can't be used for this: 1.2.1 has none, and mastertune v17 changed how it counts.
+- **B. With the task manager:** `tasks_emu.py` (here), the firmware's own task manager runs, with the audio DMA in emulated real time. It measures the share of the time spent in the audio routine. This is where 1.2.1's scheduling bug shows: the playback task's interval is `16 / 44100` as an integer, i.e. 0, so the task manager runs the audio routine again about 10 µs after each pass, on 4–12 samples. The CPU monitor can't be used for this: 1.2.1 has none, and mastertune v17 changed how it counts.
 
 The emulator counts instructions; 1 instruction per cycle at 400 MHz unless an IPC is given. Lower IPC values (0.8, 0.7) only scale the time, as a rough stand-in for cache misses and SDRAM waits.
 

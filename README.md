@@ -651,7 +651,7 @@ v17 contains v16. **The main file has the L2 cache for code and data** (previous
 
 **Less load** (patches 0056–0064, 0072, 0073):
 - **Scheduling fixed:**
-  - Since 1.2.1 a calculation error (`16 / 44100` as an integer) gives the interval 0. The audio routine therefore ran about every 12 µs, with 4–12 samples per pass.
+  - Since 1.2.1 a calculation error (`16 / 44100` as an integer) gives the playback task the interval 0. It is always due, so the task manager called the audio routine again about 10 µs after each pass, with only 4–12 samples each time.
   - Every pass goes through all tracks and sets up their effects. With small blocks this costs many times as much.
 - **Minimum window:**
   - Up to 65% load the audio routine computes in blocks of 60 samples, otherwise as before. Lowered quality or card accesses switch the minimum window off.

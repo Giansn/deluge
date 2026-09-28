@@ -1,0 +1,82 @@
+<h2 class="chapter" id="ch-workflow">7. Songs und Arbeitsablauf</h2>
+
+<p class="lead">Ein Song-Browser, der die Versionen eines Songs zusammenhält, ein Countdown beim Songwechsel, Speichern ohne Knacken, ein dimmbares OLED und Pads, die nicht flimmern, dazu Korrekturen für MIDI, Clock und Karte.</p>
+
+<h3 id="wf-browser">7.1 Song-Browser mit Versionen <span class="tag">v17, v18</span></h3>
+<div class="grid2">
+<div>
+<p>Songs, deren Namen sich nur durch eine Zahl am Ende unterscheiden, sind Versionen eines Songs: «New Sitar Grii», «New Sitar Grii 2» … «New Sitar Grii 10» erscheinen als <b>eine Zeile mit Pfeil</b>. Die Zeile zeigt den ganzen Namen.</p>
+<p>Eine Zahl nach «-» oder «.» gehört zum Namen: «TR-808» und «Jam 2026-09-27» bleiben eigene Songs.</p>
+</div>
+<figure class="figure">
+  <img class="shot oled" src="../../../screenshots/oled_song_browser.png" alt="Load song: eine Gruppe geöffnet, ihre Versionen eingerückt">
+  <figcaption>Die Versionen von «New Sitar Grii», aufgeklappt und eingerückt. Eine Zeile mit Pfeil ist eine Gruppe, die noch geschlossen ist.</figcaption>
+</figure>
+</div>
+<table>
+  <tr><th style="width:30%">Du willst …</th><th>So geht es</th></tr>
+  <tr><td>eine Gruppe öffnen</td><td>Klicken: <span class="key">SELECT</span> oder <span class="key">LOAD</span> drücken. Die Versionen erscheinen eingerückt darunter.</td></tr>
+  <tr><td>eine Version laden</td><td>Hindrehen und klicken. Das geht auch während der Wiedergabe, mit Countdown (§7.2).</td></tr>
+  <tr><td>eine Gruppe schliessen</td><td><span class="key">BACK</span> auf einer ihrer Versionen. Geöffnete Gruppen bleiben offen, während du weiterdrehst, bis zu 8.</td></tr>
+  <tr><td>den geladenen Song finden</td><td>Browser öffnen: Die Gruppe des geladenen Songs ist schon offen.</td></tr>
+  <tr><td>per Name laden</td><td>Den Namen tippen; der Song lädt direkt.</td></tr>
+  <tr><td>löschen</td><td><span class="key">SHIFT</span> + <span class="key">SAVE</span> auf einer Version. Auf einer geschlossenen Gruppenzeile ist das gesperrt: «Open the group first».</td></tr>
+</table>
+<p>Speichern und die anderen Browser sind unverändert. Der Browser liest den Ordner seltener als vorher, und wenn du während der Wiedergabe blätterst, pausiert die Audio-Routine höchstens 0,39 ms.</p>
+
+<h3 id="wf-songchange">7.2 Songwechsel mit Countdown <span class="tag">v14</span></h3>
+<div class="grid2">
+<div>
+<p>Lädst du einen Song, während ein anderer spielt, zählt der Deluge bis zum Wechsel herunter:</p>
+<ul>
+  <li>solange Wiederholungen übrig sind, zählt er die <b>Durchläufe</b>;</li>
+  <li>im letzten Durchlauf die <b>Takte</b>;</li>
+  <li>im letzten Takt die <b>Beats</b>, 4-3-2-1.</li>
+</ul>
+<p>Das stimmt auch mit Swing und mit externer MIDI-Clock.</p>
+</div>
+<figure class="figure">
+  <img class="shot oled" src="../../../screenshots/oled_songchange.png" alt="Bars remaining 2, darunter die Songliste">
+  <figcaption>Songwechsel vorgemerkt: noch 2 Takte. Die Liste mit dem nächsten Song bleibt sichtbar.</figcaption>
+</figure>
+</div>
+<ul>
+  <li><b>OLED:</b> Der Countdown steht in der Titelzeile, zum Beispiel «Bars remaining 3».</li>
+  <li><b>7-Segment-Anzeige:</b> die Zahl, blinkend, solange sie Durchläufe zählt. Beats tragen einen Punkt, so unterscheidest du sie von Takten.</li>
+  <li><b>Bis zum Wechsel</b> steuern die Goldknöpfe und Mod-Tasten die Master-Effekte des <b>laufenden</b> Songs, ab dem Moment, in dem du <span class="key">LOAD</span> drückst, auch mit Affect Entire aus. Der neue Song behält seine eigenen Werte.</li>
+</ul>
+
+<h3 id="wf-save">7.3 Speichern ohne Knacken <span class="tag">v11, v13</span></h3>
+<ul>
+  <li><b>Kein Knacken:</b> In 1.2.1 stand die Audio-Engine still, während der Deluge einen Song oder ein Preset auf die Karte schrieb. Der Ausgang wiederholte seinen letzten Puffer: ein kurzes Knacken bei jedem Speichern. Jetzt läuft das Audio weiter, und die spielenden Samples laden weiter. Das gilt für Songs, Synth- und Kit-Presets und Einstellungen.</li>
+  <li><b>Schneller:</b> Speichern während der Wiedergabe dauert im Emulator 22 statt 344 ms (ein Song mit 3 Synths) oder 66 statt 716 ms (5 Synths).</li>
+  <li><b>Kein Ladefenster beim Blättern:</b> Beim Laden und Speichern läuft oben rechts auf dem OLED eine kleine Animation, wie in der Community-Firmware 1.3. Der Preset-Name bleibt sichtbar.</li>
+</ul>
+
+<h3 id="wf-oled">7.4 OLED-Helligkeit <span class="tag">v18</span></h3>
+<p><b>Settings → OLED brightness</b>, Stufen 1–10. 10 ist so hell wie bisher, 1 ist noch lesbar. Jede Drehung wirkt sofort, und die Stufe gilt auch nach einem Neustart. Die lesbare Firmware-Version beschreibt §1.4.</p>
+
+<h3 id="wf-dim">7.5 Flimmerfreies Dimmen der Pads <span class="tag">v13</span></h3>
+<p>Settings → Community features → <b>Flicker-free dimming</b>, standardmässig an.</p>
+<ul>
+  <li><b>Warum die Pads flimmerten:</b> 1.2.1 dimmt die Pads über den LED-Controller mit dunklen Pausen. Unter 40 % Helligkeit werden die Pausen so lang, dass die ganze Auffrischung langsamer wird, bei 0 % um das 6,8-Fache.</li>
+  <li><b>Jetzt:</b> Der LED-Controller frischt immer mit voller Geschwindigkeit auf und dimmt nur bis 43,5 %. Den Rest dimmt die Firmware über die Farben der Pads, der Seitenspalten und der LEDs der Goldknöpfe. Jede Stufe gibt gleich viel Licht wie vorher.</li>
+  <li><b>Nachteil:</b> Die Tasten-LEDs, die 7-Segment-Anzeige und Pads, die der LED-Controller selbst blinken lässt (der schnelle Play-Cursor, blinkende Shortcuts in Menüs), dimmen nur bis 43,5 %. Bei sehr geringer Helligkeit sind sie heller als vorher.</li>
+  <li>Auf <b>Off</b> sendet die Firmware Byte für Byte dasselbe wie 1.2.1.</li>
+</ul>
+
+<h3 id="wf-settings">7.6 Einstellungen, die erhalten bleiben <span class="tag">v18.3</span></h3>
+<p>Wenn der Deluge seine Community-Einstellungen speichert, behält er jetzt auch die, die er nicht kennt, zum Beispiel aus einer neueren Version, mit Name und Wert. 1.2.1, v17 und die aktuelle Community-Firmware schreiben sie unter einem falschen Namen zurück. Ein Wechsel zu v17 und zurück setzt deshalb Output limiter, Filter crossing guard und OLED brightness weiterhin auf ihre Grundeinstellung zurück. Stelle sie nach einem solchen Wechsel neu ein.</p>
+
+<h3 id="wf-midi">7.7 Korrekturen für MIDI, Clock und Karte</h3>
+<table>
+  <tr><th style="width:26%">Korrektur</th><th style="width:9%">Seit</th><th>Was sich geändert hat</th></tr>
+  <tr><td>MIDI- und Gate-Ausgänge pünktlich</td><td>v13</td><td>Ereignisse spät in einem Audio-Block gingen einen ganzen Block (2,9 ms) zu früh hinaus, besonders beim Speichern. Und der Timer der MIDI- und Gate-Ausgänge wurde vor dem Start nie zurückgesetzt: Eine Wiedergabe konnte bis zu 38 Samples zu früh kommen oder nach einem Überlauf etwa 127 ms zu spät. Jetzt stimmt jede Wiedergabe auf ±1,4 Samples genau.</td></tr>
+  <tr><td>Späte Clock-Bytes</td><td>v17</td><td>Ein Clock-Byte, das spät gelesen wird, tickt jetzt sofort statt bis zu 2,9 ms zu spät.</td></tr>
+  <tr><td>Clock-Ausgänge bei externer Clock</td><td>v15</td><td>Folgte der Deluge einer externen MIDI-Clock, stoppten seine Gate-Clock- und MIDI-Clock-Ausgänge nach einem kurzen Schub. Jetzt laufen beide im Takt der eingehenden Clock weiter. Mit interner Clock bleibt alles wie bisher.</td></tr>
+  <tr><td>Section-Start per CC</td><td>v15</td><td>Ein auf einen CC gelernter Section-Start ging beim Laden des Songs verloren; gelernte Noten blieben erhalten. Jetzt bleibt auch der CC.</td></tr>
+  <tr><td>USB-MIDI vom Computer</td><td>v15</td><td>Kam MIDI schneller als einmal pro Millisekunde (dichte Automation aus der DAW, SysEx, Dateizugriff über USB), gingen Pakete verloren. Jetzt wartet der Computer, bis der Deluge bereit ist.</td></tr>
+  <tr><td>Kartenzugriffe</td><td>v14</td><td>Bei jeder Übertragung von und zur SD-Karte konnte ein gleichzeitiger Schreibzugriff direkt neben dem Puffer verloren gehen. Dieser Fehler stammt aus 1.2.1.</td></tr>
+  <tr><td>Dateizugriff über USB</td><td>v14</td><td>In seltenen Fällen konnten falsche Bytes in einer kopierten Datei landen (§8.7).</td></tr>
+</table>
+<p class="small">Die drei Korrekturen von v15 stammen aus der aktuellen Community-Firmware.</p>
