@@ -8,6 +8,7 @@
 #   gen_presets.py: the presets in ../../presets/SYNTHS, saved by the firmware itself
 #   render_demo.py: the presets on a held A major chord, 4 bars at 120 BPM (../../presets/demo)
 #   pettra.py: PETTRA ARP (the Pettra arp, sound and arp) and its demo, 8 bars at 138 BPM
+#   pingpong.py: the ping-pong ball between two plates, computed and played as a clip (demo/PETTRA PINGPONG BALL.wav)
 # Needs: python3 with unicorn 2 and numpy, a C compiler (for blockcount.c).
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -23,3 +24,4 @@ BLOCKCOUNT_DIR="$OUT" python3 "$HERE/edge_test.py" "$ELF"
 BLOCKCOUNT_DIR="$OUT" python3 "$HERE/gen_presets.py" "$ELF" "$OUT/presets"
 BLOCKCOUNT_DIR="$OUT" python3 "$HERE/render_demo.py" "$ELF" "$OUT/demo"
 BLOCKCOUNT_DIR="$OUT" python3 "$HERE/pettra.py" "$ELF" "$OUT/pettra"
+BLOCKCOUNT_DIR="$OUT" python3 "$HERE/pingpong.py" "$ELF" "$OUT/pingpong"

@@ -54,3 +54,22 @@ Both excerpts, kick grid from the kick's attack (±10 ms), constant-Q spectrogra
 - **Not separable from the mix:** single notes or chords per pluck, the note order between the figures.
 
 The preset `mastertune-1.2.1/presets/SYNTHS/PETTRA ARP.XML` is built from this (see `mastertune-1.2.1/presets/README.md`).
+
+# The ping-pong model (2026-09-28, evening)
+
+The picture: a ping-pong ball between two plates that move towards each other and then apart again.
+
+**The maths.** The ball flies at constant speed. G(t) is the time it needs to cross the gap at time t. The plates close in at speed s_a and part at speed s_p (in units of the ball's speed), closest at the meeting points:
+- G(t) = min(g_min + s_p · (t − previous meeting), g_min + s_a · (next meeting − t)).
+- The ball arrives where the plate is at that moment: after a hit at t_n, the next is at t_{n+1} = t_n + G(t_{n+1}).
+- Solved for the gaps: while the plates close in, each gap is 1/(1 + s_a) of the one before, a geometric series into the meeting point (the same series as the arp's Roll). While they part, each gap is 1/(1 − s_p) times the one before.
+
+**Does it fit the song?** HPSS (harmonic part), SuperFlux onsets above 600 Hz, gaps between plucks measured on both excerpts:
+- **Closing in:** the gaps shrink by ×0.5 to ×0.85 per hit (median about ×0.7) down to 30–50 ms, for example 194, 99, 78, 41, 35 ms. That gives s_a ≈ 0.45.
+- **The tightest point** lies on a beat almost every time; the kick sits on it.
+- **Parting:** mostly a jump of ×4 to ×7 right after the tightest hit (35 → 154, 29 → 192 ms), so the plates part fast: s_p ≈ 0.75. Once (0:56.52) gradually, ×1.4–1.6.
+- **Between the meetings** only a few slow hits (150–400 ms).
+- **Accent:** the tightest hit is a median 3 dB louder than the first of the approach (8 clean cases, noisy in the mix).
+- **Not certain:** the meeting points come at irregular distances (1 to 5 beats), and some onsets on the beat are the kick's attack rather than a pluck.
+
+**The render:** `mastertune-1.2.1/tests/arp/pingpong.py` with s_a = 0.45, s_p = 0.75, g_min = 38 ms, meetings every 2 beats on beats 2 and 4, played by the firmware (emulated) with the PETTRA ARP voice as a clip: `mastertune-1.2.1/presets/demo/PETTRA PINGPONG BALL.wav`. Measured in the render: gaps 161, 109, 77, 55, 50 ms into the meeting, then 212 and 226 ms; the level rises about 14 dB and the brightness from 2.3 to 3.5–4.9 kHz towards the last hits.

@@ -6,6 +6,7 @@ Three synth presets for the ratchet bounce of the arpeggiator, from **v13** on. 
 |---|---|---|
 | `SYNTHS/PETTRA ARP.XML` | **The arp of Pettra "You Are The Seeds"**, sound and arp: a bright, detuned saw pluck on 1/8, random notes over 2 octaves, and now and then (about once a bar) the song's figure: 3 equally loud hits into the next step, each gap ×0.7. | `demo/PETTRA ARP.wav` (138 BPM, A major held, 8 bars) |
 | `SYNTHS/PETTRA PINGPONG.XML` | Only the figure, on every step: 3 equally loud hits in one eighth, each gap ×0.7. | `demo/PETTRA PINGPONG.wav` |
+| (no preset yet) | **The ping-pong ball between two plates** that close in slowly and part fast: computed (`tests/arp/pingpong.py`) and played as notes in a clip with the PETTRA ARP voice. Per 2 beats 5-6 hits: one long flight after the plates meet, then ever faster (x0.69 per hit) into the next meeting on beats 2 and 4, the last hits about 14 dB louder and brighter. The arp can't do this yet: its bounce either accelerates or slows down. | `demo/PETTRA PINGPONG BALL.wav` (138 BPM, 8 bars) |
 | `SYNTHS/PINGPONG ROLL.XML` | A ping-pong ball between two paddles that close in. Per ratchet 16 hits over 4 eighths, ever faster and louder, up to the next hit. | `demo/PINGPONG ROLL.wav` |
 
 The audio examples are rendered with the real firmware in the emulator: PETTRA ARP at 138 BPM on A4 C#5 E5 as at 0:55 in the song, the other two at 120 BPM on A major.
