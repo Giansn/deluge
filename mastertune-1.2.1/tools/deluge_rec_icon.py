@@ -2,9 +2,8 @@
 """Draws DelugeRec's icon: the Deluge's rain of squares in the colours of a level meter (green, yellow, red from the
 bottom up) and a red recording dot. Writes deluge_rec.ico (16 to 256 pixels) and prints ICON_PNG for deluge_rec.py.
 With --baseline DelugeBaseline's: the meter without red, its top two rows grey above a gold line (the baseline), no
-dot; deluge_baseline.ico and ICON_PNG for deluge_baseline.py. With --tuner DelugeTuner's: the squares in a tuner's
-colours (green in the middle, in tune, then yellow, red at the sides) and a wave in the empty corner at the top right,
-where DelugeRec has its dot; deluge_tuner.ico and ICON_PNG for deluge_tuner.py.
+dot; deluge_baseline.ico and ICON_PNG for deluge_baseline.py. With --tuner DelugeTuner's: DelugeRec's meter with a
+wave in the empty corner at the top right instead of its dot; deluge_tuner.ico and ICON_PNG for deluge_tuner.py.
 
 Usage:  python3 deluge_rec_icon.py [FOLDER] [--baseline | --tuner]   (default: next to this file; --preview writes
         preview.png)
@@ -36,12 +35,6 @@ def colour(row, baseline=False):
     return (GREY if baseline else RED) if row < 2 else YELLOW if row < 5 else GREEN
 
 
-def tuner_colour(col):
-    """A tuner's scale from the middle out: green (in tune), yellow, red at the sides."""
-    d = abs(col - COLS // 2)
-    return GREEN if d <= 1 else YELLOW if d <= 3 else RED
-
-
 def draw(size, ss=8, baseline=False, tuner=False):
     """The icon as RGBA, size x size. Shapes are drawn ss times larger and averaged down (smooth edges)."""
     n = size * ss
@@ -63,11 +56,10 @@ def draw(size, ss=8, baseline=False, tuner=False):
     off = (pitch - side) // 2  # Whole pixels: sharp edges
     for r, c in SQUARES:
         sx, sy = x0 + c * pitch + off, y0 + r * pitch + off
-        fill((x >= sx) & (x < sx + side) & (y >= sy) & (y < sy + side),
-             tuner_colour(c) if tuner else colour(r, baseline))
+        fill((x >= sx) & (x < sx + side) & (y >= sy) & (y < sy + side), colour(r, baseline))
     if tuner:  # A wave in the empty corner at the top right, where DelugeRec has its dot: one period of a sine, "~"
-        wx0, wx1, cy, amp = x0 + 7.5 * pitch, x0 + 10.7 * pitch, y0 + 1.1 * pitch, 0.8 * pitch
-        half = max(0.5, pitch * 0.28)  # Half the line's width
+        wx0, wx1, cy, amp = x0 + 7.5 * pitch, x0 + 10.8 * pitch, y0 + 1.1 * pitch, 0.85 * pitch
+        half = max(0.5, pitch * 0.36)  # Half the line's width: as strong as DelugeRec's dot
         box = (x > wx0 - half - 1) & (x < wx1 + half + 1) & (abs(y - cy) < amp + half + 1)
         bx, by, d2 = x[box], y[box], np.inf
         for u in np.linspace(0, 1, 240):  # The line: the points within half its width of the curve
