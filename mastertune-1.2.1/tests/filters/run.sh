@@ -52,6 +52,8 @@ filterDefs() {
   grep -q kFadeSamples "$1/deluge/dsp/filter/filter_set.h" && d="$d -DFILTERSET_FADES"
   grep -q noiseLastValue "$1/deluge/dsp/filter/lpladder.h" && d="$d -DLPF_CUTOFF_NOISE"
   grep -q kFadeInSamples "$1/deluge/dsp/filter/filter.h" && d="$d -DFILTER_FADE_IN"
+  grep -q feedbackFromMoveability "$1/deluge/dsp/filter/lpladder.h" && d="$d -DLPF_RAMP_HORNER"
+  grep -q "doubled()" "$1/deluge/dsp/filter/lpladder.h" && d="$d -DLPF_RAMP_PAIRS"
   echo "$d"
 }
 DEFS=$(filterDefs "$D")

@@ -63,7 +63,10 @@ Coefs coefsOf(const LpLadderFilter::Coefficients& c) {
 // The sets of a ramp from a to b over n samples, as the firmware steps them (lpladder.cpp renderLoop()): the knots
 // from Filter::rampKnots() (b moving from a's configuration), within each piece knot + k * steps (truncated). PIECES=0
 // in the environment: one straight line over the block (v18 before the pieces)
-std::vector<Coefs> rampSets(const LpLadderFilter& a, const LpLadderFilter& b, int n, int* piecesOut) {
+// positions (if given): for each sample, the sample whose own set it takes (itself, or with the sets stepped per pair
+// the pair's second)
+std::vector<Coefs> rampSets(const LpLadderFilter& a, const LpLadderFilter& b, int n, int* piecesOut,
+                            std::vector<int>* positions = nullptr) {
 	LpLadderFilter f = b;
 	f.lastParams_ = a.params_;
 	LpLadderFilter::Knot<LpLadderFilter::Coefficients> knots[LpLadderFilter::kMaxKnots];
@@ -91,9 +94,40 @@ std::vector<Coefs> rampSets(const LpLadderFilter& a, const LpLadderFilter& b, in
 	                             [&](int begin, int end, const LpLadderFilter::Coefficients& start,
 	                                 const LpLadderFilter::Coefficients& d) {
 		                             auto now = start;
+		                             int taken = begin; // the sample whose set now is
 		                             for (int k = begin; k < end; k++) {
+#ifdef LPF_RAMP_PAIRS
+			                             // renderChannelRamp(): an odd count's first sample alone, then per pair of
+			                             // samples two steps, both samples the pair's second set
+			                             const int odd = (end - begin) & 1, j = k - begin;
+			                             if (odd && j == 0) {
+				                             now.step(d);
+				                             taken += 1;
+			                             }
+			                             else if (((j - odd) & 1) == 0) {
+				                             now.step(d);
+				                             now.step(d);
+				                             taken += 2;
+			                             }
+#else
 			                             now.step(d);
-			                             sets.push_back(coefsOf(now));
+			                             taken += 1;
+#endif
+			                             if (positions) {
+				                             positions->push_back(taken);
+			                             }
+			                             Coefs c = coefsOf(now);
+#ifdef LPF_RAMP_HORNER
+			                             // The 24 dB ladder's ramp loop takes its feedbacks from the moving moveability
+			                             // and divideBy1PlusTannedFrequency (feedbackFromMoveability()), as setConfig()
+			                             // makes them: lpf3 = d m, lpf2 = 2 lpf3 m, lpf1 = 2 lpf2 m (Q31 products)
+			                             if (b.lpfMode != FilterMode::TRANSISTOR_12DB) {
+				                             c.c3 = c.d1 * c.m / P32;
+				                             c.c2 = c.c3 * c.m / P32 * 2;
+				                             c.c1 = c.c2 * c.m / P32 * 2;
+			                             }
+#endif
+			                             sets.push_back(c);
 		                             }
 	                             });
 	if ((int)sets.size() != n) {
@@ -360,14 +394,16 @@ int ramp() {
 		bool unstable = false; // a mid-ramp set unstable where the real ladder at its moveability is stable
 		bool linear = a.processedResonance <= 510000000 && b.processedResonance <= 510000000;
 		int pieces = 0;
-		const std::vector<Coefs> sets = rampSets(a, b, kBlock, &pieces);
+		std::vector<int> positions;
+		const std::vector<Coefs> sets = rampSets(a, b, kBlock, &pieces, &positions);
 		for (int k = 1; k <= kBlock; k++) {
 			const Coefs& mid = sets[k - 1];
+			const int at = positions[k - 1]; // where on the ramp this set is (k, or with pairs the pair's second)
 			StateSpace sm = probe(twelve, mid);
 			double rm = radius(sm);
 			rad = std::max(rad, rm);
 			// The real ladder at this moveability, the resonance where the ramp has got to by now
-			const int32_t r = (int32_t)(rA + ((int64_t)rB - rA) * k / kBlock);
+			const int32_t r = (int32_t)(rA + ((int64_t)rB - rA) * at / kBlock);
 			LpLadderFilter ref = configuredAtMoveability(mode, mid.m, r);
 			StateSpace sr = probe(twelve, coefsOf(ref));
 			unstable |= rm >= 1 && radius(sr) < 1;

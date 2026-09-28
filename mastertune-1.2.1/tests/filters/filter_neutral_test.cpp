@@ -41,6 +41,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <type_traits>
 #include <vector>
 
 namespace AudioEngine {
@@ -891,6 +892,45 @@ int glide() {
 #endif
 } // namespace
 
+#ifdef LPF_RAMP_HORNER
+// The ladders' ladderTanH<amount>() (ladder_components.h, v18: fewer instructions) against getTanHUnknown(): the same
+// for every amount the ladders use, over the edges and 2^20 inputs spread over the whole range
+int tanhExact() {
+	int bad = 0;
+	auto check = [&](auto amountTag, int32_t x) {
+		constexpr uint32_t a = decltype(amountTag)::value;
+		if (ladderTanH<a>(x) != getTanHUnknown(x, a)) {
+			if (bad++ < 5) {
+				printf("tanh: amount %u input %d: %d instead of %d\n", a, x, ladderTanH<a>(x), getTanHUnknown(x, a));
+			}
+		}
+		// With the scaling shift in front merged (lpladder.cpp scaleInput(): amounts 2 and 3)
+		if constexpr (a <= 3) {
+			if (ladderTanH<a, 2>(x) != getTanHUnknown(lshiftAndSaturate<2>(x), a)) {
+				if (bad++ < 5) {
+					printf("tanh: amount %u pre 2 input %d: %d instead of %d\n", a, x, ladderTanH<a, 2>(x),
+					       getTanHUnknown(lshiftAndSaturate<2>(x), a));
+				}
+			}
+		}
+	};
+	uint32_t r = 12345;
+	for (int i = 0; i < (1 << 20) + 6; i++) {
+		int32_t x = i == 0 ? INT32_MIN : i == 1 ? INT32_MAX : i == 2 ? 0 : i == 3 ? -1 : i == 4 ? 1 : (int32_t)(r = r * 1664525u + 1013904223u);
+		if (i > 5 && (i & 1)) {
+			x >>= (r >> 27); // small inputs too
+		}
+		check(std::integral_constant<uint32_t, 2>{}, x);
+		check(std::integral_constant<uint32_t, 3>{}, x);
+		check(std::integral_constant<uint32_t, 4>{}, x);
+		check(std::integral_constant<uint32_t, 7>{}, x);
+	}
+	printf("tanh: ladderTanH() %s getTanHUnknown() (amounts 2, 3, 4, 7, and 2, 3 after lshiftAndSaturate<2>; %d inputs)\n", bad ? "DIFFERS from" : "= ",
+	       (1 << 20) + 6);
+	return bad ? 1 : 0;
+}
+#endif
+
 int main(int argc, char** argv) {
 	// argv[1]: only that part (static, zipper, clicks); argv[2] "verbose" or VERBOSE in the environment (on the PC)
 	verbose = getenv("VERBOSE") != nullptr || (argc > 2 && !strcmp(argv[2], "verbose"));
@@ -922,6 +962,11 @@ int main(int argc, char** argv) {
 #ifdef FILTER_PARAM_GLIDE
 	if (!only || !strcmp(only, "glide")) {
 		failures += glide();
+	}
+#endif
+#ifdef LPF_RAMP_HORNER
+	if (!only || !strcmp(only, "tanh")) {
+		failures += tanhExact();
 	}
 #endif
 	if (failures) {
