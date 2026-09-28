@@ -73,3 +73,5 @@ The picture: a ping-pong ball between two plates that move towards each other an
 - **Not certain:** the meeting points come at irregular distances (1 to 5 beats), and some onsets on the beat are the kick's attack rather than a pluck.
 
 **The render:** `mastertune-1.2.1/tests/arp/pingpong.py` with s_a = 0.45, s_p = 0.75, g_min = 38 ms, meetings every 2 beats on beats 2 and 4, played by the firmware (emulated) with the PETTRA ARP voice as a clip: `mastertune-1.2.1/presets/demo/PETTRA PINGPONG BALL.wav`. Measured in the render: gaps 161, 109, 77, 55, 50 ms into the meeting, then 212 and 226 ms; the level rises about 14 dB and the brightness from 2.3 to 3.5–4.9 kHz towards the last hits.
+
+**Later the same evening** (`METHODS.md`, `analyse.py`): the fast gaps sit on a geometric ladder with the factor 1.50 (rungs 34, 51, 77, 115, 173 ms; Rayleigh p = 2·10⁻⁵, a metric grid p = 0.4), so ×0.67 per hit. The plucks are mostly single notes, above all A. `PETTRA PINGPONG BALL B.wav` uses both: s_a = 0.5, g_min = 34 ms, mostly A5.

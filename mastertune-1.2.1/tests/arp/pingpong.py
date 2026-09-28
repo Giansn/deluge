@@ -13,7 +13,11 @@ jump of x4-7 right after the tightest hit (35 -> 154 ms): s_a = 0.45 (x0.69), s_
 6 hits: one long gap after the meeting, then 5 ever faster into the next one. The hits are louder and brighter the
 tighter the gap (the ball hits harder when the plates close in), the last before the meeting the loudest and longest.
 
-Usage: pingpong.py <deluge.elf> <out dir> [s_a] [s_p] [g_min in ms]   (BLOCKCOUNT_DIR: where blockcount.so is)"""
+Pitches: "plates" (default) alternates a low and a high A major note per hit, one per plate; "ratchet" plays A5 on
+four hits of five and B5, C#6 or E5 on the others, as the song's plucks are mostly single A notes (METHODS.md).
+
+Usage: pingpong.py <deluge.elf> <out dir> [s_a] [s_p] [g_min in ms] [plates|ratchet]
+(BLOCKCOUNT_DIR: where blockcount.so is)"""
 import os
 import random
 import sys
@@ -78,14 +82,17 @@ def velocities(times, s_a, s_p, g_min):
     return np.clip(np.round(out), 1, 127).astype(int)
 
 
-def clip_rows(times, vels, bars):
+def clip_rows(times, vels, bars, mode="plates"):
     rng = random.Random(7)
     rows = {}
     ticks = np.round(times / TICK).astype(int)
     for i, (tk, v) in enumerate(zip(ticks, vels)):
         nxt = ticks[i + 1] if i + 1 < len(ticks) else tk + 24
         length = max(1, min(int((nxt - tk) * 0.6), 22 if v < 120 else 28))   # short; the hardest hits ring longer
-        pitch = rng.choice(LOW if i % 2 == 0 else HIGH)      # the ball alternates between the plates
+        if mode == "ratchet":
+            pitch = 81 if rng.random() < 0.8 else rng.choice([83, 85, 76])
+        else:
+            pitch = rng.choice(LOW if i % 2 == 0 else HIGH)  # the ball alternates between the plates
         if tk < bars * make_sd.BAR:
             rows.setdefault(pitch, []).append((int(tk), length, int(v)))
     return [("y", p, notes, None) for p, notes in sorted(rows.items())]
@@ -112,11 +119,12 @@ def main():
     s_a = float(sys.argv[3]) if len(sys.argv) > 3 else 0.45
     s_p = float(sys.argv[4]) if len(sys.argv) > 4 else 0.75
     g_min = float(sys.argv[5]) / 1000 if len(sys.argv) > 5 else 0.038
+    mode = sys.argv[6] if len(sys.argv) > 6 else "plates"
     os.makedirs(out_dir, exist_ok=True)
     bars = 4
     times = hits(bars * 4 * BEAT, s_a, s_p, g_min)
     vels = velocities(times, s_a, s_p, g_min)
-    rows = clip_rows(times, vels, bars)
+    rows = clip_rows(times, vels, bars, mode)
     gaps = np.diff(times) * 1000
     print(f"closing in x{1 / (1 + s_a):.2f} per hit, parting x{1 / (1 - s_p):.1f}; {len(times)} hits in {bars} bars")
     print("gaps (ms):", " ".join(f"{x:.0f}" for x in gaps[:20]))
@@ -137,7 +145,7 @@ def main():
     x = np.concatenate([w[4] for w in record])
     peak = np.abs(x).max()
     x = x / max(peak, 1e-9) * 0.7
-    path = os.path.join(out_dir, "PETTRA PINGPONG BALL.wav")
+    path = os.path.join(out_dir, "PETTRA PINGPONG BALL.wav" if mode == "plates" else "PETTRA PINGPONG BALL B.wav")
     with wave.open(path, "wb") as f:
         f.setnchannels(2)
         f.setsampwidth(2)
