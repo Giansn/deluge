@@ -473,18 +473,19 @@ def selftest(out):
 # its pixel font, pads (the progress, then the files by what happened to them), round buttons with their LEDs in boxes,
 # boxes to tick, the gold knob for the tuning, a language switch (German, English).
 
-# The window's icon, 64 x 64: the Deluge's rain of squares in a tuner's colours, a wave in the corner at the top right
-# (deluge_rec_icon.py --tuner draws it, and deluge_tuner.ico for the .exe)
-ICON_PNG = ("iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAACu0lEQVR42u2bz0sbQRTH908wBoOaaPyxhGiyJmjFg7kIhUKlpRQKPQaE"
-            "QqFU8SSKt0BugufSIhQKgiAILRbakwdB8dBSyKX0Vuwt0KuH57zJzjq7RuNmzWZn9y18L8vu5r3PzvvOyzKjaXc4JieLJaYq0xHTORME"
-            "VOdmjBhrSfN6sIeUmWoBTriVMPZyO4nrTMfywyYmCqDrWUinx2FoaDSQwtgwRozVAQJz0TUXw70ubs5k8pBMDkMsFoeenl4lhLFizBi7"
-            "BKHesizM5C/ETUhVpcSbgcAcJAgXN0Iwh31dDPf+/qSyiTuFuUhlUW9aDnLNhyl5GYLsCc3c3hr2YUteyFEOZRlATRieyjV/F0+QjLEm"
-            "Gx8/ic4Z1uSFMEdpFJQ0s2viJhHmty+PAskQq5rZOvIGIuzJC2GuJoAjTfT22EW5eQgYhk2tri/8fmuTm98afPQUjL3vUDw8AX2jCrF4"
-            "nycAmKv476C16/5+AUg9eQEPfvyF2V//LOXe73mCIM8GgQbQlzVg5vQPTzr/6QvoaxULwtjyevgB5D8e8GSL386gN5Vu1C8rATyHoyIx"
-            "PWe7Hq/Jbn+AdPl15wE49f/nlE1egcTHMtbbHny4eOXiiQEofD7m543dr7ZSyFS2G8CYVygPgNf/s5dc19ra+YWrUljdbMzvj59b50aW"
-            "3oQDwK1TmVkKqOzWO8srcjv7/nhAtwHg0MfZQJ4dsDSwdDoCwK3p+QEEIYy8WuEgcIYQRhkZAL5OgwQg6gD8boTcAiQABIAA+AvAz4AD"
-            "aYIEgAAQAE9AummKBIAAEAD/G6H7bpS8/D4BIAAEIPgfRd0+zw0QAkAACED3GyHlP4oSAAJAADra6Cj3UZQAKAygrWVyKgNwLpOL/ELJ"
-            "yC+VjfZi6cgvl6cNE7RlhjZN0bY52jhJW2dp83Rkt89fAoDCmTMvk6kFAAAAAElFTkSuQmCC")
+# The window's icon, 64 x 64: DelugeRec's, the Deluge's rain of squares as a level meter, with a wave in the corner at
+# the top right instead of its dot (deluge_rec_icon.py --tuner draws it, and deluge_tuner.ico for the .exe)
+ICON_PNG = ("iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAC1klEQVR42u2bwWsTQRTG909ouiakxjYYk5ik2W5oKgpND4InvfUoCMGD"
+            "4EXBo6DgKeChp54qgngQhUJBUBAsSHNooSgohRyUggept4DXHp7zlp3p7BpJk+wks7sv8B0y2V3e99uZbyYwYxin+FQqtQZTi6nNdMQE"
+            "murIrRFrbRijfthDmkwdjQ33E9beHMZ4nmlXfli5bEM+X4Js9gLMzp7XUlgb1oi1+kCgl7wxQHfv8puLxSpkMnOQSJgwNTUdCmGtWDPW"
+            "LkHo9h0WrvljfhNSDZPxXiDQgwTh+L8Q3G7f5d09nc6E1rhf6EUaFt2ew0Ee81EyL0OQM6FX2otuHzXzXL7h0JQBdHjghXnMnyYTpGDs"
+            "yMHnNGJyRtU8F3qUekHDcFdNTkhE+e3LvUAKxJbhLh2dBYS2RZtJyFxfhWzzLqQWL4/8PPTqAmgbfG2Pq6hBHgKW5VHQ13OZuSJYm9tw"
+            "6eC3o6WvvyB3/+FIANAr/+9gDJv+4wCAb95680GYlzV3604gs4HWAHIPHgnD9f1DKK+/9HxPVmvRBZCy605354YxA7C9svFatM2/2PLc"
+            "Mz1zDuy3bVj68lNcrwyAaiDYxbnR0toz0X6mUIb63veToXDztvit8PipaL/YWg83AJMF1fzzTUemL6BxNhBDgcFIliw4e+2Gp8ekl6+G"
+            "G0A/VV+9F2ZrHz87mcC/F56sqc+ASQPAt764c/DP7LCw9QkSqZngAfz5tuBRvwJVX8+D0n63exKKOFzYukHJLKAjAL5WSF9ZcWAonQZ1"
+            "BTC2dUDsAUQJCAEgAAQg+IXQOEOMABAAAqAfAL/sH/c8GvT3Ua8nAASAAKgFEGRB4wZCAAgAAQg+BIM2oBIIASAABGDyCyHVoUoACAAB"
+            "mCwAnYEQAALgBTDUNrkwA/Bvk9N+o2TQ8m+UjP1W2Xhvlo79dnk6MEFHZujQFB2bo4OTdHSWDk/H9vj8X9h9pLKP6Q0cAAAAAElFTkSu"
+            "QmCC")
 
 # DelugeRec's 5 x 7 pixel font (7 rows of 5 pixels), with the German letters and a few signs more
 FONT = {

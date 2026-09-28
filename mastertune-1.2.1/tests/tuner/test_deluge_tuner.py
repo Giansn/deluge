@@ -120,8 +120,8 @@ class Destination(unittest.TestCase):
             self.assertTrue(dt.inside("e:\\NEW\\deeper", "E:\\"))
             self.assertFalse(dt.inside("F:\\new", "E:\\"))
             self.assertFalse(dt.inside("E:\\cards2", "E:\\cards"))
-        # retune_library's check of --out: in the card at the root, or containing it, refused
-        args = rl.parser().parse_args(["--card", "/", "--out", str(self.base / "x")])
+        # retune_library's check of --out: in a card at the root of its drive (C:\\ or /) refused
+        args = rl.parser().parse_args(["--card", self.base.anchor, "--out", str(self.base / "x")])
         self.assertEqual(rl.check_args(args), "--out must be outside the card's folder (and not contain it)")
         args = rl.parser().parse_args(["--card", self.card, "--out", str(self.base / "card2")])
         self.assertIsNone(rl.check_args(args))
