@@ -42,7 +42,8 @@ renamed when complete, and RETUNE_PROGRESS.jsonl in NEW_CARD lists the files fin
 continues: it keeps those, removes the temporary files, converts the rest and then writes all songs, kits and synths
 (they are always written last). At the end of a run the progress file is removed.
 
-It never writes into the card folder. Usage (Windows: py instead of python3):
+It never writes into the card folder. DelugeTuner (deluge_tuner.py, DelugeTuner-vN.exe for Windows) is this tool in a
+window: convert() does the same run, with its progress and a stop. Usage (Windows: py instead of python3):
   python3 retune_library.py --card CARD_COPY --out NEW_CARD --tuning 432 [--rate 44100] [--dry-run] [--jobs N]
                             [--no-float] [--max-memory 4G] [--resume]
   --rate 0 keeps each file's sample rate. The report goes to the console and, unless --dry-run, to
@@ -888,9 +889,12 @@ def unique_name(rel, taken):
     return candidate
 
 
-def plan(args, log):
+def plan(args, log, step=None):
+    """What to do with every file of the card: (files, xmls, plans, jobs, warnings). step(done, total, what): how far
+    it is, what: "xml" (the songs, kits and synths read) or "audio" (the audio files' headers)."""
     card = args.card
     files = card_files(card)
+    step = step or (lambda done, total, what: None)
     by_key = {path_key(f): f for f in files}
     taken = set(by_key)
     warnings, xml_errors = [], []
@@ -898,24 +902,24 @@ def plan(args, log):
     # XML references: one file at a time, kept are only its references and positions (a card can hold hundreds of MB
     # of XML), its size and checksum (read_xml() reads it again for writing)
     xmls, all_refs = {}, []
-    for rel in files:
-        top = rel.split("/")[0].upper()
-        if top in XML_FOLDERS and rel.lower().endswith(".xml"):
-            with open(os.path.join(card, rel), "rb") as fh:
-                raw = fh.read()
-            size, crc = len(raw), zlib.crc32(raw)
-            text = raw.decode("utf-8", errors="surrogateescape")
-            del raw
-            try:
-                root = parse_xml(text)
-            except ValueError as e:
-                paths = set(re.findall(r"[\"'>]([^\"'<>]+\.(?:wav|aif|aiff))[\"'<]", text, re.I))
-                xml_errors.append((rel, str(e), paths))
-                continue
-            refs, others = refs_in_xml(rel, root, warnings)
-            del root, text
-            xmls[rel] = dict(refs=refs, others=others, size=size, crc=crc)
-            all_refs += refs
+    xml_files = [rel for rel in files if rel.split("/")[0].upper() in XML_FOLDERS and rel.lower().endswith(".xml")]
+    for i, rel in enumerate(xml_files):
+        step(i, len(xml_files), "xml")
+        with open(os.path.join(card, rel), "rb") as fh:
+            raw = fh.read()
+        size, crc = len(raw), zlib.crc32(raw)
+        text = raw.decode("utf-8", errors="surrogateescape")
+        del raw
+        try:
+            root = parse_xml(text)
+        except ValueError as e:
+            paths = set(re.findall(r"[\"'>]([^\"'<>]+\.(?:wav|aif|aiff))[\"'<]", text, re.I))
+            xml_errors.append((rel, str(e), paths))
+            continue
+        refs, others = refs_in_xml(rel, root, warnings)
+        del root, text
+        xmls[rel] = dict(refs=refs, others=others, size=size, crc=crc)
+        all_refs += refs
 
     plans = {}
 
@@ -951,7 +955,8 @@ def plan(args, log):
 
     target, rate = args.tenths, args.rate
     jobs = []
-    for key in sorted(plans):
+    for i, key in enumerate(sorted(plans)):
+        step(i, len(plans), "audio")
         p = plans[key]
         if key not in by_key:
             p.action = p.category = "missing"
@@ -1249,15 +1254,24 @@ class Limiter:
         del self.running[index]
 
 
-def run_jobs(todo, args, done):
+class Stopped(Exception):
+    """Stopped on request (stop() in run_jobs() and convert()): the files finished are kept, --resume continues."""
+
+
+def to_console(text):
+    print(text, flush=True)
+
+
+def run_jobs(todo, args, done, echo=to_console, stop=None):
     """Converts the jobs (the largest first), as many at once as the Limiter lets; done(job, result) as each ends.
-    Returns the Limiter (what it chose, what ran)."""
+    echo(text): what it has to say (the console). stop(): True stops it, the jobs running are finished first, then
+    Stopped is raised. Returns the Limiter (what it chose, what ran)."""
     limiter = Limiter(todo, args)
-    print(limiter.describe(), flush=True)
+    echo(limiter.describe())
     if not todo:
         return limiter
     order = sorted(todo, key=lambda j: (-limiter.need[j["index"]], -j["frames"], j["index"]))
-    print(f"converting {len(todo)} files with {limiter.workers} process(es) ...", flush=True)
+    echo(f"converting {len(todo)} files with {limiter.workers} process(es) ...")
     count = 0
 
     def finished(job, result):
@@ -1265,14 +1279,19 @@ def run_jobs(todo, args, done):
         done(job, result)
         count += 1
         if not args.quiet and (count % 50 == 0 or count == len(todo)):
-            print(f"  {count}/{len(todo)}", flush=True)
+            echo(f"  {count}/{len(todo)}")
 
     def failed(job, e):
         return RuntimeError(f"{job['rel']} -> {job['out_rel']}: {e} (the files finished so far are kept: --resume "
                             f"continues)")
 
+    def stopped():
+        return Stopped(f"stopped after {count} of {len(todo)} files (they are kept: --resume continues)")
+
     if limiter.workers == 1:
         for j in order:
+            if stop is not None and stop():
+                raise stopped()
             limiter.start(j)
             try:
                 result = convert_job(j)[1]
@@ -1285,10 +1304,14 @@ def run_jobs(todo, args, done):
     with concurrent.futures.ProcessPoolExecutor(limiter.workers) as pool:
         running, pending = {}, list(reversed(order))
         while pending or running:
+            if pending and stop is not None and stop():
+                pending = []  # No new job: the ones running are finished (and kept)
             while pending and limiter.fits(pending[-1]):
                 j = pending.pop()
                 limiter.start(j)
                 running[pool.submit(convert_job, j)] = j["index"]
+            if not running:
+                break
             ready, _ = concurrent.futures.wait(running, return_when=concurrent.futures.FIRST_COMPLETED)
             for fut in ready:
                 index = running.pop(fut)
@@ -1299,6 +1322,8 @@ def run_jobs(todo, args, done):
                     for other in running:
                         other.cancel()
                     raise failed(by_index[index], e) from e
+    if count < len(todo):
+        raise stopped()
     return limiter
 
 
@@ -1404,7 +1429,7 @@ def human(n):
         n /= 1024
 
 
-def main():
+def parser():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter,
                                  epilog="Needs: pip install numpy soxr (and pylibrb for audio clips and time-stretched "
@@ -1432,102 +1457,121 @@ def main():
                          "are kept, the rest converted, then all songs, kits and synths written")
     ap.add_argument("--block", type=int, default=BLOCK, help=argparse.SUPPRESS)  # Frames per block (tests)
     ap.add_argument("--quiet", action="store_true", help="only the summary and the warnings on the console")
-    args = ap.parse_args()
+    return ap
+
+
+def check_args(args):
+    """What is wrong with the options, as the command line says it, or None. Sets args.tenths (the tuning in tenths
+    of Hz) and makes the folders absolute."""
     args.tenths = int(round(args.tuning * 10))
     if abs(args.tenths - args.tuning * 10) > 1e-6 or not is_valid_tuning(args.tenths):
-        ap.error("--tuning: 415.3 to 466.2 Hz in steps of 0.1 Hz, as the firmware's menu")
+        return "--tuning: 415.3 to 466.2 Hz in steps of 0.1 Hz, as the firmware's menu"
     if args.rate and not 5000 <= args.rate <= 96000:
-        ap.error("--rate: 5000 to 96000 (or 0)")
+        return "--rate: 5000 to 96000 (or 0)"
     if args.jobs < 1 or args.block < 1:
-        ap.error("--jobs (and --block): at least 1")
+        return "--jobs (and --block): at least 1"
     args.card = os.path.abspath(args.card)
     if not os.path.isdir(args.card):
-        ap.error(f"--card: {args.card} is not a folder")
+        return f"--card: {args.card} is not a folder"
     if not args.dry_run:
         if not args.out:
-            ap.error("--out is needed (or --dry-run)")
+            return "--out is needed (or --dry-run)"
         args.out = os.path.abspath(args.out)
-        c, o = os.path.normcase(args.card) + os.sep, os.path.normcase(args.out) + os.sep
+        # With a separator at the end, once: a drive's root (E:\, the SD card itself) ends with one already
+        c, o = (os.path.join(os.path.normcase(p), "") for p in (args.card, args.out))
         if o.startswith(c) or c.startswith(o):
-            ap.error("--out must be outside the card's folder (and not contain it)")
+            return "--out must be outside the card's folder (and not contain it)"
         if os.path.exists(args.out) and (not os.path.isdir(args.out) or os.listdir(args.out)):
             if not args.resume or not os.path.isdir(args.out):
-                ap.error(f"--out: {args.out} exists and is not empty (--resume continues an interrupted run in it)")
+                return f"--out: {args.out} exists and is not empty (--resume continues an interrupted run in it)"
             header = read_progress_header(os.path.join(args.out, PROGRESS))
             if header is None:
-                ap.error(f"--resume: {args.out} has no {PROGRESS}: that run is complete, or was made by an older "
-                         f"version of this tool (its files can't be trusted); convert into a new, empty folder")
+                return (f"--resume: {args.out} has no {PROGRESS}: that run is complete, or was made by an older "
+                        f"version of this tool (its files can't be trusted); convert into a new, empty folder")
             if header != progress_header(args):
-                ap.error(f"--resume: {args.out} was started with other options ({header}); use the same --tuning, "
-                         f"--rate and --no-float, or a new, empty folder")
+                return (f"--resume: {args.out} was started with other options ({header}); use the same --tuning, "
+                        f"--rate and --no-float, or a new, empty folder")
     elif args.out:
         args.out = os.path.abspath(args.out)
-    if soxr is None:
-        sys.exit("needs soxr: pip install soxr (and numpy)")
+    return None
 
+
+def convert(args, echo=to_console, step=None, stop=None):
+    """The conversion, or with --dry-run its report only; args as check_args() leaves them. echo(text): what it has
+    to say, the report's lines among it (the console). step(done, total, what): how far it is, what: "xml" and
+    "audio" (the card read), "convert" (the audio files), "copy" (the other files copied, the XML written). stop():
+    True stops it between two files: Stopped is raised, the files finished are kept, --resume continues. Returns
+    what it did: dict(lines (the report), counts (files per category), written, size_old, size_new, xml, values,
+    as_float, quieter (the files), warnings, files, seconds, report (RETUNE_REPORT.txt, None in a dry run))."""
+    step = step or (lambda done, total, what: None)
     lines = []
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(errors="backslashreplace")
-        except (AttributeError, ValueError):
-            pass
 
     def log(s="", console=True):
         s = readable(s)
         lines.append(s)
         if console:
-            print(s, flush=True)
+            echo(s)
 
     t0 = time.time()
-    files, xmls, plans, jobs, warnings = plan(args, log)
+    files, xmls, plans, jobs, warnings = plan(args, log, step)
     edits = xml_edits(xmls, warnings)
 
     # Converting: the audio first, then the other files and the XML (so that an interrupted run leaves no XML that
     # points at audio not yet converted)
     results = {}
     if args.dry_run:
-        print(Limiter(jobs, args).describe().replace("memory:", "memory (if converting):"), flush=True)
+        echo(Limiter(jobs, args).describe().replace("memory:", "memory (if converting):"))
     else:
         os.makedirs(args.out, exist_ok=True)
         progress = Progress(args)
-        todo = []
-        for j in jobs:
-            j["key"] = job_key(j)
-            r = progress.result(j)
-            if r is None:
-                todo.append(j)
-            else:
-                results[j["index"]] = r
-        if args.resume:
-            print(f"resume: {len(jobs) - len(todo)} of {len(jobs)} files were converted before, "
-                  f"{progress.removed} unfinished file(s) removed", flush=True)
+        try:
+            todo = []
+            for j in jobs:
+                j["key"] = job_key(j)
+                r = progress.result(j)
+                if r is None:
+                    todo.append(j)
+                else:
+                    results[j["index"]] = r
+            if args.resume:
+                echo(f"resume: {len(jobs) - len(todo)} of {len(jobs)} files were converted before, "
+                     f"{progress.removed} unfinished file(s) removed")
 
-        def done(job, result):
-            results[job["index"]] = result
-            progress.add(job, result)
+            def done(job, result):
+                results[job["index"]] = result
+                progress.add(job, result)
+                step(len(results), len(jobs), "convert")
 
-        limiter = run_jobs(todo, args, done)
-        if todo:
-            print(f"memory: at most {limiter.most_jobs} job(s) ran at once, estimated {human(limiter.most_memory)} of "
-                  f"{human(limiter.budget)}", flush=True)
-        # Everything else: copied, the XML edited
-        # An original is copied unless all its outputs are converted files (under its name or, an AIFF, as WAV)
-        not_copied = set()
-        for p in plans.values():
-            if p.outputs and all(o.convert or o.rel.lower() != p.rel.lower() for o in p.outputs.values()):
-                not_copied.add(p.rel.lower())
-            for o in p.outputs.values():
-                if not o.convert and o.rel.lower() != p.rel.lower():  # The original under a second name
-                    copy_file(os.path.join(args.card, p.rel), os.path.join(args.out, o.rel), args.resume)
-        for rel in files:
-            if rel.lower() in not_copied:
-                continue
-            dst = os.path.join(args.out, rel)
-            if rel in edits and edits[rel][0]:
-                data = apply_edits(read_xml(args.card, rel, xmls[rel]), edits[rel][0])
-                write_file(dst, data.encode("utf-8", errors="surrogateescape"))
-            else:
-                copy_file(os.path.join(args.card, rel), dst, args.resume)
+            step(len(results), len(jobs), "convert")
+            limiter = run_jobs(todo, args, done, echo, stop)
+            if todo:
+                echo(f"memory: at most {limiter.most_jobs} job(s) ran at once, estimated {human(limiter.most_memory)} "
+                     f"of {human(limiter.budget)}")
+            # Everything else: copied, the XML edited
+            # An original is copied unless all its outputs are converted files (under its name or, an AIFF, as WAV)
+            not_copied = set()
+            for p in plans.values():
+                if p.outputs and all(o.convert or o.rel.lower() != p.rel.lower() for o in p.outputs.values()):
+                    not_copied.add(p.rel.lower())
+                for o in p.outputs.values():
+                    if not o.convert and o.rel.lower() != p.rel.lower():  # The original under a second name
+                        copy_file(os.path.join(args.card, p.rel), os.path.join(args.out, o.rel), args.resume)
+            for i, rel in enumerate(files):
+                if stop is not None and stop():
+                    raise Stopped(f"stopped while copying: the {len(jobs)} audio files are converted, {i} of the "
+                                  f"card's {len(files)} files gone through (--resume continues)")
+                step(i, len(files), "copy")
+                if rel.lower() in not_copied:
+                    continue
+                dst = os.path.join(args.out, rel)
+                if rel in edits and edits[rel][0]:
+                    data = apply_edits(read_xml(args.card, rel, xmls[rel]), edits[rel][0])
+                    write_file(dst, data.encode("utf-8", errors="surrogateescape"))
+                else:
+                    copy_file(os.path.join(args.card, rel), dst, args.resume)
+        except BaseException:
+            progress.fh.close()  # Kept: --resume continues
+            raise
     for j in jobs:
         warnings += results.get(j["index"], {}).get("warnings", [])
 
@@ -1580,9 +1624,11 @@ def main():
     log("Summary:")
     for k, v in sorted(counts.items(), key=lambda kv: -kv[1]):
         log(f"  {v:6d}  {k}")
+    seconds = time.time() - t0
+    n_xml = sum(1 for e in edits.values() if e[0])
     log(f"  {len(jobs)} files written ({human(size_old)} -> {human(size_new)}), "
-        f"{sum(1 for e in edits.values() if e[0])} XML files with {n_edits} values changed, "
-        f"{len(files)} files on the card; {time.time() - t0:.1f} s")
+        f"{n_xml} XML files with {n_edits} values changed, "
+        f"{len(files)} files on the card; {seconds:.1f} s")
     def fmt_name(info):
         return f"{info.bits}-bit {'float' if info.float else 'PCM'}"
 
@@ -1616,9 +1662,10 @@ def main():
                     gain_db=None if r["gain_db"] is None else round(r["gain_db"], 3),
                     gain=None if r["gain_db"] is None else r["gain"])
 
+    report_path = None
     if not args.dry_run:
-        with open(os.path.join(args.out, "RETUNE_REPORT.txt"), "w", encoding="utf-8",
-                  errors="backslashreplace") as fh:
+        report_path = os.path.join(args.out, "RETUNE_REPORT.txt")
+        with open(report_path, "w", encoding="utf-8", errors="backslashreplace") as fh:
             fh.write("\n".join(lines) + "\n")
         report = dict(
             tuning=args.tenths, rate=args.rate, warnings=[readable(w) for w in warnings],
@@ -1635,7 +1682,26 @@ def main():
         with open(os.path.join(args.out, "RETUNE_REPORT.json"), "w", encoding="utf-8") as fh:
             json.dump(report, fh, indent=1)
         progress.close()  # Complete: nothing left to resume
-        print(f"\nreport: {os.path.join(args.out, 'RETUNE_REPORT.txt')}")
+        echo(f"\nreport: {report_path}")
+    return dict(lines=lines, counts=counts, written=len(jobs), size_old=size_old, size_new=size_new, xml=n_xml,
+                values=n_edits, as_float=[rel for rel, _, _ in as_float], quieter=[rel for rel, _, _ in quieter],
+                warnings=[readable(w) for w in warnings], files=len(files), seconds=seconds, report=report_path)
+
+
+def main():
+    ap = parser()
+    args = ap.parse_args()
+    error = check_args(args)
+    if error:
+        ap.error(error)
+    if soxr is None:
+        sys.exit("needs soxr: pip install soxr (and numpy)")
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError):
+            pass
+    convert(args)
 
 
 if __name__ == "__main__":

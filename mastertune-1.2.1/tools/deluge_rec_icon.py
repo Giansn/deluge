@@ -2,9 +2,12 @@
 """Draws DelugeRec's icon: the Deluge's rain of squares in the colours of a level meter (green, yellow, red from the
 bottom up) and a red recording dot. Writes deluge_rec.ico (16 to 256 pixels) and prints ICON_PNG for deluge_rec.py.
 With --baseline DelugeBaseline's: the meter without red, its top two rows grey above a gold line (the baseline), no
-dot; deluge_baseline.ico and ICON_PNG for deluge_baseline.py.
+dot; deluge_baseline.ico and ICON_PNG for deluge_baseline.py. With --tuner DelugeTuner's: the squares in a tuner's
+colours (green in the middle, in tune, then yellow, red at the sides) and a wave in the empty corner at the top right,
+where DelugeRec has its dot; deluge_tuner.ico and ICON_PNG for deluge_tuner.py.
 
-Usage:  python3 deluge_rec_icon.py [FOLDER] [--baseline]   (default: next to this file; --preview writes preview.png)
+Usage:  python3 deluge_rec_icon.py [FOLDER] [--baseline | --tuner]   (default: next to this file; --preview writes
+        preview.png)
 Needs only numpy.
 """
 import base64
@@ -21,6 +24,7 @@ SQUARES = [(0, 1), (0, 4), (1, 2), (1, 5), (2, 0), (2, 3), (2, 6), (3, 1), (3, 4
 ROWS, COLS = 10, 11
 GREEN, YELLOW, RED = (47, 220, 110), (242, 210, 46), (255, 45, 45)  # The pads' colours in deluge_rec.py
 GREY, GOLD = (70, 70, 78), (217, 179, 90)  # DelugeBaseline: above the line, and the line (the gold knobs' colour)
+WAVE = (53, 212, 232)  # DelugeTuner's wave: the colour of its UMSTIMMEN button (CYAN in deluge_tuner.py)
 RING, INSIDE, DOT_RING = (42, 42, 48), (16, 16, 18), (90, 16, 16)
 # Per size: the grid's pitch and the side of a square, in pixels (whole pixels keep the small sizes sharp)
 LAYOUT = {16: (1, 1), 24: (2, 2), 32: (2, 2), 48: (3, 3), 64: (4, 4), 128: (9, 8), 256: (18, 17)}
@@ -32,7 +36,13 @@ def colour(row, baseline=False):
     return (GREY if baseline else RED) if row < 2 else YELLOW if row < 5 else GREEN
 
 
-def draw(size, ss=8, baseline=False):
+def tuner_colour(col):
+    """A tuner's scale from the middle out: green (in tune), yellow, red at the sides."""
+    d = abs(col - COLS // 2)
+    return GREEN if d <= 1 else YELLOW if d <= 3 else RED
+
+
+def draw(size, ss=8, baseline=False, tuner=False):
     """The icon as RGBA, size x size. Shapes are drawn ss times larger and averaged down (smooth edges)."""
     n = size * ss
     y, x = (np.mgrid[0:n, 0:n] + 0.5) / ss  # Pixel centres, in pixels of the icon
@@ -53,8 +63,18 @@ def draw(size, ss=8, baseline=False):
     off = (pitch - side) // 2  # Whole pixels: sharp edges
     for r, c in SQUARES:
         sx, sy = x0 + c * pitch + off, y0 + r * pitch + off
-        fill((x >= sx) & (x < sx + side) & (y >= sy) & (y < sy + side), colour(r, baseline))
-    if baseline:  # The line right above the third row (the grey ones pass behind it), over the width of the rain
+        fill((x >= sx) & (x < sx + side) & (y >= sy) & (y < sy + side),
+             tuner_colour(c) if tuner else colour(r, baseline))
+    if tuner:  # A wave in the empty corner at the top right, where DelugeRec has its dot: one period of a sine, "~"
+        wx0, wx1, cy, amp = x0 + 7.5 * pitch, x0 + 10.7 * pitch, y0 + 1.1 * pitch, 0.8 * pitch
+        half = max(0.5, pitch * 0.28)  # Half the line's width
+        box = (x > wx0 - half - 1) & (x < wx1 + half + 1) & (abs(y - cy) < amp + half + 1)
+        bx, by, d2 = x[box], y[box], np.inf
+        for u in np.linspace(0, 1, 240):  # The line: the points within half its width of the curve
+            d2 = np.minimum(d2, (bx - wx0 - (wx1 - wx0) * u) ** 2 + (by - cy + amp * np.sin(2 * np.pi * u)) ** 2)
+        box[box] = d2 <= half ** 2
+        fill(box, WAVE)
+    elif baseline:  # The line right above the third row (the grey ones pass behind it), over the width of the rain
         bottom, th = y0 + 2 * pitch + off, max(1.0, round(pitch * 0.45))
         fill((x >= x0 - pitch * 0.3) & (x < x0 + (COLS + 0.3) * pitch) & (y >= bottom - th) & (y < bottom), GOLD)
     else:  # The recording dot in the empty corner at the top right, as on a Deluge with REC lit
@@ -92,12 +112,12 @@ def ico(images):
 
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    baseline = "--baseline" in sys.argv
+    baseline, tuner = "--baseline" in sys.argv, "--tuner" in sys.argv
     folder = Path(args[0]) if args else Path(__file__).resolve().parent
-    images = {size: draw(size, baseline=baseline) for size in LAYOUT}
-    (folder / ("deluge_baseline.ico" if baseline else "deluge_rec.ico")).write_bytes(
+    images = {size: draw(size, baseline=baseline, tuner=tuner) for size in LAYOUT}
+    (folder / ("deluge_tuner.ico" if tuner else "deluge_baseline.ico" if baseline else "deluge_rec.ico")).write_bytes(
         ico([(s, png(im)) for s, im in images.items()]))
-    b64 = base64.b64encode(png(images[64])).decode()  # For deluge_rec.py or deluge_baseline.py, in its layout
+    b64 = base64.b64encode(png(images[64])).decode()  # For deluge_rec.py, deluge_baseline.py or deluge_tuner.py
     print("ICON_PNG = (" + "\n            ".join(f'"{b64[i:i + 104]}"' for i in range(0, len(b64), 104)) + ")")
     if "--preview" in sys.argv:  # Every size four times as large, on the app's panel colour
         sheet = np.zeros((256 * 4 + 8, sum(s * 4 + 8 for s in LAYOUT) + 8, 3), np.uint8)

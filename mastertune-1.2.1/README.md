@@ -739,6 +739,18 @@ python3 tools/retune_library.py --card KOPIE_DER_KARTE --out NEUE_KARTE     # St
 python3 tools/retune_library.py --card KOPIE_DER_KARTE --out NEUE_KARTE --resume   # nach einem Abbruch weiter
 ```
 
+**Als Fenster unter Windows: DelugeTuner.** Dasselbe Werkzeug gibt es als `DelugeTuner-vN.exe`, im Release [`deluge-tuner`](https://github.com/Giansn/deluge/releases/tag/deluge-tuner). Nichts ist zu installieren, Rubber Band ist dabei. Gebaut wird die Datei aus `tools/deluge_tuner.py` von `.github/workflows/deluge-tuner-windows.yml`, als Skript läuft sie überall mit `python3 tools/deluge_tuner.py`. Das Fenster hat den Retro-Look von DelugeRec und ist auf Deutsch oder Englisch (Schalter im Fenster):
+- **KARTE:** die SD-Karte selbst oder eine Kopie davon. Sie wird nur gelesen.
+- **ZIEL:** ein Ordner auf dem Computer für die neue Karte. Ist er leer, wird er die neue Karte. Sonst entsteht darin ein neuer Ordner «Deluge 432 Hz», bei Bedarf nummeriert. Ist der gewählte Ordner selbst eine Karte (etwa die zuletzt gemachte), kommt der neue Ordner daneben. Ein Ordner in der Karte wird abgelehnt.
+- **Goldener Knopf:** die Stimmung, 415,3 bis 466,2 Hz, zu Beginn 432 Hz. Ziehen, Mausrad oder + und − ändern sie um 1 Hz, mit Shift oder den Pfeiltasten links/rechts um 0,1 Hz. Ein Klick auf die Zahl lässt sie eintippen.
+- **Kästchen:** 44,1 kHz oder die Rate jeder Datei behalten; Spitzen über 0 dBFS als 32-Bit-Float oder etwas leiser (`--no-float`).
+- **LESEN** zeigt nur, was es tun würde (`--dry-run`). **UMSTIMMEN** schreibt die neue Karte. Das Display und die Pads zeigen den Fortschritt, danach die Zusammenfassung; die Pads zeigen dann die Dateien nach Ergebnis.
+- **Anhalten und Fortsetzen:** ESC oder das Schliessen des Fensters hält an, sobald die laufenden Dateien fertig sind. START mit derselben Karte, demselben Ziel und denselben Einstellungen setzt fort (`--resume`).
+- **Platz:** Vorher prüft es den freien Platz am Ziel (etwa 5 % mehr als die Karte).
+- **BERICHT** öffnet `RETUNE_REPORT.txt`. Der Bericht ist wie beim Skript englisch.
+
+Danach die neue Karte auf eine leere SD-Karte kopieren und am Deluge dieselbe Master-Stimmung einstellen. Tests: `tests/tuner/run.sh`.
+
 **Was es tut:**
 - **Samples umrechnen:** Jedes Sample wird im exakten Verhältnis umgerechnet (440/432 = 55/54, soxr). Ein 440-Hz-Ton misst danach 432,00 Hz, die Abweichung liegt unter 0,002 Cent. Die Dauer wächst um 55/54.
 - **Abtastrate:** 48- und 96-kHz-Dateien bringt es im selben Durchgang auf 44,1 kHz. Die rechnet der Deluge sonst immer um.
