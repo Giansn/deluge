@@ -44,8 +44,8 @@ Erledigt: der Bericht zu v16, l2d, der Song für den Emulator, der Retune-Test u
 4. **OLED und Song-Übersicht:**
    - **Helligkeit:** Settings → OLED brightness, Stufen 1–10. Jeder Dreh wirkt sofort, die Stufe gilt nach dem Neustart weiter. Ist Stufe 1 noch lesbar?
    - **Gruppen:** «New Sitar Grii», «New Sitar Grii 2» und «… 10» erscheinen als eine Gruppe. «TR-808» oder «Jam 2026-09-27» bleiben eigene Songs.
-5. **DelugeRec mit Songnamen** (die neuste Version im Release https://github.com/Giansn/deluge/releases/tag/deluge-rec, ab v6):
-   - USB audio an, einen Song laden, aufnehmen. Die Datei muss «Songname, Datum - 1.2.1 v18.WAV» heissen (DelugeRec v6 kürzt v18.2 noch auf v18).
+5. **DelugeRec mit Songnamen** (die neuste Version im Release https://github.com/Giansn/deluge/releases/tag/deluge-rec, ab v7):
+   - USB audio an, einen Song laden, aufnehmen. Die Datei muss «Songname, Datum - 1.2.1 v18.2.WAV» heissen (ab DelugeRec v7; v6 kürzte auf v18).
    - Einen anderen Song laden und wieder aufnehmen. Der neue Name muss erscheinen.
    - Das kann nur das Gerät prüfen, im Emulator läuft kein USB.
 6. **Die Bibliothek `deluge topics` auf 432 Hz umwandeln, neu mit der Version, die den Laptop nicht mehr einfriert** (`tools/retune_library.py`, Stand ab Commit `868d85f`, also zuerst `git pull`):
