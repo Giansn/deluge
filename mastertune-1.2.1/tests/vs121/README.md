@@ -41,5 +41,5 @@ The emulator counts instructions; 1 instruction per cycle at 400 MHz unless an I
 - **The IPC on the device is unknown.** For the Sitar song the tipping point lies between 0.7 and 0.8.
 - **The audio is not bit-identical:** v18.3 changes filters and saturation. Voices and RMS match.
 - **1.2.1's time share is elastic:** its blocks of about 10 samples fill any idle time, so its share says little at low load.
-- **The minimum window of v17 is often off:** it only applies at cpuDireness 0. In the 3-synth song every chord change raises the direness to 14, and it takes about 1.75 s to come down, so the window is off about 90% of the time. A candidate for a later version.
+- **The minimum window of v17 is often off:** it only applies at cpuDireness 0. In the 3-synth song every chord change raises the direness to 14, and it takes about 1.75 s to come down, so the window is off in 95–99% of the renders. A candidate for a later version.
 - **Left out:** a streaming song (`tests/sdload`), an estimate with SDRAM rows, 432 Hz, UI and MIDI load. Runs were not repeated, except the 3-synth task-manager run (spread 92–95%).

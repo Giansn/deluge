@@ -47,8 +47,8 @@
 | | |
 |---|---|
 | ![DelugeRec recording](screenshots/deluge_rec.png) | **DelugeRec** ([download v7](https://github.com/Giansn/deluge/releases/download/deluge-rec-v7/DelugeRec-v7.exe)): records the Deluge's USB audio with a monitor on the headphones. Each take is named after the song, the date and the firmware. |
-| ![DelugeTuner having read a card](screenshots/deluge_tuner.png) | **DelugeTuner** ([download v1](https://github.com/Giansn/deluge/releases/download/deluge-tuner-v1/DelugeTuner-v1.exe)): retunes a card's sample library once to the master tune. The samples then play as they are instead of being resampled in every voice. |
-| ![DelugeBaseline having read a card](screenshots/deluge_baseline.png) | **DelugeBaseline** ([download v3](https://github.com/Giansn/deluge/releases/download/deluge-baseline-v3/DelugeBaseline-v3.exe)): checks the levels of all songs on a card and evens them out, with a backup. |
+| ![DelugeTuner having read a card](screenshots/deluge_tuner.png) | **DelugeTuner** ([download v2](https://github.com/Giansn/deluge/releases/download/deluge-tuner-v2/DelugeTuner-v2.exe)): retunes a card's sample library once to the master tune. The samples then play as they are instead of being resampled in every voice. |
+| ![DelugeBaseline having read a card](screenshots/deluge_baseline.png) | **DelugeBaseline** ([download v4](https://github.com/Giansn/deluge/releases/download/deluge-baseline-v4/DelugeBaseline-v4.exe)): checks the levels of all songs on a card and evens them out, with a backup. |
 
 The newest version of each tool is always in its release: [deluge-rec](https://github.com/Giansn/deluge/releases/tag/deluge-rec), [deluge-tuner](https://github.com/Giansn/deluge/releases/tag/deluge-tuner), [deluge-baseline](https://github.com/Giansn/deluge/releases/tag/deluge-baseline). As Python scripts they are in `tools/`.
 
@@ -851,7 +851,7 @@ python3 tools/retune_library.py --card CARD_COPY --out NEW_CARD       # default:
 python3 tools/retune_library.py --card CARD_COPY --out NEW_CARD --resume   # continue after an interruption
 ```
 
-**As a window on Windows: DelugeTuner.** The same tool exists as `DelugeTuner-vN.exe`, in the release [`deluge-tuner`](https://github.com/Giansn/deluge/releases/tag/deluge-tuner). Nothing to install; Rubber Band is included. The file is built from `tools/deluge_tuner.py` by `.github/workflows/deluge-tuner-windows.yml`; as a script it runs anywhere with `python3 tools/deluge_tuner.py`. The window has DelugeRec's retro look and is in German or English (switch in the window):
+**As a window on Windows: DelugeTuner.** The same tool exists as `DelugeTuner-vN.exe`, in the release [`deluge-tuner`](https://github.com/Giansn/deluge/releases/tag/deluge-tuner). Nothing to install; Rubber Band is included. The file is built from `tools/deluge_tuner.py` by `.github/workflows/deluge-tuner-windows.yml`; as a script it runs anywhere with `python3 tools/deluge_tuner.py`. The window has DelugeRec's retro look. It starts in the computer's language, German on a German Windows and English otherwise (from v2), and has a switch for both:
 - **CARD:** the SD card itself or a copy of it. It is only read.
 - **OUTPUT:** a folder on the computer for the new card. If it is empty, it becomes the new card. Otherwise a new folder "Deluge 432 Hz" is created inside it, numbered if needed. If the chosen folder is itself a card (such as the last one made), the new folder goes next to it. A folder inside the card is rejected.
 - **Gold knob:** the tuning, 415.3 to 466.2 Hz, 432 Hz at the start. Dragging, the mouse wheel or + and − change it by 1 Hz, with Shift or the left/right arrow keys by 0.1 Hz. A click on the number lets you type it in.
