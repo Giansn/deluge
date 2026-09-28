@@ -575,19 +575,34 @@ def song_files(paths, card=None):
     return found
 
 
-def report(files):
-    cards, rows, sections, with_notes = {}, [], [], 0
-    for path, root in files:
+def check_all(files, progress=None):
+    """Every song checked: dicts with name, path, settings (None if unreadable), notes, error."""
+    cards, results = {}, []
+    for i, (path, root) in enumerate(files):
+        if progress:
+            progress(i, len(files))
         name = os.path.splitext(os.path.basename(path))[0]
         card = cards.setdefault(root, Card(root))
         try:
             with open(path, "rb") as fh:
                 settings, notes = check_song(parse_xml(fh.read().decode("utf-8", "surrogateescape")), card)
+            results.append({"name": name, "path": path, "settings": settings, "notes": notes, "error": None})
         except (OSError, ValueError) as e:
+            results.append({"name": name, "path": path, "settings": None, "notes": [], "error": str(e)})
+    return results
+
+
+def report(files, results=None):
+    results = check_all(files) if results is None else results
+    rows, sections, with_notes = [], [], 0
+    for r in results:
+        name = r["name"]
+        if r["error"] is not None:
             rows.append(f"| {name} | - | - | - | - | nicht lesbar |")
-            sections.append(f"## {name}\n\nNicht lesbar: {e}\n")
+            sections.append(f"## {name}\n\nNicht lesbar: {r['error']}\n")
             with_notes += 1
             continue
+        settings, notes = r["settings"], r["notes"]
         s, c, g, v = settings["song"], settings["compressor"], settings["group"], settings["sound"]
         rows.append(f"| {name} | {'-' if s is None else round(knob(s))} | "
                     f"{'an' if c is not None and c > 0 else 'aus'} | {'-' if g is None else round(knob(g))} | "
@@ -595,7 +610,8 @@ def report(files):
         if notes:
             with_notes += 1
             sections.append(f"## {name}\n\n" + "\n".join("- " + n for n in notes) + "\n")
-    head = (f"# Baseline-Prüfung: {len(files)} {'Song' if len(files) == 1 else 'Songs'}, {with_notes} mit Hinweisen\n\n"
+    n = len(results)
+    head = (f"# Baseline-Prüfung: {n} {'Song' if n == 1 else 'Songs'}, {with_notes} mit Hinweisen\n\n"
             "Grenzen (Baseline Master, 27.09.2026): Song, Kit und Audio-Spur höchstens 35, Synth und Kit-Reihe höchstens "
             "40, lauter nur mit leisem Sample: «wirkt wie» ist der Regler, den ein voll ausgesteuertes Sample für "
             "denselben Pegel bräuchte (Regler mal 10^(Spitze/40)), höchstens 40. Master-Kompressor aus. Mit "

@@ -46,10 +46,12 @@ import json
 import math
 import os
 import queue
+import re
 import shutil
 import sys
 import tempfile
 import threading
+import time
 import unicodedata
 from pathlib import Path
 
@@ -309,8 +311,8 @@ def plan_levels(root):
             changed += 1
         if edit.lines:
             plan.sections.append((rel, edit.lines))
-    plan.summary.append(f"{len(songs)} Songs gelesen, {changed} zu ändern" + (f", {unreadable} nicht lesbar"
-                                                                               if unreadable else ""))
+    plan.summary.append(f"{len(songs)} {'Song' if len(songs) == 1 else 'Songs'} gelesen, {changed} zu ändern"
+                        + (f", {unreadable} nicht lesbar" if unreadable else ""))
     plan.summary.append("Nicht angefasst: SATURATION, Kompressoren der Spuren, Analog-Delay und Filter. Das ist Klang, "
                         "kein Pegel. «Prüfen» listet sie.")
     return plan
@@ -797,7 +799,8 @@ def demo_card(root):
     (root / "KITS").mkdir(exist_ok=True)
     (root / "KITS" / "Drums.XML").write_text(
         '<?xml version="1.0" encoding="UTF-8"?>\n<kit><soundSources>'
-        '<sound name="Tick" mode="subtractive"><osc1 type="sample" fileName="SAMPLES/quiet.wav" /><osc2 type="square" />'
+        '<sound name="Tick" mode="subtractive"><osc1 type="sample" fileName="SAMPLES/quiet.wav" />'
+        '<osc2 type="square" />'
         '<defaultParams volume="0x4CCCCCA8" oscAVolume="0x7FFFFFFF" oscBVolume="0x80000000" /></sound>'
         '</soundSources></kit>\n', encoding="utf-8")
     return root
@@ -805,6 +808,16 @@ def demo_card(root):
 
 # --------------------------------------------------------------------------------------------------------------------
 # Self-test (for the build: runs every function on a demo card, and opens and closes the window)
+
+
+def settle(root, app, seconds=30.0):
+    """The window's work done, its threads too (the self-test and the tests)."""
+    end = time.monotonic() + seconds
+    while app.working and time.monotonic() < end:
+        root.update()
+        time.sleep(0.01)
+    root.update()
+    assert not app.working, "the window's work didn't end"
 
 
 def selftest(out):
@@ -848,12 +861,21 @@ def selftest(out):
             text = bc.report(bc.song_files([str(card)]))
             assert "Master-Kompressor an" in text, text
 
-        def window():
+        def window():  # Its buttons pressed: check, then levels shown and written
             import tkinter as tk
+            fresh = demo_card(Path(tmp) / "window")
             root = tk.Tk()
-            App(root, None, card=str(card))
-            root.update()
-            root.destroy()
+            try:
+                app = App(root, None, card=str(fresh))
+                for key, title in (("check", "1 SONG, 1 MIT HINWEISEN"), ("levels", "Pegel: 1 DATEI"),
+                                   ("levels", "GESCHRIEBEN")):
+                    app.press(key)
+                    settle(root, app)
+                    assert app.list and app.list["title"] == title, app.list
+                assert [s["status"] for s in app.songs] == ["ok"], app.songs
+                assert "| Demo | 35 | aus | 35 | 50 | ok |" in bc.report(bc.song_files([str(fresh)]))
+            finally:
+                root.destroy()
 
         for name, fn in (("check", check), ("levels", levels), ("normalize", normalize), ("restore", restore),
                          ("window", window)):
@@ -863,11 +885,16 @@ def selftest(out):
 
 
 # --------------------------------------------------------------------------------------------------------------------
-# The window
+# The window: DelugeRec's look (deluge_rec.py), the Deluge's own. A panel in its proportions, the OLED with its pixel
+# font, pads (one per song), round buttons with their LEDs in boxes, the black SELECT knob and the gold one. Plain
+# Python: the window doesn't need numpy.
 
-PANEL, PLATE, EDGE, LABEL, SMALL, GOLD, OLED = "#0e0e10", "#18181b", "#26262b", "#d8d8de", "#8c8c96", "#d9b35a", \
-    "#07090d"
-# The window's icon, drawn by deluge_rec_icon.py --baseline (as deluge_baseline.ico for the .exe)
+PANEL, PLATE, EDGE, BEZEL, LABEL, SMALL = "#0e0e10", "#18181b", "#26262b", "#050506", "#d8d8de", "#8c8c96"
+BOX, BOX_EDGE = "#1d1d21", "#35353d"  # The box around each control
+OLED_ON, OLED_OFF = (226, 238, 255), (7, 9, 13)
+GREEN, AMBER, RED, CYAN, WHITE, BLUE = "#2fdc6e", "#ffae1c", "#ff2d2d", "#35d4e8", "#e8e8f0", "#3d8bff"
+# The window's icon, 64 x 64: the Deluge's rain of squares under a gold line (deluge_rec_icon.py --baseline draws it,
+# and deluge_baseline.ico for the .exe)
 ICON_PNG = ("iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAB20lEQVR42u2bwWrCQBCG9xG0vQhipTRIlVJ7LeTUg8c+QE95gr6GD9RH"
             "8OC9l1Do3WOgVw/bnbBbJiElJm5idvcX/osmYf7PmXGEHSFOeK1WT7HSVmmndFCSA9VBx0ixxuLcl3pIopQO2HCdKPakjfFIac8ftlyu"
             "ZRTdy/n8Ts5mt4MUxUYxUqwlEOQlEg3SPTM3LxYPcjq9kePxtRyNrpwQxUoxU+wMQlZbFtr80dxEVF0yXgWCPDAIx38h6LTPTLpPJlNn"
@@ -876,43 +903,123 @@ ICON_PNG = ("iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAB20lEQVR42u2bwWrCQBC
             "n4AAAAAAgP1RuM8mBgAAAADDA1DW+vu9oKafn3s9AAAAAHQLwGZAfQMBAAAAAPtN0LaBLoEAAAAAwOUHoa6bKgAAAABcFsCQgQAAABQB"
             "tDom5zKA8jG54A9KBn9UNuzD0sEfl8fCBFZmsDSFtTksTmJ1FsvTwa7P/wKH+aq0pxWiLQAAAABJRU5ErkJggg==")
 
+# DelugeRec's 5 x 7 pixel font (7 rows of 5 pixels), with the German letters and a few signs more
+FONT = {
+    "0": "01110 10001 10011 10101 11001 10001 01110", "1": "00100 01100 00100 00100 00100 00100 01110",
+    "2": "01110 10001 00001 00010 00100 01000 11111", "3": "11111 00010 00100 00010 00001 10001 01110",
+    "4": "00010 00110 01010 10010 11111 00010 00010", "5": "11111 10000 11110 00001 00001 10001 01110",
+    "6": "00110 01000 10000 11110 10001 10001 01110", "7": "11111 00001 00010 00100 01000 01000 01000",
+    "8": "01110 10001 10001 01110 10001 10001 01110", "9": "01110 10001 10001 01111 00001 00010 01100",
+    "A": "01110 10001 10001 11111 10001 10001 10001", "B": "11110 10001 10001 11110 10001 10001 11110",
+    "C": "01110 10001 10000 10000 10000 10001 01110", "D": "11100 10010 10001 10001 10001 10010 11100",
+    "E": "11111 10000 10000 11110 10000 10000 11111", "F": "11111 10000 10000 11110 10000 10000 10000",
+    "G": "01110 10001 10000 10111 10001 10001 01111", "H": "10001 10001 10001 11111 10001 10001 10001",
+    "I": "01110 00100 00100 00100 00100 00100 01110", "J": "00111 00010 00010 00010 00010 10010 01100",
+    "K": "10001 10010 10100 11000 10100 10010 10001", "L": "10000 10000 10000 10000 10000 10000 11111",
+    "M": "10001 11011 10101 10101 10001 10001 10001", "N": "10001 10001 11001 10101 10011 10001 10001",
+    "O": "01110 10001 10001 10001 10001 10001 01110", "P": "11110 10001 10001 11110 10000 10000 10000",
+    "Q": "01110 10001 10001 10001 10101 10010 01101", "R": "11110 10001 10001 11110 10100 10010 10001",
+    "S": "01111 10000 10000 01110 00001 00001 11110", "T": "11111 00100 00100 00100 00100 00100 00100",
+    "U": "10001 10001 10001 10001 10001 10001 01110", "V": "10001 10001 10001 10001 10001 01010 00100",
+    "W": "10001 10001 10001 10101 10101 10101 01010", "X": "10001 10001 01010 00100 01010 10001 10001",
+    "Y": "10001 10001 10001 01010 00100 00100 00100", "Z": "11111 00001 00010 00100 01000 10000 11111",
+    " ": "00000 00000 00000 00000 00000 00000 00000", ".": "00000 00000 00000 00000 00000 01100 01100",
+    ":": "00000 01100 01100 00000 01100 01100 00000", "-": "00000 00000 00000 11111 00000 00000 00000",
+    "_": "00000 00000 00000 00000 00000 00000 11111", "/": "00000 00001 00010 00100 01000 10000 00000",
+    "%": "11000 11001 00010 00100 01000 10011 00011", "+": "00000 00100 00100 11111 00100 00100 00000",
+    "(": "00010 00100 01000 01000 01000 00100 00010", ")": "01000 00100 00010 00010 00010 00100 01000",
+    "!": "00100 00100 00100 00100 00100 00000 00100", "?": "01110 10001 00001 00010 00100 00000 00100",
+    ",": "00000 00000 00000 00000 01100 00100 01000", "'": "01100 00100 01000 00000 00000 00000 00000",
+    ">": "01000 00100 00010 00001 00010 00100 01000", "<": "00010 00100 01000 10000 01000 00100 00010",
+    "=": "00000 00000 11111 00000 11111 00000 00000", "*": "00000 00100 10101 01110 10101 00100 00000",
+    "Ä": "01010 00000 01110 10001 11111 10001 10001", "Ö": "01010 00000 01110 10001 10001 10001 01110",
+    "Ü": "01010 00000 10001 10001 10001 10001 01110", "«": "00000 00101 01010 10100 01010 00101 00000",
+    "»": "00000 10100 01010 00101 01010 10100 00000", "#": "01010 01010 11111 01010 11111 01010 01010",
+    "[": "01110 01000 01000 01000 01000 01000 01110", "]": "01110 00010 00010 00010 00010 00010 01110",
+    "&": "01100 10010 10100 01000 10101 10010 01101", ";": "00000 01100 01100 00000 01100 00100 01000",
+    '"': "01010 01010 00000 00000 00000 00000 00000", "^": "00100 01010 10001 00000 00000 00000 00000",
+    "|": "00100 00100 00100 00100 00100 00100 00100", "\\": "00000 10000 01000 00100 00010 00001 00000",
+}
+_glyphs = {}
+
+
+def glyph(ch):
+    """A character's 7 rows of 5 pixels, 1 where it is lit."""
+    g = _glyphs.get(ch)
+    if g is None:
+        g = _glyphs[ch] = tuple(tuple(int(b) for b in row) for row in FONT[ch].split())
+    return g
+
+
+def oled_text(s):
+    """Text as the OLED can show it: upper case, a letter it lacks without its accent, else '?'."""
+    out = []
+    for ch in str(s).upper():
+        if ch not in FONT:
+            ch = unicodedata.normalize("NFKD", ch)[:1].upper()
+            ch = ch if ch in FONT else "?"
+        out.append(ch)
+    return "".join(out)
+
+
+class Oled:
+    """The Deluge's OLED as DelugeRec draws it: 128 x 48 pixels, each scale x scale on the screen (3 or more), with a
+    visible pixel grid and scanlines."""
+    W, H = 128, 48
+
+    def __init__(self, scale):
+        self.scale = s = scale
+        self.fb = [bytearray(self.W) for _ in range(self.H)]
+
+        def pixel(colour, shade):  # One pixel of a line on the screen: its last column darker (the grid)
+            return b"".join(bytes(int(c * shade * (0.8 if i == s - 1 else 1.0)) for c in colour) for i in range(s))
+        # (off, on) for the lines of a pixel, and for its last line, darker (the scanline)
+        self.line, self.scan = ((pixel(OLED_OFF, f), pixel(OLED_ON, f)) for f in (1.0, 0.45))
+        self.header = b"P6 %d %d 255\n" % (self.W * s, self.H * s)
+
+    def clear(self):
+        for row in self.fb:
+            row[:] = bytes(self.W)
+
+    @staticmethod
+    def width(s, size=1):
+        return len(oled_text(s)) * 6 * size - size
+
+    def text(self, x, y, s, size=1, invert=False):
+        for ch in oled_text(s):
+            for r, bits in enumerate(glyph(ch)):
+                for yy in range(y + r * size, y + (r + 1) * size):
+                    if not 0 <= yy < self.H:
+                        continue
+                    row = self.fb[yy]
+                    for col, bit in enumerate(bits):
+                        if bit or invert:
+                            for xx in range(max(x + col * size, 0), min(x + (col + 1) * size, self.W)):
+                                row[xx] = 1 - bit if invert else 1
+            x += 6 * size
+        return x
+
+    def rect(self, x, y, w, h, on=True):
+        x0, x1 = max(x, 0), min(x + w, self.W)
+        if x1 > x0:
+            fill = (b"\x01" if on else b"\x00") * (x1 - x0)
+            for yy in range(max(y, 0), min(y + h, self.H)):
+                self.fb[yy][x0:x1] = fill
+
+    def frame(self):
+        return b"".join(self.fb)
+
+    def ppm(self):
+        out = [self.header]
+        for row in self.fb:
+            out += [b"".join([self.line[v] for v in row])] * (self.scale - 1)
+            out.append(b"".join([self.scan[v] for v in row]))
+        return b"".join(out)
+
 
 def settings_path():
     base = os.environ.get("APPDATA") if sys.platform.startswith("win") else None
     return (Path(base) / "DelugeBaseline" if base else Path.home() / ".config" / "deluge_baseline") / "settings.json"
-
-
-def rendered(text):
-    """(line, tag) for the window: Markdown headings, tables with aligned columns, list items with a bullet."""
-    out, table = [], []
-
-    def flush():
-        if not table:
-            return
-        rows = [[c.strip() for c in line.strip().strip("|").split("|")] for line in table]
-        rows = [r for r in rows if not all(set(c) <= set("-: ") and c for c in r)]  # Without the separator row
-        widths = [max(len(r[i]) for r in rows if i < len(r)) for i in range(max(len(r) for r in rows))]
-        for n, r in enumerate(rows):
-            out.append(("  ".join(c.ljust(widths[i]) for i, c in enumerate(r)).rstrip(), "head" if n == 0 else "row"))
-        table.clear()
-
-    for line in text.splitlines():
-        if line.startswith("|"):
-            table.append(line)
-            continue
-        flush()
-        if line.startswith("## "):
-            out.append((line[3:], "h2"))
-        elif line.startswith("# "):
-            out.append((line[2:], "h1"))
-        elif line.startswith("- "):
-            out.append(("• " + line[2:], "item"))
-        elif line.startswith("  - "):
-            out.append(("    ◦ " + line[4:], "item"))
-        else:
-            out.append((line, None))
-    flush()
-    return out
 
 
 def find_card():
@@ -925,11 +1032,55 @@ def find_card():
     return ""
 
 
+def song_name(rel):
+    """A song's name from its path on the card: SONGS/sub/Name.XML -> sub/Name."""
+    rel = rel[6:] if rel.upper().startswith("SONGS/") else rel
+    return rel[:-4] if rel.upper().endswith(".XML") else rel
+
+
+def backup_name(name):
+    """A backup's folder name short enough for a line: 2026-09-28 07-18-35 Pegel -> 28.09.26 07:18 Pegel."""
+    m = re.match(r"\d\d(\d\d)-(\d\d)-(\d\d) (\d\d)-(\d\d)-\d\d (.*)", name)
+    return f"{m[3]}.{m[2]}.{m[1]} {m[4]}:{m[5]} {m[6]}" if m else name
+
+
+def check_items(results):
+    """The OLED's list after a check: per song a heading, then its notes. (text, heading, song index)"""
+    items = []
+    for i, r in enumerate(results):
+        if r["error"] is not None:
+            items += [(f"{r['name']}: NICHT LESBAR", True, i), (r["error"], False, i)]
+        elif r["notes"]:
+            n = len(r["notes"])
+            items.append((f"{r['name']}: {n} {'HINWEIS' if n == 1 else 'HINWEISE'}", True, i))
+            items += [(note, False, i) for note in r["notes"]]
+        else:
+            items.append((f"{r['name']}: OK", True, i))
+    return items
+
+
+def plan_items(plan, song_index):
+    """The OLED's list of a plan: its summary, then per section a heading and its lines."""
+    items = [(line, False, None) for line in plan.summary]
+    for heading, lines in plan.sections:
+        what, _, rel = heading.rpartition(": ")
+        song = song_index.get(rel_key(rel))
+        title = song_name(rel) if rel.upper().startswith("SONGS/") else rel
+        items.append((f"{what}: {title}" if what else title, True, song))
+        items += [(line, False, song) for line in lines]
+    return items
+
+
 class App:
-    def __init__(self, root, settings, card=None):
+    KEYS = (("check", GREEN, "PRÜFEN", "P"), ("levels", AMBER, "PEGEL", "L"), ("normalize", CYAN, "NORM", "N"),
+            ("restore", WHITE, "ZURÜCK", "Z"), ("menu", BLUE, "MENU", "M"))
+    ROWS, PADS = 4, 32  # Lines of a list on the OLED; pads (two rows of 16)
+    KEY_NAMES = {key: text for key, _, text, _ in KEYS}
+
+    def __init__(self, root, settings, card=None, z=1.0):
         import tkinter as tk
-        from tkinter import filedialog, messagebox
-        self.tk, self.filedialog, self.messagebox = tk, filedialog, messagebox
+        from tkinter import filedialog
+        self.filedialog = filedialog
         self.root, self.settings = root, settings
         saved = {}
         if settings:
@@ -937,145 +1088,537 @@ class App:
                 saved = json.loads(Path(settings).read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 saved = {}
-        root.title(f"DelugeBaseline v{VERSION}")
+        self.card = card or saved.get("card") or find_card()
+        self.mode = saved.get("mode") if saved.get("mode") in ("card", "folder") else "card"
+        self.out = saved.get("out", "")
+        try:
+            self.target = float(str(saved.get("target", -1.0)).replace(",", "."))
+        except ValueError:
+            self.target = -1.0
+        self.target = min(TARGETS, key=lambda t: abs(t - self.target))
+        self.compensate = bool(saved.get("compensate", True))
+        self.oled = Oled(max(3, round(3 * z)))
+        s = self.oled.scale / 3  # Everything follows the OLED's size
+        Z = self.Z = lambda v: int(round(v * s))  # noqa: E731
+        self.boot_until = time.monotonic() + 1.4
+        self.view = "home"  # home, list, menu, backups
+        self.list = None  # {"title", "items": [(text, heading, song)], "sel", "since"}
+        self.menu_sel, self.menu_since = 0, 0.0
+        self.backup_list = []
+        self.pending = None  # (key, plan): shown, waits for the second press
+        self.busy = self.running = None  # What runs, and on which button
+        self.working = 0  # Threads not done yet, the quiet ones too
+        self.progress = ""
+        self.message, self.message_since, self.message_until = "", 0.0, 0.0
+        self.songs = []  # [{"name", "rel", "status"}], status: None (not checked), ok, notes, error
+        self.song_index = {}  # rel key -> index
+        self.report_text = ""
+        self.jobs = queue.Queue()
+        self.select_angle = 0.0
+        self.drag = None
+        self.shown = {}  # What the LEDs, pads and OLED show: only a change is drawn
+        self.card_text = None
+
+        self.W, self.H = Z(572), Z(390)  # The Deluge's own proportions: 305 x 208 mm
+        root.title(f"DELUGE BASELINE v{VERSION}")
         self.icon = tk.PhotoImage(data=ICON_PNG)
         root.iconphoto(True, self.icon)
         root.configure(bg=PANEL)
-        root.minsize(760, 520)
-        self.card = tk.StringVar(value=card or saved.get("card") or find_card())
-        self.mode = tk.StringVar(value=saved.get("mode", "card"))
-        self.out = tk.StringVar(value=saved.get("out", ""))
-        self.target = tk.StringVar(value=saved.get("target", bc.num(-1.0)))
-        self.compensate = tk.BooleanVar(value=saved.get("compensate", True))
-        self.status = tk.StringVar(value="Karte wählen, dann «Prüfen».")
-        self.jobs = queue.Queue()
-        self.busy = False
-        font = ("Segoe UI", 10) if sys.platform.startswith("win") else ("TkDefaultFont", 10)
-        mono = ("Consolas", 10) if sys.platform.startswith("win") else ("Courier", 10)
+        root.resizable(False, False)
+        c = self.c = tk.Canvas(root, width=self.W, height=self.H, bg=PANEL, highlightthickness=0)
+        c.pack()
+        c.create_rectangle(Z(8), Z(8), self.W - Z(8), self.H - Z(8), fill=PLATE, outline=EDGE, width=Z(1))
+        self.label(Z(26), Z(16), "DELUGE", Z(3))
+        self.label(Z(26) + self.label_width("DELUGE", Z(3)) + Z(12), Z(23), "BASELINE", Z(2))
+        # The OLED in its bezel: a click chooses a line, a double click is SELECT pressed
+        self.ox, self.oy = ox, oy = Z(68), Z(52)
+        c.create_rectangle(ox - Z(6), oy - Z(6), ox + Z(384) + Z(6), oy + Z(144) + Z(6), fill=BEZEL, outline=EDGE)
+        self.img = tk.PhotoImage(width=self.oled.W * self.oled.scale, height=self.oled.H * self.oled.scale)
+        screen = c.create_image(ox, oy, image=self.img, anchor="nw")
+        c.tag_bind(screen, "<Button-1>", self.click_oled)
+        c.tag_bind(screen, "<Double-Button-1>", lambda e: self.enter())
+        # Pads: one per song, its colour its state, 32 at a time
+        self.pads = []
+        self.label(Z(26), Z(229), "SONGS", Z(1), SMALL)
+        for i in range(self.PADS):
+            x, y = Z(70) + (i % 16) * Z(24), Z(222) + (i // 16) * Z(26)
+            pad = c.create_rectangle(x, y, x + Z(20), y + Z(20), fill=self.dim(WHITE, 0.03), outline="#0a0a0c",
+                                     width=Z(1))
+            c.tag_bind(pad, "<Button-1>", lambda e, i=i: self.click_pad(i))
+            c.tag_bind(pad, "<Enter>", lambda e, i=i: self.hover_pad(i))
+            self.pads.append(pad)
+        # Round buttons with their LEDs, each in its box, its key on the computer's keyboard small underneath
+        top, bottom = Z(284), Z(368)
+        by = top + Z(28)
+        self.buttons = {}
+        x = Z(26)
+        for key, colour, text, letter in self.KEYS:
+            w = max(self.label_width(text, Z(2)), Z(44)) + Z(14)
+            self.box(x, top, x + w, bottom)
+            cx, x = x + w // 2, x + w + Z(8)
+            ring = c.create_oval(cx - Z(17), by - Z(17), cx + Z(17), by + Z(17), fill="#26262a", outline="#3c3c42",
+                                 width=Z(2))
+            led = c.create_oval(cx - Z(6), by - Z(6), cx + Z(6), by + Z(6), fill=self.dim(colour, 0.22), outline="")
+            self.label(cx - self.label_width(text, Z(2)) // 2, by + Z(26), text, Z(2))
+            self.label(cx - self.label_width(letter, Z(1)) // 2, by + Z(44), letter, Z(1), fill=SMALL)
+            for item in (ring, led):
+                self.clickable(item, lambda e, k=key: self.press(k))
+            self.buttons[key] = (led, colour)
+        # On the right, above: where it writes and the compensation (small buttons with their LEDs), and SELECT
+        cx = self.W - Z(58)
+        self.box(cx - Z(41), Z(46), cx + Z(41), top - Z(8))
+        self.toggles = {}
+        for key, text, y, colour, keyname in (("card", "KARTE", Z(74), GREEN, "K"),
+                                              ("folder", "ORDNER", Z(92), BLUE, "O"),
+                                              ("compensate", "AUSGL", Z(128), CYAN, "A")):
+            led = c.create_oval(cx - Z(33), y - Z(6), cx - Z(21), y + Z(6), fill=self.dim(colour, 0.22),
+                                outline="#3c3c42", width=Z(1))
+            self.label(cx - Z(14), y - Z(3), text, Z(1))
+            self.label(cx + Z(33) - self.label_width(keyname, Z(1)), y - Z(3), keyname, Z(1), SMALL)
+            hit = c.create_rectangle(cx - Z(37), y - Z(9), cx + Z(37), y + Z(9), fill="", outline="")
+            for item in (led, hit):
+                self.clickable(item, lambda e, k=key: self.toggle(k))
+            self.toggles[key] = (led, colour)
+        for text, y in (("SCHREIBEN", Z(56)), ("NORM", Z(110))):  # What the small buttons under it are for
+            self.label(cx - self.label_width(text, Z(1)) // 2, y, text, Z(1), SMALL)
+        self.select_knob = (cx, Z(196))
+        knob = [c.create_oval(cx - Z(22), Z(174), cx + Z(22), Z(218), fill="#1a1a1e", outline="#4a4a52", width=Z(2)),
+                c.create_oval(cx - Z(17), Z(179), cx + Z(17), Z(213), fill="#2c2c32", outline="#55555e", width=Z(1))]
+        self.select_line = c.create_line(cx, Z(196), cx, Z(181), fill=WHITE, width=Z(3), capstyle="round")
+        knob.append(self.select_line)
+        self.label(cx - self.label_width("SELECT", Z(2)) // 2, Z(227), "SELECT", Z(2))
+        self.bind_knob(knob, "select")
+        # Below: the gold knob, the samples' target
+        self.box(cx - Z(41), top, cx + Z(41), bottom)
+        self.gold_knob = (cx, by)
+        knob = [c.create_oval(cx - Z(22), by - Z(22), cx + Z(22), by + Z(22), fill="#8a6a28", outline="#4e3b14",
+                              width=Z(2)),
+                c.create_oval(cx - Z(17), by - Z(17), cx + Z(17), by + Z(17), fill="#d9b35a", outline="#f0d58c",
+                              width=Z(1))]
+        self.gold_line = c.create_line(cx, by, cx, by - Z(15), fill="#2a1e08", width=Z(3), capstyle="round")
+        knob.append(self.gold_line)
+        self.label(cx - self.label_width("ZIEL", Z(2)) // 2, by + Z(31), "ZIEL", Z(2))
+        self.bind_knob(knob, "gold")
+        self.update_knobs()
 
-        def label(parent, text, **kw):
-            return tk.Label(parent, text=text, bg=PANEL, fg=kw.pop("fg", LABEL), font=font, **kw)
+        for keys, action in ((("p", "P"), "check"), (("l", "L"), "levels"), (("n", "N"), "normalize"),
+                             (("z", "Z"), "restore"), (("m", "M"), "menu")):
+            for k in keys:
+                root.bind(k, lambda e, a=action: self.press(a))
+        for keys, action in ((("k", "K"), self.choose_card), (("o", "O"), lambda: self.toggle("folder")),
+                             (("a", "A"), lambda: self.toggle("compensate")), (("b", "B"), self.open_report)):
+            for k in keys:
+                root.bind(k, lambda e, a=action: a())
+        for k in ("<Return>", "<KP_Enter>", "<space>"):
+            root.bind(k, lambda e: self.enter())
+        root.bind("<Escape>", lambda e: self.escape())
+        for k, step in (("<Up>", -1), ("<Down>", 1), ("<Prior>", -self.ROWS), ("<Next>", self.ROWS)):
+            root.bind(k, lambda e, s=step: self.move(s))
+        root.bind("<Home>", lambda e: self.move(-10 ** 6))
+        root.bind("<End>", lambda e: self.move(10 ** 6))
+        for k in ("<plus>", "<KP_Add>"):
+            root.bind(k, lambda e: self.turn_gold(1))
+        for k in ("<minus>", "<KP_Subtract>"):
+            root.bind(k, lambda e: self.turn_gold(-1))
+        root.bind("<MouseWheel>", lambda e: self.wheel(e, 1 if e.delta > 0 else -1))
+        root.bind("<Button-4>", lambda e: self.wheel(e, 1))
+        root.bind("<Button-5>", lambda e: self.wheel(e, -1))
+        root.protocol("WM_DELETE_WINDOW", self.quit)
+        if self.card:
+            self.load_songs()
+        self.tick()
 
-        def button(parent, text, cmd, accent=False):
-            return tk.Button(parent, text=text, command=cmd, font=font, bg=GOLD if accent else PLATE,
-                             fg=PANEL if accent else LABEL, activebackground=EDGE, activeforeground=LABEL,
-                             relief="flat", padx=12, pady=5, highlightthickness=0, bd=0)
+    # --- drawing helpers, as in DelugeRec
 
-        def entry(parent, var):
-            return tk.Entry(parent, textvariable=var, font=font, bg=PLATE, fg=LABEL, insertbackground=LABEL,
-                            relief="flat", highlightthickness=1, highlightbackground=EDGE, highlightcolor=GOLD)
+    def label(self, x, y, s, p, fill=LABEL, tag=None):
+        """Lettering in the OLED's pixel font, p screen pixels per font pixel."""
+        for ch in oled_text(s):
+            for r, bits in enumerate(glyph(ch)):
+                for col, bit in enumerate(bits):
+                    if bit:
+                        self.c.create_rectangle(x + col * p, y + r * p, x + (col + 1) * p, y + (r + 1) * p,
+                                                fill=fill, width=0, tags=tag)
+            x += 6 * p
 
-        pad = {"padx": 10, "pady": 4}
-        top = tk.Frame(root, bg=PANEL)
-        top.pack(fill="x", **pad)
-        label(top, "Karte").grid(row=0, column=0, sticky="w")
-        entry(top, self.card).grid(row=0, column=1, sticky="ew", padx=6)
-        button(top, "Wählen …", self.choose_card).grid(row=0, column=2)
-        label(top, "Schreiben").grid(row=1, column=0, sticky="w", pady=(8, 0))
-        modes = tk.Frame(top, bg=PANEL)
-        modes.grid(row=1, column=1, columnspan=2, sticky="w", pady=(8, 0))
-        for value, text in (("card", "Auf die Karte, alte Dateien in BASELINE-BACKUP"), ("folder", "In einen Ordner")):
-            tk.Radiobutton(modes, text=text, value=value, variable=self.mode, font=font, bg=PANEL, fg=LABEL,
-                           selectcolor=PLATE, activebackground=PANEL, activeforeground=LABEL, highlightthickness=0,
-                           bd=0).pack(side="left", padx=(0, 16))
-        label(top, "Ordner").grid(row=2, column=0, sticky="w")
-        entry(top, self.out).grid(row=2, column=1, sticky="ew", padx=6)
-        button(top, "Wählen …", self.choose_out).grid(row=2, column=2)
-        top.columnconfigure(1, weight=1)
+    def box(self, x0, y0, x1, y1):
+        """The box around one control on the panel."""
+        self.c.create_rectangle(x0, y0, x1, y1, fill=BOX, outline=BOX_EDGE, width=self.Z(1))
 
-        norm = tk.Frame(root, bg=PANEL)
-        norm.pack(fill="x", **pad)
-        label(norm, "Samples: Ziel").pack(side="left")
-        menu = tk.OptionMenu(norm, self.target, *[bc.num(t) for t in TARGETS])
-        menu.configure(font=font, bg=PLATE, fg=LABEL, activebackground=EDGE, activeforeground=LABEL, relief="flat",
-                       highlightthickness=0, bd=0, width=5)
-        menu["menu"].configure(font=font, bg=PLATE, fg=LABEL, activebackground=GOLD, activeforeground=PANEL)
-        menu.pack(side="left", padx=6)
-        label(norm, "dBFS").pack(side="left")
-        tk.Checkbutton(norm, text="Songs, Kits und Synths ausgleichen (Mix bleibt gleich)", variable=self.compensate,
-                       font=font, bg=PANEL, fg=LABEL, selectcolor=PLATE, activebackground=PANEL,
-                       activeforeground=LABEL, highlightthickness=0, bd=0).pack(side="left", padx=12)
+    def clickable(self, item, action):
+        self.c.tag_bind(item, "<Button-1>", action)
+        self.c.tag_bind(item, "<Enter>", lambda e: self.c.configure(cursor="hand2"))
+        self.c.tag_bind(item, "<Leave>", lambda e: self.c.configure(cursor=""))
 
-        actions = tk.Frame(root, bg=PANEL)
-        actions.pack(fill="x", **pad)
-        self.buttons = [button(actions, "Prüfen", self.check, accent=True),
-                        button(actions, "Pegel anwenden", self.levels),
-                        button(actions, "Samples normalisieren", self.normalize),
-                        button(actions, "Sicherung zurückspielen", self.restore)]
-        for b in self.buttons:
-            b.pack(side="left", padx=(0, 8))
+    def bind_knob(self, items, which):
+        """A knob turns when dragged up or down; SELECT clicked without turning is SELECT pressed."""
+        for item in items:
+            self.c.tag_bind(item, "<Button-1>", lambda e: self.grab(e, which))
+            self.c.tag_bind(item, "<B1-Motion>", self.drag_knob)
+            self.c.tag_bind(item, "<ButtonRelease-1>", self.release_knob)
+            self.c.tag_bind(item, "<Enter>", lambda e: self.c.configure(cursor="sb_v_double_arrow"))
+            self.c.tag_bind(item, "<Leave>", lambda e: self.c.configure(cursor=""))
 
-        label(root, "", textvariable=self.status, fg=SMALL, anchor="w").pack(side="bottom", fill="x", padx=10, pady=6)
-        body = tk.Frame(root, bg=EDGE)
-        body.pack(fill="both", expand=True, padx=10, pady=(4, 0))
-        self.text = tk.Text(body, font=mono, bg=OLED, fg=LABEL, insertbackground=LABEL, relief="flat", wrap="word",
-                            padx=10, pady=8, highlightthickness=0, spacing1=1, spacing3=1)
-        size = mono[1]
-        self.text.tag_configure("h1", font=(mono[0], size + 3, "bold"), foreground=GOLD, spacing3=6)
-        self.text.tag_configure("h2", font=(mono[0], size + 1, "bold"), foreground=LABEL, spacing1=8, spacing3=4)
-        self.text.tag_configure("head", font=(mono[0], size, "bold"), foreground=SMALL)
-        self.text.tag_configure("row", lmargin1=0, lmargin2=0)
-        self.text.tag_configure("item", lmargin1=0, lmargin2=18)
-        scroll = tk.Scrollbar(body, command=self.text.yview)
-        self.text.configure(yscrollcommand=scroll.set)
-        scroll.pack(side="right", fill="y")
-        self.text.pack(side="left", fill="both", expand=True)
-        self.show("DelugeBaseline prüft die Songs einer Deluge-Karte gegen die Baseline Master und setzt sie darauf.\n\n"
-                  "- Prüfen: liest nur.\n"
-                  "- Pegel anwenden: Song, Kits und Audio-Spuren höchstens 35, Synths und Reihen höchstens wie 40 mit "
-                  "einem voll ausgesteuerten Sample, Master-Kompressor aus.\n"
-                  "- Samples normalisieren: hebt leise Samples bis zum Ziel an, nie darüber. Mit Ausgleich klingen die "
-                  "Songs danach gleich.\n"
-                  "- Vor dem Schreiben zeigt es immer, was es ändern würde, und fragt.\n")
-        root.after(100, self.poll)
+    @staticmethod
+    def label_width(s, p):
+        return len(oled_text(s)) * 6 * p - p
 
-    # --- plumbing: work in a thread, results through a queue
-    def run(self, work, then, what):
+    @staticmethod
+    def dim(colour, f=0.14):
+        r, g, b = (int(colour[i:i + 2], 16) for i in (1, 3, 5))
+        return "#%02x%02x%02x" % (int(24 + (r - 24) * f), int(24 + (g - 24) * f), int(26 + (b - 26) * f))
+
+    def update_knobs(self):
+        r = self.Z(15)
+        cx, cy = self.select_knob
+        a = math.radians(self.select_angle)
+        self.c.coords(self.select_line, cx, cy, cx + r * math.sin(a), cy - r * math.cos(a))
+        gx, gy = self.gold_knob
+        a = math.radians(-135 + 270 * TARGETS[::-1].index(self.target) / (len(TARGETS) - 1))
+        self.c.coords(self.gold_line, gx, gy, gx + r * math.sin(a), gy - r * math.cos(a))
+
+    def say(self, text, seconds=2.0):
+        """A message in the OLED's bottom line; a long one stays until it has scrolled through."""
+        now = time.monotonic()
+        over = max(0, Oled.width(text) - (Oled.W - 1)) / 30
+        self.message, self.message_since = text, now
+        self.message_until = now + (max(seconds, over + 3.0) if over else seconds)
+
+    # --- the knobs, the wheel, the keys
+
+    def grab(self, event, which):
+        self.drag = {"which": which, "y": event.y, "moved": False}
+
+    def drag_knob(self, event):
+        d = self.drag
+        if not d:
+            return
+        step = self.Z(12)
+        while abs(event.y - d["y"]) >= step:
+            up = event.y < d["y"]
+            d["y"] += -step if up else step
+            d["moved"] = True
+            if d["which"] == "select":
+                self.move(-1 if up else 1)
+            else:
+                self.turn_gold(1 if up else -1)
+
+    def release_knob(self, event):
+        d, self.drag = self.drag, None
+        if d and not d["moved"] and d["which"] == "select":
+            self.enter()  # Pressed, not turned: SELECT's press
+
+    def wheel(self, event, step):
+        gx, gy = self.gold_knob
+        if (event.x - gx) ** 2 + (event.y - gy) ** 2 <= self.Z(30) ** 2:
+            self.turn_gold(step)
+        else:
+            self.move(-step)
+
+    def turn_gold(self, step):
+        i = TARGETS.index(self.target)
+        self.target = TARGETS[min(len(TARGETS) - 1, max(0, i - step))]  # Up: louder, towards 0 dBFS
+        self.update_knobs()
+        if self.pending and self.pending[0] == "normalize":  # Shown for the old target: NORM anew
+            self.pending = None
+            self.say(f"ZIEL {bc.num(self.target)} DBFS: NORM NEU", 2.5)
+        else:
+            self.say(f"ZIEL {bc.num(self.target)} DBFS")
+        self.save()
+
+    def move(self, step):
+        """SELECT turned: the next line of the list or menu."""
+        self.select_angle = (self.select_angle + 30 * (1 if step > 0 else -1)) % 360
+        self.update_knobs()
+        if self.view == "menu":
+            sel = min(len(self.menu_items()) - 1, max(0, self.menu_sel + step))
+            if sel != self.menu_sel:
+                self.menu_sel, self.menu_since = sel, time.monotonic()
+        elif self.view in ("list", "backups") and self.list:
+            sel = min(len(self.list["items"]) - 1, max(0, self.list["sel"] + step))
+            if sel != self.list["sel"]:
+                self.list["sel"], self.list["since"] = sel, time.monotonic()
+
+    def click_oled(self, event):
+        row = ((event.y - self.oy) // self.oled.scale - 11) // 9
+        if self.view in ("list", "backups") and self.list and 0 <= row < self.visible_rows():
+            top = self.list_top()
+            if top + row < len(self.list["items"]):
+                self.list["sel"], self.list["since"] = top + row, time.monotonic()
+        elif self.view == "menu" and 0 <= row < self.ROWS:
+            if self.menu_top() + row < len(self.menu_items()):
+                self.menu_sel, self.menu_since = self.menu_top() + row, time.monotonic()
+
+    def click_pad(self, i):
+        n = self.pad_page() * self.PADS + i
+        if n >= len(self.songs):
+            return
+        if self.list and self.view == "list":
+            for j, (_, heading, song) in enumerate(self.list["items"]):
+                if heading and song == n:
+                    self.list["sel"], self.list["since"] = j, time.monotonic()
+                    return
+        self.say(self.songs[n]["name"], 2.5)
+
+    def hover_pad(self, i):
+        n = self.pad_page() * self.PADS + i
+        if n < len(self.songs):
+            status = {"ok": "OK", "notes": "HINWEISE", "error": "NICHT LESBAR"}.get(self.songs[n]["status"], "")
+            self.say(f"{self.songs[n]['name']} {status}".strip(), 1.6)
+
+    # --- the buttons
+
+    def press(self, key):
+        if self.busy:
+            self.say("BITTE WARTEN")
+            return
+        if key == "menu":  # What waits for the second press still waits
+            self.view = ("list" if self.list else "home") if self.view == "menu" else "menu"
+            self.menu_sel, self.menu_since = 0, time.monotonic()
+            return
+        if self.pending and self.pending[0] == key:
+            self.write()
+            return
+        self.pending = None
+        root = self.card_or_say()
+        if root is None:
+            return
+        if key == "check":
+            self.start("PRÜFE", lambda: self.checked(root), self.show_check, key)
+        elif key == "levels":
+            self.start("SUCHE PEGEL", lambda: plan_levels(root), self.show_plan, key)
+        elif key == "normalize":
+            target, compensate = self.target, self.compensate
+            self.start("LESE SAMPLES", lambda: plan_normalize(root, target, compensate,
+                                                              lambda t: self.jobs.put(("progress", t))),
+                       self.show_plan, key)
+        elif key == "restore":
+            folder = root / BACKUP
+            backups = sorted((p for p in folder.iterdir() if p.is_dir()), reverse=True) if folder.is_dir() else []
+            if not backups:
+                self.say("KEINE SICHERUNG AUF DER KARTE", 3)
+                return
+            self.backup_list = backups
+            self.list = {"title": "SICHERUNG WÄHLEN", "items": [(backup_name(b.name), False, None) for b in backups],
+                         "sel": 0, "since": time.monotonic()}
+            self.view = "backups"
+            self.say("SELECT: DIESE ZEIGEN", 2.5)
+
+    def enter(self):
+        """SELECT pressed (or Enter): the menu's item, the backup, or yes to what is shown."""
         if self.busy:
             return
-        self.busy = True
-        self.status.set(what + " …")
-        for b in self.buttons:
-            b.configure(state="disabled")
+        if self.view == "menu":
+            self.menu_action(self.menu_items()[self.menu_sel][2])
+        elif self.view == "backups" and self.list:
+            backup = self.backup_list[self.list["sel"]]
+            self.start("LESE SICHERUNG", lambda: plan_restore(backup), self.show_plan, "restore")
+        elif self.pending:
+            self.write()
+
+    def escape(self):
+        if self.pending:
+            self.pending = None
+            self.say("NICHTS GESCHRIEBEN")
+        elif self.view == "menu" and self.list:
+            self.view = "list"
+        else:
+            self.view = "home"
+
+    def toggle(self, key):
+        if self.busy:
+            return
+        if key == "compensate":
+            self.compensate = not self.compensate
+            if self.pending and self.pending[0] == "normalize":  # Shown with the other setting: NORM anew
+                self.pending = None
+            self.say("AUSGLEICHEN " + ("AN" if self.compensate else "AUS: SONGS WERDEN LAUTER"), 3)
+        else:
+            mode = "folder" if key == "folder" and self.mode != "folder" else "card"
+            if mode == "folder" and not self.out and not self.choose_out():
+                return
+            self.mode = mode
+            self.say("SCHREIBT IN ORDNER " + self.out if mode == "folder" else "SCHREIBT AUF DIE KARTE", 3)
+        self.save()
+
+    def menu_items(self):
+        return [("KARTE", self.card or "-", "card"),
+                ("SCHREIBT", "IN ORDNER" if self.mode == "folder" else "AUF KARTE", "mode"),
+                ("ORDNER", self.out or "-", "out"),
+                ("AUSGL", "AN" if self.compensate else "AUS", "compensate"),
+                ("ZIEL", f"{bc.num(self.target)} DBFS", "target"),
+                ("BERICHT", "ÖFFNEN", "report")]
+
+    def menu_top(self):
+        return min(max(0, self.menu_sel - 1), max(0, len(self.menu_items()) - self.ROWS))
+
+    def menu_action(self, what):
+        if what == "card":
+            self.choose_card()
+        elif what == "mode":
+            self.toggle("folder")
+        elif what == "out":
+            if self.choose_out():
+                self.say("ORDNER " + self.out, 3)
+        elif what == "compensate":
+            self.toggle("compensate")
+        elif what == "target":  # Quieter by a step, from the quietest back to 0 dBFS
+            self.turn_gold(-1 if self.target != TARGETS[-1] else len(TARGETS))
+        elif what == "report":
+            self.open_report()
+
+    def choose_card(self):
+        if self.busy:
+            return
+        path = self.filedialog.askdirectory(title="Deluge-Karte (oder ihr Ordner SONGS)",
+                                            initialdir=self.card or None)
+        if not path:
+            return
+        try:
+            root = card_root(path)
+        except (OSError, ValueError):
+            self.say("KEINE DELUGE-KARTE: OHNE ORDNER SONGS", 3)
+            return
+        self.card = str(root)
+        self.pending, self.list, self.view, self.report_text = None, None, "home", ""
+        self.save()
+        self.load_songs()
+        self.say("KARTE " + self.card, 3)
+
+    def choose_out(self):
+        path = self.filedialog.askdirectory(title="Ordner für die geänderten Dateien", initialdir=self.out or None)
+        if path:
+            self.out = path
+            self.save()
+            return True
+        return False
+
+    def open_report(self):
+        if not self.report_text:
+            self.say("NOCH KEIN BERICHT: ERST PRÜFEN", 3)
+            return
+        path = (Path(self.settings).parent if self.settings else Path(tempfile.gettempdir())) / "Bericht.txt"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(self.report_text, encoding="utf-8-sig")
+            if sys.platform.startswith("win"):
+                os.startfile(str(path))  # noqa: S606 (the report, in the computer's text viewer)
+            else:
+                import subprocess
+                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
+            self.say("BERICHT OFFEN")
+        except OSError:
+            self.say("BERICHT: " + str(path), 4)
+
+    def card_or_say(self):
+        """The card's root, or None with the reason on the OLED."""
+        if not self.card:
+            self.say("KEINE KARTE: K ODER MENU", 3)
+            return None
+        try:
+            return card_root(self.card)
+        except (OSError, ValueError):
+            self.say("KARTE NICHT DA: " + self.card, 3)
+            return None
+
+    def quit(self):
+        if self.busy == "SCHREIBE":  # Not in the middle of writing the card
+            self.say("SCHREIBT: BITTE WARTEN", 2.5)
+            return
+        self.root.destroy()
+
+    # --- work in a thread, its results through a queue
+
+    def start(self, title, work, done, key, quiet=False):
+        if not quiet:
+            self.busy, self.running, self.progress = title, key, ""
+        self.working += 1
 
         def worker():
             try:
-                self.jobs.put((then, work(), None))
-            except Exception as e:  # Shown in the window
-                self.jobs.put((then, None, e))
+                self.jobs.put(("done", done, work(), None, quiet))
+            except Exception as e:  # Shown on the OLED
+                self.jobs.put(("done", done, None, e, quiet))
         threading.Thread(target=worker, daemon=True).start()
 
     def poll(self):
-        try:
-            while True:
+        while True:
+            try:
                 item = self.jobs.get_nowait()
-                if item[0] == "status":
-                    self.status.set(item[1])
-                    continue
-                then, result, error = item
-                self.busy = False
-                for b in self.buttons:
-                    b.configure(state="normal")
-                if error is not None:
-                    self.status.set("Fehler")
-                    self.show(f"Fehler: {error}\n")
-                else:
-                    then(result)
-        except queue.Empty:
-            pass
-        self.root.after(100, self.poll)
+            except queue.Empty:
+                return
+            if item[0] == "progress":
+                self.progress = item[1]
+                continue
+            _, done, result, error, quiet = item
+            self.working -= 1
+            if not quiet:
+                self.busy = self.running = None
+            if error is None:
+                done(result)
+            elif not quiet:
+                self.show_list("FEHLER", [(f"{type(error).__name__}: {error}", False, None)])
+                self.say("FEHLER BEIM SCHREIBEN" if done == self.written else "FEHLER: NICHTS GEÄNDERT", 4)
 
-    def progress(self, text):
-        self.jobs.put(("status", text))
+    def checked(self, root):
+        files = bc.song_files([str(root)])
+        results = bc.check_all(files, lambda i, n: self.jobs.put(("progress", f"SONG {i + 1}/{n}")))
+        return root, files, results
 
-    def show(self, text, keep=False):
-        """The report, its Markdown drawn: headings, tables as aligned columns, list items."""
-        self.text.configure(state="normal")
-        if not keep:
-            self.text.delete("1.0", "end")
-        for line, tag in rendered(text):
-            self.text.insert("end", line + "\n", tag)
-        self.text.configure(state="disabled")
+    def set_songs(self, root, results):
+        self.songs = [{"name": r["name"], "rel": Path(r["path"]).relative_to(root).as_posix(),
+                       "status": "error" if r["error"] else "notes" if r["notes"] else "ok"} for r in results]
+        self.song_index = {rel_key(s["rel"]): i for i, s in enumerate(self.songs)}
+
+    def load_songs(self):
+        """The songs on the pads before a check: grey."""
+        try:
+            root = card_root(self.card)
+        except (OSError, ValueError):
+            self.songs, self.song_index = [], {}
+            return
+        files = bc.song_files([str(root)])
+        self.songs = [{"name": os.path.splitext(os.path.basename(p))[0],
+                       "rel": Path(p).relative_to(root).as_posix(), "status": None} for p, _ in files]
+        self.song_index = {rel_key(s["rel"]): i for i, s in enumerate(self.songs)}
+
+    def show_check(self, result):
+        root, files, results = result
+        self.report_text = bc.report(files, results)
+        self.set_songs(root, results)
+        with_notes = sum(s["status"] != "ok" for s in self.songs)
+        n = len(results)
+        self.show_list(f"{n} SONG{'' if n == 1 else 'S'}, {with_notes} MIT HINWEISEN", check_items(results))
+        self.say("GEPRÜFT, NICHTS GEÄNDERT", 2.5)
+
+    def show_plan(self, plan):
+        self.report_text = plan.report()
+        key = {"Pegel": "levels", "Normalisieren": "normalize", "Zurückspielen": "restore"}[plan.action]
+        n = len(plan.changes)
+        self.show_list(f"{plan.action}: {n} {'DATEI' if n == 1 else 'DATEIEN'}", plan_items(plan, self.song_index))
+        if plan.changes:
+            self.pending = (key, plan)
+            self.say("NUR GEZEIGT", 2.0)
+        else:
+            self.say("NICHTS ZU ÄNDERN", 3)
+
+    def write(self):
+        key, plan = self.pending
+        self.pending = None
+        to = self.out if self.mode == "folder" and key != "restore" else None
+        self.start("SCHREIBE", lambda: write_plan(plan, to), self.written, key)
+
+    def written(self, text):
+        self.report_text += "\n## Geschrieben\n\n" + text
+        lines = [part for line in text.strip().splitlines() for part in re.split(r"(?<=\.) (?=[A-ZÄÖÜ])", line)]
+        self.show_list("GESCHRIEBEN", [(line, False, None) for line in lines])
+        self.say("FERTIG")
+        root = self.card_or_say()
+        if root is not None:  # The pads anew, quietly
+            self.start("", lambda: self.checked(root), lambda result: self.set_songs(*result[::2]), None, quiet=True)
+
+    def show_list(self, title, items):
+        self.list = {"title": title, "items": items or [("-", False, None)], "sel": 0, "since": time.monotonic()}
+        self.view = "list"
 
     def save(self):
         if not self.settings:
@@ -1083,86 +1626,157 @@ class App:
         try:
             Path(self.settings).parent.mkdir(parents=True, exist_ok=True)
             Path(self.settings).write_text(json.dumps({
-                "card": self.card.get(), "mode": self.mode.get(), "out": self.out.get(), "target": self.target.get(),
-                "compensate": self.compensate.get()}), encoding="utf-8")
+                "card": self.card, "mode": self.mode, "out": self.out, "target": self.target,
+                "compensate": self.compensate}), encoding="utf-8")
         except OSError:
             pass
 
-    def root_or_warn(self):
-        try:
-            root = card_root(self.card.get())
-        except (OSError, ValueError) as e:
-            self.messagebox.showwarning("DelugeBaseline", str(e))
-            return None
-        self.save()
-        return root
+    # --- the loop: LEDs, pads, OLED, 25 times a second
 
-    # --- the buttons
-    def choose_card(self):
-        path = self.filedialog.askdirectory(title="Deluge-Karte (oder ihr Ordner SONGS)",
-                                            initialdir=self.card.get() or None)
-        if path:
-            self.card.set(path)
+    def visible_rows(self):
+        return self.ROWS - 1 if self.pending else self.ROWS
 
-    def choose_out(self):
-        path = self.filedialog.askdirectory(title="Ordner für die geänderten Dateien", initialdir=self.out.get() or None)
-        if path:
-            self.out.set(path)
-            self.mode.set("folder")
+    def list_top(self):
+        items, sel, rows = self.list["items"], self.list["sel"], self.visible_rows()
+        return min(max(0, sel - 1), max(0, len(items) - rows))
 
-    def check(self):
-        root = self.root_or_warn()
-        if root:
-            self.run(lambda: bc.report(bc.song_files([str(root)])), self.done_check, "Prüfe")
+    def selected_song(self):
+        if self.list and self.view == "list":
+            return self.list["items"][self.list["sel"]][2]
+        return None
 
-    def done_check(self, text):
-        self.show(text)
-        self.status.set("Geprüft. Die Karte ist unverändert.")
+    def pad_page(self):
+        song = self.selected_song()
+        return song // self.PADS if song is not None else 0
 
-    def levels(self):
-        root = self.root_or_warn()
-        if root:
-            self.run(lambda: plan_levels(root), self.confirm, "Suche, was sich ändert")
+    def show(self, item, fill):
+        if self.shown.get(item) != fill:
+            self.shown[item] = fill
+            self.c.itemconfigure(item, fill=fill)
 
-    def normalize(self):
-        root = self.root_or_warn()
-        if root:
-            target = float(self.target.get().replace(",", "."))
-            self.run(lambda: plan_normalize(root, target, self.compensate.get(), self.progress), self.confirm,
-                     "Lese die Samples")
+    def tick(self):
+        now = time.monotonic()
+        self.poll()
+        blink = int(now * 2.5) % 2 == 0
+        for key, (led, colour) in self.buttons.items():
+            on = (self.running == key or (self.pending is not None and self.pending[0] == key and blink)
+                  or (key == "menu" and self.view == "menu"))
+            self.show(led, colour if on else self.dim(colour, 0.22))
+        for key, (led, colour) in self.toggles.items():
+            on = self.compensate if key == "compensate" else self.mode == key
+            self.show(led, colour if on else self.dim(colour, 0.22))
+        page, selected = self.pad_page(), self.selected_song()
+        changing = {self.song_index.get(rel_key(rel)) for rel in self.pending[1].changes} if self.pending else ()
+        for i, pad in enumerate(self.pads):
+            n = page * self.PADS + i
+            if n >= len(self.songs):
+                fill = self.dim(WHITE, 0.03)
+            elif self.pending:  # The songs it would change blink in the button's colour
+                colour = self.buttons[self.pending[0]][1]
+                fill = colour if n in changing and blink else self.dim(colour, 0.45 if n in changing else 0.08)
+            else:
+                colour = {"ok": GREEN, "notes": AMBER, "error": RED}.get(self.songs[n]["status"], WHITE)
+                fill = colour if self.songs[n]["status"] else self.dim(colour, 0.3)
+                if n == selected and not blink:
+                    fill = self.dim(colour, 0.5)
+            self.show(pad, fill)
+        card = oled_text(self.card or "KEINE KARTE")
+        if card != self.card_text:  # The card, top right, in the panel's lettering
+            self.card_text = card
+            self.c.delete("card")
+            p = self.Z(2)
+            text = card if len(card) <= 12 else ".." + card[-10:]
+            self.label(self.W - self.Z(26) - self.label_width(text, p), self.Z(23), text, p, SMALL, "card")
+        self.draw_oled(now, blink)
+        frame = self.oled.frame()
+        if frame != self.shown.get("oled"):
+            self.shown["oled"] = frame
+            self.img.configure(data=self.oled.ppm())
+        self.root.after(40, self.tick)
 
-    def restore(self):
-        root = self.root_or_warn()
-        if not root:
+    def marquee(self, o, x, y, text, since, invert=False, width=None):
+        """A line too long for the OLED scrolls, as on the Deluge: a pause, then along, a pause at its end."""
+        width = width or o.W - x
+        span = o.width(text) - width
+        shift = 0
+        if span > 0:
+            t = time.monotonic() - since - 1.0
+            shift = int(min(span, (t % (span / 30 + 2.0)) * 30)) if t > 0 else 0
+        o.text(x - shift, y, text, invert=invert)
+
+    def draw_oled(self, now, blink):
+        o = self.oled
+        o.clear()
+        message = self.message if self.message and now < self.message_until else ""
+        if now < self.boot_until:  # At start the name and the version, as the Deluge shows its own
+            o.text((o.W - o.width("DELUGE", 2)) // 2, 9, "DELUGE", 2)
+            o.text((o.W - o.width(f"BASELINE V{VERSION}")) // 2, 30, f"BASELINE V{VERSION}")
             return
-        path = self.filedialog.askdirectory(title="Welche Sicherung?", initialdir=str(root / BACKUP)
-                                            if (root / BACKUP).is_dir() else str(root))
-        if path:
-            self.run(lambda: plan_restore(path), self.confirm, "Lese die Sicherung")
-
-    def confirm(self, plan):
-        self.show(plan.report())
-        if not plan.changes:
-            self.status.set("Nichts zu ändern.")
+        if self.busy:
+            o.text(0, 0, self.busy)
+            o.rect(0, 9, o.W, 1)
+            o.text(0, 16, self.progress[:21] if self.progress else "BITTE WARTEN")
+            for x, y, w, h in ((0, 30, o.W, 1), (0, 38, o.W, 1), (0, 30, 1, 9), (o.W - 1, 30, 1, 9)):
+                o.rect(x, y, w, h)
+            m = re.search(r"(\d+)/(\d+)", self.progress)
+            if m and int(m.group(2)):
+                o.rect(2, 32, (o.W - 4) * int(m.group(1)) // int(m.group(2)), 5)
+            else:
+                o.rect(2 + int(now * 40) % (o.W - 20), 32, 16, 5)
             return
-        to = None
-        if self.mode.get() == "folder" and plan.action != "Zurückspielen":
-            if not self.out.get():
-                self.messagebox.showwarning("DelugeBaseline", "Erst einen Ordner wählen.")
-                return
-            to = self.out.get()
-        where = f"in den Ordner {to}" if to else "auf die Karte (die alten Dateien kommen nach BASELINE-BACKUP)"
-        self.status.set(f"{files(len(plan.changes))} würden sich ändern.")
-        if self.messagebox.askyesno("DelugeBaseline", f"{plan.title}\n\n{files(len(plan.changes))} {where} "
-                                                      f"schreiben?"):
-            self.run(lambda: write_plan(plan, to), self.done_write, "Schreibe")
+        if self.view == "menu":
+            o.text(0, 0, "MENU")
+            o.rect(0, 9, o.W, 1)
+            items, top = self.menu_items(), self.menu_top()
+            for row, (name, value, _) in enumerate(items[top:top + self.ROWS]):
+                y, sel = 12 + row * 9, top + row == self.menu_sel
+                if sel:
+                    o.rect(0, y - 1, o.W, 9)
+                o.text(0, y, name, invert=sel)
+                self.marquee(o, 54, y, value, self.menu_since if sel else now, invert=sel)
+        elif self.view in ("list", "backups") and self.list:
+            items, rows = self.list["items"], self.visible_rows()
+            title = self.list["title"]
+            if self.pending:  # Where it would write
+                title += " > " + ("ORDNER" if self.mode == "folder" and self.pending[0] != "restore" else "KARTE")
+            self.marquee(o, 0, 0, title, self.list["since"])
+            o.rect(0, 9, o.W, 1)
+            top = self.list_top()
+            for row, (text, heading, _) in enumerate(items[top:top + rows]):
+                y, sel = 12 + row * 9, top + row == self.list["sel"]
+                line = ("» " if heading else "  ") + text
+                if sel:
+                    o.rect(0, y - 1, o.W - 3, 9)
+                    self.marquee(o, 0, y, line, self.list["since"], invert=True, width=o.W - 3)
+                else:
+                    o.text(0, y, line[:21])
+            if len(items) > rows:  # Where in the list: a thin bar on the right
+                h = max(3, 36 * rows // len(items))
+                o.rect(o.W - 1, 11 + (36 - h) * self.list["sel"] // max(1, len(items) - 1), 1, h)
+            if self.pending and not message:  # Asks: the button again, or SELECT, writes
+                o.rect(0, 39, o.W, 9, on=blink)
+                o.text(1, 40, f"SCHREIBEN? {self.KEY_NAMES[self.pending[0]]}=JA", invert=blink)
         else:
-            self.status.set("Nichts geschrieben.")
+            self.draw_home(o)
+        if message:
+            o.rect(0, 39, o.W, 9)
+            self.marquee(o, 1, 40, message, self.message_since, invert=True)
 
-    def done_write(self, text):
-        self.show("# Geschrieben\n\n" + text + "\n", keep=True)
-        self.text.see("end")
-        self.status.set(text.splitlines()[0])
+    def draw_home(self, o):
+        if not self.card:
+            o.text((o.W - o.width("KARTE?", 2)) // 2, 3, "KARTE?", 2)
+            o.text(1, 22, "K: KARTE WÄHLEN")
+            o.text(1, 31, "ODER MENU > KARTE")
+            return
+        o.text(0, 0, f"BASELINE V{VERSION}")
+        n = len(self.songs)
+        count = f"{n} SONG{'' if n == 1 else 'S'}"
+        o.text(o.W - o.width(count), 0, count)
+        o.rect(0, 9, o.W, 1)
+        o.text(0, 12, "SCHREIBT " + ("IN ORDNER" if self.mode == "folder" else "AUF KARTE"))
+        o.text(0, 21, f"ZIEL {bc.num(self.target)} DBFS")
+        o.text(0, 30, f"AUSGLEICHEN {'AN' if self.compensate else 'AUS'}")
+        o.text(0, 40, "P: PRÜFEN  M: MENU")
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -1200,7 +1814,7 @@ def main(argv=None):
                 pass
         import tkinter as tk
         root = tk.Tk()
-        App(root, settings_path())
+        App(root, settings_path(), z=min(3.0, max(1.0, root.winfo_fpixels("1i") / 96)))
         root.mainloop()
         return 0
     if hasattr(sys.stdout, "reconfigure"):

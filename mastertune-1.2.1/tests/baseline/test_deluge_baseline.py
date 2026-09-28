@@ -18,6 +18,7 @@ Usage: python3 test_deluge_baseline.py   Needs numpy (and tkinter for the self-t
 """
 import contextlib
 import io
+import json
 import math
 import os
 import shutil
@@ -436,10 +437,126 @@ class CommandLine(Case):
         with self.assertRaises(ValueError):
             db.card_root(str(card / "SAMPLES"))
 
-    def test_rendered(self):
-        lines = db.rendered("# A\n\n| x | long |\n|---|---|\n| 12 | 3 |\n## B\n- item\n  - sub\ntext")
-        self.assertEqual(lines, [("A", "h1"), ("", None), ("x   long", "head"), ("12  3", "row"), ("B", "h2"),
-                                 ("• item", "item"), ("    ◦ sub", "item"), ("text", None)])
+
+
+class Oled(unittest.TestCase):
+    """The window's OLED and lists, without a window."""
+
+    def test_text(self):
+        self.assertEqual(db.oled_text("Größe «x» é€"), "GRÖSSE «X» E?")
+        o = db.Oled(3)
+        o.text(1, 2, "A")
+        self.assertEqual([tuple(o.fb[2 + r][1:6]) for r in range(7)], list(db.glyph("A")))
+        o.rect(0, 20, 7, 7)
+        o.text(1, 20, "I", invert=True)  # Dark on light: the bar stays lit around it
+        self.assertEqual(tuple(o.fb[20][:7]), (1, 1, 0, 0, 0, 1, 1))
+        self.assertEqual(o.text(-3, 40, "WW", size=2), 21)  # Cut at the edge, not wrapped
+        self.assertEqual(len(o.ppm()), len(o.header) + 384 * 144 * 3)
+        o.clear()
+        self.assertFalse(any(o.frame()))
+        self.assertEqual(o.ppm()[len(o.header):len(o.header) + 3], bytes(db.OLED_OFF))
+
+    def test_items(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            card = db.demo_card(Path(tmp) / "card")
+            results = bc.check_all(bc.song_files([str(card)]))
+            items = db.check_items(results)
+            self.assertEqual(items[0], ("Demo: 4 HINWEISE", True, 0))
+            self.assertEqual(len(items), 5)
+            items = db.plan_items(db.plan_levels(card), {db.rel_key("SONGS/Demo.XML"): 0})
+            self.assertEqual(items[0], ("1 Song gelesen, 1 zu ändern", False, None))
+            self.assertIn(("Demo", True, 0), items)
+            self.assertIn(("Song-Lautstärke: 40,0 auf 35,4, -2,1 dB", False, 0), items)
+            items = db.plan_items(db.plan_normalize(card, -1.0, True), {db.rel_key("SONGS/Demo.XML"): 0})
+            self.assertIn(("Angehoben", True, None), items)
+            self.assertIn(("Ausgeglichen: Demo", True, 0), items)
+        self.assertEqual(db.backup_name("2026-09-28 07-18-35 Pegel 2"), "28.09.26 07:18 Pegel 2")
+        self.assertEqual(db.song_name("SONGS/Live/Set 1.XML"), "Live/Set 1")
+
+
+@unittest.skipUnless(HAS_TK, "no tkinter or display: the window can't open")
+class Window(unittest.TestCase):
+    """The window's buttons pressed, as by the mouse or the keys."""
+
+    def setUp(self):
+        import tkinter as tk
+        self.tmp = tempfile.TemporaryDirectory()
+        self.card = db.demo_card(Path(self.tmp.name) / "card")
+        self.settings = Path(self.tmp.name) / "settings.json"
+        self.root = tk.Tk()
+        self.app = db.App(self.root, str(self.settings), card=str(self.card))
+
+    def tearDown(self):
+        self.root.destroy()
+        self.tmp.cleanup()
+
+    def press(self, key):
+        self.app.press(key)
+        db.settle(self.root, self.app)
+
+    def files(self):
+        return {p.relative_to(self.card).as_posix(): p.read_bytes() for p in self.card.rglob("*") if p.is_file()}
+
+    def test_shown_first(self):
+        before = self.files()
+        self.press("check")
+        self.assertEqual(self.app.list["title"], "1 SONG, 1 MIT HINWEISEN")
+        self.assertEqual([s["status"] for s in self.app.songs], ["notes"])
+        self.press("normalize")
+        self.assertEqual(self.app.pending[0], "normalize")
+        self.assertIn(("Ausgeglichen: Demo", True, 0), self.app.list["items"])
+        self.app.turn_gold(1)  # Another target: shown anew before it writes
+        self.assertIsNone(self.app.pending)
+        self.press("levels")
+        self.app.escape()
+        self.assertIsNone(self.app.pending)
+        self.press("levels")
+        self.press("normalize")  # Another button: the levels aren't written
+        self.assertEqual(self.app.pending[0], "normalize")
+        self.app.toggle("compensate")
+        self.assertIsNone(self.app.pending)
+        self.assertEqual(self.files(), before)
+        self.assertEqual(json.loads(self.settings.read_text()),
+                         {"card": str(self.card), "mode": "card", "out": "", "target": -0.3, "compensate": False})
+
+    def test_into_a_folder(self):
+        before = self.files()
+        self.app.out = str(Path(self.tmp.name) / "out")
+        self.app.toggle("folder")
+        self.press("normalize")
+        self.press("normalize")
+        self.assertEqual(self.app.list["title"], "GESCHRIEBEN")
+        self.assertTrue((Path(self.app.out) / "SAMPLES" / "quiet.wav").exists())
+        self.assertEqual(self.files(), before)
+
+    def test_onto_the_card_and_back(self):
+        before = (self.card / "SONGS" / "Demo.XML").read_bytes()
+        self.press("levels")
+        self.app.enter()  # SELECT: yes
+        db.settle(self.root, self.app)
+        self.assertEqual(self.app.list["title"], "GESCHRIEBEN")
+        self.assertEqual([s["status"] for s in self.app.songs], ["ok"])
+        self.assertNotEqual((self.card / "SONGS" / "Demo.XML").read_bytes(), before)
+        self.press("restore")
+        self.assertEqual(self.app.view, "backups")
+        self.app.enter()
+        db.settle(self.root, self.app)
+        self.assertEqual(self.app.pending[0], "restore")
+        self.app.busy = "SCHREIBE"
+        self.app.quit()  # Not while it writes
+        self.assertTrue(self.root.winfo_exists())
+        self.app.busy = None
+        self.press("restore")
+        self.assertEqual((self.card / "SONGS" / "Demo.XML").read_bytes(), before)
+
+    def test_without_a_card(self):
+        self.app.card = ""
+        self.press("check")
+        self.assertIsNone(self.app.list)
+        self.assertEqual(self.app.message, "KEINE KARTE: K ODER MENU")
+        self.app.card = str(Path(self.tmp.name) / "gone")
+        self.press("levels")
+        self.assertTrue(self.app.message.startswith("KARTE NICHT DA"))
 
 
 @unittest.skipUnless(HAS_TK, "no tkinter or display: the self-test's window can't open")
