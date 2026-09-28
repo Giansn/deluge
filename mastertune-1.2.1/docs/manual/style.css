@@ -1,0 +1,56 @@
+/* The mastertune manual: one style for every chapter and both languages (docs/manual/build.py joins them). */
+@page {
+  size: A4;
+  margin: 16mm 15mm 18mm 15mm;
+  @bottom-center { content: counter(page); font-family: "Liberation Sans", "DejaVu Sans", Arial, sans-serif; font-size: 8.5pt; color: #5f6368; }
+}
+@page :first { @bottom-center { content: none; } }
+:root { --ink: #1d1d1f; --muted: #5f6368; --line: #d9dce1; --accent: #2d5bd7; --soft: #f3f5f9; --warn: #d98a00; --good: #2b8a3e; }
+* { box-sizing: border-box; }
+body { font-family: "Liberation Sans", "DejaVu Sans", Arial, sans-serif; color: var(--ink); font-size: 10pt; line-height: 1.45; margin: 0; }
+h1 { font-size: 26pt; margin: 0 0 4pt; letter-spacing: -0.3pt; }
+h2 { font-size: 14pt; margin: 18pt 0 6pt; padding-bottom: 3pt; border-bottom: 1.5pt solid var(--ink); break-after: avoid; }
+h2.chapter { break-before: page; font-size: 18pt; margin-top: 0; }
+h3 { font-size: 11pt; margin: 12pt 0 4pt; break-after: avoid; }
+h4 { font-size: 10pt; margin: 8pt 0 3pt; break-after: avoid; }
+p { margin: 0 0 6pt; }
+ul, ol { margin: 0 0 6pt; padding-left: 16pt; }
+li { margin-bottom: 2pt; }
+table { border-collapse: collapse; width: 100%; margin: 4pt 0 8pt; font-size: 9.3pt; break-inside: avoid; }
+th, td { border-bottom: 0.6pt solid var(--line); padding: 3.5pt 5pt; text-align: left; vertical-align: top; }
+th { background: var(--soft); font-weight: bold; }
+code, .key { font-family: "DejaVu Sans Mono", "Liberation Mono", monospace; font-size: 8.8pt; }
+.key { border: 0.7pt solid #9aa0a6; border-radius: 3pt; padding: 0 3pt; background: #fff; white-space: nowrap; }
+.subtitle { color: var(--muted); font-size: 11pt; margin-bottom: 10pt; }
+.lead { font-size: 10.5pt; }
+.box { background: var(--soft); border-left: 3pt solid var(--accent); padding: 6pt 9pt; margin: 6pt 0 8pt; break-inside: avoid; }
+.warn { background: #fff6e5; border-left-color: var(--warn); }
+.good { background: #eef7f0; border-left-color: var(--good); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10pt; }
+.figure { text-align: center; margin: 6pt 0 10pt; break-inside: avoid; }
+.figure figcaption { color: var(--muted); font-size: 8.8pt; margin-top: 3pt; }
+.shot { image-rendering: pixelated; max-width: 100%; }
+.oled { width: 62mm; }
+.window { width: 120mm; border: 0.6pt solid var(--line); }
+.shots { display: grid; grid-template-columns: 1fr 1fr; gap: 6pt 10pt; }
+.tag { display: inline-block; font-size: 7.8pt; color: #fff; background: var(--accent); border-radius: 3pt; padding: 0 4pt; vertical-align: 1pt; }
+.page-break { break-before: page; }
+.avoid { break-inside: avoid; }
+.swatch { display: inline-block; width: 9pt; height: 9pt; border-radius: 2pt; vertical-align: -1pt; margin-right: 3pt; border: 0.5pt solid rgba(0,0,0,0.25); }
+.small { font-size: 8.8pt; color: var(--muted); }
+/* Cover and table of contents */
+.cover { border-bottom: 3pt solid var(--ink); padding-bottom: 10pt; margin-bottom: 10pt; }
+.cover .kicker { font-size: 10pt; color: var(--muted); letter-spacing: 1pt; text-transform: uppercase; }
+.toc { list-style: none; padding: 0; margin: 6pt 0; font-size: 10pt; }
+.toc li { display: flex; align-items: baseline; margin: 0 0 2.5pt; }
+.toc li .t { flex: none; }
+.toc li .dots { flex: 1; border-bottom: 0.8pt dotted #9aa0a6; margin: 0 4pt; transform: translateY(-2pt); }
+.toc li .pg { flex: none; min-width: 14pt; text-align: right; }
+.toc li.sub { padding-left: 14pt; font-size: 9.2pt; color: #3c4043; }
+/* From the volca keys manual: verify markers, recipes, long tables */
+.vtag { font-size: 7.6pt; font-weight: bold; color: #8a5a00; background: #fff6e5; border: 0.6pt solid #d98a00; border-radius: 2pt; padding: 0 2.5pt; white-space: nowrap; vertical-align: 0.5pt; }
+.recipe { break-inside: avoid; }
+.recipe h4 { margin-top: 10pt; }
+table.split { break-inside: auto; }
+table.split tr { break-inside: avoid; }
+.keep { break-inside: avoid; }
