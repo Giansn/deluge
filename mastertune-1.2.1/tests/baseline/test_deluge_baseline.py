@@ -8,10 +8,12 @@
 - Normalizing: every format the firmware reads (WAV 8/16/24/32 bit and float, AIFF 8/16/24 bit) raised to the target
   exactly, every chunk and the header kept, nothing over full scale; target 0 dBFS; samples at the target stay; a
   multisample one gain; wavetables and audio clips stay; compensation keeps every sound's level (what the check calls
-  «wirkt wie») the same, in songs and in KITS/ and SYNTHS/; without a saved oscillator level, with a patch cable to
+  «as loud as») the same, in songs and in KITS/ and SYNTHS/; without a saved oscillator level, with a patch cable to
   it, in FM, or with an unreadable XML on the card the samples stay; without compensation all are raised and no XML
   changes.
 - Restore gives back the files byte for byte. The command line, the window's Markdown, the self-test (with tkinter).
+- The language: the computer's to start with on the command line and in the window, a language chosen in the window
+  wins over it the next time, --lang over both.
 - The card copy in device/card: normalizing keeps every row's level, levels leave no notes but the missing sample.
 
 Usage: python3 test_deluge_baseline.py   Needs numpy (and tkinter for the self-test, else it is skipped)
@@ -28,6 +30,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -36,7 +39,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "..", "tools"))
 import baseline_check as bc  # noqa: E402
 import deluge_baseline as db  # noqa: E402
 
-KARTE = Path(HERE, "..", "..", "device", "card").resolve()
+CARD_COPY = Path(HERE, "..", "..", "device", "card").resolve()
 try:
     import tkinter  # noqa: F401
     HAS_TK = bool(os.environ.get("DISPLAY")) or sys.platform.startswith("win")
@@ -65,7 +68,7 @@ def changed_attrs(before, after):
 
 
 def levels_of(root, rel):
-    """«wirkt wie» of every sound of a song or preset: the knob a full-scale sample would need, per oscillator."""
+    """«as loud as» of every sound of a song or preset: the knob a full-scale sample would need, per oscillator."""
     tree = bc.parse_xml(Path(root, rel).read_bytes().decode("utf-8", "surrogateescape"))
     card = bc.Card(str(root))
     out = {}
@@ -508,11 +511,23 @@ class Normalize(Case):
 
 
 class CommandLine(Case):
-    def run_main(self, *args):
+    def run_main(self, *args, lang=("--lang", "de")):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            self.assertEqual(db.main(list(args)), 0)
+            self.assertEqual(db.main(list(lang) + list(args)), 0)
         return out.getvalue()
+
+    def test_computers_language(self):
+        """Without --lang the computer's language, --lang wins."""
+        card = db.demo_card(Path(self.tmp.name) / "demo")
+        try:
+            for system, lang, text in (("de", (), "Master-Kompressor an"), ("en", (), "Master compressor on"),
+                                       ("de", ("--lang", "en"), "Master compressor on"),
+                                       ("en", ("--lang", "de"), "Master-Kompressor an")):
+                with mock.patch.object(bc, "system_language", lambda: system):
+                    self.assertIn(text, self.run_main("check", str(card / "SONGS"), lang=lang), (system, lang))
+        finally:
+            bc.LANG = "de"
 
     def test_commands(self):
         card = db.demo_card(Path(self.tmp.name) / "demo")
@@ -703,6 +718,35 @@ class Window(unittest.TestCase):
         self.app.set_lang("de")
         self.assertEqual((bc.LANG, self.app.view), ("de", "home"))
 
+    def test_computers_language_and_the_saved_one(self):
+        """The computer's language to start with; a language chosen in the window wins over it the next time."""
+        import tkinter as tk
+
+        def opened(system, saved=None):
+            settings = Path(self.tmp.name) / f"settings-{system}-{saved}.json"
+            if saved:
+                settings.write_text(json.dumps({"lang": saved}), encoding="utf-8")
+            root = tk.Tk()
+            try:
+                with mock.patch.object(bc, "system_language", lambda: system):
+                    app = db.App(root, str(settings), card=str(self.card))
+                return app.lang, bc.LANG, sorted(app.bound)
+            finally:
+                root.destroy()
+
+        de_keys, en_keys = sorted("pPnNlLaAkKbBzZdDeE"), sorted("aAbBcClLnNrRtTdDeE")
+        self.assertEqual(opened("de"), ("de", "de", de_keys))  # System German
+        self.assertEqual(opened("en"), ("en", "en", en_keys))  # System English
+        self.assertEqual(opened("de", saved="en"), ("en", "en", en_keys))  # Chosen in the window: it wins
+        self.assertEqual(opened("en", saved="de"), ("de", "de", de_keys))
+        self.app.set_lang("en")  # Chosen now, on a German computer: English the next time
+        root = tk.Tk()
+        try:
+            with mock.patch.object(bc, "system_language", lambda: "de"):
+                self.assertEqual(db.App(root, str(self.settings), card=str(self.card)).lang, "en")
+        finally:
+            root.destroy()
+
     def test_limits_in_db(self):
         shown = []
         self.app.oled.text = lambda x, y, s, *a, **k: shown.append(s)
@@ -733,12 +777,12 @@ class SelfTest(unittest.TestCase):
                 "english: ok"])
 
 
-@unittest.skipUnless((KARTE / "SONGS").is_dir(), "no card copy in device/card")
+@unittest.skipUnless((CARD_COPY / "SONGS").is_dir(), "no card copy in device/card")
 class CardCopy(unittest.TestCase):
     def test_card(self):
         with tempfile.TemporaryDirectory() as tmp:
             card = Path(tmp) / "karte"
-            shutil.copytree(KARTE, card, ignore=shutil.ignore_patterns("*.csv"))
+            shutil.copytree(CARD_COPY, card, ignore=shutil.ignore_patterns("*.csv"))
             rel = "SONGS/New Sitar Grii 10.XML"
             before = levels_of(card, rel)
             plan = db.plan_normalize(card, -1.0, True)
