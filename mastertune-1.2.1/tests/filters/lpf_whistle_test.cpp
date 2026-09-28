@@ -168,6 +168,10 @@ struct Set {
 	int32_t low = 0, band = 0, noiseLastValue = 0;
 
 	int32_t moveabilityNow(const Config& c) {
+#ifndef LPF_CUTOFF_NOISE
+		// The firmware without its analog noise on the cutoff (mastertune v18, 63b7b40f): the original without it too
+		return c.moveability;
+#endif
 		int32_t noise = getNoise() >> 2;
 		int32_t distanceToGo = noise - noiseLastValue;
 		noiseLastValue += distanceToGo >> 7;
