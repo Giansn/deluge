@@ -4,6 +4,8 @@
 
 **mastertune** is my fork of the official Deluge community firmware **1.2.1**: lighter on the CPU, with a CPU monitor, the Deluge as a USB audio interface, a master tune and a few tools around it. Latest: **v18.3**, [`deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin`](https://github.com/Giansn/deluge/raw/claude/wizardly-brahmagupta-nnrk07/mastertune-1.2.1/deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin). Install it like any Deluge firmware: the .bin in the SD card's root folder (only one .bin there), then switch the Deluge on while holding SHIFT. Every version, the details and the measurements are further down.
 
+**Manual:** [mastertune-manual-en.pdf](mastertune-1.2.1/docs/mastertune-manual-en.pdf), 56 pages: every change explained, where to find it on the Deluge and how to use it, with diagrams, the frequency drone in full and a reference of all menus, buttons and messages.
+
 **Written with Claude (AI).** This is a personal fork, not a contribution to the official firmware: please don't report its bugs to the community developers, report them in this repository's [issues](https://github.com/Giansn/deluge/issues). Every change is tested in an emulator that runs the firmware's real ARM code (below), but **v18.x has not been played on a real Deluge yet.** Keep a copy of your card.
 
 | | |
@@ -325,7 +327,7 @@ v11 contains v10, reworks the delay (sounds, kits, audio tracks and song), and f
 
 ## v12: Frequency drone
 
-Detailed manual with quick start, all controls, menu, recipes and technical data: **`docs/Drone-manual.pdf`** (source: `docs/drone-manual.html`).
+Detailed manual with quick start, all controls, menu, recipes and technical data: **`docs/Drone-manual.pdf`** (source: `docs/drone-manual.html`). It is also chapter 9 of the full manual, `docs/mastertune-manual-en.pdf`.
 
 v12 contains v11 and adds a drone: up to 16 sustained tones, set in Hz or as a note, mixed under the music. Each tone can beat like in brainwave apps, pulse in the song's tempo and duck with the sidechain.
 
@@ -643,7 +645,7 @@ v16 contains v15. **None of it is tested on the device.** Everything is tested i
 - **Profiler:** as in `prof/README.md`, again in the emulator with v16: 21 checks passed.
 - **Build:** no new warnings. Two complete rebuilds each give the same SHA-256, also for the two L2 versions. All checks above ran on exactly these builds, plus clock, sections and L2 as in v15 (`tests/clock`, `tests/sections`, `tests/l2`). The full-load song also sounds bit for bit like v15 with L2.
 
-## v17: Half the load, song browser, drone view without hangs, CPU monitor shortcut, quieter HPF whistle
+## v17: Lighter load, song browser, drone view without hangs, CPU monitor shortcut, quieter HPF whistle
 
 v17 contains v16. **The main file has the L2 cache for code and data** (previously `l2test/…-l2d`). With v16-l2d, "New Sitar Grii 10" was audibly better on the device, and there was no crash. If v17-l2d crashes or behaves strangely, the same version without L2 is right next to it. **v17 itself has not been tested on the device yet.** Everything is tested in the emulator with the firmware's machine code.
 
