@@ -18,7 +18,8 @@ Four functions, in its window or on the command line:
   or B volume) lowered by just as much, in every clip of every song and in the kits and synths of KITS/ and SYNTHS/.
   The voice gets the same signal as before, before its filters and effects, so the songs sound as before, only with
   the knobs meaning the same everywhere. A sample whose every use can't be compensated that way stays as it is: an
-  oscillator level that isn't saved or has a patch cable to it. Never changed: wavetables and audio clips.
+  oscillator level that isn't saved or has a patch cable to it, FM, a format from before 2017, a copy in a song's own
+  folder (Collect media) the firmware may play instead. Never changed: wavetables and audio clips.
 - Zurückspielen (restore): puts back the files of a backup.
 
 Where it writes: onto the card, keeping a copy of every file it changes in BASELINE-BACKUP/<date> <time> <function>/
@@ -38,7 +39,7 @@ Usage (Windows: py instead of python3; without arguments it opens its window):
 Needs numpy to normalize (pip install numpy); everything else only Python 3.8.
 
 Versions:
-  1  the first build: check, levels, normalize with compensation, restore; onto the card with a backup or into a folder
+  1  the first build: check, levels, normalize (compensated), restore, with a backup or into a folder, DelugeRec's look
 """
 import argparse
 import datetime
@@ -174,8 +175,16 @@ def rel_key(rel):
 
 
 class Change:
-    def __init__(self, rel, data, lines):
-        self.rel, self.data, self.lines = rel, data, lines
+    """A file a plan writes: its bytes, or for samples and restored files how to get them when it writes (so that
+    not all of them are in memory at once), with their size."""
+
+    def __init__(self, rel, data, lines, size=None):
+        self.rel, self.lines, self.make = rel, lines, data
+        self.size = len(data) if isinstance(data, (bytes, bytearray)) else size
+
+    @property
+    def data(self):
+        return self.make() if callable(self.make) else self.make
 
 
 class Plan:
@@ -187,8 +196,8 @@ class Plan:
         self.sections = []  # (heading, lines)
         self.summary = []
 
-    def add(self, rel, data, lines):
-        self.changes[rel] = Change(rel, data, lines)
+    def add(self, rel, data, lines, size=None):
+        self.changes[rel] = Change(rel, data, lines, size)
 
     def report(self):
         out = [f"# {self.title}", ""] + [f"- {s}" for s in self.summary]
@@ -269,21 +278,26 @@ def plan_levels(root):
         kits, synths = {}, {}
         for inst in instruments.children if instruments is not None else []:
             if inst.name == "kit":
-                kits[bc.track_key(inst, "preset")] = inst
+                kits[bc.instrument_key(inst, "preset", "kit")] = inst
             elif inst.name == "sound":
-                synths[bc.track_key(inst, "preset")] = inst
+                synths[bc.instrument_key(inst, "preset", "synth")] = inst
         number = {}
         for clip in song.iter():
-            if clip.name not in ("instrumentClip", "audioClip"):
+            if clip.name == "audioClip":
+                track = bc.readable(clip.get("trackName") or "?")
+                key = ("audio", track, "")
+            elif clip.name == "instrumentClip":
+                track = bc.readable(bc.track_key(clip, "instrumentPreset"))
+                key = bc.instrument_key(clip, "instrumentPreset",
+                                        "kit" if clip.child("kitParams") is not None else "synth")
+            else:
                 continue
-            key = bc.track_key(clip, "instrumentPreset") if clip.name == "instrumentClip" else clip.get("trackName")
             number[key] = number.get(key, 0) + 1
             name = clip_name(clip, number[key])
             if clip.name == "audioClip":
-                limit(edit, clip.child("params"), "volume", bc.SONG_KIT_LIMIT, f"Audio-Spur «{bc.readable(key)}»",
-                      name)
+                limit(edit, clip.child("params"), "volume", bc.SONG_KIT_LIMIT, f"Audio-Spur «{track}»", name)
             elif clip.child("kitParams") is not None:
-                label = f"Kit «{bc.readable(key)}»"
+                label = f"Kit «{track}»"
                 limit(edit, clip.child("kitParams"), "volume", bc.SONG_KIT_LIMIT, label, name)
                 kit = kits.get(key)
                 sources = kit.child("soundSources") if kit is not None else None
@@ -301,7 +315,7 @@ def plan_levels(root):
                     if top is not None:
                         limit(edit, sp, "volume", top, row_label, name, "" if bc.has_notes(nr) else ", ohne Noten")
             elif clip.child("soundParams") is not None:
-                label = f"Synth «{bc.readable(key)}»"
+                label = f"Synth «{track}»"
                 sp = clip.child("soundParams")
                 top = sound_top(synths.get(key), [sp], card, label, edit)
                 if top is not None:
@@ -341,8 +355,9 @@ class OscRef:
             self.problem = "Kabel auf den Osc-Pegel"
 
 
-def sound_refs(rel, sound, params, label, other):
-    """The sample oscillators of a sound; its other uses of files go to other (file value -> reason)."""
+def sound_refs(rel, sound, params, label, other, handled):
+    """The sample oscillators of a sound; its other uses of files go to other (file value -> {reasons}). The nodes
+    that name its files go to handled."""
     refs = []
     defaults = sound.child("defaultParams")
     params = [p for p in params if p is not None] + ([defaults] if defaults is not None else [])
@@ -350,37 +365,44 @@ def sound_refs(rel, sound, params, label, other):
         node = sound.child(osc)
         if node is None:
             continue
-        ranges = [r for g in node.children if g.name == "sampleRanges" for r in g.children]
+        ranges = [r for g in node.children if g.name in ("sampleRanges", "wavetableRanges") for r in g.children]
         holders = [h for h in [node] + ranges if h.get("fileName")]
         if not holders:
             continue
+        handled.update(id(h) for h in holders)
         if node.get("type") == "wavetable":
-            for h in holders:
-                other[h.get("fileName")] = "Wavetable"
+            reason = "Wavetable"
+        elif (sound.get("mode") or "subtractive") != "subtractive":
+            reason = "FM oder Ringmod"
+        else:
+            refs.append(OscRef(rel, sound, osc, params, holders, label))
             continue
-        if (sound.get("mode") or "subtractive") != "subtractive":
-            for h in holders:
-                other.setdefault(h.get("fileName"), "FM oder Ringmod")
-            continue
-        refs.append(OscRef(rel, sound, osc, params, holders, label))
+        for h in holders:
+            other.setdefault(h.get("fileName"), set()).add(reason)
     return refs
 
 
 def xml_refs(rel, tree):
-    """(sample oscillators, {file value: reason} for the other files it names) of one XML of the card."""
-    refs, other = [], {}
-    top = next((c for c in tree.children if c.name in ("song", "kit", "sound")), None)
+    """(sample oscillators, {file value: {reasons}} for the other files it names) of one XML of the card. What it
+    doesn't know (formats before 2017 among them) goes to the other files: a sample it plays isn't raised if the
+    songs are to sound as before."""
+    refs, other, handled = [], {}, set()
+    top = next((c for c in tree.children if c.name in ("song", "kit", "sound", "synth")), None)
     if top is None:
-        return refs, other
-    if top.name == "song":
+        pass
+    elif top.name == "song":
         clips = [c for c in top.iter() if c.name == "instrumentClip"]
         instruments = top.child("instruments")
         for inst in instruments.children if instruments is not None else []:
-            key = bc.track_key(inst, "preset")
-            mine = [c for c in clips if bc.track_key(c, "instrumentPreset") == key]
+            kind = {"sound": "synth", "kit": "kit"}.get(inst.name)
+            if kind is None:
+                continue
+            key, name = bc.instrument_key(inst, "preset", kind), bc.readable(bc.track_key(inst, "preset"))
+            mine = [c for c in clips if bc.instrument_key(
+                c, "instrumentPreset", "kit" if c.child("kitParams") is not None else "synth") == key]
             if inst.name == "sound":
-                params = [c.child("soundParams") for c in mine if c.child("kitParams") is None]
-                refs += sound_refs(rel, inst, params, f"Synth «{bc.readable(key)}»", other)
+                params = [c.child("soundParams") for c in mine]
+                refs += sound_refs(rel, inst, params, f"Synth «{name}»", other, handled)
             elif inst.name == "kit":
                 sources = inst.child("soundSources")
                 for i, drum in enumerate(sources.children if sources is not None else []):
@@ -389,25 +411,39 @@ def xml_refs(rel, tree):
                     params = [nr.child("soundParams") for c in mine if c.child("kitParams") is not None
                               for nr in (c.child("noteRows").children if c.child("noteRows") is not None else [])
                               if nr.get("drumIndex") == str(i)]
-                    label = f"Reihe «{bc.readable(drum.get('name'))}» in Kit «{bc.readable(key)}»"
-                    refs += sound_refs(rel, drum, params, label, other)
+                    label = f"Reihe «{bc.readable(drum.get('name'))}» in Kit «{name}»"
+                    refs += sound_refs(rel, drum, params, label, other, handled)
         for c in top.iter():
             if c.name == "audioClip" and c.get("filePath"):
-                other[c.get("filePath")] = "Audio-Clip"
+                other.setdefault(c.get("filePath"), set()).add("Audio-Clip")
     elif top.name == "kit":
         sources = top.child("soundSources")
         for drum in sources.children if sources is not None else []:
             if drum.name == "sound":
-                refs += sound_refs(rel, drum, [], f"Reihe «{bc.readable(drum.get('name'))}» im Kit", other)
-    else:
-        refs += sound_refs(rel, top, [], "Synth", other)
-    handled = {id(h) for r in refs for h in r.holders}
-    for node in tree.iter():
+                refs += sound_refs(rel, drum, [], f"Reihe «{bc.readable(drum.get('name'))}» im Kit", other, handled)
+    else:  # A synth: <sound>, or <synth> in old files
+        refs += sound_refs(rel, top, [], "Synth", other, handled)
+    for node in tree.iter():  # Every other file it names, as attribute or as tag
         for key in ("fileName", "filePath"):
             v = node.attrs.get(key)
             if v and v.lower().endswith(AUDIO_EXTENSIONS) and id(node) not in handled:
-                other.setdefault(v, "anderes Format, zum Beispiel von 2016")
+                other.setdefault(v, set()).add("anderes Format, zum Beispiel von 2016")
+        v = (node.text or "").strip()
+        if node.name in ("fileName", "filePath") and v.lower().endswith(AUDIO_EXTENSIONS) and \
+                id(node.parent) not in handled:
+            other.setdefault(v, set()).add("anderes Format, zum Beispiel von 2016")
     return refs, other
+
+
+def alternate_copies(rel, value, card):
+    """Copies of a sample the firmware may play instead of it (AudioFileManager::getAudioFileFromFilename()): once
+    a file of a song is missing and the song has a folder of its own (SONGS/<song>/, where «Collect media» puts its
+    files; KITS/<kit>/ and SYNTHS/<synth>/ alike), every file after is looked for there first, by its path with _
+    for / and by its name."""
+    folder = rel[:-4] if rel.lower().endswith(".xml") else rel
+    names = [value[8:].replace("/", "_")] if value[:8].upper() == "SAMPLES/" else []
+    names.append(value.rsplit("/", 1)[-1])
+    return {f for f in (card.find(f"{folder}/{n}") for n in names) if f}
 
 
 def is_wavetable_file(path):
@@ -474,6 +510,14 @@ def raised(path, gain):
     return bytes(data), gain
 
 
+def raised_by(path, gain):
+    """The file raised by exactly gain, when it is written: the oscillators that play it are compensated for it."""
+    data, g = raised(path, gain)
+    if abs(g - gain) > 1e-9 * gain:  # Can't happen: its target is below full scale (unless it changed since)
+        raise ValueError(f"{path}: würde clippen, nicht geschrieben")
+    return data
+
+
 class Groups:
     """Files played by one oscillator together (the ranges of a multisample): they get one gain."""
 
@@ -518,15 +562,20 @@ def plan_normalize(root, target_db=-1.0, compensate=True, progress=None):
             continue
         r, o = xml_refs(rel, texts[rel][1])
         refs += r
-        for value, reason in o.items():
+        for value, reasons in o.items():
             found = card.find(value)
             if found:
-                other.setdefault(found, reason)
+                other.setdefault(found, set()).update(reasons)
     unreadable_xml = [rel for rel, t in texts.items() if t is None]
 
     groups, uses = Groups(), {}
     for r in refs:
         r.files = [card.find(h.get("fileName")) for h in r.holders]
+        copies = {c for h, f in zip(r.holders, r.files) for c in alternate_copies(r.rel, h.get("fileName"), card)
+                  if c != f}
+        if copies and not r.problem:
+            r.problem = "spielt vielleicht die Kopie " + bc.readable(
+                Path(min(copies)).relative_to(root).as_posix())
         keys = [f or "missing:" + h.get("fileName") for f, h in zip(r.files, r.holders)]
         groups.union(keys)
         for k in keys:
@@ -551,8 +600,9 @@ def plan_normalize(root, target_db=-1.0, compensate=True, progress=None):
         except (OSError, ValueError) as e:
             skipped[path] = f"nicht lesbar ({e})"
             continue
-        if path in other and (compensate or other[path] in ALWAYS_KEPT):
-            skipped[path] = other[path]
+        kept = sorted(other.get(path, set()) & set(ALWAYS_KEPT))
+        if kept or (compensate and path in other):  # Wavetables and audio clips never, the rest if it can't be matched
+            skipped[path] = ", ".join(kept or sorted(other[path]))
         elif peak is None or peak <= 0:
             skipped[path] = error or "still"
         elif compensate and any(r.problem for r in uses.get(path, [])):
@@ -595,14 +645,11 @@ def plan_normalize(root, target_db=-1.0, compensate=True, progress=None):
 
     # The files, then the oscillators that play them
     applied, lines = {}, []
-    for i, (path, g) in enumerate(sorted(gains.items(), key=lambda kv: kv[0].lower())):
-        if progress:
-            progress(f"Rechne Samples {i + 1}/{len(gains)}")
-        data, g = raised(path, g)
+    for path, g in sorted(gains.items(), key=lambda kv: kv[0].lower()):
         applied[path] = g
         rel = Path(path).relative_to(root).as_posix()
         line = f"{bc.readable(rel)}: {bc.signed_db(20 * math.log10(g))}"
-        plan.add(rel, data, [line])
+        plan.add(rel, lambda path=path, g=g: raised_by(path, g), [line], os.path.getsize(path))
         lines.append(line)
     compensated = {}
     if compensate:
@@ -664,7 +711,7 @@ def plan_restore(backup):
             rel = full.relative_to(backup).as_posix()
             if rel == REPORT_NAME:
                 continue
-            plan.add(rel, full.read_bytes(), [bc.readable(rel)])
+            plan.add(rel, full.read_bytes, [bc.readable(rel)], full.stat().st_size)
             lines.append(bc.readable(rel))
     plan.summary.append(f"{files(len(lines))} zurück auf die Karte")
     plan.sections.append(("Dateien", sorted(lines, key=str.lower)))
@@ -688,32 +735,37 @@ def write_atomic(path, data):
         raise
 
 
-def write_plan(plan, to=None, now=None):
+def write_plan(plan, to=None, now=None, progress=None):
     """Writes a plan: onto the card with a backup of every file it replaces, or into the folder to. Returns the
     report of what it did."""
     if not plan.changes:
         return "Nichts zu ändern.\n"
     stamp = (now or datetime.datetime.now()).strftime("%Y-%m-%d %H-%M-%S")
     report = plan.report()
+    n = len(plan.changes)
     if to is not None:
         to = Path(to).resolve()
         if to == plan.root.resolve():
             raise ValueError("Der Ordner ist die Karte selbst: dafür «Auf die Karte» wählen")
-        for rel, c in plan.changes.items():
+        for i, (rel, c) in enumerate(plan.changes.items()):
+            if progress:
+                progress(f"Datei {i + 1}/{n}")
             write_atomic(to / rel, c.data)
         (to / REPORT_NAME).write_text(report, encoding="utf-8")
         return (f"{files(len(plan.changes))} geschrieben in {to}.\nKopiere den Inhalt dieses Ordners auf die Karte "
                 f"(Ordner zusammenführen, Dateien ersetzen).\n")
-    backup, n = plan.root / BACKUP / f"{stamp} {plan.action}", 2
+    backup, k = plan.root / BACKUP / f"{stamp} {plan.action}", 2
     while backup.exists():
-        backup, n = plan.root / BACKUP / f"{stamp} {plan.action} ({n})", n + 1
-    need = sum(len(c.data) for c in plan.changes.values())
+        backup, k = plan.root / BACKUP / f"{stamp} {plan.action} ({k})", k + 1
+    need = sum(c.size for c in plan.changes.values())
     need += sum((plan.root / rel).stat().st_size for rel in plan.changes if (plan.root / rel).exists())
     free = shutil.disk_usage(plan.root).free
     if need + (16 << 20) > free:
         raise ValueError(f"Zu wenig Platz auf der Karte: {need >> 20} MB nötig, {free >> 20} MB frei. "
                          f"Wähle «In einen Ordner».")
-    for rel in plan.changes:
+    for i, rel in enumerate(plan.changes):
+        if progress:
+            progress(f"Sicherung {i + 1}/{n}")
         src = plan.root / rel
         if src.exists():
             (backup / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -723,10 +775,12 @@ def write_plan(plan, to=None, now=None):
     done = 0
     try:
         for rel, c in plan.changes.items():
+            if progress:
+                progress(f"Datei {done + 1}/{n}")
             write_atomic(plan.root / rel, c.data)
             done += 1
-    except OSError as e:
-        raise OSError(f"Nach {done} von {len(plan.changes)} Dateien abgebrochen: {e}. Die Sicherung liegt in "
+    except (OSError, ValueError) as e:
+        raise OSError(f"Nach {done} von {n} Dateien abgebrochen: {e}. Die Sicherung liegt in "
                       f"{backup}: mit «Zurückspielen» holst du den alten Stand.") from e
     return f"{files(done)} auf der Karte geändert. Sicherung: {backup}\n"
 
@@ -1605,7 +1659,8 @@ class App:
         key, plan = self.pending
         self.pending = None
         to = self.out if self.mode == "folder" and key != "restore" else None
-        self.start("SCHREIBE", lambda: write_plan(plan, to), self.written, key)
+        self.start("SCHREIBE", lambda: write_plan(plan, to, progress=lambda t: self.jobs.put(("progress", t))),
+                   self.written, key)
 
     def written(self, text):
         self.report_text += "\n## Geschrieben\n\n" + text
@@ -1837,7 +1892,7 @@ def main(argv=None):
         if plan.changes:
             print("\nNur gezeigt, nichts geschrieben: mit --yes schreiben.")
         return 0
-    print(write_plan(plan, getattr(args, "to", None)), end="")
+    print(write_plan(plan, getattr(args, "to", None), progress=lambda t: print(t, end="\r", file=sys.stderr)), end="")
     return 0
 
 

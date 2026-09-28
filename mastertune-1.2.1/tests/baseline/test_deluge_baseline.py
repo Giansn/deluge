@@ -261,6 +261,23 @@ class Levels(Case):
         self.assertEqual(db.plan_levels(self.root).changes["SONGS/C.XML"].lines,
                          ["Reihe «saw» in Kit «K» (Clip 1): 50,0 auf 40,0, -3,9 dB, ohne Noten"])
 
+    def test_same_name_other_folder(self):
+        # Two kits «K», in KITS/A and KITS/B: each clip goes by its own kit, as in the firmware (name and folder)
+        wav(self.root / "SAMPLES" / "quiet.wav", signal(-12, 16), 16)
+        wav(self.root / "SAMPLES" / "loud.wav", signal(0, 16), 16)
+        kits = kit("K", [sound("q", "SAMPLES/quiet.wav")]).replace('<kit presetName="K"', '<kit presetName="K" '
+                                                                     'presetFolder="KITS/A"') + \
+            kit("K", [sound("q", "SAMPLES/loud.wav")]).replace('<kit presetName="K"', '<kit presetName="K" '
+                                                                 'presetFolder="KITS/B"')
+        clips = kit_clip("K", [(0, params("0x7FFFFFFF"))]).replace(
+            'instrumentPresetName="K"', 'instrumentPresetName="K" instrumentPresetFolder="KITS/A"')
+        self.song("F.XML", song_text(kits, clips=clips))
+        self.assertEqual(db.plan_levels(self.root).changes, {})  # 50 with a sample at -12 dBFS: as loud as 25
+        self.assertEqual(bc.check_all(bc.song_files([str(self.root)]))[0]["notes"], [])
+        self.song("F.XML", song_text(kits, clips=clips.replace("KITS/A", "kits/b")))  # Case doesn't count
+        self.assertEqual(db.plan_levels(self.root).changes["SONGS/F.XML"].lines,
+                         ["Reihe «q» in Kit «K» (Clip 1): 50,0 auf 40,0, -3,9 dB"])
+
     def test_what_stays(self):
         # Samples that can't be read: nothing changes, and the report says so; a row with an oscillator: 40 exactly
         text = song_text(kit("K", [sound("gone", "SAMPLES/gone.wav"), sound("saw", osc1_type="saw")]),
@@ -396,6 +413,59 @@ class Normalize(Case):
         plan = db.plan_normalize(self.root, -1.0, True)
         self.assertEqual(plan.changes, {})
         self.assertEqual(dict(plan.sections)["Bleiben wie sie sind"][-1], "SAMPLES/take.wav: Audio-Clip")
+
+    def test_what_the_firmware_finds(self):
+        """Every use of a sample, as the firmware finds it: old formats, instruments of the same name in other
+        folders, copies in a song's own folder, wavetable ranges."""
+        s = self.root / "SAMPLES"
+        for name in ("old", "tag", "drum", "a", "copied", "range", "take"):
+            wav(s / f"{name}.wav", signal(-12, 16), 16)
+        synths = self.root / "SYNTHS"
+        synths.mkdir()
+        (synths / "Old.XML").write_text('<synth><osc1 type="sample" fileName="SAMPLES/old.wav" /></synth>')
+        (synths / "Tag.XML").write_text('<sound><osc1 type="sample"><fileName>SAMPLES/tag.wav</fileName></osc1>'
+                                        '<defaultParams oscAVolume="0x7FFFFFFF" /></sound>')
+        (self.root / "KITS").mkdir()
+        (self.root / "KITS" / "Old.XML").write_text(
+            '<kit><soundSources><sample><fileName>SAMPLES/drum.wav</fileName></sample></soundSources></kit>')
+        bass_a = sound("Bass", "SAMPLES/a.wav").replace('presetName="Bass"', 'presetName="Bass" '
+                                                                               'presetFolder="SYNTHS/A"')
+        bass_b = sound("Bass", osc1_type="saw").replace('presetName="Bass"', 'presetName="Bass" '
+                                                                              'presetFolder="SYNTHS/B"')
+        clip = '<instrumentClip instrumentPresetName="Bass" instrumentPresetFolder="SYNTHS/{}"><soundParams {} />' \
+               '</instrumentClip>'
+        self.song("Two.XML", song_text(synths=bass_a + bass_b, clips=clip.format("A", params()) + clip.format(
+            "B", params(osc_a='oscAVolume="0x7FFFFFFF"'))))
+        self.song("Collected.XML", song_text(sound("C", "SAMPLES/copied.wav"), clips=synth_clip("C", params())))
+        wav(self.root / "SONGS" / "Collected" / "copied.wav", signal(-12, 16), 16)  # «Collect media»
+        pad = '<sound presetName="Pad" mode="subtractive"><osc1 type="wavetable"><wavetableRanges><wavetableRange ' \
+              'fileName="SAMPLES/range.wav" /></wavetableRanges></osc1><defaultParams oscAVolume="0x7FFFFFFF" />' \
+              '</sound>'
+        self.song("Pad.XML", song_text(synths=pad, clips=synth_clip("Pad", params())
+                                       + '<audioClip trackName="T" filePath="SAMPLES/take.wav" />'))
+        (self.root / "KITS" / "Fm.XML").write_text(f'<kit><soundSources>{sound("fm", "SAMPLES/take.wav", mode="fm")}'
+                                                   '</soundSources></kit>')
+        before = (self.root / "SONGS" / "Two.XML").read_text()
+        plan = db.plan_normalize(self.root, -1.0, True)
+        self.assertEqual(dict(plan.sections)["Bleiben wie sie sind"], [
+            "SAMPLES/copied.wav: spielt vielleicht die Kopie SONGS/Collected/copied.wav (Synth «C»)",
+            "SAMPLES/drum.wav: anderes Format, zum Beispiel von 2016",
+            "SAMPLES/old.wav: Osc-Pegel nirgends gespeichert (Synth)",
+            "SAMPLES/range.wav: Wavetable",
+            "SAMPLES/take.wav: Audio-Clip"])
+        self.assertEqual(sorted(plan.changes), ["SAMPLES/a.wav", "SAMPLES/tag.wav", "SONGS/Two.XML", "SYNTHS/Tag.XML"])
+        a = plan.changes["SAMPLES/a.wav"]
+        self.assertTrue(callable(a.make))  # Raised when it writes: not every sample in memory at once
+        self.assertEqual(a.size, (s / "a.wav").stat().st_size)
+        after = plan.changes["SONGS/Two.XML"].data.decode()
+        self.assertEqual([(n, a, old) for n, a, old, _ in changed_attrs(before, after)],
+                         [("soundParams", "oscAVolume", "0x7FFFFFFF")])  # Bass of SYNTHS/A only
+        self.assertIn('instrumentPresetFolder="SYNTHS/B"><soundParams volume="0x4CCCCCA8" oscAVolume="0x7FFFFFFF"',
+                      after)
+        # Without compensation: never wavetables or audio clips, whatever else plays them
+        plan = db.plan_normalize(self.root, -1.0, False)
+        self.assertEqual(sorted(k for k in plan.changes if k.startswith("SAMPLES/")), [
+            "SAMPLES/a.wav", "SAMPLES/copied.wav", "SAMPLES/drum.wav", "SAMPLES/old.wav", "SAMPLES/tag.wav"])
 
     def test_restore(self):
         card = db.demo_card(Path(self.tmp.name) / "demo")

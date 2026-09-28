@@ -344,6 +344,15 @@ def track_key(node, prefix):
     return f"#{slot}.{node.get(prefix + 'SubSlot') or ''}" if slot is not None else "?"
 
 
+def instrument_key(node, prefix, kind):
+    """How the firmware joins a clip to its instrument (Song::getInstrumentFromPresetSlot()): kind, name and folder,
+    case ignored. Songs from before V4.0.0 name no folder: SYNTHS or KITS."""
+    folder = node.get(prefix + "Folder")
+    if folder is None:
+        folder = "KITS" if kind == "kit" else "SYNTHS"
+    return kind, track_key(node, prefix).lower(), folder.lower()
+
+
 def has_notes(row):
     """Whether a note row has notes (noteData, noteDataWithLift, ... or a notes tag of old files)."""
     return any(k.startswith("noteData") and v for k, v in row.attrs.items()) or any(
@@ -363,18 +372,18 @@ def check_song(root, card):
     kits, synths, audio = {}, {}, {}
     for inst in (instruments.children if instruments is not None else []):
         if inst.name == "kit":
-            kits[track_key(inst, "preset")] = inst
+            kits[instrument_key(inst, "preset", "kit")] = inst
         elif inst.name == "sound":
-            synths[track_key(inst, "preset")] = inst
+            synths[instrument_key(inst, "preset", "synth")] = inst
         elif inst.name == "audioTrack":
-            audio[inst.get("name") or "?"] = inst
+            audio[("audio", inst.get("name") or "?", "")] = inst
 
-    tracks = {}
+    tracks = {}  # instrument_key() -> Track
     for clip in song.iter():
         if clip.name == "instrumentClip":
-            key = track_key(clip, "instrumentPreset")
+            name = track_key(clip, "instrumentPreset")
             if clip.child("kitParams") is not None:
-                t = tracks.setdefault(("kit", key), Track("kit", key))
+                t = tracks.setdefault(instrument_key(clip, "instrumentPreset", "kit"), Track("kit", name))
                 p = clip.child("kitParams")
                 rows = clip.child("noteRows")
                 for nr in (rows.children if rows is not None else []):
@@ -386,13 +395,13 @@ def check_song(root, card):
                     if has_notes(nr):
                         t.played.add(int(index))
             elif clip.child("soundParams") is not None:
-                t = tracks.setdefault(("synth", key), Track("synth", key))
+                t = tracks.setdefault(instrument_key(clip, "instrumentPreset", "synth"), Track("synth", name))
                 p = clip.child("soundParams")
             else:
                 continue  # MIDI and CV: no audio
         elif clip.name == "audioClip":
-            key = clip.get("trackName") or "?"
-            t = tracks.setdefault(("audio", key), Track("audio", key))
+            name = clip.get("trackName") or "?"
+            t = tracks.setdefault(("audio", name, ""), Track("audio", name))
             p = clip.child("params")
         else:
             continue
@@ -411,16 +420,19 @@ def check_song(root, card):
     stages += effect_stages(song, [params] if params is not None else [], "im Master", with_saturation=False)
 
     loudest_sound = loudest_group = None
-    for (kind, key), t in sorted(tracks.items(), key=lambda kv: (["kit", "synth", "audio"].index(kv[0][0]), kv[0][1])):
+    names = [(k[0], k[1]) for k in tracks]
+    order = ["kit", "synth", "audio"]
+    for key, t in sorted(tracks.items(), key=lambda kv: (order.index(kv[0][0]), kv[1].name, kv[0])):
+        kind = t.kind
         inst = {"kit": kits, "synth": synths, "audio": audio}[kind].get(key)
-        label = {"kit": "Kit", "synth": "Synth", "audio": "Audio-Spur"}[kind] + " «" + readable(key) + "»"
+        where = f" ({readable(key[2]).upper()})" if names.count(key[:2]) > 1 else ""  # Two alike but for the folder
+        label = {"kit": "Kit", "synth": "Synth", "audio": "Audio-Spur"}[kind] + " «" + readable(t.name) + "»" + where
         if kind in ("kit", "audio"):
             loudest_group = more(loudest_group, t.volume)
             if t.volume is not None and t.volume > SONG_KIT_LIMIT:
                 k = knob(t.volume)
                 notes.append(f"{label}: {round(k)}, {signed_db(db_between(knob(SONG_KIT_LIMIT), k))} über 35")
-            where = "im Kit" if kind == "kit" else "in der Audio-Spur"
-            stages += effect_stages(inst, t.params, f"{where} «{readable(key)}»")
+            stages += effect_stages(inst, t.params, ("im " if kind == "kit" else "in der ") + label)
         if kind == "synth":
             loudest_sound = more(loudest_sound, t.volume)
             notes += sound_notes(label, inst, t.params, card)
