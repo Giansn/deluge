@@ -1,0 +1,248 @@
+From b63780d87504f0cd65c89adad7ddd61fd9e6afd5 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 11:51:41 +0000
+Subject: [PATCH 113/113] Silence: the filters, the EQ and the volume stage
+ start from their settings when a kit or audio track sounds again
+
+A kit or audio track whose effects gave out exact silence for 4096 samples skips them: the early return before the
+setup (v17), or the check after rendering (v12) where the early return can't be taken. v18's per-sample ramps and
+fades kept their state across that silence, and the two ways did different things with it:
+- the early return restarted the volume ramps, the check after rendering didn't: a volume changed while silent
+  ramped from the old one over at least 5 ms of the next sound there (tests/silent against a v18 reference without
+  the early return: up to -21 dBFS from bar 5 on);
+- in both, the filters' coefficients moved from the last rendered block, from before the silence; a crossfade
+  started while silent stayed frozen (holding one of the 24 slots, and keeping the early return from being taken)
+  and ran over the first 7 ms of the next sound; a filter switched on while silent faded in from the dry signal
+  there; the EQ's gain and corner moved from before the silence.
+Now both call the same: the filter params stop gliding, FilterSet::restartAfterSilence() (no ramp from the last
+rendered configuration or gain compensation, a crossfade ends and frees its slot, no switch-on fade-in), and
+ModControllableAudio::restartAfterSilence() (the volume ramps and the EQ bands take their gains and corners at once).
+A sound that stops rendering restarts its EQ too.
+
+tests/silent against the same source with the early return disabled: the same output, sample for sample (705,654
+samples), the same 116 arpeggiator notes; 26,118 early returns (25,769 before: LREV's frozen crossfade no longer
+keeps it from them). Against v18: from bar 4.5 on, where tracks sound again after changes while silent (-40 dBFS in
+the first 2.5 ms at 4.5, -34 dBFS at 5 through the delay's repeats).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/eq_shelves.h                   | 22 +++++++++++++++++-
+ src/deluge/dsp/filter/filter.h                |  7 ++++++
+ src/deluge/dsp/filter/filter_set.cpp          | 23 +++++++++++++++++++
+ src/deluge/dsp/filter/filter_set.h            |  6 +++++
+ .../global_effectable_for_clip.cpp            | 19 +++++++++++----
+ .../mod_controllable_audio.cpp                |  5 ++++
+ .../mod_controllable/mod_controllable_audio.h |  3 +++
+ src/deluge/processing/sound/sound.cpp         |  4 ++--
+ 8 files changed, 81 insertions(+), 8 deletions(-)
+
+diff --git a/src/deluge/dsp/eq_shelves.h b/src/deluge/dsp/eq_shelves.h
+index 571d40c4..03606fac 100644
+--- a/src/deluge/dsp/eq_shelves.h
++++ b/src/deluge/dsp/eq_shelves.h
+@@ -166,6 +166,12 @@ public:
+ 		bass_ = Band{};
+ 		treble_ = Band{};
+ 	}
++	// The effects skipped their blocks and silence went out: a band still on takes its gain and corner as they are
++	// set at its next block, instead of moving there from where it was before the silence
++	void restartAfterSilence() {
++		bass_.restartAfterSilence();
++		treble_.restartAfterSilence();
++	}
+ 
+ private:
+ 	struct Band {
+@@ -180,6 +186,14 @@ private:
+ 		int32_t freqParam = 0;
+ 		float targetLog2 = 0; // the corner's for freqParam
+ 		bool haveTarget = false;
++		bool snapCorner = false; // the next block takes the corner at once (after silence)
++
++		void restartAfterSilence() {
++			if (active) {
++				gain.restart();
++				snapCorner = true;
++			}
++		}
+ 
+ 		// Sets up the block; false: the band is off and stays off (nothing to render)
+ 		bool prepare(const StereoSample* buffer, int32_t n, int32_t gainParam, int32_t newFreqParam, float centre) {
+@@ -202,8 +216,14 @@ private:
+ 				gain.restart();
+ 				gain.advance(kUnity, n);
+ 			}
+-			gainStart = gain.current();
++			// (after a restart the gain starts at its target: advance() takes it at once)
++			gainStart = gain.started() ? gain.current() : targetGain;
+ 			gainEnd = gain.advance(targetGain, n);
++			if (snapCorner) {
++				log2Corner = targetLog2;
++				moveability = moveabilityForLog2(targetLog2);
++				snapCorner = false;
++			}
+ 			moveStart = moveability;
+ 			if (log2Corner != targetLog2) {
+ 				// The corner glides in log frequency: 10 ms one-pole, per block (exact for the block's length)
+diff --git a/src/deluge/dsp/filter/filter.h b/src/deluge/dsp/filter/filter.h
+index 053cafd4..04afdc12 100644
+--- a/src/deluge/dsp/filter/filter.h
++++ b/src/deluge/dsp/filter/filter.h
+@@ -115,6 +115,13 @@ public:
+ 	/// mastertune v18: the next block takes the configuration as it is, without moving to it from the last one's (after
+ 	/// a reset, a mode change, or anything else that makes the last configuration meaningless for this one)
+ 	void restartRamp() { haveLast_ = false; }
++	/// mastertune v18: the effects skipped their blocks and silence went out (see FilterSet::restartAfterSilence()):
++	/// the next block takes the configuration as it is then, and a filter switched on meanwhile is on at once, since
++	/// nothing sounded to move or fade from
++	void restartAfterSilence() {
++		haveLast_ = false;
++		fadeInLeft_ = 0;
++	}
+ 
+ 	q31_t fc;
+ 	q31_t tannedFrequency;
+diff --git a/src/deluge/dsp/filter/filter_set.cpp b/src/deluge/dsp/filter/filter_set.cpp
+index 7e8c2db7..ebb1e6cf 100644
+--- a/src/deluge/dsp/filter/filter_set.cpp
++++ b/src/deluge/dsp/filter/filter_set.cpp
+@@ -287,6 +287,29 @@ void FilterSet::endFade() {
+ 	fadeSlot_ = 0;
+ }
+ 
++void FilterSet::restartAfterSilence() {
++	endFade();
++	// (the filters as setConfig() uses them for the modes it was last given)
++	if (LPFOn) {
++		if ((lpfMode_ == FilterMode::SVF_BAND) || (lpfMode_ == FilterMode::SVF_NOTCH)) {
++			lpfilter.svf.restartAfterSilence();
++		}
++		else {
++			lpfilter.ladder.restartAfterSilence();
++		}
++	}
++	if (HPFOn) {
++		if (hpfMode_ == FilterMode::HPLADDER) {
++			hpfilter.ladder.restartAfterSilence();
++		}
++		else {
++			hpfilter.svf.restartAfterSilence();
++		}
++	}
++	haveRenderedGain_ = false;
++	gainRampStart_ = 1.0f;
++}
++
+ // The filters as they were render the same input into fadeBuffer, this one's in place, and the output moves from theirs
+ // to this one's over kFadeSamples. Their gain: the gain compensation their configuration gave against this one's, on
+ // their input where the caller applies it before the filters (a voice), on their output where after (outputGain: the
+diff --git a/src/deluge/dsp/filter/filter_set.h b/src/deluge/dsp/filter/filter_set.h
+index db7c1e15..fead0546 100644
+--- a/src/deluge/dsp/filter/filter_set.h
++++ b/src/deluge/dsp/filter/filter_set.h
+@@ -95,6 +95,12 @@ public:
+ 	static constexpr int32_t kNumFades = 24;
+ 	/// Ends a crossfade at once, freeing its slot (a voice that is unassigned: it may be freed without its destructor)
+ 	void endFade();
++	/// mastertune v18: the song's, a kit's or an audio track's effects skipped this block, nothing rendered: silence
++	/// went out, and the filters' last rendered block may lie long before. Nothing sounds that a crossfade, a
++	/// switch-on fade-in or the per-sample ramps could smooth, so the next rendered block takes the filters and their
++	/// gain compensation as they are set then, instead of moving from what they were before the silence (a crossfade
++	/// running ends and frees its slot)
++	void restartAfterSilence();
+ 
+ 	/// mastertune v18: the crossing guard (Community features > Filter crossing guard, off by default; the audio
+ 	/// engine sets this from the setting before each render). Where both filters are on and the HPF's cutoff comes
+diff --git a/src/deluge/model/global_effectable/global_effectable_for_clip.cpp b/src/deluge/model/global_effectable/global_effectable_for_clip.cpp
+index 5d6ad786..62808e97 100644
+--- a/src/deluge/model/global_effectable/global_effectable_for_clip.cpp
++++ b/src/deluge/model/global_effectable/global_effectable_for_clip.cpp
+@@ -135,6 +135,13 @@ GlobalEffectableForClip::GlobalEffectableForClip() {
+ 		if (reverbSendAmount != 0) {
+ 			AudioEngine::timeThereWasLastSomeReverb = AudioEngine::audioSampleTimer; // As the volume stage would
+ 		}
++		// mastertune v18: nothing renders, so nothing moves on in the filters, the EQ or the volume stage: when
++		// something sounds again, they take their settings at once instead of moving from before the silence (a
++		// crossfade or switch-on fade-in that started meanwhile ends), and the filter params stop gliding.
++		// renderWithNothingToRender() does the same, so the early return renders exactly as this
++		endFilterGlide(unpatchedParams);
++		filterSet.restartAfterSilence();
++		restartAfterSilence();
+ 		goto effectsDone;
+ 	}
+ 
+@@ -247,9 +254,9 @@ void GlobalEffectableForClip::tickParamManagerForClip(ModelStackWithTimelineCoun
+ //   coming in, which Delay::process() only reads after it has been set again. An old file's delay time change is
+ //   resolved there, the first time.
+ // - setupFilterSetConfig(): FilterSet::setConfig() resets a filter whose mode changes; otherwise it only sets what
+-//   processFilters() reads, after it has been set again. The filter params' glide (v18) moves on there;
+-//   renderWithNothingToRender() takes them to their own values instead (with nothing coming in, the filters give
+-//   silence either way; the modes checked here are from where the glide is).
++//   processFilters() reads, after it has been set again. The filter params' glide (v18) moves on there, and the
++//   check after rendering then ends it, as renderWithNothingToRender() does (the modes checked here are from where
++//   the glide is). Both restart the filters' ramps and fades, the EQ's and the volume stage's after the silence.
+ // - The rest reads params and settings, as the check does.
+ bool GlobalEffectableForClip::effectsStayDormant(ParamManager* paramManagerForClip, SampleRecorder* recorder) {
+ 	UnpatchedParamSet* unpatchedParams = paramManagerForClip->getUnpatchedParamSet();
+@@ -290,8 +297,10 @@ void GlobalEffectableForClip::renderWithNothingToRender(ModelStackWithTimelineCo
+ 		AudioEngine::timeThereWasLastSomeReverb = AudioEngine::audioSampleTimer; // As the volume stage would
+ 	}
+ 
+-	// Silence went out: the volume stage takes its gains at once when something sounds again
+-	restartVolumeRamps();
++	// Silence went out: the filters, the EQ and the volume stage take their settings at once when something sounds
++	// again, as the check after rendering does
++	filterSet.restartAfterSilence();
++	restartAfterSilence();
+ 
+ 	tickParamManagerForClip(modelStack, paramManagerForClip, numSamples, isClipActive);
+ }
+diff --git a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+index ad6fd829..50989900 100644
+--- a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
++++ b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+@@ -628,6 +628,11 @@ void ModControllableAudio::restartVolumeRamps() {
+ 	reverbSendRamp_.restart();
+ }
+ 
++void ModControllableAudio::restartAfterSilence() {
++	restartVolumeRamps();
++	eqShelves_.restartAfterSilence();
++}
++
+ bool ModControllableAudio::isBitcrushingEnabled(ParamManager* paramManager) {
+ 	UnpatchedParamSet* unpatchedParams = paramManager->getUnpatchedParamSet();
+ 	return (unpatchedParams->getValue(params::UNPATCHED_BITCRUSHING) >= -2113929216);
+diff --git a/src/deluge/model/mod_controllable/mod_controllable_audio.h b/src/deluge/model/mod_controllable/mod_controllable_audio.h
+index 58763a73..c7da36ce 100644
+--- a/src/deluge/model/mod_controllable/mod_controllable_audio.h
++++ b/src/deluge/model/mod_controllable/mod_controllable_audio.h
+@@ -150,6 +150,9 @@ public:
+ 
+ 	// mastertune v18: the volume stage's gains per side and its reverb send, moving per sample (dsp/gain_ramp.h)
+ 	void restartVolumeRamps();
++	// mastertune v18: the effects skipped their blocks and silence went out: the volume stage and the EQ take their
++	// gains (and the EQ its corners) at once the next time they render, instead of moving from before the silence
++	void restartAfterSilence();
+ 	deluge::dsp::gain::GainRamp volumeRampL_;
+ 	deluge::dsp::gain::GainRamp volumeRampR_;
+ 	deluge::dsp::gain::GainRamp reverbSendRamp_;
+diff --git a/src/deluge/processing/sound/sound.cpp b/src/deluge/processing/sound/sound.cpp
+index 473e6779..93d7a3a2 100644
+--- a/src/deluge/processing/sound/sound.cpp
++++ b/src/deluge/processing/sound/sound.cpp
+@@ -2581,8 +2581,8 @@ void Sound::stopSkippingRendering(ArpeggiatorSettings* arpSettings) {
+ 				                                     AudioEngine::audioSampleTimer - AudioEngine::timeLastSideChainHit);
+ 				//}
+ 			}
+-			// The volume stage and the pan take their gains at once the first time it's rendered (as v17 did)
+-			restartVolumeRamps();
++			// The volume stage, the EQ and the pan take their gains at once the first time it's rendered (as v17 did)
++			restartAfterSilence();
+ 			panRampL_.restart();
+ 			panRampR_.restart();
+ 
+-- 
+2.43.0
+
