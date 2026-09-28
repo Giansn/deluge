@@ -22,6 +22,7 @@ Songs:
   the song's values between windows in the same pattern.
 - clipping: the base song pushed into clipping: the song's volume and every synth's, kit row's, kit's and the audio
   track's volume at the knob's maximum.
+  --automate filters|eq|mix: only those params automated (the rest as in the base song).
 --limiter / --guard: CommunityFeatures.XML with outputLimiter / filterCrossingGuard 1 (mastertune v18; builds without
 the settings ignore them). Without either, no file: the defaults (both off).
 """
@@ -74,6 +75,17 @@ def automate_params_block(block, top_tag, top_attrs, length, rng):
     for child, attrs in (("lpf", FILTER_ATTRS), ("hpf", FILTER_ATTRS), ("equalizer", EQ_ATTRS)):
         block = re.sub(rf"<{child}\b[^>]*/>", lambda m: automate_attrs(m.group(0), attrs, length, rng), block)
     return block
+
+
+def restrict(which):
+    """--automate: only these of the automated params (filters, eq, mix; all: every one)."""
+    global SOUND_ATTRS, GLOBAL_ATTRS, FILTER_ATTRS, EQ_ATTRS
+    if which == "all":
+        return
+    SOUND_ATTRS = [n for n in SOUND_ATTRS if (n in ("volume", "pan")) == (which == "mix")] if which != "eq" else []
+    GLOBAL_ATTRS = GLOBAL_ATTRS if which == "mix" else []
+    FILTER_ATTRS = FILTER_ATTRS if which == "filters" else []
+    EQ_ATTRS = EQ_ATTRS if which == "eq" else []
 
 
 def automate(xml, rng, song_length=32 * 4 * 96):
@@ -141,6 +153,10 @@ def main():
     ap.add_argument("--guard", action="store_true", help="Community features: filter crossing guard on")
     ap.add_argument("--xml-out")
     ap.add_argument("--seed", type=int, default=1, help="the automation's random values")
+    ap.add_argument("--automate", default="all", choices=["all", "filters", "eq", "mix"],
+                    help="the automation song with only some of its params automated: the filters' frequency, "
+                         "resonance and morph, EQ bass and treble, or volume and pan (to find what a difference "
+                         "between builds comes from)")
     a = ap.parse_args()
     files, lengths = make_sd.samples()
     if a.song == "synths16":
@@ -152,6 +168,7 @@ def main():
     if a.song == "drive":
         xml = xml.replace('lpfMode="24dB"', 'lpfMode="24dBDrive"')
     elif a.song == "automation":
+        restrict(a.automate)
         xml = automate(xml, np.random.default_rng(a.seed))
     elif a.song == "clipping":
         xml = clipping(xml)

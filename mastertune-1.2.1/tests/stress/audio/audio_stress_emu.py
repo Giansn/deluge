@@ -24,7 +24,7 @@ play_realtime(), without the MIDI models):
   and filter route (HPF to LPF, LPF to HPF, parallel): every synth, kit row, the kit, the audio track and the song,
   their fields (ModControllableAudio::lpfMode, hpfMode, filterRoute) written between routine() calls, as the menu does
   (offsets from the ELF's debug info, the toolchain's gdb; the objects found by walking Song::firstOutput, Output::next,
-  Kit::firstDrum, Drum::next).
+  Kit::firstDrum, Drum::next). --storm-objects N: only N of them, at random, each time (1: as a user would).
 - --song-storm: every 16th note (5512.5 samples at 120 BPM) the song's own params (its UnpatchedParamSet: volume, pan,
   LPF and HPF frequency, resonance and morph, EQ bass and treble) jump to the extremes or random values (a third each,
   seeded), written between routine() calls: the song-level automation of stress_sd.py's automation song, which the
@@ -48,7 +48,9 @@ Measured over the bars after the warm-up (--warmup-bars, also played in real tim
 - Heap: the GeneralMemoryAllocator's regions (song_emu.ram_usage(): internal RAM, SDRAM, the stealable SDRAM with the
   sample clusters) free and allocations after the warm-up and at the end, at the same place in the song's loop when the
   bars are a multiple of 4 (a leak shows as less free at the end), and after loading, before playback.
-Results: <out>/result.json, stress.wav; a line per result on stdout. Exit status 1 on a crash, a hang or a freeze.
+- Profile: the top 30 functions of the measured bars, instructions per 128 samples rendered (the block counts).
+Results: <out>/result.json, stress.wav, calls.npz (per routine() call: emulated time and instructions, samples
+rendered, gap at entry, voices, cpuDireness, culls); a line per result on stdout. Exit status 1 on a crash, a hang or a freeze.
 """
 import argparse
 import array
@@ -257,8 +259,9 @@ class Objects:
 class Storms:
     """--mode-storm and --song-storm (see the docstring): due by the samples rendered since playback started."""
 
-    def __init__(self, emu, objects, mode_storm, song_storm, seed, timer0):
+    def __init__(self, emu, objects, mode_storm, song_storm, seed, timer0, storm_objects=0):
         self.emu = emu
+        self.storm_objects = storm_objects
         self.objects = objects
         self.rng = np.random.default_rng(seed)
         self.timer_address = emu.sym["_ZN11AudioEngine16audioSampleTimerE"]
@@ -278,7 +281,10 @@ class Storms:
     def after_call(self):
         now = (self.emu.u32(self.timer_address) - self.timer0) & 0xFFFFFFFF
         if self.next_mode is not None and now >= self.next_mode:
-            for _, address in self.objects.list:
+            targets = self.objects.list
+            if self.storm_objects:  # --storm-objects N: only N of them, at random
+                targets = [targets[i] for i in self.rng.choice(len(targets), self.storm_objects, replace=False)]
+            for _, address in targets:
                 self.objects.set(address, int(self.rng.choice(LPF_MODES)), int(self.rng.choice(HPF_MODES)),
                                  int(self.rng.choice(ROUTES)))
             self.mode_events.append(now)
@@ -301,6 +307,9 @@ def main():
     ap.add_argument("--warmup-bars", type=float, default=1)
     ap.add_argument("--mode-storm", action="store_true")
     ap.add_argument("--song-storm", action="store_true")
+    ap.add_argument("--storm-objects", type=int, default=0,
+                    help="--mode-storm switches only this many objects (at random) each time, e.g. 1 as a user would "
+                         "(default: all of them at once)")
     ap.add_argument("--seed", type=int, default=1, help="the storms' random values (and the firmware's jcong)")
     a = ap.parse_args()
     tools = a.tools or os.path.join(os.path.dirname(os.path.abspath(a.elf)),
@@ -362,7 +371,7 @@ def main():
     timer_address = sym["_ZN11AudioEngine16audioSampleTimerE"]
     player.start()
     timer0 = emu.u32(timer_address)
-    storms = Storms(emu, objects, a.mode_storm, a.song_storm, a.seed, timer0)
+    storms = Storms(emu, objects, a.mode_storm, a.song_storm, a.seed, timer0, a.storm_objects)
     limiter_running = sym.by_name.get("_ZN11AudioEngine20outputLimiterRunningE")
     guard = sym.by_name.get("_ZN6deluge3dsp6filter9FilterSet13crossingGuardE")
     dma = Dma(emu)
@@ -421,6 +430,7 @@ def main():
             player.culls), timer=(emu.u32(timer_address) - timer0) & 0xFFFFFFFF, events=len(storms.mode_events),
             max_gap_warmup=dma.max_gap)
         result["heap_start"] = heap()
+        emu.bc.bc_reset_counts()  # The profile: the measured bars only
         dma.max_gap = 0
         log(f"warm-up: {a.warmup_bars:g} bar(s) ({time.time() - t:.0f} s), max gap {marks['max_gap_warmup']}, "
             f"underruns {dma.underrun_events}")
@@ -485,6 +495,15 @@ def main():
                            by_type=dict(by_type), by_caller=dict(culls),
                            warmup=sum(marks["culls"].values()))
 
+    # The profile of the measured bars (song_emu.profile_by_function(): the block counts): the top functions in
+    # instructions per 128 samples rendered, and the per-call log (calls.npz: emulated time in instructions,
+    # instructions, samples rendered, gap at entry, voices, cpuDireness, culls)
+    rendered = float(c[:, 2].sum()) if len(c) else 0.0
+    if rendered:
+        functions = se.profile_by_function(emu)
+        result["top_functions"] = [(n, round(v / rendered * 128)) for n, v in functions.most_common(30)]
+    np.savez_compressed(os.path.join(a.out, "calls.npz"), calls=np.array(calls, dtype=np.int64).reshape(-1, 7),
+                        measured_from=marks["calls"])
     x = np.frombuffer(dma.out, dtype="<i4").reshape(-1, 2)
     wav_path = os.path.join(a.out, "stress.wav")
     with wave.open(wav_path, "wb") as f:
@@ -511,6 +530,20 @@ def main():
                    rms_dbfs=float(10 * np.log10(np.mean(m ** 2) + 1e-30)),
                    click_samples=int(len(idx)), click_events=int(len(events)),
                    click_event_times_s=[round(float(i) / se.SAMPLE_RATE, 4) for i in events[:40]])
+        # Events within 10 ms after cpuDireness went to or from 14 (the drive ladder's oversampling switched off or on)
+        allc = np.array(calls, dtype=np.float64).reshape(-1, 7)
+        if len(allc) > 1:
+            at14_all = allc[:, 5] >= 14
+            first_sample = np.cumsum(allc[:, 2]) - allc[:, 2]  # Rendered before each call, since playback started
+            ch = np.flatnonzero(at14_all[1:] != at14_all[:-1]) + 1
+            tr = first_sample[ch].astype(np.int64) - marks["out"]
+            tr = tr[tr >= 0]
+            near14 = 0
+            if len(tr) and len(events):
+                j = np.searchsorted(tr, events, side="right") - 1
+                near14 = int(np.sum((j >= 0) & (events - tr[np.maximum(j, 0)] <= CLICK_WINDOW)))
+            out["direness_14_changes"] = int(len(tr))
+            out["click_events_within_10ms_after_direness_14_change"] = near14
         if a.mode_storm:
             # Events within 10 ms after a switch (the output's sample index = samples rendered since playback started,
             # less those before the measurement)
@@ -549,7 +582,9 @@ def main():
         log(f"output: peak {o['peak_dbfs']:.2f} dBFS, RMS {o['rms_dbfs']:.1f} dBFS, clipped {o['clipped_samples']}, "
             f"clicks {o['click_samples']} samples / {o['click_events']} events"
             + (f", {o['click_events_within_10ms_after_switch']} within 10 ms after one of {o['switches']} switches"
-               if a.mode_storm else ""))
+               if a.mode_storm else "")
+            + (f", {o.get('click_events_within_10ms_after_direness_14_change', 0)} within 10 ms after one of "
+               f"{o.get('direness_14_changes', 0)} changes of cpuDireness to or from 14"))
     log(f"heap free internal / external: loaded {hfree(result['heap_loaded'])}, after warm-up "
         f"{hfree(result.get('heap_start'))}, end {hfree(result.get('heap_end'))}")
     if a.song_storm:

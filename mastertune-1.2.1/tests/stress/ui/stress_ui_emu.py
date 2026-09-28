@@ -117,42 +117,56 @@ class Stop(Exception):
 
 
 class LightDma(se.RealTimeDma):
-    """song_emu.RealTimeDma without keeping the samples (runs of minutes): the worst gap, underruns and the times over
-    64 per phase (take())."""
+    """The SSI's DMA in real time (song_emu.RealTimeDma's hooks and clock) without keeping the samples (runs of
+    minutes), with the gap judged per slot of the ring of 128, as the DMA sees it: a sample written into slot s at DMA
+    position p comes (p - s) mod 128 samples after the DMA last read that slot, the gap (how many samples the DMA read
+    since the buffer was last full there); if the DMA has read the slot more than once since it was last written, it
+    played the old content again (an underrun: n - 1 stale samples for n reads) and the gap is 128 more per extra read.
+    Unlike RealTimeDma's count of samples written, this recovers as the Deluge does after an underrun: the firmware
+    renders up to where the DMA reads now, modulo the ring (AudioEngine::routine() can't see a lap it missed), so its
+    next samples are on time again; RealTimeDma keeps a lag of a lap for ever and counts every later sample as an
+    underrun (an artifact in long runs). Per phase (take()): the worst gap, underrun events (runs of late samples),
+    stale samples, times over 64."""
 
     def __init__(self, emu):
         super().__init__(emu)
-        self.phase = dict(max_gap=0, underrun_samples=0, over_64=0)
-        self.phase_max_at = None
+        self.slot_pos = [self.start_position - 1] * 128  # The DMA's position when each slot was last written
+        self.last_pos, self.last_gap, self.late = self.start_position, 0, False
+        self.phase = dict(max_gap=0, underruns=0, underrun_samples=0, over_64=0)
+        self.underrun_events = 0
 
     def on_write(self, uc, access, address, size, value, _):
         base = self.base if address >= self.base else self.cached
         offset = address - base
+        pos = self.position()
+        p = self.phase
         for first in range(-(-offset // 8) * 8, offset + size, 8):
-            slot = first // 8 % 128
-            if slot != self.written % 128:
-                self.misplaced += 1
-                self.written += (slot - self.written) % 128
-            gap = self.gap()
-            p = self.phase
+            s = first // 8 % 128
+            reads = (pos - s) // 128 - (self.slot_pos[s] - s) // 128  # DMA reads of slot s since its last write
+            self.slot_pos[s] = pos
+            gap = (pos - s) % 128 + 128 * max(reads - 1, 0)
             if gap > p["max_gap"]:
                 p["max_gap"] = gap
-                self.phase_max_at = self.emu.now()
             if gap > 64 and not self.over_64_now:
                 p["over_64"] += 1
             self.over_64_now = gap > 64
-            if gap >= 128:
-                p["underrun_samples"] += 1
-            self.written += 1
+            late = reads >= 2
+            if late:
+                p["underrun_samples"] += reads - 1
+                if not self.late:
+                    p["underruns"] += 1
+            self.late = late
+            self.last_pos, self.last_gap = pos, gap
 
     def take(self):
-        """The phase's numbers (the gap standing now counts too), and a new phase."""
+        """The phase's numbers (a gap standing now counts too: nothing written for a while), and a new phase."""
         p = self.phase
-        p["max_gap"] = max(p["max_gap"], self.gap())
+        p["max_gap"] = max(p["max_gap"], self.last_gap + self.position() - self.last_pos)
         self.max_gap = max(self.max_gap, p["max_gap"])
         self.underruns += p["underrun_samples"]
+        self.underrun_events += p["underruns"]
         self.over_64 += p["over_64"]
-        self.phase = dict(max_gap=0, underrun_samples=0, over_64=0)
+        self.phase = dict(max_gap=0, underruns=0, underrun_samples=0, over_64=0)
         return p
 
 
@@ -529,8 +543,9 @@ def build_bigcard(path, synths):
 
 def summarize_gaps(rows, key):
     g = [r[key] for r in rows if r.get(key)]
-    return dict(max_gap=max((x["max_gap"] for x in g), default=None),
-                underrun_samples=sum(x["underrun_samples"] for x in g), over_64=sum(x["over_64"] for x in g))
+    return dict(max_gap=max((x["max_gap"] for x in g), default=None), underruns=sum(x["underruns"] for x in g),
+                underrun_samples=sum(x["underrun_samples"] for x in g), over_64=sum(x["over_64"] for x in g),
+                phases_with_underruns=sum(1 for x in g if x["underruns"]))
 
 
 def heap_trend(rows):
@@ -561,8 +576,9 @@ def run_songchange(a, rig, res):
         r["index"] = i + 1
         rows.append(r)
         log(f"  {i + 1:2d} -> {name:7s} {'ok ' if r['ok'] else 'NOT'} load {r['load_ms']} ms, wait {r['wait_ms']} ms,"
-            f" press {r['press_ms']} ms; gap {r['gap_change']['max_gap']} (underruns {r['gap_change']['underrun_samples']}"
-            f"), after {r['gap_after']['max_gap']} ({r['gap_after']['underrun_samples']}), CPU "
+            f" press {r['press_ms']} ms; gap {r['gap_change']['max_gap']} (underruns {r['gap_change']['underruns']}/"
+            f"{r['gap_change']['underrun_samples']} smp), after {r['gap_after']['max_gap']} ({r['gap_after']['underruns']}/"
+            f"{r['gap_after']['underrun_samples']}), CPU "
             f"{(r['gap_after']['cpu'] or {}).get('cpu_avg')} % culled {(r['gap_after']['cpu'] or {}).get('culled')}"
             f"; heap free internal "
             f"{r['heap']['internal_free']:,} SDRAM {r['heap']['sdram_free']:,}"
