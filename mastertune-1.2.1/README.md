@@ -1,6 +1,6 @@
 # Deluge 1.2.1 mit Master Tune
 
-Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern, v12 einen Frequenz-Drone mit bis zu 16 Tönen, v13 mehr Leistung, einen Ping-Pong-Arp, flimmerfreies Dimmen der Pads, genaueres MIDI und einen überarbeiteten Drone, v14 ein Reverb ohne Wabbeln, ein Delay ohne Tonhöhensprung und einen Countdown beim Song-Wechsel, v15 einen lebendigen Drone (Life, FM, Pulse), einen CPU-Monitor in einer Zeile und drei Korrekturen aus der Community, v16 Drone-Spuren für Song- und Arranger-View und einen Profiler, v17 halbe Last, eine Song-Übersicht mit aufklappbaren Versionen, ein Kürzel für den CPU-Monitor und den L2-Cache in der Hauptdatei, v18 Filter ohne Rascheln und mit sauberen Übergängen, Lautstärkeregler in dB und ein lesbares OLED.
+Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern, v12 einen Frequenz-Drone mit bis zu 16 Tönen, v13 mehr Leistung, einen Ping-Pong-Arp, flimmerfreies Dimmen der Pads, genaueres MIDI und einen überarbeiteten Drone, v14 ein Reverb ohne Wabbeln, ein Delay ohne Tonhöhensprung und einen Countdown beim Song-Wechsel, v15 einen lebendigen Drone (Life, FM, Pulse), einen CPU-Monitor in einer Zeile und drei Korrekturen aus der Community, v16 Drone-Spuren für Song- und Arranger-View und einen Profiler, v17 halbe Last, eine Song-Übersicht mit aufklappbaren Versionen, ein Kürzel für den CPU-Monitor und den L2-Cache in der Hauptdatei, v18 Filter ohne Rascheln und mit sauberen Übergängen, Lautstärkeregler in dB und ein lesbares OLED, v18.2 Filter, EQ und Lautstärke ohne Reste nach einer Stille.
 
 | Datei | Version (Settings → Firmware version) | Inhalt |
 |---|---|---|
@@ -23,10 +23,11 @@ Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit
 | `deluge-1.2.1-mastertune-v17-2cb5e31b.bin` | `1.2.1-mastertune-v17-2cb5e31b` | dasselbe ohne L2-Cache, zum Zurückwechseln |
 | `deluge-1.2.1-mastertune-v18-l2d-6fa0875b.bin` | `1.2.1-mastertune-v18-l2d` (ab v18 ohne Hash) | v17 + Filter ohne Rascheln, Übergänge ohne Stufen und Klicks, Lautstärke in 0,5-dB-Schritten, EQ mit echten Shelves, Output limiter, Filter crossing guard, OLED-Helligkeit, Songname für DelugeRec; **mit L2-Cache für Code und Daten** |
 | `deluge-1.2.1-mastertune-v18-124aeaa2.bin` | `1.2.1-mastertune-v18` | dasselbe ohne L2-Cache, zum Zurückwechseln |
+| `deluge-1.2.1-mastertune-v18.2-l2d-c9c65066.bin` | `1.2.1-mastertune-v18.2-l2d` | v18 + Filter, EQ und Lautstärke nach einer Stille korrigiert; **mit L2-Cache für Code und Daten**, nur in dieser Variante |
 
-SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7`, v14 `cb17bbb3…8e23e6e5`, v15 `cdce07f3…da7ca652`, v16 `7eed1a77…71897f9f`, v17-l2d `aad4d080…5ec32c4b`, v17 ohne L2 `ae6aedd4…be88ae64`, v18-l2d `03f55664…75098a8c`, v18 ohne L2 `ea2d606a…220d434f` (vollständig: `sha256sum *.bin`).
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7`, v14 `cb17bbb3…8e23e6e5`, v15 `cdce07f3…da7ca652`, v16 `7eed1a77…71897f9f`, v17-l2d `aad4d080…5ec32c4b`, v17 ohne L2 `ae6aedd4…be88ae64`, v18-l2d `03f55664…75098a8c`, v18 ohne L2 `ea2d606a…220d434f`, v18.2-l2d `7f45090c…0f8c29ef` (vollständig: `sha256sum *.bin`).
 Nachgeprüft am 26.09.2026: Jede Version v2–v12 wurde aus ihrem Commit in einer eigenen Arbeitskopie komplett neu gebaut, mit 441–448 neu übersetzten Dateien. Jede SHA-256 stimmt mit der ausgelieferten Datei überein.
-Quellcode: `patches/0001` bis `0112` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 sind die Leistungsversion v12-perf, gleich wie `perf/0001`–`0003`), v14 = 0001–0035, v15 = 0001–0041, v16 = 0001–0055, v17 ohne L2 = 0001–0074, die Hauptdatei v17-l2d dazu `l2test/0001`–`0003`, v18 ohne L2 = 0001–0112, die Hauptdatei v18-l2d ebenso dazu `l2test/0001`–`0003`.
+Quellcode: `patches/0001` bis `0113` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 sind die Leistungsversion v12-perf, gleich wie `perf/0001`–`0003`), v14 = 0001–0035, v15 = 0001–0041, v16 = 0001–0055, v17 ohne L2 = 0001–0074, die Hauptdatei v17-l2d dazu `l2test/0001`–`0003`, v18 ohne L2 = 0001–0112, die Hauptdatei v18-l2d ebenso dazu `l2test/0001`–`0003`, v18.2-l2d = 0001–0113 und `l2test/0001`–`0003`.
 
 ## v3 und v4: Unterschiede
 
@@ -650,6 +651,28 @@ v17 enthält v16. **Die Hauptdatei hat den L2-Cache für Code und Daten** (bishe
 - **Weiterhin bestanden:** Profiler 21 Prüfungen (alle drei Varianten), Song-Wechsel 131, Clock, Sections, L2 (alle drei), CPU-Monitor-Dekoder 503 Meldungen, Drone auf dem PC 150, Retune ohne Zugriff auf Adresse 0.
 - **Gegenprüfer:** je einer für die Leistungsänderungen, die stillen Spuren, die Song-Übersicht, das Kürzel, die Drone-Ansicht und den Filter. Alle ihre Befunde der Stufe «mittel» und höher sind behoben, jeder mit einem Test.
 
+## v18.2: Filter, EQ und Lautstärke nach Stille
+
+v18.2 enthält v18 und behebt einen Fehler, den die Prüfung «stille Spuren» nach dem Release von v18 gefunden hat. **Wer v18 aufgespielt hat, nimmt v18.2.** v18.2 gibt es nur als Hauptdatei mit L2-Cache für Code und Daten. Zum Zurückwechseln ohne L2 bleibt `deluge-1.2.1-mastertune-v18-124aeaa2.bin`, allerdings mit diesem Fehler. **v18.2 ist auf dem Gerät noch nicht getestet**, geprüft ist alles im Emulator mit dem Maschinencode der Firmware.
+
+**Der Fehler** (Patch 0113 behebt ihn):
+- **Die Abkürzung:** Ein Kit oder eine Audiospur, die nichts mehr spielt und deren Effekte 4096 Samples (93 ms) lang nur Stille ausgegeben haben, überspringt ihre Effekte: seit v12 nach dem Rechnen, seit v17 schon davor.
+- **Was v18 daran änderte:** v18 bewegt Filter, EQ und Lautstärke pro Sample von Block zu Block. Diese Bewegungen standen während der Stille still und liefen beim Wiedereinsatz über die ersten Millisekunden der neuen Töne:
+  - Ein während der Stille umgeschaltetes Filter blendete 7 ms lang vom alten über, ein eingeschaltetes 7 ms lang vom ungefilterten Signal ein. Die Filterkoeffizienten fuhren vom Stand vor der Stille zum neuen.
+  - Ebenso Verstärkung und Ecke des EQ, und eine geänderte Lautstärke auf einem der beiden Wege 5 ms lang vom alten Pegel aus.
+  - Eine eingefrorene Überblendung belegte einen der 24 Plätze, solange die Stille dauerte.
+- **Hörbar** als kurzes Ticken oder hellerer Anschlag, wenn ein Kit oder eine Spur nach einer Pause mit verstellten Filtern, EQ oder Lautstärke wieder einsetzt. Im Test lag das bis nur 3,5 dB unter dem Ton.
+- **v18.2** setzt nach der Stille Filter, EQ und Lautstärke sofort auf ihre aktuellen Einstellungen, auf beiden Wegen gleich. Sonst klingt alles wie v18.
+
+**Geprüft:**
+- **Build:** 474 Dateien, ohne Warnungen. Zwei komplette Neubauten ergeben dieselbe SHA-256. `patches/0001`–`0113` mit `l2test/0001`–`0003` ergeben genau den Quellbaum von v18.2-l2d. Alle folgenden Prüfungen liefen auf genau diesem Build.
+- **Stille Spuren** (`tests/silent`): v18.2-l2d und dieselbe Firmware ohne die Abkürzung geben dieselbe Ausgabe, Sample für Sample (705 654 Samples), und dieselben 116 Arpeggiator-Noten. v18 wich ab Takt 4 um bis −21 dBFS ab. Die Abkürzung greift jetzt öfter: 26 118 statt 25 769 Mal, weil keine eingefrorene Überblendung sie mehr blockiert.
+- **Neue Tests:** `tests/filters` silence_restart: Filterrampe, Überblendung und Einblenden nach einer Stille klingen Bit für Bit wie bei Filtern, die schon vorher so eingestellt waren (v18: −33, −20 und −16 dBFS daneben). `tests/eq` restart: ebenso für den EQ (v18: −9,5 dBFS daneben).
+- **Klang:** Der Volllast-Song klingt Bit für Bit wie v18 (`47053032…`, `8bdf172e…`), bei 91,4 % CPU und gleich vielen abgeschnittenen Stimmen im Gerätemodus (111).
+- **Weiterhin bestanden** (ganze Firmware im Emulator): Song-Wechsel 131 Prüfungen, Drone 81, L2, Firmware-Version 49, OLED-Helligkeit 26, Crossing guard 7, CPU-Monitor-Kürzel 34, USB audio 2, Lautstärkeknopf, Song-Übersicht 39, Profiler 21, Clock, Sections, Retune. Auf dem Cortex-A9-Code: alle Filter-Tests, EQ und Lautstärke. Auf dem PC: CPU-Monitor-Dekoder 503 Meldungen, Profiler 1175, Drone 150.
+- **Nicht abgewartet:** `tests/run_all.sh` (die Tests der früheren Versionen, auf dem PC und dem Cortex-A9-Code), DelugeRec und Baseline laufen noch. Was sie finden, kommt in v18.3.
+- **Stresstest im Emulator** (v18 gegen v17, `tests/stress`): keine Abstürze, Hänger oder Speicherlecks, auch nicht über 30 Song-Wechsel, eine grosse Karte, Speichern beim Spielen und Automation auf allen Filtern und Lautstärken. Seine drei Befunde kommen in v18.3: Drive überabtastet wieder wie 1.2.1 nur hoch oben mit Resonanz (ein Song mit vielen Drive-Filtern verlor sonst am Taktanfang fast alle Stimmen), Einstellungen, die eine Version nicht kennt, schreibt sie unter ihrem richtigen Namen zurück (v17 hat diesen Fehler selbst: Ein Wechsel auf v17 und zurück setzt Limiter, Crossing guard und OLED-Helligkeit weiterhin auf den Standard), und das Sync-Level des Reverb-Sidechains rutscht beim Speichern nicht mehr um eine Stufe.
+
 ## v18: Filter ohne Rascheln, saubere Übergänge, Lautstärke in dB, lesbares OLED
 
 v18 enthält v17. Wie bei v17 hat die Hauptdatei den L2-Cache für Code und Daten, daneben liegt dieselbe Version ohne L2. **v18 ist auf dem Gerät noch nicht getestet.** Geprüft ist alles im Emulator mit dem Maschinencode der Firmware. Vor der Umsetzung haben zwei Prüfer die Mathematik von Filtern und Verstärkung Stufe für Stufe festgelegt (Zahlenformate, Rundung, Überlauf, Headroom, Modulation, Aliasing); jede Etappe wurde daran gemessen.
@@ -696,6 +719,7 @@ v18 enthält v17. Wie bei v17 hat die Hauptdatei den L2-Cache für Code und Date
 - Das Halbband-Filter von Drive verzögert um 2,3 Samples; in der Parallel-Summe mit Drive ist das nicht ausgeglichen.
 - Die Song-Lautstärke stellt weiterhin auch die Schwelle des Song-Kompressors, wie in 1.2.1; alte Songs komprimieren so gleich.
 - Der DJ-Filter kommt in v19.
+- **Nach einer Stille** (Kits und Audiospuren) laufen Reste von Filter-, EQ- und Lautstärkerampen über den Wiedereinsatz. Behoben in v18.2.
 
 **Geprüft:**
 - **Build:** 474 Dateien, ohne Warnungen. Je zwei komplette Neubauten ergeben dieselbe SHA-256, bei beiden Varianten. `patches/0001`–`0112` ergeben genau den Quellbaum von v18, dazu `l2test/0001`–`0003` genau den von v18-l2d. Alle folgenden Prüfungen liefen auf genau diesen Builds, die meisten auf der Hauptdatei v18-l2d.
@@ -705,7 +729,7 @@ v18 enthält v17. Wie bei v17 hat die Hauptdatei den L2-Cache für Code und Date
 - **Song-Übersicht** (`tests/browser`): 39 Prüfungen, darunter Namen mit «-» und «.» («TR-808», «Jam 2026-09-27», «Mix 1.5»).
 - **Weiterhin bestanden:** L2 (beide Varianten), Drone 81 Prüfungen (beide), Profiler 21 (beide), Song-Wechsel 131, Clock, Sections, Retune.
 - **Gegenprüfer:** je einer für die vier Etappen (Filter, Lautstärke, Klangänderungen, Crossing guard), gemessen an der Vorgabe. Sie fanden zwei kleine Fehler, beide behoben: den Bassausgleich von Drive nach einem Sprung der Ladder-Koeffizienten und eine undefinierte Umwandlung bei Resonanz über Kabel (nur am PC wirksam). Der Emulator fand einen Schreibzugriff ein Sample hinter dem Puffer im rechten Kanal, ebenfalls behoben. Die übrigen Hinweise stehen oben unter «Bekannte Grenzen».
-- **Noch offen, wird hier nachgetragen:** die Filter-, Lautstärke- und EQ-Tests auf dem Cortex-A9-Code dieses Stands, `run_all.sh`, DelugeRec, Baseline, und «stille Spuren» gegen eine v18-Referenz ohne die Abkürzung (v16 taugt dafür nicht mehr, weil v18 anders rechnet). Danach läuft ein Stresstest im Emulator, v18 gegen v17.
+- **Nachtrag:** Die Prüfung «stille Spuren» gegen eine v18-Referenz ohne die Abkürzung fand einen Fehler nach einer Stille, behoben in v18.2 (siehe dort). Die übrigen offenen Prüfungen liefen auf v18.2.
 
 ## Bedienung
 
@@ -843,8 +867,8 @@ Version 1 liegt weiterhin in der Git-Historie dieses Ordners.
 ```sh
 git clone https://github.com/SynthstromAudible/DelugeFirmware && cd DelugeFirmware
 git checkout release_1_2_1
-git am /pfad/zu/patches/*.patch        # alle = v18 ohne L2 (Stände der Versionen: siehe «Quellcode» oben); die Hauptdatei dazu: git am /pfad/zu/l2test/*.patch
-./dbt configure -DRELEASE_TYPE:STRING=mastertune-v18-l2d   # Name in der Versionsanzeige, z. B. mastertune-v18 ohne L2
+git am /pfad/zu/patches/*.patch        # alle = v18.2 ohne L2 (nicht ausgeliefert) (Stände der Versionen: siehe «Quellcode» oben); die Hauptdatei dazu: git am /pfad/zu/l2test/*.patch
+./dbt configure -DRELEASE_TYPE:STRING=mastertune-v18.2-l2d   # Name in der Versionsanzeige
 ./dbt build release                      # Ergebnis: build/Release/deluge.bin
 # Bitgleich wie die ausgelieferte Datei: Die Firmware enthält den Commit-Hash (bis v17 im Versionsnamen, immer in der Absturzanzeige), git am
 # erzeugt aber neue Hashes. Vor dem Build in build/src/deluge/version/version.cmake den execute_process mit

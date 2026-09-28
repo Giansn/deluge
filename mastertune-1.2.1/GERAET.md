@@ -21,12 +21,12 @@ Vor jeder Arbeit `git pull`, denn die Cloud-Session liefert laufend nach.
 - **Python 3.12 nehmen.** `python-rtmidi` hat für neuere Versionen keine fertigen Pakete.
 - **Port-Namen:** Die Ports heissen `Deluge 0`, `MIDIIN2 (Deluge) 1` und `MIDIIN3 (Deluge) 2`. Ab Commit nach `0377a67` erkennt das Skript `MIDIIN3` von selbst, `-p` ist dann nicht mehr nötig.
 
-## Aufträge (Stand 28.09.2026, v18 ist da)
+## Aufträge (Stand 28.09.2026, v18.2 ist da)
 
-Erledigt: der Bericht zu v16, l2d, der Song für den Emulator, der Retune-Test unter Windows, «Rescue». Die Aufträge zu v17 entfallen: v18 enthält v17, alles gilt jetzt für v18. Was v18 bringt, steht im README im Abschnitt «v18».
+Erledigt: der Bericht zu v16, l2d, der Song für den Emulator, der Retune-Test unter Windows, «Rescue». Die Aufträge zu v17 entfallen: v18.2 enthält v17 und v18, alles gilt jetzt für v18.2. Was es bringt, steht im README in den Abschnitten «v18» und «v18.2».
 
-1. **v18 aufspielen:** `deluge-1.2.1-mastertune-v18-l2d-6fa0875b.bin`, die Hauptdatei mit L2 für Code und Daten. Settings → Firmware version zeigt neu ohne Hash `1.2.1-mastertune-` / `v18-l2d` auf zwei Zeilen. Bei einem Absturz: `deluge-1.2.1-mastertune-v18-124aeaa2.bin` ohne L2 (zeigt `v18`).
-2. **Die wichtigste Messung: «New Sitar Grii 10» mit v18**, wie der v16-Bericht. 432 Hz, CPU monitor auf Profile, 30 s Stillstand, dann 40 s dieselbe Stelle mit denselben Clips. `live -s 70 -o 2026-..-v18-l2d-grosser-song.jsonl --symbols deluge-1.2.1-mastertune-v18-l2d-6fa0875b.symbols.json`.
+1. **v18.2 aufspielen:** `deluge-1.2.1-mastertune-v18.2-l2d-c9c65066.bin`, die Hauptdatei mit L2 für Code und Daten (v18.2 gibt es nur so). Settings → Firmware version zeigt `1.2.1-mastertune-` / `v18.2-l2d`. Bei einem Absturz: `deluge-1.2.1-mastertune-v18-124aeaa2.bin`, v18 ohne L2 (mit dem Fehler nach Stille, siehe README).
+2. **Die wichtigste Messung: «New Sitar Grii 10» mit v18**, wie der v16-Bericht. 432 Hz, CPU monitor auf Profile, 30 s Stillstand, dann 40 s dieselbe Stelle mit denselben Clips. `live -s 70 -o 2026-..-v18.2-l2d-grosser-song.jsonl --symbols deluge-1.2.1-mastertune-v18.2-l2d-c9c65066.symbols.json`.
    - Der Emulator erwartet etwa die Last von v17 (41 statt 93 % Anzeige bei v16). Die neuen Filter kosten etwas mehr: Der Testsong braucht 91,4 statt 89,3 %.
    - Notieren: QL, abgeschnittene Stimmen, die längste Lücke, und ob Oboe und Sitar zu hören sind.
 3. **Filter und Lautstärke am Gehör**, jeweils kurz, am besten mit Kopfhörer:
@@ -40,11 +40,12 @@ Erledigt: der Bericht zu v16, l2d, der Song für den Emulator, der Retune-Test u
    - **Sidechain:** Ein alter Song mit hartem Pumpen setzt jetzt über mindestens 5 ms ein, etwas weicher. Stört das?
    - **Output limiter** (Settings → Community features, `LIMT`): an einem Song, der übersteuert. Kein hartes Verzerren mehr. Beim Umschalten kann es einmal knacken.
    - **Filter crossing guard** (Settings → Community features, `CROS`): HPF und LPF mit Resonanz aufeinander zu drehen. Kein schmerzhafter Pegelsprung mehr.
+   - **Nach einer Stille (neu in v18.2):** ein Kit eine Weile nicht spielen lassen (Pause im Clip oder stummschalten), währenddessen sein LPF, EQ oder seine Lautstärke verstellen, dann wieder spielen. Der erste Schlag setzt ohne Ticken und ohne hellen Anschlag ein, gleich mit dem neuen Klang.
 4. **OLED und Song-Übersicht:**
    - **Helligkeit:** Settings → OLED brightness, Stufen 1–10. Jeder Dreh wirkt sofort, die Stufe gilt nach dem Neustart weiter. Ist Stufe 1 noch lesbar?
    - **Gruppen:** «New Sitar Grii», «New Sitar Grii 2» und «… 10» erscheinen als eine Gruppe. «TR-808» oder «Jam 2026-09-27» bleiben eigene Songs.
 5. **DelugeRec mit Songnamen** (die neuste Version im Release https://github.com/Giansn/deluge/releases/tag/deluge-rec, ab v6):
-   - USB audio an, einen Song laden, aufnehmen. Die Datei muss «Songname, Datum - 1.2.1 v18.WAV» heissen.
+   - USB audio an, einen Song laden, aufnehmen. Die Datei muss «Songname, Datum - 1.2.1 v18.WAV» heissen (DelugeRec v6 kürzt v18.2 noch auf v18).
    - Einen anderen Song laden und wieder aufnehmen. Der neue Name muss erscheinen.
    - Das kann nur das Gerät prüfen, im Emulator läuft kein USB.
 6. **Die Bibliothek `deluge topics` auf 432 Hz umwandeln, neu mit der Version, die den Laptop nicht mehr einfriert** (`tools/retune_library.py`, Stand ab Commit `868d85f`, also zuerst `git pull`):
@@ -70,8 +71,9 @@ Erledigt: der Bericht zu v16, l2d, der Song für den Emulator, der Retune-Test u
 
 | Datei | Was |
 |---|---|
-| `deluge-1.2.1-mastertune-v18-l2d-6fa0875b.bin` | **aktuelle Version**, mit L2-Cache für Code und Daten. Im README der Abschnitt «v18». |
-| `deluge-1.2.1-mastertune-v18-124aeaa2.bin` | dieselbe ohne L2, zum Zurückwechseln |
+| `deluge-1.2.1-mastertune-v18.2-l2d-c9c65066.bin` | **aktuelle Version**, mit L2-Cache für Code und Daten. Im README die Abschnitte «v18.2» und «v18». |
+| `deluge-1.2.1-mastertune-v18-l2d-6fa0875b.bin` | v18, mit dem Fehler nach Stille |
+| `deluge-1.2.1-mastertune-v18-124aeaa2.bin` | v18 ohne L2, zum Zurückwechseln |
 | `deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin` | v17, die Version davor |
 | `l2test/deluge-1.2.1-mastertune-v17-l2i-e476310e.bin` | v17 mit L2 nur für Code |
 | `*.symbols.json` neben jeder `.bin` | Funktionsnamen für den Profiler, nur zu genau dieser `.bin` passend |

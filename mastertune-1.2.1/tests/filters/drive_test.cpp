@@ -9,7 +9,7 @@
 //              judged up to resonance 30 at every level and up to 50 from -45 dBFS (above 25 the ladder sings on its
 //              own at about -50 dBFS, over a -60 dBFS input).
 //   selfosc    the ladder singing on its own (resonance 30, 40, 50 at 500 Hz, 2 and 8 kHz): its level and frequency
-//              against the cutoff (fails more than 50 cents off up to 2 kHz; 8 kHz printed).
+//              against the cutoff (fails more than 50 cents off up to 2 kHz, v18.3 60 as 1.2.1; 8 kHz printed).
 //   alias      a sine of 5, 9, 13, 17 kHz at -40 and -20 dBFS RMS through the ladder (cutoff 50 = wide open, resonance
 //              25 %): what isn't the tone or its harmonics below Nyquist (aliases, noise) in dBc, 2x against 1x (the
 //              CPU guard's case): fails where 2x doesn't take it at least 3 dB down (unless below -90 dBc). The
@@ -19,6 +19,12 @@
 //   halfband   the half-band pair alone (up then down): gain 20 Hz..18 kHz (fails beyond +-0.05 dB), images above
 //              26.1 kHz (fails above -70 dB), group delay.
 //   cpu        instructions per 128 frames (emulator), stereo kit row: 1x and 2x, steady and with the cutoff moving.
+//   where      (v18.3, DRIVE_WHERE_121) where the drive ladder oversamples: LpLadderFilter::driveWantsOversampling()
+//              against 1.2.1's condition rebuilt here (cutoff above logFreq 51 << 24, resonance above its table) on a
+//              grid of cutoffs and resonances, fails at any difference; the lowest cutoff it oversamples at per
+//              resonance printed. Through FilterSet: a cutoff swept up and down across that point switches once each
+//              way, one wobbling around it (+-0.1 display every block) at most once (the hysteresis).
+//   (v18.3: alias at resonance 30 %% and toggle at cutoff 45, where it oversamples; v18 did at every setting)
 #include "dsp/filter/filter_set.h"
 #if __has_include("dsp/filter/halfband.h")
 #include "dsp/filter/halfband.h"
@@ -193,8 +199,14 @@ int selfOsc() {
 			double cents = rms > 1e-7 ? 1200 * std::log2(f / cutoffHz(cut)) : 0;
 			// (This ladder's feedback weights, 2 s4 + G s3 + G^2 s2 + G^3 s1 ("we should halve..."), put its tone
 			// below the cutoff, more so the higher it is: 1.2.1 -16 / -56 / -146 cents at 500 Hz / 2 / 8 kHz, v18 at
-			// 2x -7 / -30 / -100. Fails beyond 50 cents up to 2 kHz)
-			bool fail = rms > 1e-7 && hz <= 2000 && std::fabs(cents) > 50;
+			// 2x -7 / -30 / -100. Fails beyond 50 cents up to 2 kHz; v18.3 oversamples where 1.2.1 did, so below
+			// that (here up to 2 kHz) it sings as 1.2.1: beyond 60 cents)
+#ifdef DRIVE_WHERE_121
+			const double limit = 60;
+#else
+			const double limit = 50;
+#endif
+			bool fail = rms > 1e-7 && hz <= 2000 && std::fabs(cents) > limit;
 			bad += fail;
 			printf("selfosc %-8s cutoff %4.0f Hz resonance %2.0f: %6.1f dBFS RMS at %6.1f Hz (%+.0f cents)%s\n",
 			       global ? "kit" : "kit row", cutoffHz(cut), res, db(rms), rms > 1e-7 ? f : 0.0, cents,
@@ -269,15 +281,25 @@ int alias() {
 				for (int os = 0; os < 2; os++) {
 					AudioEngine::cpuDireness = os ? 0 : 14;
 					std::vector<double> in = sine(f, level, 128 * 200);
+#ifdef DRIVE_WHERE_121
+					Drive d(global, 50, 15); // (where v18.3 oversamples: 1.2.1's condition)
+#else
 					Drive d(global, 50, 12.5);
+#endif
 					r[os] = aliasDbc(d.run(in), f);
 				}
 				AudioEngine::cpuDireness = 0;
 				bool fail = r[1] > -90 && r[1] > r[0] - 3;
 				bad += fail;
-				printf("alias %-8s %5.0f Hz %3.0f dBFS, cutoff wide open, resonance 25 %%: not the tone's harmonics: 1x "
+				printf("alias %-8s %5.0f Hz %3.0f dBFS, cutoff wide open, resonance %s: not the tone's harmonics: 1x "
 				       "%6.1f dBc, 2x %6.1f dBc (%+5.1f dB)%s\n",
-				       global ? "kit" : "kit row", f, level, r[0], r[1], r[1] - r[0], fail ? "  FAIL" : "");
+				       global ? "kit" : "kit row", f, level,
+#ifdef DRIVE_WHERE_121
+				       "30 %",
+#else
+				       "25 %",
+#endif
+				       r[0], r[1], r[1] - r[0], fail ? "  FAIL" : "");
 			}
 		}
 	}
@@ -290,7 +312,11 @@ int toggle() {
 	int bad = 0;
 	for (bool global : {false, true}) {
 		std::vector<double> in = sine(110, -30, 128 * 120);
+#ifdef DRIVE_WHERE_121
+		Drive d(global, 45, 20); // (where v18.3 oversamples)
+#else
 		Drive d(global, 30, 20);
+#endif
 		std::vector<double> out(in.size());
 		for (int b = 0; b < 120; b++) {
 			AudioEngine::cpuDireness = (b >= 40 && b < 80) ? 14 : 0;
@@ -376,6 +402,83 @@ int halfband() {
 }
 #endif
 
+#ifdef DRIVE_WHERE_121
+// 1.2.1's condition, as its lpladder.cpp had it (mastertune-v17 b3385d83, LpLadderFilter::setConfig())
+const int16_t kThresholds121[] = {
+    16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384,
+    16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384,
+    16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384,
+    16384, 16384, 16384, 16384, 15500, 20735, 17000, 9000,  9000,  9000,  9000,  9000,  9000,  9000,  9000,  9000,
+    9000,
+};
+bool oversamples121(q31_t lpfFrequency, q31_t lpfResonance) {
+	int32_t resonance = ONE_Q31 - (lpfResonance << 2);
+	int32_t processedResonance = ONE_Q31 - resonance;
+	int32_t logFreq = std::min(quickLog(lpfFrequency), (int32_t)63 << 24);
+	return (logFreq >> 24) > 51 && processedResonance > interpolateTableSigned(logFreq, 30, kThresholds121, 6);
+}
+int where() {
+	int bad = 0, points = 0, differ = 0;
+	for (double res = 0; res <= 25.001; res += 0.5) { // (1.2.1's << 2 holds up to 25, the display's 50 %)
+		double lowest = -1;
+		for (double cut = 0; cut <= 50.001; cut += 0.25) {
+			bool now = LpLadderFilter::driveWantsOversampling(freqParam(cut), linearParam(res), false);
+			points++;
+			differ += now != oversamples121(freqParam(cut), linearParam(res));
+			if (now && lowest < 0) {
+				lowest = cut;
+			}
+		}
+		if (std::fmod(res, 5) == 0) {
+			if (lowest < 0) {
+				printf("where resonance %4.1f: never oversampled\n", res);
+			}
+			else {
+				printf("where resonance %4.1f: oversampled from cutoff %5.2f (%5.0f Hz) up\n", res, lowest,
+				       cutoffHz(lowest));
+			}
+		}
+	}
+	bad += differ != 0;
+	printf("where: against 1.2.1's condition at %d settings: %d differ%s\n", points, differ, differ ? "  FAIL" : "");
+	// Through FilterSet: switches while the cutoff sweeps across the threshold, and while it wobbles around it
+	double edge = -1;
+	for (double cut = 0; cut <= 50.001 && edge < 0; cut += 0.01) {
+		if (LpLadderFilter::driveWantsOversampling(freqParam(cut), linearParam(20), false)) {
+			edge = cut;
+		}
+	}
+	auto switches = [&](auto cutAt, int blocks) {
+		FilterSet* fs = new FilterSet();
+		memset((void*)fs, 0, sizeof(FilterSet));
+		fs->reset();
+		static int32_t buf[2 * kBlock];
+		int n = 0;
+		bool last = false;
+		for (int b = 0; b < blocks; b++) {
+			fs->setConfig(freqParam(cutAt(b)), linearParam(20), FilterMode::TRANSISTOR_24DB_DRIVE, 0, 0, 0,
+			              FilterMode::OFF, 0, 1 << 28, FilterRoute::HIGH_TO_LOW, false, nullptr);
+			for (int i = 0; i < 2 * kBlock; i++) {
+				buf[i] = (int32_t)(0.01 * 2147483648.0 * std::sin(2 * M_PI * 220 * (b * kBlock + i / 2) / kFs));
+			}
+			fs->renderLongStereo(buf, buf + 2 * kBlock);
+			bool now = fs->lpfilter.ladder.isOversampling();
+			n += b > 0 && now != last;
+			last = now;
+		}
+		delete fs;
+		return n;
+	};
+	int sweep = switches([&](int b) { return edge - 5 + 10 * (b < 200 ? b / 200.0 : (400 - b) / 200.0); }, 400);
+	int wobble = switches([&](int b) { return edge + ((b & 1) ? 0.1 : -0.1); }, 200);
+	bad += sweep != 2 || wobble > 1;
+	printf("where: resonance 20, threshold at cutoff %.2f: a sweep across it and back switches %d times (limit 2), "
+	       "+-0.1 around it every block %d (limit 1)%s\n",
+	       edge, sweep, wobble, (sweep != 2 || wobble > 1) ? "  FAIL" : "");
+	return bad;
+}
+#endif
+
 // (An older tree: 1.2.1's oversampling where its condition has it, cutoff 45 with resonance)
 int cpu() {
 	static int32_t buf[2 * kBlock];
@@ -437,6 +540,11 @@ int main(int argc, char** argv) {
 	if (is("toggle")) {
 		bad += toggle();
 	}
+#ifdef DRIVE_WHERE_121
+	if (is("where")) {
+		bad += where();
+	}
+#endif
 	if (is("cpu")) {
 		bad += cpu();
 	}
