@@ -8,17 +8,17 @@
 
 | | |
 |:-:|:-:|
-| ![The CPU monitor's line over Song view](screenshots/oled_cpu_monitor.png) | ![Settings → Tuning → Master tune at 432.0 Hz](screenshots/oled_master_tune.png) |
+| ![The CPU monitor's line over Song view](mastertune-1.2.1/screenshots/oled_cpu_monitor.png) | ![Settings → Tuning → Master tune at 432.0 Hz](mastertune-1.2.1/screenshots/oled_master_tune.png) |
 | CPU monitor: load and voices in one line | Master tune, here 432.0 Hz |
-| ![The drone view: a binaural tone at 100 Hz with a 4 Hz beat](screenshots/oled_drone.png) | ![The song browser with a song's versions folded out](screenshots/oled_song_browser.png) |
+| ![The drone view: a binaural tone at 100 Hz with a 4 Hz beat](mastertune-1.2.1/screenshots/oled_drone.png) | ![The song browser with a song's versions folded out](mastertune-1.2.1/screenshots/oled_song_browser.png) |
 | Frequency drone: a binaural tone | Song browser: a song's versions under one name |
-| ![Song change armed: 2 bars remaining](screenshots/oled_songchange.png) | ![The song's volume knob: master level −8.5 dB](screenshots/oled_volume_db.png) |
+| ![Song change armed: 2 bars remaining](mastertune-1.2.1/screenshots/oled_songchange.png) | ![The song's volume knob: master level −8.5 dB](mastertune-1.2.1/screenshots/oled_volume_db.png) |
 | Song-change countdown | Volume in 0.5 dB steps, shown in dB |
 
 <sub>The OLED of the real v18.3 firmware, run in the emulator (`tests/screenshots`).</sub>
 
 **Lighter on the CPU**
-- **About 20–25% less CPU work per sample than stock 1.2.1**, measured the same way for both in the emulator on three songs. At moderate load the audio routine's time can roughly halve, because a scheduling bug from 1.2.1 is fixed; near full load that advantage disappears. In a full-load test song 32 voices stay on average instead of 20 before any are cut. Method, numbers and caveats: [`tests/vs121/README.md`](tests/vs121/README.md).
+- **About 20–25% less CPU work per sample than stock 1.2.1**, measured the same way for both in the emulator on three songs. At moderate load the audio routine's time can roughly halve, because a scheduling bug from 1.2.1 is fixed; near full load that advantage disappears. In a full-load test song 32 voices stay on average instead of 20 before any are cut. Method, numbers and caveats: [`tests/vs121/README.md`](mastertune-1.2.1/tests/vs121/README.md).
 - Silent tracks skipped, L2 cache for code and data, smarter sample streaming, a RAM saver for kits.
 
 **CPU monitor**
@@ -46,9 +46,9 @@
 
 | | |
 |---|---|
-| ![DelugeRec recording](screenshots/deluge_rec.png) | **DelugeRec** ([download v7](https://github.com/Giansn/deluge/releases/download/deluge-rec-v7/DelugeRec-v7.exe)): records the Deluge's USB audio with a monitor on the headphones. Each take is named after the song, the date and the firmware. |
-| ![DelugeTuner having read a card](screenshots/deluge_tuner.png) | **DelugeTuner** ([download v2](https://github.com/Giansn/deluge/releases/download/deluge-tuner-v2/DelugeTuner-v2.exe)): retunes a card's sample library once to the master tune. The samples then play as they are instead of being resampled in every voice. |
-| ![DelugeBaseline having read a card](screenshots/deluge_baseline.png) | **DelugeBaseline** ([download v4](https://github.com/Giansn/deluge/releases/download/deluge-baseline-v4/DelugeBaseline-v4.exe)): checks the levels of all songs on a card and evens them out, with a backup. |
+| ![DelugeRec recording](mastertune-1.2.1/screenshots/deluge_rec.png) | **DelugeRec** ([download v7](https://github.com/Giansn/deluge/releases/download/deluge-rec-v7/DelugeRec-v7.exe)): records the Deluge's USB audio with a monitor on the headphones. Each take is named after the song, the date and the firmware. |
+| ![DelugeTuner having read a card](mastertune-1.2.1/screenshots/deluge_tuner.png) | **DelugeTuner** ([download v2](https://github.com/Giansn/deluge/releases/download/deluge-tuner-v2/DelugeTuner-v2.exe)): retunes a card's sample library once to the master tune. The samples then play as they are instead of being resampled in every voice. |
+| ![DelugeBaseline having read a card](mastertune-1.2.1/screenshots/deluge_baseline.png) | **DelugeBaseline** ([download v4](https://github.com/Giansn/deluge/releases/download/deluge-baseline-v4/DelugeBaseline-v4.exe)): checks the levels of all songs on a card and evens them out, with a backup. |
 
 The newest version of each tool is always in its release: [deluge-rec](https://github.com/Giansn/deluge/releases/tag/deluge-rec), [deluge-tuner](https://github.com/Giansn/deluge/releases/tag/deluge-tuner), [deluge-baseline](https://github.com/Giansn/deluge/releases/tag/deluge-baseline). As Python scripts they are in `tools/`.
 
@@ -57,6 +57,8 @@ The newest version of each tool is always in its release: [deluge-rec](https://g
 **Source:** `patches/0001`–`0116` against `release_1_2_1`, plus `l2test/0001`–`0003` for the L2 build.
 
 ## All versions
+
+All files named below are in the folder [`mastertune-1.2.1/`](mastertune-1.2.1/): the firmware `.bin` files, `patches/`, `tools/`, `tests/`, `docs/` and the rest.
 
 This is the official community firmware **1.2.1** (tag `release_1_2_1`, commit `c23bc2fe`) with an adjustable master tuning, in several stages. v5 adds the arpeggiator from 1.3, v6 a second bounce version, v7 access to the SD card over USB, v8 the Deluge as a USB audio input on the computer, v9 smarter sample streaming and a RAM saver for kits, v10 a better reverb, v11 a better delay and no more crackle when saving, v12 a frequency drone with up to 16 tones, v13 more performance, a ping-pong arp, flicker-free pad dimming, more precise MIDI and a reworked drone, v14 a reverb without wobble, a delay without pitch jumps and a countdown on song change, v15 a living drone (Life, FM, Pulse), a CPU monitor in one line and three fixes from the community, v16 drone tracks for song and arranger view and a profiler, v17 half the load, a song browser with expandable versions, a shortcut for the CPU monitor and the L2 cache in the main file, v18 filters without rustle and with clean transitions, volume controls in dB and a readable OLED, v18.2 filters, EQ and volume without leftovers after a silence, v18.3 Drive with oversampling as in 1.2.1 and settings that are kept when saving.
 
@@ -948,7 +950,7 @@ The tuning goes out as RPN 1 (6 control change messages):
 | External MIDI devices | not tuned | RPN 1, before the first note after play start (up to 6 ms delay per channel over DIN) | RPN 1, no delay at play start, DIN buffer protected, MIDI drums included |
 | Storage location | flash bytes 198–199 | SD file | SD file |
 
-Version 1 is still in this folder's git history.
+Version 1 is still in the git history of the folder `mastertune-1.2.1/`.
 
 ## Building and testing it yourself
 
