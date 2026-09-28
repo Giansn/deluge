@@ -201,7 +201,7 @@ class Params(unittest.TestCase):
 class Levels(Case):
     def test_demo_card(self):
         card = db.demo_card(Path(self.tmp.name) / "demo")
-        before = (card / "SONGS" / "Demo.XML").read_text(encoding="utf-8")
+        before = (card / "SONGS" / "Demo.XML").read_bytes().decode("utf-8")
         plan = db.plan_levels(card)
         self.assertEqual(list(plan.changes), ["SONGS/Demo.XML"])
         lines = plan.changes["SONGS/Demo.XML"].lines
@@ -220,14 +220,14 @@ class Levels(Case):
         # Into a folder: the card stays; onto the card: a backup of the old file
         out = Path(self.tmp.name) / "out"
         db.write_plan(plan, to=out)
-        self.assertEqual((card / "SONGS" / "Demo.XML").read_text(encoding="utf-8"), before)
-        self.assertEqual((out / "SONGS" / "Demo.XML").read_text(encoding="utf-8"), after)
+        self.assertEqual((card / "SONGS" / "Demo.XML").read_bytes().decode("utf-8"), before)
+        self.assertEqual((out / "SONGS" / "Demo.XML").read_bytes().decode("utf-8"), after)
         self.assertEqual(sorted(p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()),
                          ["BASELINE.txt", "SONGS/Demo.XML"])
         db.write_plan(plan)
         backups = list((card / db.BACKUP).iterdir())
         self.assertEqual(len(backups), 1)
-        self.assertEqual((backups[0] / "SONGS" / "Demo.XML").read_text(encoding="utf-8"), before)
+        self.assertEqual((backups[0] / "SONGS" / "Demo.XML").read_bytes().decode("utf-8"), before)
         self.assertTrue((backups[0] / "BASELINE.txt").exists())
         self.assertEqual(db.plan_levels(card).changes, {})
         self.assertIn("| Demo | 35 | aus | 35 | 50 | ok |", bc.report(bc.song_files([str(card)])))
@@ -544,6 +544,39 @@ class Oled(unittest.TestCase):
         self.assertEqual(db.song_name("SONGS/Live/Set 1.XML"), "Live/Set 1")
 
 
+class English(unittest.TestCase):
+    """The texts in English (the window's switch, --lang en), numbers with a point."""
+
+    def setUp(self):
+        bc.LANG = "en"
+        self.tmp = tempfile.TemporaryDirectory()
+        self.card = db.demo_card(Path(self.tmp.name) / "card")
+
+    def tearDown(self):
+        bc.LANG = "de"
+        self.tmp.cleanup()
+
+    def test_texts(self):
+        text = bc.report(bc.song_files([str(self.card)]))
+        self.assertIn("# Baseline check: 1 song, 1 with notes", text)
+        self.assertIn("| Demo | 40 | on | 40 | 50 | 4 |", text)
+        self.assertIn("- Song volume 40: +2.1 dB above the default 35", text)
+        self.assertIn("- Row «Kick» in Kit «Drums»: 50, sample up to 0.0 dBFS, as loud as 50.0", text)
+        plan = db.plan_levels(self.card)
+        self.assertEqual(plan.changes["SONGS/Demo.XML"].lines, [
+            "Song volume: 40.0 to 35.4, -2.1 dB", "Master compressor off (threshold was 25)",
+            "Kit «Drums» (Clip 1): 40.0 to 35.4, -2.1 dB", "Row «Kick» in Kit «Drums» (Clip 1): 50.0 to 40.0, -3.9 dB"])
+        plan = db.plan_normalize(self.card, -1.0, True)
+        self.assertEqual(plan.action, "Normalize")
+        self.assertEqual(dict(plan.sections)["Stay as they are"], ["SAMPLES/table.wav: wavetable",
+                                                                   "SAMPLES/take.wav: audio clip"])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            db.main(["--lang", "en", "levels", str(self.card), "--yes"])
+        self.assertIn("1 file changed on the card. Backup:", out.getvalue())
+        self.assertTrue(next((self.card / db.BACKUP).iterdir()).name.endswith(" Levels"))
+
+
 @unittest.skipUnless(HAS_TK, "no tkinter or display: the window can't open")
 class Window(unittest.TestCase):
     """The window's buttons pressed, as by the mouse or the keys."""
@@ -554,78 +587,103 @@ class Window(unittest.TestCase):
         self.card = db.demo_card(Path(self.tmp.name) / "card")
         self.settings = Path(self.tmp.name) / "settings.json"
         self.root = tk.Tk()
-        self.app = db.App(self.root, str(self.settings), card=str(self.card))
+        self.app = db.App(self.root, str(self.settings), card=str(self.card), lang="de")
 
     def tearDown(self):
         self.root.destroy()
+        bc.LANG = "de"
         self.tmp.cleanup()
 
-    def press(self, key):
-        self.app.press(key)
-        db.settle(self.root, self.app)
+    def press(self, *keys):
+        for key in keys:
+            self.app.press(key)
+            db.settle(self.root, self.app)
 
     def files(self):
         return {p.relative_to(self.card).as_posix(): p.read_bytes() for p in self.card.rglob("*") if p.is_file()}
 
-    def test_shown_first(self):
+    def test_read_changes_nothing(self):
         before = self.files()
-        self.press("check")
+        self.press("levels", "read", "start")
         self.assertEqual(self.app.list["title"], "1 SONG, 1 MIT HINWEISEN")
         self.assertEqual([s["status"] for s in self.app.songs], ["notes"])
-        self.press("normalize")
-        self.assertEqual(self.app.pending[0], "normalize")
+        self.assertIsNone(self.app.pending)
+        self.press("normalize", "start")  # Read: shown, nothing waits for a second START
+        self.assertIsNone(self.app.pending)
         self.assertIn(("Ausgeglichen: Demo", True, 0), self.app.list["items"])
-        self.app.turn_gold(1)  # Another target: shown anew before it writes
-        self.assertIsNone(self.app.pending)
-        self.press("levels")
-        self.app.escape()
-        self.assertIsNone(self.app.pending)
-        self.press("levels")
-        self.press("normalize")  # Another button: the levels aren't written
-        self.assertEqual(self.app.pending[0], "normalize")
-        self.app.toggle("compensate")
+        self.press("start")
         self.assertIsNone(self.app.pending)
         self.assertEqual(self.files(), before)
-        self.assertEqual(json.loads(self.settings.read_text()),
-                         {"card": str(self.card), "mode": "card", "out": "", "target": -0.3, "compensate": False})
 
-    def test_into_a_folder(self):
+    def test_apply_shows_first(self):
         before = self.files()
-        self.app.out = str(Path(self.tmp.name) / "out")
-        self.app.toggle("folder")
-        self.press("normalize")
-        self.press("normalize")
+        self.press("normalize", "apply", "start")
+        self.assertEqual(self.app.pending[0], "normalize")
+        self.app.turn_gold(1)  # Another target: shown anew before it writes
+        self.assertIsNone(self.app.pending)
+        self.press("levels", "start")
+        self.assertEqual(self.app.pending[0], "levels")
+        self.app.escape()
+        self.assertIsNone(self.app.pending)
+        self.press("start")
+        self.press("read")  # Another mode: nothing written
+        self.assertIsNone(self.app.pending)
+        self.press("normalize", "apply", "start")
+        self.app.tick_box("compensate")
+        self.assertIsNone(self.app.pending)
+        self.assertEqual(self.files(), before)
+        self.assertEqual(json.loads(self.settings.read_text()), {
+            "card": str(self.card), "lang": "de", "function": "normalize", "mode": "apply", "dest": "card", "out": "",
+            "target": -0.3, "compensate": False})
+
+    def test_into_the_copy_folder(self):
+        before = self.files()
+        self.app.out = str(Path(self.tmp.name) / "copy")
+        self.app.tick_box("folder")
+        self.press("normalize", "apply", "start", "start")
         self.assertEqual(self.app.list["title"], "GESCHRIEBEN")
         self.assertTrue((Path(self.app.out) / "SAMPLES" / "quiet.wav").exists())
         self.assertEqual(self.files(), before)
+        self.app.tick_box("sd")
+        self.assertEqual(self.app.dest, "card")
 
     def test_onto_the_card_and_back(self):
         before = (self.card / "SONGS" / "Demo.XML").read_bytes()
-        self.press("levels")
-        self.app.enter()  # SELECT: yes
-        db.settle(self.root, self.app)
+        self.press("levels", "apply", "start", "start")
         self.assertEqual(self.app.list["title"], "GESCHRIEBEN")
         self.assertEqual([s["status"] for s in self.app.songs], ["ok"])
         self.assertNotEqual((self.card / "SONGS" / "Demo.XML").read_bytes(), before)
         self.press("restore")
         self.assertEqual(self.app.view, "backups")
-        self.app.enter()
-        db.settle(self.root, self.app)
+        self.press("start")
         self.assertEqual(self.app.pending[0], "restore")
         self.app.busy = "SCHREIBE"
         self.app.quit()  # Not while it writes
         self.assertTrue(self.root.winfo_exists())
         self.app.busy = None
-        self.press("restore")
+        self.press("start")
         self.assertEqual((self.card / "SONGS" / "Demo.XML").read_bytes(), before)
+
+    def test_language(self):
+        self.press("levels", "read", "start")
+        self.app.set_lang("en")
+        self.assertEqual(bc.LANG, "en")
+        self.assertIsNone(self.app.list)  # What was shown was German
+        self.assertEqual(json.loads(self.settings.read_text())["lang"], "en")
+        self.press("start")
+        self.assertEqual(self.app.list["title"], "1 SONG, 1 WITH NOTES")
+        self.assertIn(("Song volume 40: +2.1 dB above the default 35", False, 0), self.app.list["items"])
+        self.assertEqual(sorted(self.app.bound), sorted("aAbBcClLnNrRtTdDeE"))
+        self.app.set_lang("de")
+        self.assertEqual((bc.LANG, self.app.view), ("de", "home"))
 
     def test_without_a_card(self):
         self.app.card = ""
-        self.press("check")
+        self.press("start")
         self.assertIsNone(self.app.list)
-        self.assertEqual(self.app.message, "KEINE KARTE: K ODER MENU")
+        self.assertEqual(self.app.message, "KEINE KARTE: KARTE WÄHLEN")
         self.app.card = str(Path(self.tmp.name) / "gone")
-        self.press("levels")
+        self.press("start")
         self.assertTrue(self.app.message.startswith("KARTE NICHT DA"))
 
 
@@ -635,7 +693,8 @@ class SelfTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertTrue(db.selftest(tmp), Path(tmp, "selftest.txt").read_text())
             self.assertEqual(Path(tmp, "selftest.txt").read_text().splitlines(), [
-                f"version: v{db.VERSION}", "check: ok", "levels: ok", "normalize: ok", "restore: ok", "window: ok"])
+                f"version: v{db.VERSION}", "check: ok", "levels: ok", "normalize: ok", "restore: ok", "window: ok",
+                "english: ok"])
 
 
 @unittest.skipUnless((KARTE / "SONGS").is_dir(), "no card copy in geraet/karte")

@@ -91,16 +91,16 @@ Alle Lautstärkeregler (Song, Kit, Kit-Reihe, Synth, 0–50) folgen derselben Pa
 
 ## Alle Songs prüfen und auf die Baseline setzen: DelugeBaseline
 
-**DelugeBaseline-vN.exe** (Release `deluge-baseline` auf GitHub, gebaut von `.github/workflows/deluge-baseline-windows.yml` aus `tools/deluge_baseline.py` und `tools/baseline_check.py`) hat vier Funktionen:
+**DelugeBaseline-vN.exe** (Release `deluge-baseline` auf GitHub, gebaut von `.github/workflows/deluge-baseline-windows.yml` aus `tools/deluge_baseline.py` und `tools/baseline_check.py`) hat zwei Funktionen, PEGEL und NORM, je im Modus LESEN (zeigt nur) oder ANPASSEN (zeigt, schreibt beim zweiten START):
 
-- **Prüfen:** liest nur. Der Bericht von `baseline_check.py`, siehe unten.
-- **Pegel anwenden:**
+- **Pegel lesen:** liest nur. Der Bericht von `baseline_check.py`, siehe unten.
+- **Pegel anpassen:**
   - Song-Lautstärke über 35 auf 35, Master-Kompressor aus
   - Kits und Audio-Spuren über 35 auf 35
   - Synths und Kit-Reihen so weit hinunter, dass sie höchstens wie 40 mit einem voll ausgesteuerten Sample wirken
   - Automation behält ihre Form, alle Werte sinken gleich.
   - SATURATION, Kompressoren der Spuren, Analog-Delay und Filter bleiben: Das ist Klang, kein Pegel.
-- **Samples normalisieren:**
+- **NORM (Samples normalisieren):** Lesen zeigt, was es ändern würde, Anpassen tut es.
   - Hebt jedes Sample unter `SAMPLES/`, dessen Spitze unter dem Ziel liegt (Standard −1 dBFS), bis zum Ziel an, nie darüber. Keine Spitze wird geschnitten, nichts clippt.
   - Samples am Ziel oder darüber bleiben. Format, Bittiefe und alle Chunks bleiben, nur das Audio ändert sich.
   - Die Bereiche eines Multisamples bekommen eine gemeinsame Verstärkung, damit ihr Verhältnis bleibt.
@@ -108,15 +108,15 @@ Alle Lautstärkeregler (Song, Kit, Kit-Reihe, Synth, 0–50) folgen derselben Pa
   - Nie angefasst: Wavetables und Audio-Clips.
   - Mit Ausgleich bleiben auch Samples, die sich nicht sicher ausgleichen lassen: Oszillator-Pegel nicht gespeichert oder mit Kabel, FM, ein Format von vor 2017, oder eine Kopie im eigenen Ordner des Songs (`SONGS/<Song>/`, von «Collect media»). Die Firmware sucht dort zuerst, sobald eine Datei des Songs fehlt, und spielt dann vielleicht die Kopie.
   - Ein Clip gehört zu seinem Instrument nach Name und Ordner, wie in der Firmware: Zwei Synths «Bass» in verschiedenen Ordnern bleiben getrennt.
-- **Sicherung zurückspielen:** holt den alten Stand.
-- **Schreiben:** immer erst nach einer Vorschau, wahlweise auf die Karte (die alten Dateien kommen nach `BASELINE-BACKUP/<Datum Zeit Funktion>/`) oder in einen Ordner (nur die geänderten Dateien, im Aufbau der Karte).
-- **Fenster:** im Look von DelugeRec.
+- **Zurück:** spielt eine Sicherung zurück, der alte Stand kommt wieder.
+- **Schreiben:** immer erst nach einer Vorschau. Zum Ankreuzen: direkt auf die SD-Karte (die alten Dateien kommen nach `BASELINE-BACKUP/<Datum Zeit Funktion>/`) oder in einen Kopie-Ordner (nur die geänderten Dateien, im Aufbau der Karte).
+- **Fenster:** im Look von DelugeRec, etwas grösser für den Text. Deutsch oder Englisch, mit dem Schalter SPRACHE / LANGUAGE.
   - OLED mit Pixelschrift, ein Pad pro Song: grün in Ordnung, orange mit Hinweisen, rot nicht lesbar.
-  - Knöpfe PRÜFEN (P), PEGEL (L), NORM (N), ZURÜCK (Z), MENU (M). Eine Funktion zeigt zuerst auf dem OLED, was sie ändern würde, die Pads der betroffenen Songs blinken. Derselbe Knopf nochmals oder SELECT schreibt, Esc bricht ab.
-  - KARTE oder ORDNER wählt, wohin es schreibt. AUSGL schaltet den Ausgleich. Der goldene Knopf ZIEL wählt das Ziel der Samples: 0, −0,3, −1, −3 oder −6 dBFS.
-  - SELECT drehen (Mausrad, Pfeiltasten) blättert durch die Liste. MENU > BERICHT öffnet den ganzen Bericht als Text.
+  - FUNKTION: PEGEL (P) oder NORM (N). MODUS: LESEN (L) oder ANPASSEN (A). START (Enter) führt aus. Bei ANPASSEN zeigt das OLED zuerst, was sich ändern würde, die Pads der betroffenen Songs blinken. START nochmals schreibt, Esc bricht ab.
+  - SCHREIBEN NACH: SD-KARTE DIREKT oder KOPIE-ORDNER ankreuzen. NORMALISIEREN: AUSGLEICHEN ankreuzen, der goldene Knopf ZIEL wählt das Ziel der Samples: 0, −0,3, −1, −3 oder −6 dBFS.
+  - KARTE (K) wählt die Karte, BERICHT (B) öffnet den ganzen Bericht als Text, ZURÜCK (Z) zeigt die Sicherungen. Mausrad und Pfeiltasten blättern durch die Liste.
 
-Ohne Fenster, zum Beispiel für die lokale Session: `py mastertune-1.2.1/tools/deluge_baseline.py check|levels|normalize E:\ [--yes]`. Ohne `--yes` zeigt es nur, was es tun würde.
+Ohne Fenster, zum Beispiel für die lokale Session: `py mastertune-1.2.1/tools/deluge_baseline.py [--lang en] check|levels|normalize E:\ [--yes]`. Ohne `--yes` zeigt es nur, was es tun würde.
 
 **Geprüft im Emulator** (v17-l2d, «New Sitar Grii 10», alle 7 Clips, dieselben 302'400 Samples wie oben):
 

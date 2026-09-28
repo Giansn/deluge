@@ -3,24 +3,28 @@
 (geraet/analyse/2026-09-27-baseline-master.md). Built into DelugeBaseline-vN.exe for Windows by
 .github/workflows/deluge-baseline-windows.yml; runs as a script anywhere.
 
-Four functions, in its window or on the command line:
-- Prüfen (check): the report of baseline_check.py. Only reads.
-- Pegel (levels): sets the songs to the baseline. The song's volume above 35 down to 35, the master compressor off,
-  kits and audio tracks above 35 down to 35, synths and kit rows down to where they are as loud as a full-scale sample
-  at 40 (their sample's peak within its zone and their oscillator's level counted, as baseline_check.py judges them).
-  Automation keeps its shape: all its values scale alike. What distorts on purpose (SATURATION, compressors of tracks,
-  analog delay, filters) stays: that's sound, not level. The report lists it.
-- Normalisieren (samples): raises every sample under SAMPLES/ whose peak is below the target (-1 dBFS unless chosen
-  otherwise) to the target, never above: no peak is cut, no sample clips. Samples at the target or above stay as they
-  are. The format stays (bits, float, channels, every chunk), only the audio changes. The files an oscillator plays
-  together (the ranges of a multisample) get one gain, the one of the loudest, so they keep their balance.
+Its window (in DelugeRec's look): a function, PEGEL or NORM, in a mode, LESEN (only reads and shows) or ANPASSEN
+(shows what it would change, and writes on the second START), written onto the SD card directly or into a copy folder
+(boxes to tick). ZURÜCK restores a backup, BERICHT opens the whole report as text. German or English: the switch in
+the window, --lang en on the command line. What it does, in its window or on the command line:
+- Pegel lesen (check): the report of baseline_check.py. Only reads.
+- Pegel anpassen (levels): sets the songs to the baseline. The song's volume above 35 down to 35, the master
+  compressor off, kits and audio tracks above 35 down to 35, synths and kit rows down to where they are as loud as a
+  full-scale sample at 40 (their sample's peak within its zone and their oscillator's level counted, as
+  baseline_check.py judges them). Automation keeps its shape: all its values scale alike. What distorts on purpose
+  (SATURATION, compressors of tracks, analog delay, filters) stays: that's sound, not level. The report lists it.
+- NORM (normalize; lesen shows it, anpassen does it): raises every sample under SAMPLES/ whose peak is below the
+  target (-1 dBFS unless chosen otherwise) to the target, never above: no peak is cut, no sample clips. Samples at
+  the target or above stay as they are. The format stays (bits, float, channels, every chunk), only the audio
+  changes. The files an oscillator plays together (the ranges of a multisample) get one gain, the one of the
+  loudest, so they keep their balance.
   Ausgleichen (compensate, on unless switched off): every oscillator that plays a raised sample gets its level (osc A
   or B volume) lowered by just as much, in every clip of every song and in the kits and synths of KITS/ and SYNTHS/.
   The voice gets the same signal as before, before its filters and effects, so the songs sound as before, only with
   the knobs meaning the same everywhere. A sample whose every use can't be compensated that way stays as it is: an
   oscillator level that isn't saved or has a patch cable to it, FM, a format from before 2017, a copy in a song's own
   folder (Collect media) the firmware may play instead. Never changed: wavetables and audio clips.
-- Zurückspielen (restore): puts back the files of a backup.
+- Zurück (restore): puts back the files of a backup.
 
 Where it writes: onto the card, keeping a copy of every file it changes in BASELINE-BACKUP/<date> <time> <function>/
 on the card first (not under SONGS, so the Deluge doesn't list them), or into a folder of its own: only the changed
@@ -31,15 +35,15 @@ volume params like the rest (getFinalParameterValueVolume(): the gain goes with 
 in Voice::render() before anything else happens to it.
 
 Usage (Windows: py instead of python3; without arguments it opens its window):
-  python3 deluge_baseline.py check CARD [--out REPORT.md]
-  python3 deluge_baseline.py levels CARD [--to FOLDER] [--yes]
-  python3 deluge_baseline.py normalize CARD [--target DB] [--no-compensate] [--to FOLDER] [--yes]
-  python3 deluge_baseline.py restore BACKUP [--yes]
+  python3 deluge_baseline.py [--lang en] check CARD [--out REPORT.md]
+  python3 deluge_baseline.py [--lang en] levels CARD [--to FOLDER] [--yes]
+  python3 deluge_baseline.py [--lang en] normalize CARD [--target DB] [--no-compensate] [--to FOLDER] [--yes]
+  python3 deluge_baseline.py [--lang en] restore BACKUP [--yes]
   Without --yes it only shows what it would do. CARD: the card's root (with SONGS in it) or its SONGS folder.
 Needs numpy to normalize (pip install numpy); everything else only Python 3.8.
 
 Versions:
-  1  the first build: check, levels, normalize (compensated), restore, with a backup or into a folder, DelugeRec's look
+  1  the first build: levels and normalize, read or apply, onto the SD card or into a copy folder, German and English
 """
 import argparse
 import datetime
@@ -67,7 +71,13 @@ except ImportError:  # Only normalizing needs it: checked there
 VERSION = 1
 AUDIO_EXTENSIONS = (".wav", ".aif", ".aiff")
 XML_FOLDERS = ("SONGS", "KITS", "SYNTHS")
-ALWAYS_KEPT = ("Wavetable", "Audio-Clip")  # Samples that are never normalized; other uses only matter to compensate
+# Why a sample stays as it is. Wavetables and audio clips always; the other reasons only when it compensates
+REASONS = {"wavetable": ("Wavetable", "wavetable"), "audio": ("Audio-Clip", "audio clip"),
+           "fm": ("FM oder Ringmod", "FM or ring mod"),
+           "format": ("anderes Format, zum Beispiel von 2016", "another format, from 2016 for example")}
+ALWAYS_KEPT = ("wavetable", "audio")
+ACTIONS = {"levels": ("Pegel", "Levels"), "normalize": ("Normalisieren", "Normalize"),
+           "restore": ("Zurückspielen", "Restore")}
 BACKUP = "BASELINE-BACKUP"
 REPORT_NAME = "BASELINE.txt"
 TARGETS = (0.0, -0.3, -1.0, -3.0, -6.0)  # dBFS, for the window's choice
@@ -119,14 +129,14 @@ class XmlEdit:
     def replace(self, span, new):
         old = self.edits.get(span)
         if old is not None and old != new:
-            raise ValueError(f"{self.rel}: zwei Änderungen an derselben Stelle")
+            raise ValueError(f"{self.rel}: " + bc.t("zwei Änderungen an derselben Stelle", "two changes at one place"))
         self.edits[span] = new
 
     def result(self):
         out, last = [], 0
         for (start, end), new in sorted(self.edits.items()):
             if start < last:
-                raise ValueError(f"{self.rel}: Änderungen überlappen")
+                raise ValueError(f"{self.rel}: " + bc.t("Änderungen überlappen", "changes overlap"))
             out += [self.text[last:start], new]
             last = end
         out.append(self.text[last:])
@@ -144,7 +154,8 @@ def card_root(path):
         return p.parent
     if p.is_dir() and any(c.name.upper() == "SONGS" and c.is_dir() for c in p.iterdir()):
         return p
-    raise ValueError(f"{path}: kein Ordner SONGS darin, das ist keine Deluge-Karte")
+    raise ValueError(f"{path}: " + bc.t("kein Ordner SONGS darin, das ist keine Deluge-Karte",
+                                        "no SONGS folder in it, that's no Deluge card"))
 
 
 def folder(root, name):
@@ -190,11 +201,15 @@ class Change:
 class Plan:
     """What a function would write: files by their path on the card, and its report."""
 
-    def __init__(self, root, action, title):
-        self.root, self.action, self.title = Path(root), action, title
+    def __init__(self, root, kind, title):
+        self.root, self.kind, self.title = Path(root), kind, title  # kind: levels, normalize or restore
         self.changes = {}  # rel -> Change
         self.sections = []  # (heading, lines)
         self.summary = []
+
+    @property
+    def action(self):
+        return bc.t(*ACTIONS[self.kind])
 
     def add(self, rel, data, lines, size=None):
         self.changes[rel] = Change(rel, data, lines, size)
@@ -204,7 +219,7 @@ class Plan:
         for heading, lines in self.sections:
             out += ["", f"## {heading}", ""] + [f"- {line}" for line in lines]
         if not self.changes:
-            out += ["", "Nichts zu ändern."]
+            out += ["", bc.t("Nichts zu ändern.", "Nothing to change.")]
         return "\n".join(out) + "\n"
 
 
@@ -225,8 +240,8 @@ def limit(edit, node, name, top, label, clip, suffix=""):
     else:
         edit.replace(span, scale_text(edit.text[span[0]:span[1]], new / old))
     where = f" (Clip {clip})" if clip else ""
-    edit.lines.append(f"{label}{where}: {bc.num(old)} auf {bc.num(new)}, {bc.signed_db(bc.db_between(old, new))}"
-                      + suffix)
+    edit.lines.append(f"{label}{where}: {bc.num(old)} " + bc.t("auf", "to") +
+                      f" {bc.num(new)}, {bc.signed_db(bc.db_between(old, new))}" + suffix)
 
 
 def sound_top(sound, params, card, label, edit):
@@ -236,7 +251,7 @@ def sound_top(sound, params, card, label, edit):
         return bc.SOUND_LIMIT
     level, problems = bc.sample_level(samples, card)
     if problems:
-        line = f"{label}: nicht geändert ({'; '.join(problems)})"
+        line = f"{label}: " + bc.t("nicht geändert", "not changed") + f" ({'; '.join(problems)})"
         if line not in edit.lines:
             edit.lines.append(line)
         return None
@@ -252,7 +267,7 @@ def clip_name(clip, number):
 
 def plan_levels(root):
     root = Path(root)
-    plan = Plan(root, "Pegel", "Pegel auf die Baseline")
+    plan = Plan(root, "levels", bc.t("Pegel auf die Baseline", "Levels to the baseline"))
     card = bc.Card(str(root))
     songs = xml_files(root, ("SONGS",))
     changed = unreadable = 0
@@ -260,7 +275,7 @@ def plan_levels(root):
         try:
             text, tree = read_xml(path)
         except (OSError, ValueError) as e:
-            plan.sections.append((rel, [f"nicht lesbar: {e}"]))
+            plan.sections.append((rel, [bc.t("nicht lesbar: ", "unreadable: ") + str(e)]))
             unreadable += 1
             continue
         song = tree.child("song")
@@ -268,12 +283,14 @@ def plan_levels(root):
             continue
         edit = XmlEdit(rel, text)
         params = song.child("songParams")
-        limit(edit, params, "volume", bc.SONG_KIT_LIMIT, "Song-Lautstärke", None)
+        limit(edit, params, "volume", bc.SONG_KIT_LIMIT, bc.t("Song-Lautstärke", "Song volume"), None)
         comp = bc.loudest(params, "compressorThreshold") if params is not None else None
         span = params.span("compressorThreshold") if params is not None else None
         if comp is not None and comp > 0 and span is not None:
             edit.replace(span, "0x00000000")
-            edit.lines.append(f"Master-Kompressor aus (Threshold war {round(bc.unipolar_knob(comp))})")
+            was = round(bc.unipolar_knob(comp))
+            edit.lines.append(bc.t(f"Master-Kompressor aus (Threshold war {was})",
+                                   f"Master compressor off (threshold was {was})"))
         instruments = song.child("instruments")
         kits, synths = {}, {}
         for inst in instruments.children if instruments is not None else []:
@@ -295,7 +312,8 @@ def plan_levels(root):
             number[key] = number.get(key, 0) + 1
             name = clip_name(clip, number[key])
             if clip.name == "audioClip":
-                limit(edit, clip.child("params"), "volume", bc.SONG_KIT_LIMIT, f"Audio-Spur «{track}»", name)
+                limit(edit, clip.child("params"), "volume", bc.SONG_KIT_LIMIT,
+                      bc.t("Audio-Spur", "Audio track") + f" «{track}»", name)
             elif clip.child("kitParams") is not None:
                 label = f"Kit «{track}»"
                 limit(edit, clip.child("kitParams"), "volume", bc.SONG_KIT_LIMIT, label, name)
@@ -310,10 +328,11 @@ def plan_levels(root):
                     drum = drums[int(index)]
                     if drum.name != "sound":
                         continue
-                    row_label = f"Reihe «{bc.readable(drum.get('name'))}» in {label}"
+                    row_label = bc.t("Reihe", "Row") + f" «{bc.readable(drum.get('name'))}» in {label}"
                     top = sound_top(drum, [sp], card, row_label, edit)
                     if top is not None:
-                        limit(edit, sp, "volume", top, row_label, name, "" if bc.has_notes(nr) else ", ohne Noten")
+                        limit(edit, sp, "volume", top, row_label, name,
+                              "" if bc.has_notes(nr) else bc.t(", ohne Noten", ", no notes"))
             elif clip.child("soundParams") is not None:
                 label = f"Synth «{track}»"
                 sp = clip.child("soundParams")
@@ -325,10 +344,14 @@ def plan_levels(root):
             changed += 1
         if edit.lines:
             plan.sections.append((rel, edit.lines))
-    plan.summary.append(f"{len(songs)} {'Song' if len(songs) == 1 else 'Songs'} gelesen, {changed} zu ändern"
-                        + (f", {unreadable} nicht lesbar" if unreadable else ""))
-    plan.summary.append("Nicht angefasst: SATURATION, Kompressoren der Spuren, Analog-Delay und Filter. Das ist Klang, "
-                        "kein Pegel. «Prüfen» listet sie.")
+    n = len(songs)
+    plan.summary.append(bc.t(f"{n} {'Song' if n == 1 else 'Songs'} gelesen, {changed} zu ändern",
+                             f"{n} {'song' if n == 1 else 'songs'} read, {changed} to change")
+                        + (bc.t(f", {unreadable} nicht lesbar", f", {unreadable} unreadable") if unreadable else ""))
+    plan.summary.append(bc.t("Nicht angefasst: SATURATION, Kompressoren der Spuren, Analog-Delay und Filter. Das ist "
+                             "Klang, kein Pegel. «Pegel lesen» listet sie.",
+                             "Not touched: SATURATION, compressors of tracks, analog delay and filters. That's sound, "
+                             "not level. «Levels, read» lists them."))
     return plan
 
 
@@ -346,18 +369,18 @@ class OscRef:
         self.files = []  # The card files its holders name (None where missing)
         self.problem = None
         if not params:
-            self.problem = "Osc-Pegel nirgends gespeichert"
+            self.problem = bc.t("Osc-Pegel nirgends gespeichert", "osc level saved nowhere")
         for p in params:
             if not bc.param_values(p.get(self.level)) or p.span(self.level) is None:
-                self.problem = "Osc-Pegel nicht gespeichert"
+                self.problem = bc.t("Osc-Pegel nicht gespeichert", "osc level not saved")
         cables = [c for n in [sound] + params for c in n.iter() if c.name == "patchCable"]
         if any(c.get("destination") == self.level for c in cables):
-            self.problem = "Kabel auf den Osc-Pegel"
+            self.problem = bc.t("Kabel auf den Osc-Pegel", "patch cable to the osc level")
 
 
 def sound_refs(rel, sound, params, label, other, handled):
-    """The sample oscillators of a sound; its other uses of files go to other (file value -> {reasons}). The nodes
-    that name its files go to handled."""
+    """The sample oscillators of a sound; its other uses of files go to other (file value -> {REASONS keys}). The
+    nodes that name its files go to handled."""
     refs = []
     defaults = sound.child("defaultParams")
     params = [p for p in params if p is not None] + ([defaults] if defaults is not None else [])
@@ -371,9 +394,9 @@ def sound_refs(rel, sound, params, label, other, handled):
             continue
         handled.update(id(h) for h in holders)
         if node.get("type") == "wavetable":
-            reason = "Wavetable"
+            reason = "wavetable"
         elif (sound.get("mode") or "subtractive") != "subtractive":
-            reason = "FM oder Ringmod"
+            reason = "fm"
         else:
             refs.append(OscRef(rel, sound, osc, params, holders, label))
             continue
@@ -383,7 +406,7 @@ def sound_refs(rel, sound, params, label, other, handled):
 
 
 def xml_refs(rel, tree):
-    """(sample oscillators, {file value: {reasons}} for the other files it names) of one XML of the card. What it
+    """(sample oscillators, {file value: {REASONS keys}} for the other files it names) of one XML of the card. What it
     doesn't know (formats before 2017 among them) goes to the other files: a sample it plays isn't raised if the
     songs are to sound as before."""
     refs, other, handled = [], {}, set()
@@ -411,27 +434,28 @@ def xml_refs(rel, tree):
                     params = [nr.child("soundParams") for c in mine if c.child("kitParams") is not None
                               for nr in (c.child("noteRows").children if c.child("noteRows") is not None else [])
                               if nr.get("drumIndex") == str(i)]
-                    label = f"Reihe «{bc.readable(drum.get('name'))}» in Kit «{name}»"
+                    label = bc.t("Reihe", "Row") + f" «{bc.readable(drum.get('name'))}» in Kit «{name}»"
                     refs += sound_refs(rel, drum, params, label, other, handled)
         for c in top.iter():
             if c.name == "audioClip" and c.get("filePath"):
-                other.setdefault(c.get("filePath"), set()).add("Audio-Clip")
+                other.setdefault(c.get("filePath"), set()).add("audio")
     elif top.name == "kit":
         sources = top.child("soundSources")
         for drum in sources.children if sources is not None else []:
             if drum.name == "sound":
-                refs += sound_refs(rel, drum, [], f"Reihe «{bc.readable(drum.get('name'))}» im Kit", other, handled)
+                refs += sound_refs(rel, drum, [], bc.t("Reihe", "Row") + f" «{bc.readable(drum.get('name'))}» "
+                                   + bc.t("im Kit", "in the kit"), other, handled)
     else:  # A synth: <sound>, or <synth> in old files
         refs += sound_refs(rel, top, [], "Synth", other, handled)
     for node in tree.iter():  # Every other file it names, as attribute or as tag
         for key in ("fileName", "filePath"):
             v = node.attrs.get(key)
             if v and v.lower().endswith(AUDIO_EXTENSIONS) and id(node) not in handled:
-                other.setdefault(v, set()).add("anderes Format, zum Beispiel von 2016")
+                other.setdefault(v, set()).add("format")
         v = (node.text or "").strip()
         if node.name in ("fileName", "filePath") and v.lower().endswith(AUDIO_EXTENSIONS) and \
                 id(node.parent) not in handled:
-            other.setdefault(v, set()).add("anderes Format, zum Beispiel von 2016")
+            other.setdefault(v, set()).add("format")
     return refs, other
 
 
@@ -505,7 +529,7 @@ def raised(path, gain):
             gain = min(gain, top / -lo)
         y = np.rint(x * gain).astype(np.int64)
         if y.size and (y.max() > top - 1 or y.min() < -top):
-            raise ValueError(f"{path}: würde clippen")  # Can't happen with the cap above
+            raise ValueError(f"{path}: " + bc.t("würde clippen", "would clip"))  # Can't happen with the cap above
     data[f["pos"]:f["pos"] + f["size"]] = encode(y, f)
     return bytes(data), gain
 
@@ -514,7 +538,7 @@ def raised_by(path, gain):
     """The file raised by exactly gain, when it is written: the oscillators that play it are compensated for it."""
     data, g = raised(path, gain)
     if abs(g - gain) > 1e-9 * gain:  # Can't happen: its target is below full scale (unless it changed since)
-        raise ValueError(f"{path}: würde clippen, nicht geschrieben")
+        raise ValueError(f"{path}: " + bc.t("würde clippen, nicht geschrieben", "would clip, not written"))
     return data
 
 
@@ -539,13 +563,15 @@ class Groups:
 
 def plan_normalize(root, target_db=-1.0, compensate=True, progress=None):
     if np is None:
-        raise RuntimeError("Normalisieren braucht numpy: pip install numpy")
+        raise RuntimeError(bc.t("Normalisieren braucht numpy", "Normalizing needs numpy") + ": pip install numpy")
     if target_db > 0:
-        raise ValueError("Das Ziel muss bei 0 dBFS oder darunter liegen")
+        raise ValueError(bc.t("Das Ziel muss bei 0 dBFS oder darunter liegen", "The target must be 0 dBFS or below"))
     root = Path(root)
-    title = f"Samples normalisieren: Ziel {bc.num(target_db)} dBFS, " + (
-        "Songs, Kits und Synths ausgeglichen" if compensate else "ohne Ausgleich")
-    plan = Plan(root, "Normalisieren", title)
+    title = bc.t(f"Samples normalisieren: Ziel {bc.num(target_db)} dBFS, ",
+                 f"Normalize samples: target {bc.num(target_db)} dBFS, ") + (
+        bc.t("Songs, Kits und Synths ausgeglichen", "songs, kits and synths compensated") if compensate
+        else bc.t("ohne Ausgleich", "without compensation"))
+    plan = Plan(root, "normalize", title)
     card = bc.Card(str(root))
     card.find("")  # Reads the card's list of files, card.index
     sample_files = sorted({p for k, p in card.index.items() if k.startswith("samples/")
@@ -557,7 +583,8 @@ def plan_normalize(root, target_db=-1.0, compensate=True, progress=None):
         try:
             texts[rel] = read_xml(path)
         except (OSError, ValueError) as e:
-            plan.sections.append((rel, [f"nicht lesbar, seine Samples bleiben wie sie sind: {e}"]))
+            plan.sections.append((rel, [bc.t("nicht lesbar, seine Samples bleiben wie sie sind: ",
+                                             "unreadable, its samples stay as they are: ") + str(e)]))
             texts[rel] = None
             continue
         r, o = xml_refs(rel, texts[rel][1])
@@ -586,7 +613,7 @@ def plan_normalize(root, target_db=-1.0, compensate=True, progress=None):
     skipped, loud, gains = {}, 0, {}
     for i, path in enumerate(sample_files):
         if progress:
-            progress(f"Lese Samples {i + 1}/{len(sample_files)}")
+            progress(bc.t("Lese Samples", "Reading samples") + f" {i + 1}/{len(sample_files)}")
         try:
             with open(path, "rb") as fh:
                 f = bc.audio_format(fh)
@@ -594,15 +621,15 @@ def plan_normalize(root, target_db=-1.0, compensate=True, progress=None):
                 skipped[path] = f
                 continue
             if is_wavetable_file(path):
-                skipped[path] = "Wavetable"
+                skipped[path] = bc.t(*REASONS["wavetable"])
                 continue
             peak, error = bc.sample_peak(path)
         except (OSError, ValueError) as e:
-            skipped[path] = f"nicht lesbar ({e})"
+            skipped[path] = bc.t("nicht lesbar", "unreadable") + f" ({e})"
             continue
         kept = sorted(other.get(path, set()) & set(ALWAYS_KEPT))
         if kept or (compensate and path in other):  # Wavetables and audio clips never, the rest if it can't be matched
-            skipped[path] = ", ".join(kept or sorted(other[path]))
+            skipped[path] = ", ".join(bc.t(*REASONS[r]) for r in (kept or sorted(other[path])))
         elif peak is None or peak <= 0:
             skipped[path] = error or "still"
         elif compensate and any(r.problem for r in uses.get(path, [])):
@@ -619,7 +646,7 @@ def plan_normalize(root, target_db=-1.0, compensate=True, progress=None):
     if unreadable_xml and compensate:  # Its uses are unknown: nothing may change
         for path in list(gains):
             del gains[path]
-            skipped[path] = "ein XML der Karte ist nicht lesbar"
+            skipped[path] = bc.t("ein XML der Karte ist nicht lesbar", "an XML of the card is unreadable")
 
     # One gain per group: the smallest, and none if one of its files can't change
     members = {}
@@ -632,7 +659,8 @@ def plan_normalize(root, target_db=-1.0, compensate=True, progress=None):
             for k in group:
                 if k in gains:
                     del gains[k]
-                    skipped[k] = "Multisample mit einem Sample, das bleibt"
+                    skipped[k] = bc.t("Multisample mit einem Sample, das bleibt",
+                                      "multisample with a sample that stays")
             continue
         g = min(gains[k] for k in group)
         if 20 * math.log10(g) < RAISE_FROM_DB:
@@ -668,27 +696,37 @@ def plan_normalize(root, target_db=-1.0, compensate=True, progress=None):
             compensated[r.rel] = compensated.get(r.rel, 0) + 1
         for rel, edit in edits.items():
             plan.add(rel, edit.result(), edit.lines)
-            plan.sections.append((f"Ausgeglichen: {rel}", edit.lines))
+            plan.sections.append((bc.t("Ausgeglichen", "Compensated") + f": {rel}", edit.lines))
     if applied:
         db = [20 * math.log10(g) for g in applied.values()]
-        plan.summary.append(f"{len(applied)} {'Sample' if len(applied) == 1 else 'Samples'} angehoben, um "
-                            f"{bc.num(min(db))} bis {bc.num(max(db))} dB")
-    plan.summary.append(f"{loud} {'Sample' if loud == 1 else 'Samples'} schon laut genug (höchstens "
-                        f"{bc.num(RAISE_FROM_DB)} dB unter dem Ziel)")
+        n = len(applied)
+        plan.summary.append(bc.t(f"{n} {'Sample' if n == 1 else 'Samples'} angehoben, um "
+                                 f"{bc.num(min(db))} bis {bc.num(max(db))} dB",
+                                 f"{n} {'sample' if n == 1 else 'samples'} raised, by "
+                                 f"{bc.num(min(db))} to {bc.num(max(db))} dB"))
+    plan.summary.append(bc.t(f"{loud} {'Sample' if loud == 1 else 'Samples'} schon laut genug (höchstens "
+                             f"{bc.num(RAISE_FROM_DB)} dB unter dem Ziel)",
+                             f"{loud} {'sample' if loud == 1 else 'samples'} loud enough already (at most "
+                             f"{bc.num(RAISE_FROM_DB)} dB below the target)"))
     if skipped:
-        plan.summary.append(f"{len(skipped)} {'Sample bleibt' if len(skipped) == 1 else 'Samples bleiben'} wie "
-                            f"{'es ist' if len(skipped) == 1 else 'sie sind'}, siehe unten")
+        one = len(skipped) == 1
+        plan.summary.append(bc.t(f"{len(skipped)} {'Sample bleibt' if one else 'Samples bleiben'} wie "
+                                 f"{'es ist' if one else 'sie sind'}, siehe unten",
+                                 f"{len(skipped)} {'sample stays as it is' if one else 'samples stay as they are'}, "
+                                 f"see below"))
     if compensate:
-        n, files = sum(compensated.values()), len(compensated)
-        plan.summary.append(f"Ausgeglichen: {n} {'Oszillator' if n == 1 else 'Oszillatoren'} in {files} "
-                            f"{'Datei' if files == 1 else 'Dateien'} (Songs, Kits, Synths). Die Songs klingen wie "
-                            f"vorher.")
+        n, k = sum(compensated.values()), len(compensated)
+        plan.summary.append(bc.t(f"Ausgeglichen: {n} {'Oszillator' if n == 1 else 'Oszillatoren'} in {files(k)} "
+                                 f"(Songs, Kits, Synths). Die Songs klingen wie vorher.",
+                                 f"Compensated: {n} {'oscillator' if n == 1 else 'oscillators'} in {files(k)} "
+                                 f"(songs, kits, synths). The songs sound as before."))
     else:
-        plan.summary.append("Ohne Ausgleich: Songs, die angehobene Samples spielen, werden an diesen Stellen lauter.")
+        plan.summary.append(bc.t("Ohne Ausgleich: Songs, die angehobene Samples spielen, werden an diesen Stellen "
+                                 "lauter.", "Without compensation: songs that play raised samples get louder there."))
     if lines:
-        plan.sections.insert(0, ("Angehoben", lines))
+        plan.sections.insert(0, (bc.t("Angehoben", "Raised"), lines))
     if skipped:
-        plan.sections.append(("Bleiben wie sie sind", [
+        plan.sections.append((bc.t("Bleiben wie sie sind", "Stay as they are"), [
             f"{bc.readable(Path(p).relative_to(root).as_posix())}: {why}"
             for p, why in sorted(skipped.items(), key=lambda kv: kv[0].lower())]))
     return plan
@@ -701,9 +739,10 @@ def plan_normalize(root, target_db=-1.0, compensate=True, progress=None):
 def plan_restore(backup):
     backup = Path(backup).resolve()
     if backup.parent.name != BACKUP:
-        raise ValueError(f"{backup}: keine Sicherung (die liegen in {BACKUP}/ auf der Karte)")
+        raise ValueError(f"{backup}: " + bc.t(f"keine Sicherung (die liegen in {BACKUP}/ auf der Karte)",
+                                              f"no backup (they are in {BACKUP}/ on the card)"))
     root = backup.parent.parent
-    plan = Plan(root, "Zurückspielen", f"Sicherung zurückspielen: {backup.name}")
+    plan = Plan(root, "restore", bc.t("Sicherung zurückspielen: ", "Restore backup: ") + backup.name)
     lines = []
     for d, _, names in os.walk(backup):
         for n in names:
@@ -713,13 +752,13 @@ def plan_restore(backup):
                 continue
             plan.add(rel, full.read_bytes, [bc.readable(rel)], full.stat().st_size)
             lines.append(bc.readable(rel))
-    plan.summary.append(f"{files(len(lines))} zurück auf die Karte")
-    plan.sections.append(("Dateien", sorted(lines, key=str.lower)))
+    plan.summary.append(files(len(lines)) + bc.t(" zurück auf die Karte", " back onto the card"))
+    plan.sections.append((bc.t("Dateien", "Files"), sorted(lines, key=str.lower)))
     return plan
 
 
 def files(n):
-    return f"{n} {'Datei' if n == 1 else 'Dateien'}"
+    return f"{n} " + (bc.t("Datei", "file") if n == 1 else bc.t("Dateien", "files"))
 
 
 def write_atomic(path, data):
@@ -739,21 +778,24 @@ def write_plan(plan, to=None, now=None, progress=None):
     """Writes a plan: onto the card with a backup of every file it replaces, or into the folder to. Returns the
     report of what it did."""
     if not plan.changes:
-        return "Nichts zu ändern.\n"
+        return bc.t("Nichts zu ändern.", "Nothing to change.") + "\n"
     stamp = (now or datetime.datetime.now()).strftime("%Y-%m-%d %H-%M-%S")
     report = plan.report()
     n = len(plan.changes)
     if to is not None:
         to = Path(to).resolve()
         if to == plan.root.resolve():
-            raise ValueError("Der Ordner ist die Karte selbst: dafür «Auf die Karte» wählen")
+            raise ValueError(bc.t("Der Ordner ist die Karte selbst: dafür «SD-Karte direkt» wählen",
+                                  "The folder is the card itself: choose «SD card directly» for that"))
         for i, (rel, c) in enumerate(plan.changes.items()):
             if progress:
-                progress(f"Datei {i + 1}/{n}")
+                progress(bc.t("Datei", "File") + f" {i + 1}/{n}")
             write_atomic(to / rel, c.data)
         (to / REPORT_NAME).write_text(report, encoding="utf-8")
-        return (f"{files(len(plan.changes))} geschrieben in {to}.\nKopiere den Inhalt dieses Ordners auf die Karte "
-                f"(Ordner zusammenführen, Dateien ersetzen).\n")
+        return bc.t(f"{files(n)} geschrieben in {to}.\nKopiere den Inhalt dieses Ordners auf die Karte (Ordner "
+                    f"zusammenführen, Dateien ersetzen).\n",
+                    f"{files(n)} written to {to}.\nCopy the contents of this folder onto the card (merge folders, "
+                    f"replace files).\n")
     backup, k = plan.root / BACKUP / f"{stamp} {plan.action}", 2
     while backup.exists():
         backup, k = plan.root / BACKUP / f"{stamp} {plan.action} ({k})", k + 1
@@ -761,11 +803,13 @@ def write_plan(plan, to=None, now=None, progress=None):
     need += sum((plan.root / rel).stat().st_size for rel in plan.changes if (plan.root / rel).exists())
     free = shutil.disk_usage(plan.root).free
     if need + (16 << 20) > free:
-        raise ValueError(f"Zu wenig Platz auf der Karte: {need >> 20} MB nötig, {free >> 20} MB frei. "
-                         f"Wähle «In einen Ordner».")
+        raise ValueError(bc.t(f"Zu wenig Platz auf der Karte: {need >> 20} MB nötig, {free >> 20} MB frei. "
+                              f"Wähle «Kopie-Ordner».",
+                              f"Not enough space on the card: {need >> 20} MB needed, {free >> 20} MB free. "
+                              f"Choose «Copy folder»."))
     for i, rel in enumerate(plan.changes):
         if progress:
-            progress(f"Sicherung {i + 1}/{n}")
+            progress(bc.t("Sicherung", "Backup") + f" {i + 1}/{n}")
         src = plan.root / rel
         if src.exists():
             (backup / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -776,13 +820,16 @@ def write_plan(plan, to=None, now=None, progress=None):
     try:
         for rel, c in plan.changes.items():
             if progress:
-                progress(f"Datei {done + 1}/{n}")
+                progress(bc.t("Datei", "File") + f" {done + 1}/{n}")
             write_atomic(plan.root / rel, c.data)
             done += 1
     except (OSError, ValueError) as e:
-        raise OSError(f"Nach {done} von {n} Dateien abgebrochen: {e}. Die Sicherung liegt in "
-                      f"{backup}: mit «Zurückspielen» holst du den alten Stand.") from e
-    return f"{files(done)} auf der Karte geändert. Sicherung: {backup}\n"
+        raise OSError(bc.t(f"Nach {done} von {n} Dateien abgebrochen: {e}. Die Sicherung liegt in {backup}: mit "
+                           f"«Zurück» holst du den alten Stand.",
+                           f"Stopped after {done} of {n} files: {e}. The backup is in {backup}: «Restore» brings "
+                           f"back the old state.")) from e
+    return bc.t(f"{files(done)} auf der Karte geändert. Sicherung: {backup}\n",
+                f"{files(done)} changed on the card. Backup: {backup}\n")
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -849,14 +896,14 @@ def demo_card(root):
         '<audioClip trackName="Take" filePath="SAMPLES/take.wav"><params volume="0xE0000000" /></audioClip>\n'
         '</sessionClips>\n</song>\n')
     (root / "SONGS").mkdir(parents=True, exist_ok=True)
-    (root / "SONGS" / "Demo.XML").write_text(song, encoding="utf-8")
+    (root / "SONGS" / "Demo.XML").write_bytes(song.encode("utf-8"))  # "\n" as the Deluge writes, on Windows too
     (root / "KITS").mkdir(exist_ok=True)
-    (root / "KITS" / "Drums.XML").write_text(
+    (root / "KITS" / "Drums.XML").write_bytes((
         '<?xml version="1.0" encoding="UTF-8"?>\n<kit><soundSources>'
         '<sound name="Tick" mode="subtractive"><osc1 type="sample" fileName="SAMPLES/quiet.wav" />'
         '<osc2 type="square" />'
         '<defaultParams volume="0x4CCCCCA8" oscAVolume="0x7FFFFFFF" oscBVolume="0x80000000" /></sound>'
-        '</soundSources></kit>\n', encoding="utf-8")
+        '</soundSources></kit>\n').encode("utf-8"))
     return root
 
 
@@ -878,6 +925,7 @@ def selftest(out):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     lines, ok = [f"version: v{VERSION}"], True
+    bc.LANG = "de"
 
     def step(name, fn):
         nonlocal ok
@@ -915,33 +963,52 @@ def selftest(out):
             text = bc.report(bc.song_files([str(card)]))
             assert "Master-Kompressor an" in text, text
 
-        def window():  # Its buttons pressed: check, then levels shown and written
+        def window():  # Its buttons pressed: levels read, then shown and written with a second START
             import tkinter as tk
             fresh = demo_card(Path(tmp) / "window")
             root = tk.Tk()
             try:
-                app = App(root, None, card=str(fresh))
-                for key, title in (("check", "1 SONG, 1 MIT HINWEISEN"), ("levels", "Pegel: 1 DATEI"),
-                                   ("levels", "GESCHRIEBEN")):
-                    app.press(key)
+                app = App(root, None, card=str(fresh), lang="de")
+                for keys, title in ((("levels", "read", "start"), "1 SONG, 1 MIT HINWEISEN"),
+                                    (("apply", "start"), "Pegel: 1 Datei"), (("start",), "GESCHRIEBEN")):
+                    for key in keys:
+                        app.press(key)
                     settle(root, app)
                     assert app.list and app.list["title"] == title, app.list
                 assert [s["status"] for s in app.songs] == ["ok"], app.songs
                 assert "| Demo | 35 | aus | 35 | 50 | ok |" in bc.report(bc.song_files([str(fresh)]))
+                app.set_lang("en")
+                for key in ("read", "start"):
+                    app.press(key)
+                settle(root, app)
+                assert app.list["title"] == "1 SONG, 0 WITH NOTES", app.list
             finally:
                 root.destroy()
+                bc.LANG = "de"
+
+        def english():  # The same card, its texts in English
+            bc.LANG = "en"
+            try:
+                fresh = demo_card(Path(tmp) / "english")
+                text = bc.report(bc.song_files([str(fresh)]))
+                assert "Song volume 40" in text and "Master compressor on" in text, text
+                plan = plan_levels(fresh)
+                assert plan.summary[0] == "1 song read, 1 to change", plan.summary
+                assert "Song volume: 40.0 to 35.4, -2.1 dB" in plan.changes["SONGS/Demo.XML"].lines, plan.report()
+            finally:
+                bc.LANG = "de"
 
         for name, fn in (("check", check), ("levels", levels), ("normalize", normalize), ("restore", restore),
-                         ("window", window)):
+                         ("window", window), ("english", english)):
             step(name, fn)
     (out / "selftest.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return ok
 
 
 # --------------------------------------------------------------------------------------------------------------------
-# The window: DelugeRec's look (deluge_rec.py), the Deluge's own. A panel in its proportions, the OLED with its pixel
-# font, pads (one per song), round buttons with their LEDs in boxes, the black SELECT knob and the gold one. Plain
-# Python: the window doesn't need numpy.
+# The window: DelugeRec's look (deluge_rec.py), the Deluge's own, a little bigger for the text. A panel in its
+# proportions, the OLED with its pixel font, pads (one per song), round buttons with their LEDs in boxes, boxes to
+# tick, the gold knob, a language switch (German, English). Plain Python: the window doesn't need numpy.
 
 PANEL, PLATE, EDGE, BEZEL, LABEL, SMALL = "#0e0e10", "#18181b", "#26262b", "#050506", "#d8d8de", "#8c8c96"
 BOX, BOX_EDGE = "#1d1d21", "#35353d"  # The box around each control
@@ -1076,6 +1143,19 @@ def settings_path():
     return (Path(base) / "DelugeBaseline" if base else Path.home() / ".config" / "deluge_baseline") / "settings.json"
 
 
+def system_language():
+    """de if the computer speaks German, else en: the window's language until it is switched."""
+    try:
+        if sys.platform.startswith("win"):
+            import ctypes
+            return "de" if ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF == 0x07 else "en"
+        import locale
+        code = locale.getlocale()[0] or os.environ.get("LC_ALL") or os.environ.get("LANG") or ""
+        return "de" if code.lower().startswith("de") else "en"
+    except Exception:
+        return "de"
+
+
 def find_card():
     """A Deluge card among the drives (Windows): the first with a SONGS folder."""
     if not sys.platform.startswith("win"):
@@ -1099,14 +1179,15 @@ def backup_name(name):
 
 
 def check_items(results):
-    """The OLED's list after a check: per song a heading, then its notes. (text, heading, song index)"""
+    """The OLED's list after reading the levels: per song a heading, then its notes. (text, heading, song index)"""
     items = []
     for i, r in enumerate(results):
         if r["error"] is not None:
-            items += [(f"{r['name']}: NICHT LESBAR", True, i), (r["error"], False, i)]
+            items += [(f"{r['name']}: " + bc.t("NICHT LESBAR", "UNREADABLE"), True, i), (r["error"], False, i)]
         elif r["notes"]:
             n = len(r["notes"])
-            items.append((f"{r['name']}: {n} {'HINWEIS' if n == 1 else 'HINWEISE'}", True, i))
+            items.append((f"{r['name']}: {n} " + (bc.t("HINWEIS", "NOTE") if n == 1 else bc.t("HINWEISE", "NOTES")),
+                          True, i))
             items += [(note, False, i) for note in r["notes"]]
         else:
             items.append((f"{r['name']}: OK", True, i))
@@ -1126,15 +1207,22 @@ def plan_items(plan, song_index):
 
 
 class App:
-    KEYS = (("check", GREEN, "PRÜFEN", "P"), ("levels", AMBER, "PEGEL", "L"), ("normalize", CYAN, "NORM", "N"),
-            ("restore", WHITE, "ZURÜCK", "Z"), ("menu", BLUE, "MENU", "M"))
+    """The window. What it does: a function (PEGEL or NORM) in a mode (LESEN: only read, ANPASSEN: show, then write
+    on the second START), written onto the SD card directly or into a copy folder."""
+    W, H = 900, 614  # The panel at scale 1, in the Deluge's (and DelugeRec's) proportions: 305 x 208 mm
     ROWS, PADS = 4, 32  # Lines of a list on the OLED; pads (two rows of 16)
-    KEY_NAMES = {key: text for key, _, text, _ in KEYS}
+    COLOURS = {"levels": AMBER, "normalize": CYAN, "read": WHITE, "apply": RED, "start": GREEN, "card": GREEN,
+               "report": WHITE, "restore": BLUE}
+    # The computer's keys, by language (shown small under each button)
+    LETTERS = {"de": {"levels": "P", "normalize": "N", "read": "L", "apply": "A", "card": "K", "report": "B",
+                      "restore": "Z"},
+               "en": {"levels": "L", "normalize": "N", "read": "R", "apply": "A", "card": "C", "report": "T",
+                      "restore": "B"}}
 
-    def __init__(self, root, settings, card=None, z=1.0):
+    def __init__(self, root, settings, card=None, z=1.0, lang=None):
         import tkinter as tk
         from tkinter import filedialog
-        self.filedialog = filedialog
+        self.tk, self.filedialog = tk, filedialog
         self.root, self.settings = root, settings
         saved = {}
         if settings:
@@ -1143,7 +1231,11 @@ class App:
             except (OSError, ValueError):
                 saved = {}
         self.card = card or saved.get("card") or find_card()
-        self.mode = saved.get("mode") if saved.get("mode") in ("card", "folder") else "card"
+        self.lang = lang or (saved.get("lang") if saved.get("lang") in ("de", "en") else system_language())
+        bc.LANG = self.lang
+        self.function = saved.get("function") if saved.get("function") in ("levels", "normalize") else "levels"
+        self.mode = saved.get("mode") if saved.get("mode") in ("read", "apply") else "read"
+        self.dest = saved.get("dest") if saved.get("dest") in ("card", "folder") else "card"
         self.out = saved.get("out", "")
         try:
             self.target = float(str(saved.get("target", -1.0)).replace(",", "."))
@@ -1151,120 +1243,43 @@ class App:
             self.target = -1.0
         self.target = min(TARGETS, key=lambda t: abs(t - self.target))
         self.compensate = bool(saved.get("compensate", True))
-        self.oled = Oled(max(3, round(3 * z)))
-        s = self.oled.scale / 3  # Everything follows the OLED's size
-        Z = self.Z = lambda v: int(round(v * s))  # noqa: E731
+        # A little bigger than DelugeRec (more text), as big as the screen's scale asks, never bigger than the screen
+        scale = max(3, round(4 * z))
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        while scale > 3 and (self.W * scale / 4 > sw * 0.98 or self.H * scale / 4 > sh - 90):
+            scale -= 1
+        self.oled = Oled(scale)
+        s = scale / 4  # Everything follows the OLED's size
+        self.Z = lambda v: int(round(v * s))  # noqa: E731
         self.boot_until = time.monotonic() + 1.4
-        self.view = "home"  # home, list, menu, backups
+        self.view = "home"  # home, list, backups
         self.list = None  # {"title", "items": [(text, heading, song)], "sel", "since"}
-        self.menu_sel, self.menu_since = 0, 0.0
         self.backup_list = []
-        self.pending = None  # (key, plan): shown, waits for the second press
-        self.busy = self.running = None  # What runs, and on which button
+        self.pending = None  # (kind, plan): shown, waits for the second START
+        self.preview = None  # A plan only read: its songs on the pads
+        self.busy = self.running = None  # What runs (its title) and on which button, None when nothing does
         self.working = 0  # Threads not done yet, the quiet ones too
         self.progress = ""
         self.message, self.message_since, self.message_until = "", 0.0, 0.0
-        self.songs = []  # [{"name", "rel", "status"}], status: None (not checked), ok, notes, error
+        self.songs = []  # [{"name", "rel", "status"}], status: None (not read), ok, notes, error
         self.song_index = {}  # rel key -> index
         self.report_text = ""
         self.jobs = queue.Queue()
-        self.select_angle = 0.0
         self.drag = None
-        self.shown = {}  # What the LEDs, pads and OLED show: only a change is drawn
-        self.card_text = None
+        self.bound = []  # The keys bound for the language set
 
-        self.W, self.H = Z(572), Z(390)  # The Deluge's own proportions: 305 x 208 mm
         root.title(f"DELUGE BASELINE v{VERSION}")
         self.icon = tk.PhotoImage(data=ICON_PNG)
         root.iconphoto(True, self.icon)
         root.configure(bg=PANEL)
         root.resizable(False, False)
-        c = self.c = tk.Canvas(root, width=self.W, height=self.H, bg=PANEL, highlightthickness=0)
-        c.pack()
-        c.create_rectangle(Z(8), Z(8), self.W - Z(8), self.H - Z(8), fill=PLATE, outline=EDGE, width=Z(1))
-        self.label(Z(26), Z(16), "DELUGE", Z(3))
-        self.label(Z(26) + self.label_width("DELUGE", Z(3)) + Z(12), Z(23), "BASELINE", Z(2))
-        # The OLED in its bezel: a click chooses a line, a double click is SELECT pressed
-        self.ox, self.oy = ox, oy = Z(68), Z(52)
-        c.create_rectangle(ox - Z(6), oy - Z(6), ox + Z(384) + Z(6), oy + Z(144) + Z(6), fill=BEZEL, outline=EDGE)
-        self.img = tk.PhotoImage(width=self.oled.W * self.oled.scale, height=self.oled.H * self.oled.scale)
-        screen = c.create_image(ox, oy, image=self.img, anchor="nw")
-        c.tag_bind(screen, "<Button-1>", self.click_oled)
-        c.tag_bind(screen, "<Double-Button-1>", lambda e: self.enter())
-        # Pads: one per song, its colour its state, 32 at a time
-        self.pads = []
-        self.label(Z(26), Z(229), "SONGS", Z(1), SMALL)
-        for i in range(self.PADS):
-            x, y = Z(70) + (i % 16) * Z(24), Z(222) + (i // 16) * Z(26)
-            pad = c.create_rectangle(x, y, x + Z(20), y + Z(20), fill=self.dim(WHITE, 0.03), outline="#0a0a0c",
-                                     width=Z(1))
-            c.tag_bind(pad, "<Button-1>", lambda e, i=i: self.click_pad(i))
-            c.tag_bind(pad, "<Enter>", lambda e, i=i: self.hover_pad(i))
-            self.pads.append(pad)
-        # Round buttons with their LEDs, each in its box, its key on the computer's keyboard small underneath
-        top, bottom = Z(284), Z(368)
-        by = top + Z(28)
-        self.buttons = {}
-        x = Z(26)
-        for key, colour, text, letter in self.KEYS:
-            w = max(self.label_width(text, Z(2)), Z(44)) + Z(14)
-            self.box(x, top, x + w, bottom)
-            cx, x = x + w // 2, x + w + Z(8)
-            ring = c.create_oval(cx - Z(17), by - Z(17), cx + Z(17), by + Z(17), fill="#26262a", outline="#3c3c42",
-                                 width=Z(2))
-            led = c.create_oval(cx - Z(6), by - Z(6), cx + Z(6), by + Z(6), fill=self.dim(colour, 0.22), outline="")
-            self.label(cx - self.label_width(text, Z(2)) // 2, by + Z(26), text, Z(2))
-            self.label(cx - self.label_width(letter, Z(1)) // 2, by + Z(44), letter, Z(1), fill=SMALL)
-            for item in (ring, led):
-                self.clickable(item, lambda e, k=key: self.press(k))
-            self.buttons[key] = (led, colour)
-        # On the right, above: where it writes and the compensation (small buttons with their LEDs), and SELECT
-        cx = self.W - Z(58)
-        self.box(cx - Z(41), Z(46), cx + Z(41), top - Z(8))
-        self.toggles = {}
-        for key, text, y, colour, keyname in (("card", "KARTE", Z(74), GREEN, "K"),
-                                              ("folder", "ORDNER", Z(92), BLUE, "O"),
-                                              ("compensate", "AUSGL", Z(128), CYAN, "A")):
-            led = c.create_oval(cx - Z(33), y - Z(6), cx - Z(21), y + Z(6), fill=self.dim(colour, 0.22),
-                                outline="#3c3c42", width=Z(1))
-            self.label(cx - Z(14), y - Z(3), text, Z(1))
-            self.label(cx + Z(33) - self.label_width(keyname, Z(1)), y - Z(3), keyname, Z(1), SMALL)
-            hit = c.create_rectangle(cx - Z(37), y - Z(9), cx + Z(37), y + Z(9), fill="", outline="")
-            for item in (led, hit):
-                self.clickable(item, lambda e, k=key: self.toggle(k))
-            self.toggles[key] = (led, colour)
-        for text, y in (("SCHREIBEN", Z(56)), ("NORM", Z(110))):  # What the small buttons under it are for
-            self.label(cx - self.label_width(text, Z(1)) // 2, y, text, Z(1), SMALL)
-        self.select_knob = (cx, Z(196))
-        knob = [c.create_oval(cx - Z(22), Z(174), cx + Z(22), Z(218), fill="#1a1a1e", outline="#4a4a52", width=Z(2)),
-                c.create_oval(cx - Z(17), Z(179), cx + Z(17), Z(213), fill="#2c2c32", outline="#55555e", width=Z(1))]
-        self.select_line = c.create_line(cx, Z(196), cx, Z(181), fill=WHITE, width=Z(3), capstyle="round")
-        knob.append(self.select_line)
-        self.label(cx - self.label_width("SELECT", Z(2)) // 2, Z(227), "SELECT", Z(2))
-        self.bind_knob(knob, "select")
-        # Below: the gold knob, the samples' target
-        self.box(cx - Z(41), top, cx + Z(41), bottom)
-        self.gold_knob = (cx, by)
-        knob = [c.create_oval(cx - Z(22), by - Z(22), cx + Z(22), by + Z(22), fill="#8a6a28", outline="#4e3b14",
-                              width=Z(2)),
-                c.create_oval(cx - Z(17), by - Z(17), cx + Z(17), by + Z(17), fill="#d9b35a", outline="#f0d58c",
-                              width=Z(1))]
-        self.gold_line = c.create_line(cx, by, cx, by - Z(15), fill="#2a1e08", width=Z(3), capstyle="round")
-        knob.append(self.gold_line)
-        self.label(cx - self.label_width("ZIEL", Z(2)) // 2, by + Z(31), "ZIEL", Z(2))
-        self.bind_knob(knob, "gold")
-        self.update_knobs()
-
-        for keys, action in ((("p", "P"), "check"), (("l", "L"), "levels"), (("n", "N"), "normalize"),
-                             (("z", "Z"), "restore"), (("m", "M"), "menu")):
-            for k in keys:
-                root.bind(k, lambda e, a=action: self.press(a))
-        for keys, action in ((("k", "K"), self.choose_card), (("o", "O"), lambda: self.toggle("folder")),
-                             (("a", "A"), lambda: self.toggle("compensate")), (("b", "B"), self.open_report)):
-            for k in keys:
-                root.bind(k, lambda e, a=action: a())
-        for k in ("<Return>", "<KP_Enter>", "<space>"):
-            root.bind(k, lambda e: self.enter())
+        self.c = tk.Canvas(root, width=self.Z(self.W), height=self.Z(self.H), bg=PANEL, highlightthickness=0)
+        self.c.pack()
+        self.img = tk.PhotoImage(width=self.oled.W * scale, height=self.oled.H * scale)
+        self.build()
+        self.bind_keys()
+        for k in ("<Return>", "<KP_Enter>"):
+            root.bind(k, lambda e: self.press("start"))
         root.bind("<Escape>", lambda e: self.escape())
         for k, step in (("<Up>", -1), ("<Down>", 1), ("<Prior>", -self.ROWS), ("<Next>", self.ROWS)):
             root.bind(k, lambda e, s=step: self.move(s))
@@ -1282,6 +1297,156 @@ class App:
             self.load_songs()
         self.tick()
 
+    # --- the panel, drawn anew when the language changes
+
+    def build(self):
+        c, Z, t = self.c, self.Z, bc.t
+        c.delete("all")
+        self.shown = {}  # What the LEDs, boxes, pads and OLED show: only a change is drawn
+        self.leds, self.checks = {}, {}
+        W, H = Z(self.W), Z(self.H)
+        c.create_rectangle(Z(8), Z(8), W - Z(8), H - Z(8), fill=PLATE, outline=EDGE, width=Z(1))
+        self.label(Z(26), Z(18), "DELUGE", Z(3))
+        self.label(Z(26) + self.label_width("DELUGE", Z(3)) + Z(12), Z(25), "BASELINE", Z(2))
+        # The OLED in its bezel: a click chooses a line, a double click a backup (never a write: that is START's)
+        self.ox, self.oy = ox, oy = Z(40), Z(58)
+        ow, oh = self.oled.W * self.oled.scale, self.oled.H * self.oled.scale
+        c.create_rectangle(ox - Z(6), oy - Z(6), ox + ow + Z(6), oy + oh + Z(6), fill=BEZEL, outline=EDGE)
+        screen = c.create_image(ox, oy, image=self.img, anchor="nw")
+        c.tag_bind(screen, "<Button-1>", self.click_oled)
+        c.tag_bind(screen, "<Double-Button-1>", lambda e: self.press("start") if self.view == "backups" else None)
+        # Pads: one per song, its colour its state, 32 at a time
+        self.pads = []
+        for i in range(self.PADS):
+            x, y = ox + (i % 16) * Z(32), Z(270) + (i // 16) * Z(28)
+            pad = c.create_rectangle(x, y, x + Z(28), y + Z(24), fill=self.dim(WHITE, 0.03), outline="#0a0a0c",
+                                     width=Z(1))
+            c.tag_bind(pad, "<Button-1>", lambda e, i=i: self.click_pad(i))
+            c.tag_bind(pad, "<Enter>", lambda e, i=i: self.hover_pad(i))
+            self.pads.append(pad)
+        # Below: what it does, how, and go; then the card, the report and the backups
+        self.button_row([(t("FUNKTION", "FUNCTION"), [("levels", t("PEGEL", "LEVELS")), ("normalize", "NORM")]),
+                         (t("MODUS", "MODE"), [("read", t("LESEN", "READ")), ("apply", t("ANPASSEN", "APPLY"))]),
+                         ("", [("start", "START")])], Z(26), Z(566), Z(338), Z(468), Z(62))
+        report_w = max(self.label_width(t("BERICHT", "REPORT"), Z(2)), Z(50)) + Z(40)
+        restore_w = max(self.label_width(t("ZURÜCK", "RESTORE"), Z(2)), Z(50)) + Z(40)
+        x1 = Z(566) - report_w - restore_w - Z(20)
+        self.box(Z(26), Z(484), x1, Z(596))
+        self.card_area = (Z(26) + Z(96), Z(484))
+        self.button("card", t("KARTE", "CARD"), Z(26) + Z(46), Z(522))
+        self.button_row([("", [("report", t("BERICHT", "REPORT"))]), ("", [("restore", t("ZURÜCK", "RESTORE"))])],
+                        x1 + Z(10), Z(566), Z(484), Z(596), Z(38))
+        # On the right: where it writes, the samples' settings, the language
+        rx0, rx1 = Z(578), Z(874)
+        self.box(rx0, Z(52), rx1, Z(184))
+        self.label(rx0 + Z(14), Z(62), t("SCHREIBEN NACH", "WRITE TO"), Z(2), SMALL)
+        self.checkbox("sd", t("SD-KARTE DIREKT", "SD CARD DIRECTLY"), rx0 + Z(16), Z(98), GREEN)
+        self.checkbox("folder", t("KOPIE-ORDNER", "COPY FOLDER"), rx0 + Z(16), Z(130), BLUE)
+        self.out_area = (rx0 + Z(44), Z(152))
+        c.tag_bind("out", "<Button-1>", lambda e: self.choose_out() and self.tick_box("folder"))
+        self.box(rx0, Z(194), rx1, Z(468))
+        self.label(rx0 + Z(14), Z(204), t("NORMALISIEREN", "NORMALIZE"), Z(2), SMALL)
+        self.checkbox("compensate", t("AUSGLEICHEN", "COMPENSATE"), rx0 + Z(16), Z(240), CYAN)
+        for i, line in enumerate(t(("SENKT DEN OSC-PEGEL UM GLEICH VIEL:", "DIE SONGS KLINGEN WIE VORHER."),
+                                   ("LOWERS THE OSC LEVEL BY AS MUCH:", "THE SONGS SOUND AS BEFORE."))):
+            self.label(rx0 + Z(44), Z(260) + i * Z(11), line, Z(1), SMALL)
+        gx, gy = self.gold_knob = (rx0 + Z(62), Z(366))
+        knob = [c.create_oval(gx - Z(26), gy - Z(26), gx + Z(26), gy + Z(26), fill="#8a6a28", outline="#4e3b14",
+                              width=Z(2)),
+                c.create_oval(gx - Z(20), gy - Z(20), gx + Z(20), gy + Z(20), fill="#d9b35a", outline="#f0d58c",
+                              width=Z(1))]
+        self.gold_line = c.create_line(gx, gy, gx, gy - Z(18), fill="#2a1e08", width=Z(3), capstyle="round")
+        knob.append(self.gold_line)
+        ziel = t("ZIEL", "TARGET")
+        self.label(gx - self.label_width(ziel, Z(2)) // 2, gy + Z(36), ziel, Z(2))
+        self.target_area = (gx + Z(44), gy - Z(18))
+        self.label(gx + Z(44), gy + Z(6), t("SPITZE DER SAMPLES", "PEAK OF THE SAMPLES"), Z(1), SMALL)
+        self.label(gx + Z(44), gy + Z(18), t("ZIEHEN, RAD, + UND -", "DRAG, WHEEL, + AND -"), Z(1), SMALL)
+        for item in knob:
+            c.tag_bind(item, "<Button-1>", self.grab)
+            c.tag_bind(item, "<B1-Motion>", self.drag_knob)
+            c.tag_bind(item, "<ButtonRelease-1>", lambda e: setattr(self, "drag", None))
+            c.tag_bind(item, "<Enter>", lambda e: c.configure(cursor="sb_v_double_arrow"))
+            c.tag_bind(item, "<Leave>", lambda e: c.configure(cursor=""))
+        self.update_knob()
+        self.box(rx0, Z(484), rx1, Z(596))
+        self.label(rx0 + Z(14), Z(494), "SPRACHE / LANGUAGE", Z(2), SMALL)
+        # The language switch: a click on DE or EN chooses it, a click on the switch flips it
+        mid, y = (rx0 + rx1) // 2, Z(548)
+        self.label(mid - Z(44) - self.label_width("DE", Z(3)), y - Z(10), "DE", Z(3), tag=("lang", "lang_de"))
+        self.label(mid + Z(44), y - Z(10), "EN", Z(3), tag=("lang", "lang_en"))
+        c.create_rectangle(mid - Z(32), y - Z(13), mid + Z(32), y + Z(13), fill=BEZEL, outline=EDGE, width=Z(1),
+                           tags=("lang", "lang_switch"))
+        self.lang_knob = c.create_rectangle(0, 0, 0, 0, fill="#c8c8d0", outline="#f0f0f4", width=Z(1),
+                                            tags=("lang", "lang_switch"))
+        c.tag_bind("lang_de", "<Button-1>", lambda e: self.set_lang("de"))
+        c.tag_bind("lang_en", "<Button-1>", lambda e: self.set_lang("en"))
+        c.tag_bind("lang_switch", "<Button-1>", lambda e: self.set_lang("en" if self.lang == "de" else "de"))
+        c.tag_bind("lang", "<Enter>", lambda e: c.configure(cursor="hand2"))
+        c.tag_bind("lang", "<Leave>", lambda e: c.configure(cursor=""))
+
+    def button_row(self, groups, x0, x1, top, bottom, cy):
+        """Boxes of round buttons side by side over x0..x1, each with its title; cy: the buttons' centre from top."""
+        Z = self.Z
+        sizes = []
+        for title, keys in groups:
+            slots = [max(self.label_width(text, Z(2)), Z(50)) + Z(16) for _, text in keys]
+            sizes.append((max(sum(slots) + Z(24), self.label_width(title, Z(2)) + Z(28) if title else 0), slots))
+        gap = (x1 - x0 - sum(w for w, _ in sizes)) / max(1, len(groups) - 1)
+        x = x0
+        for (title, keys), (w, slots) in zip(groups, sizes):
+            self.box(int(x), top, int(x + w), bottom)
+            if title:
+                self.label(int(x) + Z(14), top + Z(10), title, Z(2), SMALL)
+            bx = x + (w - sum(slots)) / 2
+            for (key, text), slot in zip(keys, slots):
+                self.button(key, text, int(bx + slot / 2), top + cy)
+                bx += slot
+            x += w + gap
+
+    def button(self, key, text, cx, cy):
+        """A round button with its LED, its name under it and its key small below."""
+        c, Z = self.c, self.Z
+        colour = self.COLOURS[key]
+        ring = c.create_oval(cx - Z(19), cy - Z(19), cx + Z(19), cy + Z(19), fill="#26262a", outline="#3c3c42",
+                             width=Z(2))
+        led = c.create_oval(cx - Z(7), cy - Z(7), cx + Z(7), cy + Z(7), fill=self.dim(colour, 0.22), outline="")
+        self.label(cx - self.label_width(text, Z(2)) // 2, cy + Z(28), text, Z(2))
+        letter = "ENTER" if key == "start" else self.LETTERS[self.lang][key]
+        self.label(cx - self.label_width(letter, Z(1)) // 2, cy + Z(48), letter, Z(1), SMALL)
+        for item in (ring, led):
+            self.clickable(item, lambda e: self.press(key))
+        self.leds[key] = (led, colour)
+
+    def checkbox(self, key, text, x, y, colour):
+        """A box to tick, with its name: all of it clickable."""
+        c, Z = self.c, self.Z
+        tag, s = "check_" + key, Z(18)
+        c.create_rectangle(x - Z(6), y - Z(13), x + s + Z(16) + self.label_width(text, Z(2)), y + Z(13), fill=BOX,
+                           outline="", tags=tag)
+        c.create_rectangle(x, y - s // 2, x + s, y + s // 2, fill=BEZEL, outline="#6a6a74", width=Z(2), tags=tag)
+        marks = [c.create_line(x + Z(5), y - s // 2 + Z(5), x + s - Z(5), y + s // 2 - Z(5), fill=colour, width=Z(3),
+                               tags=tag),
+                 c.create_line(x + Z(5), y + s // 2 - Z(5), x + s - Z(5), y - s // 2 + Z(5), fill=colour, width=Z(3),
+                               tags=tag)]
+        self.label(x + s + Z(10), y - Z(7), text, Z(2), tag=tag)
+        c.tag_bind(tag, "<Button-1>", lambda e: self.tick_box(key))
+        c.tag_bind(tag, "<Enter>", lambda e: c.configure(cursor="hand2"))
+        c.tag_bind(tag, "<Leave>", lambda e: c.configure(cursor=""))
+        self.checks[key] = marks
+
+    def bind_keys(self):
+        for k in self.bound:
+            self.root.unbind(k)
+        self.bound = []
+        for key, letter in self.LETTERS[self.lang].items():
+            for k in (letter.lower(), letter.upper()):
+                self.root.bind(k, lambda e, key=key: self.press(key))
+                self.bound.append(k)
+        for k, lang in (("d", "de"), ("D", "de"), ("e", "en"), ("E", "en")):  # Deutsch, English
+            self.root.bind(k, lambda e, lang=lang: self.set_lang(lang))
+            self.bound.append(k)
+
     # --- drawing helpers, as in DelugeRec
 
     def label(self, x, y, s, p, fill=LABEL, tag=None):
@@ -1295,22 +1460,13 @@ class App:
             x += 6 * p
 
     def box(self, x0, y0, x1, y1):
-        """The box around one control on the panel."""
+        """The box around controls on the panel."""
         self.c.create_rectangle(x0, y0, x1, y1, fill=BOX, outline=BOX_EDGE, width=self.Z(1))
 
     def clickable(self, item, action):
         self.c.tag_bind(item, "<Button-1>", action)
         self.c.tag_bind(item, "<Enter>", lambda e: self.c.configure(cursor="hand2"))
         self.c.tag_bind(item, "<Leave>", lambda e: self.c.configure(cursor=""))
-
-    def bind_knob(self, items, which):
-        """A knob turns when dragged up or down; SELECT clicked without turning is SELECT pressed."""
-        for item in items:
-            self.c.tag_bind(item, "<Button-1>", lambda e: self.grab(e, which))
-            self.c.tag_bind(item, "<B1-Motion>", self.drag_knob)
-            self.c.tag_bind(item, "<ButtonRelease-1>", self.release_knob)
-            self.c.tag_bind(item, "<Enter>", lambda e: self.c.configure(cursor="sb_v_double_arrow"))
-            self.c.tag_bind(item, "<Leave>", lambda e: self.c.configure(cursor=""))
 
     @staticmethod
     def label_width(s, p):
@@ -1321,13 +1477,10 @@ class App:
         r, g, b = (int(colour[i:i + 2], 16) for i in (1, 3, 5))
         return "#%02x%02x%02x" % (int(24 + (r - 24) * f), int(24 + (g - 24) * f), int(26 + (b - 26) * f))
 
-    def update_knobs(self):
-        r = self.Z(15)
-        cx, cy = self.select_knob
-        a = math.radians(self.select_angle)
-        self.c.coords(self.select_line, cx, cy, cx + r * math.sin(a), cy - r * math.cos(a))
+    def update_knob(self):
         gx, gy = self.gold_knob
         a = math.radians(-135 + 270 * TARGETS[::-1].index(self.target) / (len(TARGETS) - 1))
+        r = self.Z(18)
         self.c.coords(self.gold_line, gx, gy, gx + r * math.sin(a), gy - r * math.cos(a))
 
     def say(self, text, seconds=2.0):
@@ -1337,57 +1490,53 @@ class App:
         self.message, self.message_since = text, now
         self.message_until = now + (max(seconds, over + 3.0) if over else seconds)
 
-    # --- the knobs, the wheel, the keys
+    def show(self, item, fill):
+        if self.shown.get(item) != fill:
+            self.shown[item] = fill
+            self.c.itemconfigure(item, fill=fill)
 
-    def grab(self, event, which):
-        self.drag = {"which": which, "y": event.y, "moved": False}
+    def redraw(self, tag, text, x, y, p, fill=LABEL):
+        """Lettering that changes (the card, the folder, the target): drawn again when its text does."""
+        if self.shown.get(tag) != text:
+            self.shown[tag] = text
+            self.c.delete(tag)
+            self.label(x, y, text, p, fill, tag)
+            return True
+        return False
+
+    # --- the gold knob, the wheel, the list
+
+    def grab(self, event):
+        self.drag = {"y": event.y}
 
     def drag_knob(self, event):
-        d = self.drag
-        if not d:
-            return
-        step = self.Z(12)
-        while abs(event.y - d["y"]) >= step:
+        d, step = self.drag, self.Z(12)
+        while d and abs(event.y - d["y"]) >= step:
             up = event.y < d["y"]
             d["y"] += -step if up else step
-            d["moved"] = True
-            if d["which"] == "select":
-                self.move(-1 if up else 1)
-            else:
-                self.turn_gold(1 if up else -1)
-
-    def release_knob(self, event):
-        d, self.drag = self.drag, None
-        if d and not d["moved"] and d["which"] == "select":
-            self.enter()  # Pressed, not turned: SELECT's press
+            self.turn_gold(1 if up else -1)
 
     def wheel(self, event, step):
         gx, gy = self.gold_knob
-        if (event.x - gx) ** 2 + (event.y - gy) ** 2 <= self.Z(30) ** 2:
+        if (event.x - gx) ** 2 + (event.y - gy) ** 2 <= self.Z(34) ** 2:
             self.turn_gold(step)
         else:
             self.move(-step)
 
     def turn_gold(self, step):
+        if self.busy:
+            return
         i = TARGETS.index(self.target)
         self.target = TARGETS[min(len(TARGETS) - 1, max(0, i - step))]  # Up: louder, towards 0 dBFS
-        self.update_knobs()
-        if self.pending and self.pending[0] == "normalize":  # Shown for the old target: NORM anew
+        self.update_knob()
+        if self.pending and self.pending[0] == "normalize":  # Shown for the old target: START anew
             self.pending = None
-            self.say(f"ZIEL {bc.num(self.target)} DBFS: NORM NEU", 2.5)
-        else:
-            self.say(f"ZIEL {bc.num(self.target)} DBFS")
+        self.say(bc.t("ZIEL ", "TARGET ") + f"{bc.num(self.target)} DBFS")
         self.save()
 
     def move(self, step):
-        """SELECT turned: the next line of the list or menu."""
-        self.select_angle = (self.select_angle + 30 * (1 if step > 0 else -1)) % 360
-        self.update_knobs()
-        if self.view == "menu":
-            sel = min(len(self.menu_items()) - 1, max(0, self.menu_sel + step))
-            if sel != self.menu_sel:
-                self.menu_sel, self.menu_since = sel, time.monotonic()
-        elif self.view in ("list", "backups") and self.list:
+        """Through the list on the OLED: wheel, arrow keys."""
+        if self.view in ("list", "backups") and self.list:
             sel = min(len(self.list["items"]) - 1, max(0, self.list["sel"] + step))
             if sel != self.list["sel"]:
                 self.list["sel"], self.list["since"] = sel, time.monotonic()
@@ -1398,9 +1547,6 @@ class App:
             top = self.list_top()
             if top + row < len(self.list["items"]):
                 self.list["sel"], self.list["since"] = top + row, time.monotonic()
-        elif self.view == "menu" and 0 <= row < self.ROWS:
-            if self.menu_top() + row < len(self.menu_items()):
-                self.menu_sel, self.menu_since = self.menu_top() + row, time.monotonic()
 
     def click_pad(self, i):
         n = self.pad_page() * self.PADS + i
@@ -1416,130 +1562,138 @@ class App:
     def hover_pad(self, i):
         n = self.pad_page() * self.PADS + i
         if n < len(self.songs):
-            status = {"ok": "OK", "notes": "HINWEISE", "error": "NICHT LESBAR"}.get(self.songs[n]["status"], "")
+            status = {"ok": "OK", "notes": bc.t("HINWEISE", "NOTES"),
+                      "error": bc.t("NICHT LESBAR", "UNREADABLE")}.get(self.songs[n]["status"], "")
             self.say(f"{self.songs[n]['name']} {status}".strip(), 1.6)
 
-    # --- the buttons
+    # --- the buttons and boxes
 
     def press(self, key):
         if self.busy:
-            self.say("BITTE WARTEN")
+            self.say(bc.t("BITTE WARTEN", "PLEASE WAIT"))
             return
-        if key == "menu":  # What waits for the second press still waits
-            self.view = ("list" if self.list else "home") if self.view == "menu" else "menu"
-            self.menu_sel, self.menu_since = 0, time.monotonic()
-            return
-        if self.pending and self.pending[0] == key:
+        if key in ("levels", "normalize", "read", "apply"):  # What START will do
+            if key in ("levels", "normalize"):
+                self.function = key
+            else:
+                self.mode = key
+            self.pending = self.preview = None
+            self.view = "home"
+            self.save()
+        elif key == "start":
+            self.go()
+        elif key == "card":
+            self.choose_card()
+        elif key == "report":
+            self.open_report()
+        elif key == "restore":
+            self.backups()
+
+    def go(self):
+        """START: the second press writes what is shown; else the backup chosen, or the function in its mode."""
+        if self.pending:
             self.write()
             return
-        self.pending = None
+        if self.view == "backups" and self.list and self.backup_list:
+            backup = self.backup_list[self.list["sel"]]
+            self.start(bc.t("LESE SICHERUNG", "READING BACKUP"), lambda: plan_restore(backup),
+                       lambda plan: self.show_plan(plan, True), "restore")
+            return
         root = self.card_or_say()
         if root is None:
             return
-        if key == "check":
-            self.start("PRÜFE", lambda: self.checked(root), self.show_check, key)
-        elif key == "levels":
-            self.start("SUCHE PEGEL", lambda: plan_levels(root), self.show_plan, key)
-        elif key == "normalize":
+        apply = self.mode == "apply"
+        if self.function == "levels" and not apply:
+            self.start(bc.t("LESE PEGEL", "READING LEVELS"), lambda: self.checked(root), self.show_check, "start")
+        elif self.function == "levels":
+            self.start(bc.t("SUCHE PEGEL", "FINDING LEVELS"), lambda: plan_levels(root),
+                       lambda plan: self.show_plan(plan, True), "start")
+        else:
             target, compensate = self.target, self.compensate
-            self.start("LESE SAMPLES", lambda: plan_normalize(root, target, compensate,
-                                                              lambda t: self.jobs.put(("progress", t))),
-                       self.show_plan, key)
-        elif key == "restore":
-            folder = root / BACKUP
-            backups = sorted((p for p in folder.iterdir() if p.is_dir()), reverse=True) if folder.is_dir() else []
-            if not backups:
-                self.say("KEINE SICHERUNG AUF DER KARTE", 3)
-                return
-            self.backup_list = backups
-            self.list = {"title": "SICHERUNG WÄHLEN", "items": [(backup_name(b.name), False, None) for b in backups],
-                         "sel": 0, "since": time.monotonic()}
-            self.view = "backups"
-            self.say("SELECT: DIESE ZEIGEN", 2.5)
+            self.start(bc.t("LESE SAMPLES", "READING SAMPLES"),
+                       lambda: plan_normalize(root, target, compensate, lambda t: self.jobs.put(("progress", t))),
+                       lambda plan: self.show_plan(plan, apply), "start")
 
-    def enter(self):
-        """SELECT pressed (or Enter): the menu's item, the backup, or yes to what is shown."""
-        if self.busy:
+    def backups(self):
+        root = self.card_or_say()
+        if root is None:
             return
-        if self.view == "menu":
-            self.menu_action(self.menu_items()[self.menu_sel][2])
-        elif self.view == "backups" and self.list:
-            backup = self.backup_list[self.list["sel"]]
-            self.start("LESE SICHERUNG", lambda: plan_restore(backup), self.show_plan, "restore")
-        elif self.pending:
-            self.write()
+        folder = root / BACKUP
+        found = sorted((p for p in folder.iterdir() if p.is_dir()), reverse=True) if folder.is_dir() else []
+        if not found:
+            self.say(bc.t("KEINE SICHERUNG AUF DER KARTE", "NO BACKUP ON THE CARD"), 3)
+            return
+        self.pending = self.preview = None
+        self.backup_list = found
+        self.list = {"title": bc.t("SICHERUNG WÄHLEN", "CHOOSE A BACKUP"),
+                     "items": [(backup_name(b.name), False, None) for b in found], "sel": 0, "since": time.monotonic()}
+        self.view = "backups"
+        self.say(bc.t("START: ZEIGEN, WAS ZURÜCKKOMMT", "START: SHOW WHAT COMES BACK"), 3)
 
     def escape(self):
         if self.pending:
             self.pending = None
-            self.say("NICHTS GESCHRIEBEN")
-        elif self.view == "menu" and self.list:
-            self.view = "list"
+            self.say(bc.t("NICHTS GESCHRIEBEN", "NOTHING WRITTEN"))
         else:
-            self.view = "home"
+            self.view, self.preview = "home", None
 
-    def toggle(self, key):
+    def tick_box(self, key):
         if self.busy:
             return
         if key == "compensate":
             self.compensate = not self.compensate
-            if self.pending and self.pending[0] == "normalize":  # Shown with the other setting: NORM anew
+            if self.pending and self.pending[0] == "normalize":  # Shown with the other setting: START anew
                 self.pending = None
-            self.say("AUSGLEICHEN " + ("AN" if self.compensate else "AUS: SONGS WERDEN LAUTER"), 3)
-        else:
-            mode = "folder" if key == "folder" and self.mode != "folder" else "card"
-            if mode == "folder" and not self.out and not self.choose_out():
+            self.say(bc.t("AUSGLEICHEN AN", "COMPENSATE ON") if self.compensate else
+                     bc.t("AUSGLEICHEN AUS: SONGS WERDEN LAUTER", "COMPENSATE OFF: SONGS GET LOUDER"), 3)
+        elif key == "folder":
+            if not self.out and not self.choose_out():
                 return
-            self.mode = mode
-            self.say("SCHREIBT IN ORDNER " + self.out if mode == "folder" else "SCHREIBT AUF DIE KARTE", 3)
+            self.dest = "folder"
+            self.say(bc.t("SCHREIBT IN DEN KOPIE-ORDNER ", "WRITES TO THE COPY FOLDER ") + self.out, 3)
+        else:
+            self.dest = "card"
+            self.say(bc.t("SCHREIBT DIREKT AUF DIE SD-KARTE", "WRITES TO THE SD CARD DIRECTLY"), 3)
         self.save()
 
-    def menu_items(self):
-        return [("KARTE", self.card or "-", "card"),
-                ("SCHREIBT", "IN ORDNER" if self.mode == "folder" else "AUF KARTE", "mode"),
-                ("ORDNER", self.out or "-", "out"),
-                ("AUSGL", "AN" if self.compensate else "AUS", "compensate"),
-                ("ZIEL", f"{bc.num(self.target)} DBFS", "target"),
-                ("BERICHT", "ÖFFNEN", "report")]
-
-    def menu_top(self):
-        return min(max(0, self.menu_sel - 1), max(0, len(self.menu_items()) - self.ROWS))
-
-    def menu_action(self, what):
-        if what == "card":
-            self.choose_card()
-        elif what == "mode":
-            self.toggle("folder")
-        elif what == "out":
-            if self.choose_out():
-                self.say("ORDNER " + self.out, 3)
-        elif what == "compensate":
-            self.toggle("compensate")
-        elif what == "target":  # Quieter by a step, from the quietest back to 0 dBFS
-            self.turn_gold(-1 if self.target != TARGETS[-1] else len(TARGETS))
-        elif what == "report":
-            self.open_report()
+    def set_lang(self, lang):
+        """The language switch: the panel and every text anew. What was shown goes (it was in the other language)."""
+        if self.busy or lang == self.lang:
+            return
+        self.lang = bc.LANG = lang
+        self.pending = self.preview = self.list = None
+        self.report_text, self.view = "", "home"
+        self.build()
+        self.bind_keys()
+        self.save()
+        self.say(bc.t("DEUTSCH", "ENGLISH"))
 
     def choose_card(self):
         if self.busy:
             return
-        path = self.filedialog.askdirectory(title="Deluge-Karte (oder ihr Ordner SONGS)",
+        path = self.filedialog.askdirectory(title=bc.t("Deluge-Karte (oder ihr Ordner SONGS)",
+                                                       "Deluge card (or its SONGS folder)"),
                                             initialdir=self.card or None)
         if not path:
             return
         try:
             root = card_root(path)
         except (OSError, ValueError):
-            self.say("KEINE DELUGE-KARTE: OHNE ORDNER SONGS", 3)
+            self.say(bc.t("KEINE DELUGE-KARTE: OHNE ORDNER SONGS", "NO DELUGE CARD: NO SONGS FOLDER"), 3)
             return
         self.card = str(root)
-        self.pending, self.list, self.view, self.report_text = None, None, "home", ""
+        self.pending = self.preview = self.list = None
+        self.view, self.report_text = "home", ""
         self.save()
         self.load_songs()
-        self.say("KARTE " + self.card, 3)
+        self.say(bc.t("KARTE ", "CARD ") + self.card, 3)
 
     def choose_out(self):
-        path = self.filedialog.askdirectory(title="Ordner für die geänderten Dateien", initialdir=self.out or None)
+        if self.busy:
+            return False
+        path = self.filedialog.askdirectory(title=bc.t("Kopie-Ordner für die geänderten Dateien",
+                                                       "Copy folder for the changed files"),
+                                            initialdir=self.out or None)
         if path:
             self.out = path
             self.save()
@@ -1548,9 +1702,10 @@ class App:
 
     def open_report(self):
         if not self.report_text:
-            self.say("NOCH KEIN BERICHT: ERST PRÜFEN", 3)
+            self.say(bc.t("NOCH KEIN BERICHT: ERST START", "NO REPORT YET: START FIRST"), 3)
             return
-        path = (Path(self.settings).parent if self.settings else Path(tempfile.gettempdir())) / "Bericht.txt"
+        path = (Path(self.settings).parent if self.settings else Path(tempfile.gettempdir())) / bc.t(
+            "Bericht.txt", "Report.txt")
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(self.report_text, encoding="utf-8-sig")
@@ -1559,24 +1714,24 @@ class App:
             else:
                 import subprocess
                 subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
-            self.say("BERICHT OFFEN")
+            self.say(bc.t("BERICHT OFFEN", "REPORT OPEN"))
         except OSError:
-            self.say("BERICHT: " + str(path), 4)
+            self.say(bc.t("BERICHT: ", "REPORT: ") + str(path), 4)
 
     def card_or_say(self):
         """The card's root, or None with the reason on the OLED."""
         if not self.card:
-            self.say("KEINE KARTE: K ODER MENU", 3)
+            self.say(bc.t("KEINE KARTE: KARTE WÄHLEN", "NO CARD: CHOOSE A CARD"), 3)
             return None
         try:
             return card_root(self.card)
         except (OSError, ValueError):
-            self.say("KARTE NICHT DA: " + self.card, 3)
+            self.say(bc.t("KARTE NICHT DA: ", "CARD NOT THERE: ") + self.card, 3)
             return None
 
     def quit(self):
-        if self.busy == "SCHREIBE":  # Not in the middle of writing the card
-            self.say("SCHREIBT: BITTE WARTEN", 2.5)
+        if self.busy == bc.t("SCHREIBE", "WRITING"):  # Not in the middle of writing the card
+            self.say(bc.t("SCHREIBT: BITTE WARTEN", "WRITING: PLEASE WAIT"), 2.5)
             return
         self.root.destroy()
 
@@ -1610,8 +1765,9 @@ class App:
             if error is None:
                 done(result)
             elif not quiet:
-                self.show_list("FEHLER", [(f"{type(error).__name__}: {error}", False, None)])
-                self.say("FEHLER BEIM SCHREIBEN" if done == self.written else "FEHLER: NICHTS GEÄNDERT", 4)
+                self.show_list(bc.t("FEHLER", "ERROR"), [(f"{type(error).__name__}: {error}", False, None)])
+                self.say(bc.t("FEHLER BEIM SCHREIBEN", "ERROR WHILE WRITING") if done == self.written else
+                         bc.t("FEHLER: NICHTS GEÄNDERT", "ERROR: NOTHING CHANGED"), 4)
 
     def checked(self, root):
         files = bc.song_files([str(root)])
@@ -1624,7 +1780,7 @@ class App:
         self.song_index = {rel_key(s["rel"]): i for i, s in enumerate(self.songs)}
 
     def load_songs(self):
-        """The songs on the pads before a check: grey."""
+        """The songs on the pads before they are read: grey."""
         try:
             root = card_root(self.card)
         except (OSError, ValueError):
@@ -1641,32 +1797,37 @@ class App:
         self.set_songs(root, results)
         with_notes = sum(s["status"] != "ok" for s in self.songs)
         n = len(results)
-        self.show_list(f"{n} SONG{'' if n == 1 else 'S'}, {with_notes} MIT HINWEISEN", check_items(results))
-        self.say("GEPRÜFT, NICHTS GEÄNDERT", 2.5)
+        self.show_list(f"{n} SONG{'' if n == 1 else 'S'}, {with_notes} " + bc.t("MIT HINWEISEN", "WITH NOTES"),
+                       check_items(results))
+        self.say(bc.t("NUR GELESEN, NICHTS GEÄNDERT", "ONLY READ, NOTHING CHANGED"), 2.5)
 
-    def show_plan(self, plan):
+    def show_plan(self, plan, pending):
+        """A plan on the OLED: to write on the second START (pending), or only read."""
         self.report_text = plan.report()
-        key = {"Pegel": "levels", "Normalisieren": "normalize", "Zurückspielen": "restore"}[plan.action]
         n = len(plan.changes)
-        self.show_list(f"{plan.action}: {n} {'DATEI' if n == 1 else 'DATEIEN'}", plan_items(plan, self.song_index))
-        if plan.changes:
-            self.pending = (key, plan)
-            self.say("NUR GEZEIGT", 2.0)
+        self.show_list(f"{plan.action}: {files(n)}", plan_items(plan, self.song_index))
+        if not plan.changes:
+            self.say(bc.t("NICHTS ZU ÄNDERN", "NOTHING TO CHANGE"), 3)
+        elif pending:
+            self.pending = (plan.kind, plan)
+            self.say(bc.t("VORSCHAU", "PREVIEW"), 2.0)
         else:
-            self.say("NICHTS ZU ÄNDERN", 3)
+            self.preview = plan
+            self.say(bc.t("NUR GELESEN, NICHTS GEÄNDERT", "ONLY READ, NOTHING CHANGED"), 2.5)
 
     def write(self):
-        key, plan = self.pending
+        kind, plan = self.pending
         self.pending = None
-        to = self.out if self.mode == "folder" and key != "restore" else None
-        self.start("SCHREIBE", lambda: write_plan(plan, to, progress=lambda t: self.jobs.put(("progress", t))),
-                   self.written, key)
+        to = self.out if self.dest == "folder" and kind != "restore" else None
+        self.start(bc.t("SCHREIBE", "WRITING"),
+                   lambda: write_plan(plan, to, progress=lambda t: self.jobs.put(("progress", t))), self.written,
+                   "restore" if kind == "restore" else "start")
 
     def written(self, text):
-        self.report_text += "\n## Geschrieben\n\n" + text
+        self.report_text += bc.t("\n## Geschrieben\n\n", "\n## Written\n\n") + text
         lines = [part for line in text.strip().splitlines() for part in re.split(r"(?<=\.) (?=[A-ZÄÖÜ])", line)]
-        self.show_list("GESCHRIEBEN", [(line, False, None) for line in lines])
-        self.say("FERTIG")
+        self.show_list(bc.t("GESCHRIEBEN", "WRITTEN"), [(line, False, None) for line in lines])
+        self.say(bc.t("FERTIG", "DONE"))
         root = self.card_or_say()
         if root is not None:  # The pads anew, quietly
             self.start("", lambda: self.checked(root), lambda result: self.set_songs(*result[::2]), None, quiet=True)
@@ -1681,12 +1842,13 @@ class App:
         try:
             Path(self.settings).parent.mkdir(parents=True, exist_ok=True)
             Path(self.settings).write_text(json.dumps({
-                "card": self.card, "mode": self.mode, "out": self.out, "target": self.target,
-                "compensate": self.compensate}), encoding="utf-8")
+                "card": self.card, "lang": self.lang, "function": self.function, "mode": self.mode,
+                "dest": self.dest, "out": self.out, "target": self.target, "compensate": self.compensate}),
+                encoding="utf-8")
         except OSError:
             pass
 
-    # --- the loop: LEDs, pads, OLED, 25 times a second
+    # --- the loop: LEDs, boxes, pads, OLED, 25 times a second
 
     def visible_rows(self):
         return self.ROWS - 1 if self.pending else self.ROWS
@@ -1704,44 +1866,67 @@ class App:
         song = self.selected_song()
         return song // self.PADS if song is not None else 0
 
-    def show(self, item, fill):
-        if self.shown.get(item) != fill:
-            self.shown[item] = fill
-            self.c.itemconfigure(item, fill=fill)
-
     def tick(self):
         now = time.monotonic()
         self.poll()
         blink = int(now * 2.5) % 2 == 0
-        for key, (led, colour) in self.buttons.items():
-            on = (self.running == key or (self.pending is not None and self.pending[0] == key and blink)
-                  or (key == "menu" and self.view == "menu"))
-            self.show(led, colour if on else self.dim(colour, 0.22))
-        for key, (led, colour) in self.toggles.items():
-            on = self.compensate if key == "compensate" else self.mode == key
-            self.show(led, colour if on else self.dim(colour, 0.22))
+        Z = self.Z
+        lit = {"levels": self.function == "levels", "normalize": self.function == "normalize",
+               "read": self.mode == "read", "apply": self.mode == "apply",
+               "start": self.running == "start" or (bool(self.pending) and blink),
+               "card": bool(self.songs) or (not self.card and blink),
+               "report": bool(self.report_text),
+               "restore": self.running == "restore" or self.view == "backups" or
+               (bool(self.pending) and self.pending[0] == "restore")}
+        for key, (led, colour) in self.leds.items():
+            self.show(led, colour if lit[key] else self.dim(colour, 0.22))
+        ticked = {"sd": self.dest == "card", "folder": self.dest == "folder", "compensate": self.compensate}
+        for key, marks in self.checks.items():
+            for m in marks:
+                if self.shown.get(m) != ticked[key]:
+                    self.shown[m] = ticked[key]
+                    self.c.itemconfigure(m, state="normal" if ticked[key] else "hidden")
+        mid = (Z(578) + Z(874)) // 2
+        x = mid - Z(30) if self.lang == "de" else mid + Z(2)
+        if self.shown.get("lang_knob") != x:
+            self.shown["lang_knob"] = x
+            self.c.coords(self.lang_knob, x, Z(548) - Z(11), x + Z(28), Z(548) + Z(11))
+            for tag, on in (("lang_de", self.lang == "de"), ("lang_en", self.lang == "en")):
+                self.c.itemconfigure(tag, fill=LABEL if on else self.dim(LABEL, 0.35))
+        # The card, the copy folder, the target: their text on the panel
+        cx, cy = self.card_area
+        card = self.card or bc.t("KEINE KARTE", "NO CARD")
+        name = Path(card).name or card
+        self.redraw("card_name", name[:15], cx, cy + Z(24), Z(2))
+        self.redraw("card_path", card if len(card) <= 30 else ".." + card[-28:], cx, cy + Z(46), Z(1), SMALL)
+        n = len(self.songs)
+        self.redraw("card_songs", f"{n} SONG{'' if n == 1 else 'S'}" if self.card else "", cx, cy + Z(60), Z(1),
+                    SMALL)
+        ox, oy = self.out_area
+        out = self.out or bc.t("(NOCH KEIN ORDNER)", "(NO FOLDER YET)")
+        if self.redraw("out", out if len(out) <= 36 else ".." + out[-34:], ox, oy, Z(1), SMALL):
+            self.c.tag_bind("out", "<Enter>", lambda e: self.c.configure(cursor="hand2"))
+            self.c.tag_bind("out", "<Leave>", lambda e: self.c.configure(cursor=""))
+        tx, ty = self.target_area
+        self.redraw("target", f"{bc.num(self.target)} DBFS", tx, ty, Z(2))
+        # The pads: after reading the levels green, amber, red; what a plan touches in its function's colour
         page, selected = self.pad_page(), self.selected_song()
-        changing = {self.song_index.get(rel_key(rel)) for rel in self.pending[1].changes} if self.pending else ()
+        plan = self.pending[1] if self.pending else self.preview
+        touched = {self.song_index.get(rel_key(rel)) for rel in plan.changes} if plan else ()
+        colour = {"levels": AMBER, "normalize": CYAN, "restore": BLUE}[plan.kind] if plan else None
         for i, pad in enumerate(self.pads):
             n = page * self.PADS + i
             if n >= len(self.songs):
                 fill = self.dim(WHITE, 0.03)
-            elif self.pending:  # The songs it would change blink in the button's colour
-                colour = self.buttons[self.pending[0]][1]
-                fill = colour if n in changing and blink else self.dim(colour, 0.45 if n in changing else 0.08)
+            elif plan:  # Blinking: it would be written on START
+                on = n in touched and (blink or not self.pending)
+                fill = colour if on else self.dim(colour, 0.45 if n in touched else 0.08)
             else:
-                colour = {"ok": GREEN, "notes": AMBER, "error": RED}.get(self.songs[n]["status"], WHITE)
-                fill = colour if self.songs[n]["status"] else self.dim(colour, 0.3)
+                c = {"ok": GREEN, "notes": AMBER, "error": RED}.get(self.songs[n]["status"], WHITE)
+                fill = c if self.songs[n]["status"] else self.dim(c, 0.3)
                 if n == selected and not blink:
-                    fill = self.dim(colour, 0.5)
+                    fill = self.dim(c, 0.5)
             self.show(pad, fill)
-        card = oled_text(self.card or "KEINE KARTE")
-        if card != self.card_text:  # The card, top right, in the panel's lettering
-            self.card_text = card
-            self.c.delete("card")
-            p = self.Z(2)
-            text = card if len(card) <= 12 else ".." + card[-10:]
-            self.label(self.W - self.Z(26) - self.label_width(text, p), self.Z(23), text, p, SMALL, "card")
         self.draw_oled(now, blink)
         frame = self.oled.frame()
         if frame != self.shown.get("oled"):
@@ -1770,7 +1955,7 @@ class App:
         if self.busy:
             o.text(0, 0, self.busy)
             o.rect(0, 9, o.W, 1)
-            o.text(0, 16, self.progress[:21] if self.progress else "BITTE WARTEN")
+            o.text(0, 16, self.progress[:21] if self.progress else bc.t("BITTE WARTEN", "PLEASE WAIT"))
             for x, y, w, h in ((0, 30, o.W, 1), (0, 38, o.W, 1), (0, 30, 1, 9), (o.W - 1, 30, 1, 9)):
                 o.rect(x, y, w, h)
             m = re.search(r"(\d+)/(\d+)", self.progress)
@@ -1779,21 +1964,12 @@ class App:
             else:
                 o.rect(2 + int(now * 40) % (o.W - 20), 32, 16, 5)
             return
-        if self.view == "menu":
-            o.text(0, 0, "MENU")
-            o.rect(0, 9, o.W, 1)
-            items, top = self.menu_items(), self.menu_top()
-            for row, (name, value, _) in enumerate(items[top:top + self.ROWS]):
-                y, sel = 12 + row * 9, top + row == self.menu_sel
-                if sel:
-                    o.rect(0, y - 1, o.W, 9)
-                o.text(0, y, name, invert=sel)
-                self.marquee(o, 54, y, value, self.menu_since if sel else now, invert=sel)
-        elif self.view in ("list", "backups") and self.list:
+        if self.view in ("list", "backups") and self.list:
             items, rows = self.list["items"], self.visible_rows()
             title = self.list["title"]
             if self.pending:  # Where it would write
-                title += " > " + ("ORDNER" if self.mode == "folder" and self.pending[0] != "restore" else "KARTE")
+                title += " > " + (bc.t("ORDNER", "FOLDER") if self.dest == "folder" and self.pending[0] != "restore"
+                                  else bc.t("SD-KARTE", "SD CARD"))
             self.marquee(o, 0, 0, title, self.list["since"])
             o.rect(0, 9, o.W, 1)
             top = self.list_top()
@@ -1808,9 +1984,9 @@ class App:
             if len(items) > rows:  # Where in the list: a thin bar on the right
                 h = max(3, 36 * rows // len(items))
                 o.rect(o.W - 1, 11 + (36 - h) * self.list["sel"] // max(1, len(items) - 1), 1, h)
-            if self.pending and not message:  # Asks: the button again, or SELECT, writes
+            if self.pending and not message:  # Asks: START again writes
                 o.rect(0, 39, o.W, 9, on=blink)
-                o.text(1, 40, f"SCHREIBEN? {self.KEY_NAMES[self.pending[0]]}=JA", invert=blink)
+                o.text(1, 40, bc.t("SCHREIBEN? START=JA", "WRITE? START=YES"), invert=blink)
         else:
             self.draw_home(o)
         if message:
@@ -1818,48 +1994,70 @@ class App:
             self.marquee(o, 1, 40, message, self.message_since, invert=True)
 
     def draw_home(self, o):
+        """What START will do, from the buttons and boxes set."""
+        t = bc.t
         if not self.card:
-            o.text((o.W - o.width("KARTE?", 2)) // 2, 3, "KARTE?", 2)
-            o.text(1, 22, "K: KARTE WÄHLEN")
-            o.text(1, 31, "ODER MENU > KARTE")
+            o.text((o.W - o.width(t("KARTE?", "CARD?"), 2)) // 2, 3, t("KARTE?", "CARD?"), 2)
+            o.text(1, 22, t("KNOPF KARTE: SD-KARTE", "CARD BUTTON: CHOOSE"))
+            o.text(1, 31, t("ODER KOPIE WÄHLEN", "THE SD CARD OR COPY"))
             return
-        o.text(0, 0, f"BASELINE V{VERSION}")
+        function = t("PEGEL", "LEVELS") if self.function == "levels" else "NORM"
+        mode = t("LESEN", "READ") if self.mode == "read" else t("ANPASSEN", "APPLY")
+        o.text(0, 0, f"{function} {mode}")
         n = len(self.songs)
         count = f"{n} SONG{'' if n == 1 else 'S'}"
         o.text(o.W - o.width(count), 0, count)
         o.rect(0, 9, o.W, 1)
-        o.text(0, 12, "SCHREIBT " + ("IN ORDNER" if self.mode == "folder" else "AUF KARTE"))
-        o.text(0, 21, f"ZIEL {bc.num(self.target)} DBFS")
-        o.text(0, 30, f"AUSGLEICHEN {'AN' if self.compensate else 'AUS'}")
-        o.text(0, 40, "P: PRÜFEN  M: MENU")
+        what = {("levels", "read"): t("ZEIGT ZU LAUTE SPUREN", "SHOWS WHAT'S TOO LOUD"),
+                ("levels", "apply"): t("SONGS AUF BASELINE", "SONGS TO THE BASELINE"),
+                ("normalize", "read"): t("ZEIGT LEISE SAMPLES", "SHOWS QUIET SAMPLES"),
+                ("normalize", "apply"): t("HEBT LEISE SAMPLES AN", "RAISES QUIET SAMPLES")}[(self.function, self.mode)]
+        self.marquee(o, 0, 12, what, self.boot_until)
+        if self.mode == "read":
+            o.text(0, 21, t("ÄNDERT NICHTS", "CHANGES NOTHING"))
+        elif self.dest == "folder":
+            o.text(0, 21, t("NACH: KOPIE-ORDNER", "TO: COPY FOLDER"))
+        else:
+            o.text(0, 21, t("NACH: SD-KARTE", "TO: SD CARD"))
+        if self.function == "normalize":
+            o.text(0, 30, t("ZIEL ", "TARGET ") + f"{bc.num(self.target)} " + (
+                t("AUSGL AN", "COMP ON") if self.compensate else t("AUSGL AUS", "COMP OFF")))
+        else:
+            o.text(0, 30, "SONG 35, SYNTH 40")
+        o.text(0, 40, t("START: LESEN", "START: READ") if self.mode == "read" else t("START: VORSCHAU",
+                                                                                      "START: PREVIEW"))
 
 
 # --------------------------------------------------------------------------------------------------------------------
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="DelugeBaseline", description="Deluge-Songs und -Samples auf die Baseline")
+    ap = argparse.ArgumentParser(prog="DelugeBaseline", description="Deluge-Songs und -Samples auf die Baseline. "
+                                                                     "Deluge songs and samples to the baseline.")
     ap.add_argument("--version", action="version", version=f"DelugeBaseline v{VERSION}")
+    ap.add_argument("--lang", choices=("de", "en"), help="Sprache, language (Standard/default: de)")
     ap.add_argument("--selftest", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--out", help=argparse.SUPPRESS)  # The self-test's folder
     sub = ap.add_subparsers(dest="cmd")
-    p = sub.add_parser("check", help="prüfen (liest nur)")
+    p = sub.add_parser("check", help="prüfen, liest nur / check, only reads")
     p.add_argument("card")
     p.add_argument("--out", dest="report")
-    for name, text in (("levels", "Pegel der Songs auf die Baseline"), ("normalize", "Samples normalisieren")):
+    for name, text in (("levels", "Pegel der Songs auf die Baseline / the songs' levels to the baseline"),
+                       ("normalize", "Samples normalisieren / normalize the samples")):
         p = sub.add_parser(name, help=text)
         p.add_argument("card")
-        p.add_argument("--to", help="in diesen Ordner statt auf die Karte")
-        p.add_argument("--yes", action="store_true", help="wirklich schreiben (sonst nur zeigen)")
+        p.add_argument("--to", help="in diesen Ordner statt auf die Karte / into this folder instead of the card")
+        p.add_argument("--yes", action="store_true", help="wirklich schreiben / really write (else only show)")
         if name == "normalize":
-            p.add_argument("--target", type=float, default=-1.0, help="Ziel in dBFS, höchstens 0 (Standard -1)")
-            p.add_argument("--no-compensate", action="store_true", help="Songs, Kits und Synths nicht ausgleichen")
-    p = sub.add_parser("restore", help="eine Sicherung zurückspielen")
+            p.add_argument("--target", type=float, default=-1.0, help="Ziel/target dBFS <= 0 (-1)")
+            p.add_argument("--no-compensate", action="store_true", help="nicht ausgleichen / don't compensate")
+    p = sub.add_parser("restore", help="eine Sicherung zurückspielen / restore a backup")
     p.add_argument("backup")
     p.add_argument("--yes", action="store_true")
     args = ap.parse_args(argv)
     if args.selftest:
         return 0 if selftest(args.out or ".") else 1
+    bc.LANG = args.lang or "de"
     if args.cmd is None:
         if sys.platform.startswith("win"):
             try:  # Sharp text on scaled Windows displays
@@ -1869,7 +2067,7 @@ def main(argv=None):
                 pass
         import tkinter as tk
         root = tk.Tk()
-        App(root, settings_path(), z=min(3.0, max(1.0, root.winfo_fpixels("1i") / 96)))
+        App(root, settings_path(), z=min(3.0, max(1.0, root.winfo_fpixels("1i") / 96)), lang=args.lang)
         root.mainloop()
         return 0
     if hasattr(sys.stdout, "reconfigure"):
@@ -1890,7 +2088,8 @@ def main(argv=None):
     print(plan.report(), end="")
     if not args.yes or not plan.changes:
         if plan.changes:
-            print("\nNur gezeigt, nichts geschrieben: mit --yes schreiben.")
+            print(bc.t("\nNur gezeigt, nichts geschrieben: mit --yes schreiben.",
+                       "\nOnly shown, nothing written: --yes writes."))
         return 0
     print(write_plan(plan, getattr(args, "to", None), progress=lambda t: print(t, end="\r", file=sys.stderr)), end="")
     return 0

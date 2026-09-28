@@ -20,9 +20,10 @@ The firmware behind it (mastertune v17 on release_1_2_1): a volume knob's value 
 at 25; their default is 40 (0x4CCCCCA8). The only hard limit is the output's clip at 0 dBFS.
 
 Usage (Windows: py instead of python3):
-  python3 baseline_check.py PATH... [--card ROOT] [--out REPORT.md]
+  python3 baseline_check.py PATH... [--card ROOT] [--out REPORT.md] [--lang de|en]
   PATH: the card's root (with SONGS in it), a folder of songs or song files. Samples are looked up in the card's root:
-  the folder that holds SONGS, or ROOT. The report goes to the console and, with --out, into a file (UTF-8).
+  the folder that holds SONGS, or ROOT. The report goes to the console and, with --out, into a file (UTF-8), in German
+  or with --lang en in English.
 Needs Python 3.8 or newer and nothing else.
 """
 import argparse
@@ -41,6 +42,12 @@ PARAM_MIN = -2 ** 31  # A filter's resonance or morph and a delay's feedback at 
 LPF_OPEN = 2147483602  # From here up the low-pass filter is off (GlobalEffectable::getFilterModesForRender())
 RESONANCE_HINT = 25  # Resonance knob value from which an active filter is reported
 EQUIVALENT_TOLERANCE = 0.4  # A full-scale sample at 40 must not be reported for rounding
+LANG = "de"  # The language of every text it makes: "de" or "en" (--lang, and DelugeBaseline's switch)
+
+
+def t(de, en):
+    """A text in the language set: German or English."""
+    return en if LANG == "en" else de
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -102,7 +109,7 @@ def parse_xml(text):
         closing, name, rest = m.group(1), m.group(2), m.group(3)
         if closing:
             if cur.name != name:
-                raise ValueError(f"</{name}> schliesst <{cur.name}>")
+                raise ValueError(t(f"</{name}> schliesst <{cur.name}>", f"</{name}> closes <{cur.name}>"))
             cur = cur.parent
             continue
         node = Node(name, cur, m.end(2))
@@ -115,7 +122,7 @@ def parse_xml(text):
         if not rest.rstrip().endswith("/"):
             cur = node
     if cur is not root:
-        raise ValueError(f"<{cur.name}> nicht geschlossen")
+        raise ValueError(t(f"<{cur.name}> nicht geschlossen", f"<{cur.name}> not closed"))
     return root
 
 
@@ -163,7 +170,8 @@ def db_between(a, b):
 
 
 def num(x, digits=1):
-    return f"{round(x, digits) + 0.0:.{digits}f}".replace(".", ",")  # + 0.0: no "-0,0"
+    s = f"{round(x, digits) + 0.0:.{digits}f}"  # + 0.0: no "-0,0"
+    return s if LANG == "en" else s.replace(".", ",")
 
 
 def signed_db(x):
@@ -222,12 +230,13 @@ def audio_format(fh):
             elif cid == b"data":
                 data = (at, n)
         if fmt is None or data is None or len(fmt) < 16:
-            return "kein fmt oder data"
+            return t("kein fmt oder data", "no fmt or data")
         tag, channels, _, _, align, bits = struct.unpack_from("<HHIIHH", fmt)
         if tag == 0xFFFE:
-            return "WAVE_FORMAT_EXTENSIBLE, das liest der Deluge nicht"
+            return "WAVE_FORMAT_EXTENSIBLE, " + t("das liest der Deluge nicht", "the Deluge can't read it")
         if not ((tag == 1 and bits in (8, 16, 24, 32)) or (tag == 3 and bits == 32)):
-            return f"Format {tag} mit {bits} Bit, das liest der Deluge nicht"
+            return t(f"Format {tag} mit {bits} Bit, das liest der Deluge nicht",
+                     f"format {tag} with {bits} bits, the Deluge can't read it")
         is_float, big = tag == 3, False
     elif head[:4] == b"FORM" and head[8:12] == b"AIFF":
         comm = ssnd = None
@@ -240,16 +249,16 @@ def audio_format(fh):
                 offset = struct.unpack(">I", fh.read(8)[:4])[0]
                 ssnd = (at + 8 + offset, max(0, n - 8 - offset))
         if comm is None or ssnd is None or len(comm) < 8:
-            return "kein COMM oder SSND"
+            return t("kein COMM oder SSND", "no COMM or SSND")
         channels, _, bits = struct.unpack_from(">hIh", comm)
         if bits not in (8, 16, 24, 32):
-            return f"AIFF mit {bits} Bit"
+            return t(f"AIFF mit {bits} Bit", f"AIFF with {bits} bits")
         is_float, big, data = False, True, ssnd
         align = channels * bits // 8
     else:
-        return "kein WAV oder AIFF, das liest der Deluge nicht"
+        return t("kein WAV oder AIFF, das liest der Deluge nicht", "no WAV or AIFF, the Deluge can't read it")
     if channels not in (1, 2) or align != channels * bits // 8:
-        return f"{channels} Kanäle, das liest der Deluge nicht"
+        return t(f"{channels} Kanäle, das liest der Deluge nicht", f"{channels} channels, the Deluge can't read it")
     return {"pos": data[0], "size": data[1] // align * align, "channels": channels, "bits": bits, "float": is_float,
             "big": big}
 
@@ -311,13 +320,13 @@ class Card:
         """(peak, None) or (None, reason) of a sample the XML names, within [start, end)."""
         path = self.find(value)
         if path is None:
-            return None, "Sample fehlt: " + readable(value)
+            return None, t("Sample fehlt: ", "sample missing: ") + readable(value)
         k = (path, start, end)
         if k not in self.peaks:
             try:
                 self.peaks[k] = sample_peak(path, start, end)
             except (OSError, struct.error) as e:
-                self.peaks[k] = (None, f"nicht lesbar ({getattr(e, 'strerror', None) or e})")
+                self.peaks[k] = (None, t("nicht lesbar", "unreadable") + f" ({getattr(e, 'strerror', None) or e})")
         return self.peaks[k]
 
 
@@ -367,7 +376,7 @@ def check_song(root, card):
     """(settings, notes): what the song has, and its notes against the baseline, as report lines."""
     song = root.child("song")
     if song is None:
-        raise ValueError("kein <song>")
+        raise ValueError(t("kein <song>", "no <song>"))
     instruments = song.child("instruments")
     kits, synths, audio = {}, {}, {}
     for inst in (instruments.children if instruments is not None else []):
@@ -383,7 +392,7 @@ def check_song(root, card):
         if clip.name == "instrumentClip":
             name = track_key(clip, "instrumentPreset")
             if clip.child("kitParams") is not None:
-                t = tracks.setdefault(instrument_key(clip, "instrumentPreset", "kit"), Track("kit", name))
+                tr = tracks.setdefault(instrument_key(clip, "instrumentPreset", "kit"), Track("kit", name))
                 p = clip.child("kitParams")
                 rows = clip.child("noteRows")
                 for nr in (rows.children if rows is not None else []):
@@ -391,70 +400,80 @@ def check_song(root, card):
                     index = nr.get("drumIndex")
                     if sp is None or index is None or not index.isdigit():
                         continue
-                    t.rows.setdefault(int(index), []).append(sp)
+                    tr.rows.setdefault(int(index), []).append(sp)
                     if has_notes(nr):
-                        t.played.add(int(index))
+                        tr.played.add(int(index))
             elif clip.child("soundParams") is not None:
-                t = tracks.setdefault(instrument_key(clip, "instrumentPreset", "synth"), Track("synth", name))
+                tr = tracks.setdefault(instrument_key(clip, "instrumentPreset", "synth"), Track("synth", name))
                 p = clip.child("soundParams")
             else:
                 continue  # MIDI and CV: no audio
         elif clip.name == "audioClip":
             name = clip.get("trackName") or "?"
-            t = tracks.setdefault(("audio", name, ""), Track("audio", name))
+            tr = tracks.setdefault(("audio", name, ""), Track("audio", name))
             p = clip.child("params")
         else:
             continue
         if p is not None:
-            t.params.append(p)
-            t.volume = more(t.volume, loudest(p, "volume"))
+            tr.params.append(p)
+            tr.volume = more(tr.volume, loudest(p, "volume"))
 
     notes, stages = [], []
     params = song.child("songParams")
     settings = {"song": loudest(params, "volume"), "compressor": loudest(params, "compressorThreshold")}
     if settings["song"] is not None and settings["song"] > SONG_KIT_LIMIT:
         k = knob(settings["song"])
-        notes.append(f"Song-Lautstärke {round(k)}: {signed_db(db_between(knob(SONG_KIT_LIMIT), k))} über dem Standard 35")
+        over = signed_db(db_between(knob(SONG_KIT_LIMIT), k))
+        notes.append(t(f"Song-Lautstärke {round(k)}: {over} über dem Standard 35",
+                       f"Song volume {round(k)}: {over} above the default 35"))
     if settings["compressor"] is not None and settings["compressor"] > 0:
-        notes.append(f"Master-Kompressor an (Threshold {round(unipolar_knob(settings['compressor']))})")
-    stages += effect_stages(song, [params] if params is not None else [], "im Master", with_saturation=False)
+        threshold = round(unipolar_knob(settings["compressor"]))
+        notes.append(t(f"Master-Kompressor an (Threshold {threshold})",
+                       f"Master compressor on (threshold {threshold})"))
+    stages += effect_stages(song, [params] if params is not None else [], t("im Master", "in the master"),
+                            with_saturation=False)
 
     loudest_sound = loudest_group = None
     names = [(k[0], k[1]) for k in tracks]
     order = ["kit", "synth", "audio"]
-    for key, t in sorted(tracks.items(), key=lambda kv: (order.index(kv[0][0]), kv[1].name, kv[0])):
-        kind = t.kind
+    for key, tr in sorted(tracks.items(), key=lambda kv: (order.index(kv[0][0]), kv[1].name, kv[0])):
+        kind = tr.kind
         inst = {"kit": kits, "synth": synths, "audio": audio}[kind].get(key)
         where = f" ({readable(key[2]).upper()})" if names.count(key[:2]) > 1 else ""  # Two alike but for the folder
-        label = {"kit": "Kit", "synth": "Synth", "audio": "Audio-Spur"}[kind] + " «" + readable(t.name) + "»" + where
+        label = {"kit": "Kit", "synth": "Synth", "audio": t("Audio-Spur", "Audio track")}[kind] + " «" + \
+            readable(tr.name) + "»" + where
         if kind in ("kit", "audio"):
-            loudest_group = more(loudest_group, t.volume)
-            if t.volume is not None and t.volume > SONG_KIT_LIMIT:
-                k = knob(t.volume)
-                notes.append(f"{label}: {round(k)}, {signed_db(db_between(knob(SONG_KIT_LIMIT), k))} über 35")
-            stages += effect_stages(inst, t.params, ("im " if kind == "kit" else "in der ") + label)
+            loudest_group = more(loudest_group, tr.volume)
+            if tr.volume is not None and tr.volume > SONG_KIT_LIMIT:
+                k = knob(tr.volume)
+                over = signed_db(db_between(knob(SONG_KIT_LIMIT), k))
+                notes.append(t(f"{label}: {round(k)}, {over} über 35", f"{label}: {round(k)}, {over} above 35"))
+            stages += effect_stages(inst, tr.params, t("im " if kind == "kit" else "in der ", "in ") + label)
         if kind == "synth":
-            loudest_sound = more(loudest_sound, t.volume)
-            notes += sound_notes(label, inst, t.params, card)
-            if any((loudest(p, "compressorThreshold") or 0) > 0 for p in t.params):
-                stages.append(f"Kompressor nach dem Regler von {label}")
+            loudest_sound = more(loudest_sound, tr.volume)
+            notes += sound_notes(label, inst, tr.params, card)
+            if any((loudest(p, "compressorThreshold") or 0) > 0 for p in tr.params):
+                stages.append(t(f"Kompressor nach dem Regler von {label}", f"compressor after the knob of {label}"))
         if kind == "kit":
             sources = inst.child("soundSources") if inst is not None else None
             drums = sources.children if sources is not None else []
-            for index, rows in sorted(t.rows.items()):
+            for index, rows in sorted(tr.rows.items()):
                 drum = drums[index] if index < len(drums) else None
                 if drum is not None and drum.name != "sound":
                     continue  # MIDI and gate rows: no audio
-                name = readable(drum.get("name")) if drum is not None else f"Reihe {index + 1}"
+                name = readable(drum.get("name")) if drum is not None else t("Reihe", "row") + f" {index + 1}"
                 for p in rows:
                     loudest_sound = more(loudest_sound, loudest(p, "volume"))
-                notes += sound_notes(f"Reihe «{name}» in {label}", drum, rows, card,
-                                     "" if index in t.played else ", ohne Noten: klingt nur live gespielt")
+                notes += sound_notes(t(f"Reihe «{name}» in {label}", f"Row «{name}» in {label}"), drum, rows, card,
+                                     "" if index in tr.played else t(", ohne Noten: klingt nur live gespielt",
+                                                                     ", no notes: sounds only when played live"))
                 if any((loudest(p, "compressorThreshold") or 0) > 0 for p in rows):
-                    stages.append(f"Kompressor nach dem Regler der Reihe «{name}» in {label}")
+                    stages.append(t(f"Kompressor nach dem Regler der Reihe «{name}» in {label}",
+                                    f"compressor after the knob of row «{name}» in {label}"))
     settings["group"], settings["sound"] = loudest_group, loudest_sound
     if stages:
-        notes.append("Stufen nach den Reglern, die mit dem Pegel stärker verzerren: " + "; ".join(stages))
+        notes.append(t("Stufen nach den Reglern, die mit dem Pegel stärker verzerren: ",
+                       "Stages after the knobs that distort the more, the louder it comes in: ") + "; ".join(stages))
     return settings, notes
 
 
@@ -466,7 +485,7 @@ def sound_notes(label, sound, params, card, suffix=""):
     if volume is None or volume <= SOUND_LIMIT:
         return []
     k = knob(volume)
-    over = f"{label}: {round(k)}, {signed_db(db_between(40, k))} über 40"
+    over = f"{label}: {round(k)}, {signed_db(db_between(40, k))} " + t("über 40", "above 40")
     samples, other = sources(sound, params)
     if other or not samples:
         return [over + suffix]  # An oscillator, noise or FM sound: no sample to go by
@@ -477,8 +496,9 @@ def sound_notes(label, sound, params, card, suffix=""):
     if equivalent <= 40 + EQUIVALENT_TOLERANCE:
         return []
     osc = f", Osc {round(level[2])}" if level[2] < 49.5 else ""
-    return [f"{label}: {round(k)}, Sample bis {num(20 * math.log10(level[1]))} dBFS{osc}, wirkt wie {num(equivalent)}"
-            + suffix]
+    peak = num(20 * math.log10(level[1]))
+    return [t(f"{label}: {round(k)}, Sample bis {peak} dBFS{osc}, wirkt wie {num(equivalent)}",
+              f"{label}: {round(k)}, sample up to {peak} dBFS{osc}, as loud as {num(equivalent)}") + suffix]
 
 
 def sample_level(samples, card):
@@ -531,12 +551,12 @@ def effect_stages(owner, params, where, with_saturation=True):
     if with_saturation and clipping and clipping.strip().isdigit() and int(clipping) > 0:
         found.append(f"SATURATION {int(clipping)} {where}")
     if with_saturation and any((loudest(p, "compressorThreshold") or 0) > 0 for p in params):
-        found.append(f"Kompressor {where}")
+        found.append(t("Kompressor", "compressor") + f" {where}")
     delay = owner.child("delay")
     feedback = [loudest(p.child("delay"), "feedback") for p in params] + [loudest(p, "delayFeedback") for p in params]
     if delay is not None and delay.get("analog") == "1" and any(f is not None and f > PARAM_MIN for f in feedback):
-        found.append(f"Analog-Delay mit Feedback {where}")
-    for kind, name in (("lpf", "Tiefpass"), ("hpf", "Hochpass")):
+        found.append(t("Analog-Delay mit Feedback", "analog delay with feedback") + f" {where}")
+    for kind, name in (("lpf", t("Tiefpass", "low-pass")), ("hpf", t("Hochpass", "high-pass"))):
         drive = kind == "lpf" and owner.get("lpfMode") == "24dBDrive"
         for p in params:
             f = p.child(kind)
@@ -549,10 +569,10 @@ def effect_stages(owner, params, where, with_saturation=True):
             active = active or (morph is not None and morph > PARAM_MIN)
             resonance = loudest(f, "resonance") if f is not None else None
             if active and drive:
-                found.append(f"{name} mit Drive {where}")
+                found.append(name + t(" mit Drive ", " with drive ") + where)
                 break
             if active and resonance is not None and knob(resonance) >= RESONANCE_HINT:
-                found.append(f"{name} mit Resonanz {round(knob(resonance))} {where}")
+                found.append(name + t(" mit Resonanz ", " with resonance ") + f"{round(knob(resonance))} {where}")
                 break
     return found
 
@@ -610,39 +630,51 @@ def report(files, results=None):
     for r in results:
         name = r["name"]
         if r["error"] is not None:
-            rows.append(f"| {name} | - | - | - | - | nicht lesbar |")
-            sections.append(f"## {name}\n\nNicht lesbar: {r['error']}\n")
+            rows.append(f"| {name} | - | - | - | - | " + t("nicht lesbar", "unreadable") + " |")
+            sections.append(f"## {name}\n\n" + t("Nicht lesbar: ", "Unreadable: ") + f"{r['error']}\n")
             with_notes += 1
             continue
         settings, notes = r["settings"], r["notes"]
         s, c, g, v = settings["song"], settings["compressor"], settings["group"], settings["sound"]
         rows.append(f"| {name} | {'-' if s is None else round(knob(s))} | "
-                    f"{'an' if c is not None and c > 0 else 'aus'} | {'-' if g is None else round(knob(g))} | "
+                    f"{t('an', 'on') if c is not None and c > 0 else t('aus', 'off')} | "
+                    f"{'-' if g is None else round(knob(g))} | "
                     f"{'-' if v is None else round(knob(v))} | {len(notes) or 'ok'} |")
         if notes:
             with_notes += 1
             sections.append(f"## {name}\n\n" + "\n".join("- " + n for n in notes) + "\n")
     n = len(results)
-    head = (f"# Baseline-Prüfung: {n} {'Song' if n == 1 else 'Songs'}, {with_notes} mit Hinweisen\n\n"
-            "Grenzen (Baseline Master, 27.09.2026): Song, Kit und Audio-Spur höchstens 35, Synth und Kit-Reihe höchstens "
-            "40, lauter nur mit leisem Sample: «wirkt wie» ist der Regler, den ein voll ausgesteuertes Sample für "
-            "denselben Pegel bräuchte (Regler mal 10^(Spitze/40)), höchstens 40. Master-Kompressor aus. Mit "
-            "Automation zählt der lauteste Punkt. Ob ein Song clippt, zeigt nur das Messen: In DelugeRec bleibt das Pad "
-            "-3 dunkel.\n\n"
-            "| Song | Song-Lautstärke | Master-Kompressor | lautestes Kit, Audio | lautester Synth, Reihe | Hinweise |\n"
-            "|---|---|---|---|---|---|\n")
+    head = t(f"# Baseline-Prüfung: {n} {'Song' if n == 1 else 'Songs'}, {with_notes} mit Hinweisen\n\n"
+             "Grenzen (Baseline Master, 27.09.2026): Song, Kit und Audio-Spur höchstens 35, Synth und Kit-Reihe "
+             "höchstens 40, lauter nur mit leisem Sample: «wirkt wie» ist der Regler, den ein voll ausgesteuertes "
+             "Sample für denselben Pegel bräuchte (Regler mal 10^(Spitze/40)), höchstens 40. Master-Kompressor aus. "
+             "Mit Automation zählt der lauteste Punkt. Ob ein Song clippt, zeigt nur das Messen: In DelugeRec bleibt "
+             "das Pad -3 dunkel.\n\n"
+             "| Song | Song-Lautstärke | Master-Kompressor | lautestes Kit, Audio | lautester Synth, Reihe | "
+             "Hinweise |\n|---|---|---|---|---|---|\n",
+             f"# Baseline check: {n} {'song' if n == 1 else 'songs'}, {with_notes} with notes\n\n"
+             "Limits (baseline master, 2026-09-27): song, kit and audio track at most 35, synth and kit row at most "
+             "40, louder only with a quiet sample: «as loud as» is the knob a full-scale sample would need for the "
+             "same level (knob times 10^(peak/40)), at most 40. Master compressor off. With automation the loudest "
+             "point counts. Whether a song clips only measuring shows: in DelugeRec the pad -3 stays dark.\n\n"
+             "| Song | Song volume | Master compressor | loudest kit, audio | loudest synth, row | Notes |\n"
+             "|---|---|---|---|---|---|\n")
     return head + "\n".join(rows) + "\n" + ("\n" + "\n".join(sections) if sections else "")
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Prüft Deluge-Songs gegen die Baseline Master (nur lesend).")
+    global LANG
+    ap = argparse.ArgumentParser(description="Prüft Deluge-Songs gegen die Baseline Master (nur lesend). Checks "
+                                             "Deluge songs against the baseline master (only reads).")
     ap.add_argument("paths", nargs="+", metavar="PATH", help="Karte, Ordner mit Songs oder Song-Dateien")
     ap.add_argument("--card", help="wo die Samples liegen, wenn die Songs nicht auf der Karte sind: deren Wurzel")
     ap.add_argument("--out", help="den Bericht auch in diese Datei schreiben (UTF-8, Markdown)")
+    ap.add_argument("--lang", choices=("de", "en"), default="de", help="Sprache des Berichts, language of the report")
     args = ap.parse_args()
+    LANG = args.lang
     files = song_files(args.paths, args.card)
     if not files:
-        ap.error("keine Songs gefunden (SONGS/*.XML)")
+        ap.error(t("keine Songs gefunden (SONGS/*.XML)", "no songs found (SONGS/*.XML)"))
     text = report(files)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")
