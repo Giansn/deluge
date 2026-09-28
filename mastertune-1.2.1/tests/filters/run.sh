@@ -54,6 +54,7 @@ filterDefs() {
   grep -q kFadeInSamples "$1/deluge/dsp/filter/filter.h" && d="$d -DFILTER_FADE_IN"
   grep -q feedbackFromMoveability "$1/deluge/dsp/filter/lpladder.h" && d="$d -DLPF_RAMP_HORNER"
   grep -q "doubled()" "$1/deluge/dsp/filter/lpladder.h" && d="$d -DLPF_RAMP_PAIRS"
+  grep -q "vrhaddq_s32" "$1/deluge/dsp/filter/filter_set.cpp" && d="$d -DFILTERSET_PARALLEL_HALF"
   echo "$d"
 }
 DEFS=$(filterDefs "$D")
@@ -103,6 +104,7 @@ for t in ${TEST:-filter_tone hpf_whistle lpf_whistle lpf_precision svf_precision
     $RUN "$B/$t" jumps || status=1
     $RUN "$B/$t" hpres || status=1
     $RUN "$B/$t" glide || status=1
+    case "$DEFS" in *FILTERSET_PARALLEL_HALF*) $RUN "$B/$t" parallel || status=1 ;; esac
     continue
   fi
   $RUN "$B/$t" || status=1

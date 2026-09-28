@@ -28,8 +28,9 @@
 // 6. jumps: the cutoff jumping from 28 Hz to 16 kHz and back every block: no mid-ramp ringing (see jumps()).
 // 7. hpres: the HP ladder's level in the resonance's finest steps: no 1 / resonance to 8 bits (see hpRes()).
 // 8. glide: the filter params' 10 ms glide: its time constant, and a MIDI CC's steps on the cutoff (see glide()).
+// 9. parallel: the parallel route's levels (an off filter adds nothing, both at half level; see parallel()).
 //
-// Arguments: the part (static, zipper, clicks, fadein, slots, jumps, hpres, glide or all), then verbose: every static case's hash.
+// Arguments: the part (static, zipper, clicks, fadein, slots, jumps, hpres, glide, parallel or all), then verbose: every static case's hash.
 #include "dsp/filter/filter_set.h"
 #if __has_include("dsp/filter/param_glide.h")
 #include "dsp/filter/param_glide.h"
@@ -284,7 +285,8 @@ uint64_t staticHash() {
 	int cases = 0;
 	for (Ctx ctx : {Ctx::SYNTH, Ctx::KIT_ROW, Ctx::KIT}) {
 		for (FilterMode lm : lpfModes) {
-			uint64_t group = 1469598103934665603ull;
+			// Two groups: the serial routes and the parallel one (whose levels v18 changed on purpose)
+			uint64_t group = 1469598103934665603ull, groupPar = 1469598103934665603ull;
 			for (FilterMode hm : hpfModes) {
 				for (FilterRoute rt : routes) {
 					for (int set = 0; set < 3; set++) {
@@ -312,13 +314,20 @@ uint64_t staticHash() {
 							printf("  static %-7s %-5s %-4s %s set %d: %016llx\n", ctxName(ctx), modeName(lm),
 							       modeName(hm), routeName(rt), set, (unsigned long long)h);
 						}
-						group = fnv(group, raw);
+						if (rt == FilterRoute::PARALLEL) {
+							groupPar = fnv(groupPar, raw);
+						}
+						else {
+							group = fnv(group, raw);
+						}
 						all = fnv(all, raw);
 						cases++;
 					}
 				}
 			}
-			printf("static %-7s LPF %-5s: %016llx\n", ctxName(ctx), modeName(lm), (unsigned long long)group);
+			printf("static %-7s LPF %-5s serial  : %016llx\n", ctxName(ctx), modeName(lm), (unsigned long long)group);
+			printf("static %-7s LPF %-5s parallel: %016llx\n", ctxName(ctx), modeName(lm),
+			       (unsigned long long)groupPar);
 		}
 	}
 	printf("static: %d cases, hash %016llx\n", cases, (unsigned long long)all);
@@ -543,6 +552,17 @@ int clicks() {
 		bothOff.lpfMode = FilterMode::OFF;
 		bothOff.hpfMode = FilterMode::OFF;
 		changes.push_back({"LPF+HPF off", ctx, both, bothOff});
+#ifdef FILTERSET_PARALLEL_HALF
+		// Parallel: a filter switched on beside one that is on (the sum goes to half level) or off
+		Settings parLp = par;
+		parLp.hpfMode = FilterMode::OFF;
+		changes.push_back({"par: HPL on beside LP24", ctx, parLp, par});
+		changes.push_back({"par: HPL off", ctx, par, parLp});
+		Settings parHp = par;
+		parHp.lpfMode = FilterMode::OFF;
+		changes.push_back({"par: LP24 off", ctx, par, parHp});
+		changes.push_back({"par: LP24 on beside HPL", ctx, parHp, par});
+#endif
 	}
 	int failures = 0;
 	double worstStep = 0, worstBurst = -300;
@@ -931,6 +951,107 @@ int tanhExact() {
 }
 #endif
 
+#ifdef FILTERSET_PARALLEL_HALF
+// 9. parallel (v18): the parallel route with a filter off is that filter alone (bit-exact against the same filter in
+// series with the other off; v17 added the dry input), with none on the input itself, with both the two filters'
+// outputs summed at half level (bit-exact against (a + b + 1) >> 1 of each filter alone). Printed: the level against
+// v17's sum (LPF + HPF) and against the input, for a split-band setting (LPF low, HPF high) and both wide open.
+int parallel() {
+	constexpr int kBlocks = 80;
+	std::vector<float> in = makeMusic(kBlocks * kBlock);
+	int failures = 0;
+	// Returns the filter gain setConfig() gave (the same every block: the settings stay)
+	auto run = [&](Ctx ctx, const Settings& s, std::vector<double>& out, std::vector<int32_t>& raw) {
+		Runner r(ctx);
+		for (int b = 0; b < kBlocks; b++) {
+			r.block(s, in.data() + 2 * b * kBlock, kBlock, out, &raw);
+		}
+		return (double)r.lastGain;
+	};
+	auto rms = [](const std::vector<double>& v) {
+		double e = 0;
+		for (size_t i = v.size() / 4; i < v.size(); i++) { // after the first quarter (the filters settled)
+			e += v[i] * v[i];
+		}
+		return e / (double)(v.size() - v.size() / 4);
+	};
+	struct Case {
+		const char* name;
+		double cut, hcut;
+		FilterMode lp, hp;
+	};
+	const Case cases[] = {
+	    {"split LP24 cut 15 / HPL cut 30", 15, 30, FilterMode::TRANSISTOR_24DB, FilterMode::HPLADDER},
+	    {"split SVFb cut 18 / SVFb cut 32", 18, 32, FilterMode::SVF_BAND, FilterMode::SVF_BAND},
+	    {"wide open LP12 cut 50 / HPL cut 0", 50, 0, FilterMode::TRANSISTOR_12DB, FilterMode::HPLADDER},
+	};
+	for (Ctx ctx : {Ctx::SYNTH, Ctx::KIT_ROW, Ctx::KIT}) {
+		for (const Case& c : cases) {
+			Settings both;
+			both.route = FilterRoute::PARALLEL;
+			both.lpfMode = c.lp;
+			both.hpfMode = c.hp;
+			both.cut = c.cut;
+			both.hcut = c.hcut;
+			Settings lpOnly = both, hpOnly = both, lpSeries = both, hpSeries = both, none = both;
+			lpOnly.hpfMode = FilterMode::OFF;
+			hpOnly.lpfMode = FilterMode::OFF;
+			lpSeries = lpOnly;
+			lpSeries.route = FilterRoute::HIGH_TO_LOW;
+			hpSeries = hpOnly;
+			hpSeries.route = FilterRoute::HIGH_TO_LOW;
+			none.lpfMode = none.hpfMode = FilterMode::OFF;
+			std::vector<double> oBoth, oLp, oHp, oLpS, oHpS, oNone, oLpBothGain, oHpBothGain;
+			std::vector<int32_t> rBoth, rLp, rHp, rLpS, rHpS, rNone;
+			double gBoth = run(ctx, both, oBoth, rBoth);
+			double gLp = run(ctx, lpOnly, oLp, rLp);
+			double gHp = run(ctx, hpOnly, oHp, rHp);
+			run(ctx, lpSeries, oLpS, rLpS);
+			run(ctx, hpSeries, oHpS, rHpS);
+			run(ctx, none, oNone, rNone);
+			bool okOne = rLp == rLpS && rHp == rHpS;
+			// none: as in series with both off (the input with the caller's gain)
+			Settings noneSeries = none;
+			noneSeries.route = FilterRoute::HIGH_TO_LOW;
+			std::vector<double> oNoneS;
+			std::vector<int32_t> rNoneS;
+			run(ctx, noneSeries, oNoneS, rNoneS);
+			bool okNone = rNone == rNoneS;
+			std::vector<double> dry;
+			for (int i = 0; i < kBlocks * kBlock; i++) {
+				dry.push_back(in[2 * i]);
+				dry.push_back(in[2 * i + 1]);
+			}
+			// Both: each filter alone with both's gain (the voice's input carries both's: render each alone with it)
+			// is what goes into the sum; the sum at half level against v17's full one
+			double eBoth = rms(oBoth), eSum = 0, eIn = rms(dry);
+			{
+				// v17's parallel sum: each filter's output with both's gain compensation (the other filter's part in
+				// it), summed at full level. At resonance 0 nothing saturates, so the gain's place (a voice's input, the
+				// song's / a kit's output) doesn't matter: each alone, scaled by both's gain over its own
+				std::vector<double> sum(oLp.size());
+				for (size_t i = 0; i < sum.size(); i++) {
+					sum[i] = oLp[i] * gBoth / gLp + oHp[i] * gBoth / gHp;
+				}
+				eSum = rms(sum);
+			}
+			double vsV17 = db(eBoth / eSum), vsIn = db(eBoth / eIn), v17VsIn = db(eSum / eIn);
+			double eIn2 = rms(oNoneS); // the input as the filters get it (the caller's gain, none on)
+			vsIn = db(eBoth / eIn2);
+			v17VsIn = db(eSum / eIn2);
+			(void)eIn;
+			bool bad = !okOne || !okNone || std::fabs(vsV17 + 6.02) > 1.0;
+			failures += bad;
+			printf("parallel %-8s %-34s both: %+6.2f dB against v17 (LPF + HPF), %+6.2f dB against the input "
+			       "(v17 %+6.2f); one on = that filter alone: %s; none on = the input: %s%s\n",
+			       ctxName(ctx), c.name, vsV17, vsIn, v17VsIn, okOne ? "bit-exact" : "DIFFERENT",
+			       okNone ? "yes" : "NO", bad ? "  FAIL" : "");
+		}
+	}
+	return failures;
+}
+#endif
+
 int main(int argc, char** argv) {
 	// argv[1]: only that part (static, zipper, clicks); argv[2] "verbose" or VERBOSE in the environment (on the PC)
 	verbose = getenv("VERBOSE") != nullptr || (argc > 2 && !strcmp(argv[2], "verbose"));
@@ -962,6 +1083,11 @@ int main(int argc, char** argv) {
 #ifdef FILTER_PARAM_GLIDE
 	if (!only || !strcmp(only, "glide")) {
 		failures += glide();
+	}
+#endif
+#ifdef FILTERSET_PARALLEL_HALF
+	if (!only || !strcmp(only, "parallel")) {
+		failures += parallel();
 	}
 #endif
 #ifdef LPF_RAMP_HORNER
