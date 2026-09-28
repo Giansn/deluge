@@ -32,7 +32,10 @@
 # LPF or above it, the combined resonance peak within 1 dB of the higher single one (off: up to 24 dB above), the
 # resonance moving smoothly with a swept cutoff, bit for bit as off where it mustn't act. A tree without the guard:
 # skipped.
-# TEST=crossing_guard, TEST=drive, TEST=filter_tone, TEST=hpf_whistle, TEST=lpf_whistle, TEST=lpf_precision, TEST=svf_precision, TEST=lpf_ramp_math or
+# silence_restart_test.cpp (v18.1): a kit's / audio track's filters after silence (FilterSet::restartAfterSilence()):
+# settings changed while the effects skip their blocks, then a tone renders bit for bit as through filters set to the
+# new settings all along (the coefficients' ramp, a crossfade, a switch-on fade-in). A tree without it: skipped.
+# TEST=silence_restart, TEST=crossing_guard, TEST=drive, TEST=filter_tone, TEST=hpf_whistle, TEST=lpf_whistle, TEST=lpf_precision, TEST=svf_precision, TEST=lpf_ramp_math or
 # TEST=filter_neutral: only that one.
 # song_filter_emu.py, master_filter_emu.py --check 10: the same in the whole firmware (song view, the gold knob).
 set -e
@@ -83,9 +86,13 @@ awk '/_rounded\(q31_t.*\) \{$/ {r = 1} r && /int64_t\)b\) >> 32\)/ {sub(/\* \(in
     "$D/deluge/util/fixedpoint.h" > "$B/prec/util/fixedpoint.h"
 grep -q '0x80000000LL) >> 32)' "$B/prec/util/fixedpoint.h" || { echo "run.sh: fixedpoint.h's rounded multiplies not found"; exit 1; }
 status=0
-for t in ${TEST:-filter_tone hpf_whistle lpf_whistle lpf_precision svf_precision lpf_ramp_math filter_neutral drive crossing_guard}; do
+for t in ${TEST:-filter_tone hpf_whistle lpf_whistle lpf_precision svf_precision lpf_ramp_math filter_neutral drive crossing_guard silence_restart}; do
   if [ "$t" = crossing_guard ] && ! grep -q crossingGuard "$F/filter_set.h"; then
     echo "== $t: no crossing guard in this tree"
+    continue
+  fi
+  if [ "$t" = silence_restart ] && ! grep -q restartAfterSilence "$F/filter_set.h"; then
+    echo "== $t: no FilterSet::restartAfterSilence() in this tree (before mastertune v18.1)"
     continue
   fi
   INC=""

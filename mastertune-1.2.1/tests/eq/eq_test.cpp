@@ -15,6 +15,11 @@
 //              automated across its range per block, with a 100 + 500 Hz tone: energy above 6 kHz (dBc) in the
 //              30 ms after each change against the tone's own (fails above -60 dBc, or 3 dB above the setting's own); v17 printed.
 //   cpu        instructions per 128 samples: v17 both bands, v18 both bands steady / ramping, one band.
+//   restart    (v18.1, EqShelves::restartAfterSilence()) a kit's / audio track's EQ after silence: settled on silence
+//              at one setting, the settings changed while the effects skip their blocks, restarted, then a tone: bit
+//              for bit as through bands set to the new settings all along (one of them back at the centre: off, the
+//              output the input). Printed: the difference without the restart (v18: gain and corner moving from
+//              before the silence). A tree without it: skipped.
 #include "dsp/eq_shelves.h"
 #include "emu_count.h"
 #include <cmath>
@@ -158,6 +163,58 @@ double modelGainAt(const ModelEq& m0, double f) {
 		}
 	}
 	return db(2 * std::sqrt(c * c + s * s) / w);
+}
+
+// ---- restart
+int restartAfterSilence() {
+#ifdef EQ_RESTART_AFTER_SILENCE
+	struct Setting {
+		double bassDb, trebleDb, bassOct, trebleOct;
+	};
+	const Setting before{12, 9, 0, 2}, after{-6, 0, -2, 0};
+	auto run = [&](const Setting& settle, bool restart) {
+		EqShelves eq;
+		std::vector<StereoSample> buf(128), out;
+		auto process = [&](const Setting& s) {
+			eq.process(buf.data(), 128, gainParam(s.bassDb), gainParam(s.trebleDb), freqParam(s.bassOct),
+			           freqParam(s.trebleOct));
+		};
+		for (int b = 0; b < 64; b++) { // silence
+			std::fill(buf.begin(), buf.end(), StereoSample{});
+			process(settle);
+		}
+		if (restart) { // the skipped blocks: nothing processed
+			eq.restartAfterSilence();
+		}
+		for (int b = 0; b < 8; b++) { // a 100 + 500 Hz tone at the new settings
+			for (int i = 0; i < 128; i++) {
+				int t = b * 128 + i;
+				double x = 0.2 * std::sin(2 * M_PI * 100 * t / kFs) + 0.2 * std::sin(2 * M_PI * 500 * t / kFs);
+				buf[i].l = buf[i].r = (int32_t)std::lround(x * kFullScale);
+			}
+			process(after);
+			out.insert(out.end(), buf.begin(), buf.end());
+		}
+		return out;
+	};
+	std::vector<StereoSample> ref = run(after, false), with = run(before, true), without = run(before, false);
+	auto maxDiff = [&](const std::vector<StereoSample>& v) {
+		double m = 0;
+		for (size_t i = 0; i < v.size(); i++) {
+			m = std::max({m, std::fabs((double)v[i].l - ref[i].l), std::fabs((double)v[i].r - ref[i].r)});
+		}
+		return m;
+	};
+	double dWith = maxDiff(with), dWithout = maxDiff(without);
+	bool ok = dWith == 0;
+	printf("restart: bass +12 dB -> -6 dB and 2 octaves down, treble +9 dB -> centre while silent; restarted: %s; "
+	       "without the restart the largest difference %.1f dBFS\n",
+	       ok ? "bit for bit as bands set so all along" : "DIFFERS", dWithout > 0 ? db(dWithout / kFullScale) : -999.0);
+	return ok ? 0 : 1;
+#else
+	printf("restart: no EqShelves::restartAfterSilence() in this tree (before mastertune v18.1)\n");
+	return 0;
+#endif
 }
 
 // ---- neutral
@@ -499,6 +556,9 @@ int main(int argc, char** argv) {
 	}
 	if (!strcmp(c, "cpu")) {
 		return cpu();
+	}
+	if (!strcmp(c, "restart")) {
+		return restartAfterSilence();
 	}
 	printf("unknown case %s\n", c);
 	return 2;

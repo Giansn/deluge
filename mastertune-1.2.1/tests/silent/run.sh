@@ -17,6 +17,14 @@
 #   With KARP and KMIDI (the arps across silence), mastertune-v16 (c610417f) against mastertune-v17: the same output
 #   and the same 116 arp notes (kit arp 20, MIDI row 64, gate row 32, in the same windows); 135,565 -> 133,143
 #   instructions per 128 samples (-1.8 %); 26,037 early returns (KARP 4,270 between its steps, KMIDI 5,598).
+# mastertune v18 on: v16 is no reference any more (v18's filters and volume render differently). The reference is the
+#   same source with the early return disabled, built once (then restore the line):
+#     sed -i 's|	if (!renderedLastTime \&\& samplesOfSilentEffects >= kSilentSamplesBeforeSkippingEffects$|	if (false \&\& !renderedLastTime \&\& samplesOfSilentEffects >= kSilentSamplesBeforeSkippingEffects|' \
+#       src/deluge/model/global_effectable/global_effectable_for_clip.cpp
+#   v18 against that: different from bar 4 on (up to -21 dBFS at 5): the check after rendering didn't restart the
+#   volume ramps as the early return does, and both left the filters' ramps, fades and the EQ from before the silence.
+#   v18.1 (both restart all of them) against its own: the same output, sample for sample, the same 116 arp notes;
+#   26,118 early returns.
 # Needs: python3 with unicorn 2 and numpy, a C compiler (for ../song/blockcount.c).
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
