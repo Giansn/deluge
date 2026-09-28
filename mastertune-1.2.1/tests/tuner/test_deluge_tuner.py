@@ -7,10 +7,12 @@
   drive's root (E:\\, /) too, as retune_library's own check of --out.
 - The card: its root found from the card or from its SAMPLES folder; the pads as a bar of the categories; the list
   of a run in German and English.
-- The window (tkinter and a display): LESEN writes nothing; UMSTIMMEN writes the same new card as retune_library's
+- The window (tkinter and a display): READ writes nothing; RETUNE writes the same new card as retune_library's
   command line; stopped after a file (ESC), START continues and the card is the same as one made in one go; another
   card doesn't continue that run; not enough space; closed while it runs, it stops first; the tuning knob (whole Hz,
   0.1 Hz, the limits, typed); the settings saved; English.
+- The language: the computer's to start with (Windows: its display language; macOS, Linux: the locale), a language
+  chosen in the window wins over it the next time.
 - The self-test of the .exe (needs soxr and pylibrb).
 
 Usage: python3 test_deluge_tuner.py   Needs numpy and soxr (pylibrb for the self-test; tkinter and a display for
@@ -125,6 +127,43 @@ class Destination(unittest.TestCase):
         self.assertEqual(rl.check_args(args), "--out must be outside the card's folder (and not contain it)")
         args = rl.parser().parse_args(["--card", self.card, "--out", str(self.base / "card2")])
         self.assertIsNone(rl.check_args(args))
+
+
+class SystemLanguage(unittest.TestCase):
+    """The window's language to start with: German if the computer speaks German, else English."""
+
+    def on_windows(self, langid):
+        import ctypes
+        import types
+
+        def ui_language():
+            if isinstance(langid, Exception):
+                raise langid
+            return langid
+        windll = types.SimpleNamespace(kernel32=types.SimpleNamespace(GetUserDefaultUILanguage=ui_language))
+        with mock.patch.object(dt.sys, "platform", "win32"), mock.patch.object(ctypes, "windll", windll, create=True):
+            return dt.system_language()
+
+    def on_unix(self, env, code=None):
+        import locale
+        with mock.patch.object(dt.sys, "platform", "linux"), mock.patch.dict(dt.os.environ, env, clear=True), \
+                mock.patch.object(locale, "getlocale", lambda *a: (code, "UTF-8")):
+            return dt.system_language()
+
+    def test_windows(self):
+        for langid, lang in ((0x0807, "de"), (0x0407, "de"), (0x0C07, "de"), (0x0409, "en"), (0x0809, "en"),
+                             (0x040C, "en"), (OSError("no API"), "en")):
+            self.assertEqual(self.on_windows(langid), lang, hex(langid) if isinstance(langid, int) else langid)
+
+    def test_macos_linux(self):
+        self.assertEqual(self.on_unix({"LANG": "de_CH.UTF-8"}), "de")
+        self.assertEqual(self.on_unix({"LANG": "en_US.UTF-8"}), "en")
+        self.assertEqual(self.on_unix({"LANG": "fr_CH.UTF-8"}), "en")
+        self.assertEqual(self.on_unix({"LC_ALL": "de_DE.UTF-8", "LANG": "en_US.UTF-8"}), "de")
+        self.assertEqual(self.on_unix({"LC_MESSAGES": "en_GB.UTF-8", "LANG": "de_CH.UTF-8"}), "en")
+        self.assertEqual(self.on_unix({"LANG": "C"}), "en")
+        self.assertEqual(self.on_unix({}, "de_AT"), "de")  # Nothing set: Python's locale
+        self.assertEqual(self.on_unix({}, None), "en")
 
 
 class Card(unittest.TestCase):
@@ -327,6 +366,35 @@ class Window(unittest.TestCase):
         self.app.set_lang("de")
         self.assertEqual((dt.LANG, self.app.view, self.app.list), ("de", "home", None))
         self.assertEqual(json.loads(self.settings.read_text())["lang"], "de")
+
+    def test_computers_language_and_the_saved_one(self):
+        """The computer's language to start with; a language chosen in the window wins over it the next time."""
+        import tkinter as tk
+
+        def opened(system, saved=None):
+            settings = self.base / f"settings-{system}-{saved}.json"
+            if saved:
+                settings.write_text(json.dumps({"lang": saved}), encoding="utf-8")
+            root = tk.Tk()
+            try:
+                with mock.patch.object(dt, "system_language", lambda: system):
+                    app = dt.App(root, str(settings), card=str(self.card))
+                return app.lang, dt.LANG, sorted(app.bound)
+            finally:
+                root.destroy()
+
+        de_keys, en_keys = sorted("lLuUkKzZbBdDeE"), sorted("rRuUcCoOtTdDeE")
+        self.assertEqual(opened("de"), ("de", "de", de_keys))  # System German
+        self.assertEqual(opened("en"), ("en", "en", en_keys))  # System English
+        self.assertEqual(opened("de", saved="en"), ("en", "en", en_keys))  # Chosen in the window: it wins
+        self.assertEqual(opened("en", saved="de"), ("de", "de", de_keys))
+        self.app.set_lang("en")  # Chosen now, on a German computer: English the next time
+        root = tk.Tk()
+        try:
+            with mock.patch.object(dt, "system_language", lambda: "de"):
+                self.assertEqual(dt.App(root, str(self.settings), card=str(self.card)).lang, "en")
+        finally:
+            root.destroy()
 
     def test_without_a_card(self):
         self.app.card = ""

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checks every song on a Deluge card against the baseline master (geraet/analyse/2026-09-27-baseline-master.md).
+"""Checks every song on a Deluge card against the baseline master (device/analysis/2026-09-27-baseline-master.md).
 
 It only reads: the card (or a copy of it) stays as it is. Per song it reports what goes over the baseline:
 - the song's volume above 35, its default (0 dB there);
@@ -26,8 +26,8 @@ every volume as its value to 0.1 and in these dB (Song 35.4 = 0.00 dB, Synth 40 
 Usage (Windows: py instead of python3):
   python3 baseline_check.py PATH... [--card ROOT] [--out REPORT.md] [--lang de|en]
   PATH: the card's root (with SONGS in it), a folder of songs or song files. Samples are looked up in the card's root:
-  the folder that holds SONGS, or ROOT. The report goes to the console and, with --out, into a file (UTF-8), in German
-  or with --lang en in English.
+  the folder that holds SONGS, or ROOT. The report goes to the console and, with --out, into a file (UTF-8), in the
+  computer's language (German if it is German, else English; system_language()) or as --lang says.
 Needs Python 3.8 or newer and nothing else.
 """
 import argparse
@@ -49,12 +49,29 @@ RESONANCE_HINT = 25  # Resonance knob value from which an active filter is repor
 # How far above a limit still counts as at it: less than the report shows (0.01 dB), so it never says "+0,00 dB
 # above". Nothing is rounded to a step: a value between them counts as it is.
 TOLERANCE_DB = 0.005
-LANG = "de"  # The language of every text it makes: "de" or "en" (--lang, and DelugeBaseline's switch)
+LANG = "de"  # The language of every text it makes: "de" or "en" (the command line and DelugeBaseline set it)
 
 
 def t(de, en):
     """A text in the language set: German or English."""
     return en if LANG == "en" else de
+
+
+def system_language():
+    """de if the computer speaks German, else en: the language to start with, on the command line and in
+    DelugeBaseline's window until one is chosen there. Windows: the language of its user interface; macOS and Linux:
+    the locale (LC_ALL, LC_MESSAGES, LANG, the first one set, else Python's locale). English where it can't be read."""
+    try:
+        if sys.platform.startswith("win"):
+            import ctypes
+            return "de" if ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF == 0x07 else "en"  # LANG_GERMAN
+        code = next((os.environ[k] for k in ("LC_ALL", "LC_MESSAGES", "LANG") if os.environ.get(k)), None)
+        if code is None:
+            import locale
+            code = locale.getlocale()[0] or ""
+        return "de" if code.lower().startswith("de") else "en"
+    except Exception:
+        return "en"
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -714,14 +731,14 @@ def report(files, results=None):
 
 def main():
     global LANG
-    ap = argparse.ArgumentParser(description="Prüft Deluge-Songs gegen die Baseline Master (nur lesend). Checks "
-                                             "Deluge songs against the baseline master (only reads).")
-    ap.add_argument("paths", nargs="+", metavar="PATH", help="Karte, Ordner mit Songs oder Song-Dateien")
-    ap.add_argument("--card", help="wo die Samples liegen, wenn die Songs nicht auf der Karte sind: deren Wurzel")
-    ap.add_argument("--out", help="den Bericht auch in diese Datei schreiben (UTF-8, Markdown)")
-    ap.add_argument("--lang", choices=("de", "en"), default="de", help="Sprache des Berichts, language of the report")
+    ap = argparse.ArgumentParser(description="Checks Deluge songs against the baseline master (only reads).")
+    ap.add_argument("paths", nargs="+", metavar="PATH", help="the card, a folder of songs or song files")
+    ap.add_argument("--card", help="where the samples are when the songs aren't on the card: its root")
+    ap.add_argument("--out", help="the report into this file too (UTF-8, Markdown)")
+    ap.add_argument("--lang", choices=("de", "en"),
+                    help="the report's language: German or English (default: the computer's language)")
     args = ap.parse_args()
-    LANG = args.lang
+    LANG = args.lang or system_language()
     files = song_files(args.paths, args.card)
     if not files:
         ap.error(t("keine Songs gefunden (SONGS/*.XML)", "no songs found (SONGS/*.XML)"))

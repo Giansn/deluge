@@ -1634,16 +1634,16 @@ def convert(args, echo=to_console, step=None, stop=None):
 
     if as_float:
         log("")
-        log(f"Als 32-Bit-Float geschrieben, weil Spitzen über 0 dBFS ({len(as_float)}): written as 32-bit float, "
-            f"because resampling put peaks over full scale; the file keeps them, the firmware limits them to full "
-            f"scale as it loads the file (--no-float: a little quieter instead)")
+        log(f"Written as 32-bit float, because resampling put peaks over full scale ({len(as_float)}): the file "
+            f"keeps them, the firmware limits them to full scale as it loads the file (--no-float: a little quieter "
+            f"instead)")
         for rel, info, r in as_float:
             log(f"  {rel}: {fmt_name(info)} -> 32-bit float, peak {db(r['peak']):+.2f} dBFS, {r['over']} samples "
                 f"over full scale")
     if quieter:
         log("")
-        log(f"Leiser geschrieben, weil Spitzen über 0 dBFS ({len(quieter)}, --no-float): the level lowered just "
-            f"enough that nothing is clipped")
+        log(f"Written a little quieter, because resampling put peaks over full scale ({len(quieter)}, --no-float): "
+            f"the level lowered just enough that nothing is clipped")
         for rel, info, r in quieter:
             log(f"  {rel}: {r['gain_db']:+.2f} dB ({fmt_name(info)}, the resampled peak was {db(r['peak']):+.2f} "
                 f"dBFS, {r['over']} samples over full scale)")

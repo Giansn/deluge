@@ -1,30 +1,32 @@
 #!/usr/bin/env python3
 """DelugeBaseline: checks the songs of a Deluge card against the baseline master and sets them and the samples to it
-(geraet/analyse/2026-09-27-baseline-master.md). Built into DelugeBaseline-vN.exe for Windows by
+(device/analysis/2026-09-27-baseline-master.md). Built into DelugeBaseline-vN.exe for Windows by
 .github/workflows/deluge-baseline-windows.yml; runs as a script anywhere.
 
-Its window (in DelugeRec's look): a function, PEGEL or NORM, in a mode, LESEN (only reads and shows) or ANPASSEN
+Its window (in DelugeRec's look): a function, LEVELS or NORM, in a mode, READ (only reads and shows) or APPLY
 (shows what it would change, and writes on the second START), written onto the SD card directly or into a copy folder
-(boxes to tick). ZURÜCK restores a backup, BERICHT opens the whole report as text. German or English: the switch in
-the window, --lang en on the command line. What it does, in its window or on the command line:
-- Pegel lesen (check): the report of baseline_check.py. Only reads.
-- Pegel anpassen (levels): sets the songs to the baseline. The song's volume above 35 down to 35, the master
+(boxes to tick). RESTORE brings back a backup, REPORT opens the whole report as text. German or English: the
+computer's language to start with (baseline_check.system_language(): Windows' display language, the locale on macOS
+and Linux), then the switch in the window, which it keeps; --lang on the command line. What it does, in its window
+or on the command line:
+- Levels, read (check): the report of baseline_check.py. Only reads.
+- Levels, apply (levels): sets the songs to the baseline. The song's volume above 35 down to 35, the master
   compressor off, kits and audio tracks above 35 down to 35, synths and kit rows down to where they are as loud as a
   full-scale sample at 40 (their sample's peak within its zone and their oscillator's level counted, as
   baseline_check.py judges them). Automation keeps its shape: all its values scale alike. What distorts on purpose
   (SATURATION, compressors of tracks, analog delay, filters) stays: that's sound, not level. The report lists it.
-- NORM (normalize; lesen shows it, anpassen does it): raises every sample under SAMPLES/ whose peak is below the
+- NORM (normalize; read shows it, apply does it): raises every sample under SAMPLES/ whose peak is below the
   target (-1 dBFS unless chosen otherwise) to the target, never above: no peak is cut, no sample clips. Samples at
   the target or above stay as they are. The format stays (bits, float, channels, every chunk), only the audio
   changes. The files an oscillator plays together (the ranges of a multisample) get one gain, the one of the
   loudest, so they keep their balance.
-  Ausgleichen (compensate, on unless switched off): every oscillator that plays a raised sample gets its level (osc A
+  Compensate (on unless switched off): every oscillator that plays a raised sample gets its level (osc A
   or B volume) lowered by just as much, in every clip of every song and in the kits and synths of KITS/ and SYNTHS/.
   The voice gets the same signal as before, before its filters and effects, so the songs sound as before, only with
   the knobs meaning the same everywhere. A sample whose every use can't be compensated that way stays as it is: an
   oscillator level that isn't saved or has a patch cable to it, FM, a format from before 2017, a copy in a song's own
   folder (Collect media) the firmware may play instead. Never changed: wavetables and audio clips.
-- Zurück (restore): puts back the files of a backup.
+- Restore: puts back the files of a backup.
 
 Where it writes: onto the card, keeping a copy of every file it changes in BASELINE-BACKUP/<date> <time> <function>/
 on the card first (not under SONGS, so the Deluge doesn't list them), or into a folder of its own: only the changed
@@ -35,10 +37,10 @@ oscillator levels LOCAL_OSC_A/B_VOLUME are volume params like the rest (getFinal
 with the knob squared) and scale the sample in Voice::render() before anything else happens to it.
 
 Usage (Windows: py instead of python3; without arguments it opens its window):
-  python3 deluge_baseline.py [--lang en] check CARD [--out REPORT.md]
-  python3 deluge_baseline.py [--lang en] levels CARD [--to FOLDER] [--yes]
-  python3 deluge_baseline.py [--lang en] normalize CARD [--target DB] [--no-compensate] [--to FOLDER] [--yes]
-  python3 deluge_baseline.py [--lang en] restore BACKUP [--yes]
+  python3 deluge_baseline.py [--lang de|en] check CARD [--out REPORT.md]
+  python3 deluge_baseline.py [--lang de|en] levels CARD [--to FOLDER] [--yes]
+  python3 deluge_baseline.py [--lang de|en] normalize CARD [--target DB] [--no-compensate] [--to FOLDER] [--yes]
+  python3 deluge_baseline.py [--lang de|en] restore BACKUP [--yes]
   Without --yes it only shows what it would do. CARD: the card's root (with SONGS in it) or its SONGS folder.
 Needs numpy to normalize (pip install numpy); everything else only Python 3.8.
 
@@ -46,6 +48,7 @@ Versions:
   1  the first build: levels and normalize, read or apply, onto the SD card or into a copy folder, German and English
   2  the display's text smaller: 28 characters on 5 lines instead of 21 on 4
   3  mastertune v18: every level also in dB as the Deluge shows it, values between its 0.5 dB steps as they are
+  4  the computer's language to start with (Windows: its display language; macOS, Linux: the locale); code in English
 """
 import argparse
 import datetime
@@ -70,7 +73,7 @@ try:
 except ImportError:  # Only normalizing needs it: checked there
     np = None
 
-VERSION = 3
+VERSION = 4
 AUDIO_EXTENSIONS = (".wav", ".aif", ".aiff")
 XML_FOLDERS = ("SONGS", "KITS", "SYNTHS")
 # Why a sample stays as it is. Wavetables and audio clips always; the other reasons only when it compensates
@@ -226,7 +229,7 @@ class Plan:
 
 
 # --------------------------------------------------------------------------------------------------------------------
-# Pegel: the songs' levels to the baseline
+# Levels: the songs' levels to the baseline
 
 
 def limit(edit, node, name, top, label, clip, suffix="", song_kit=False):
@@ -738,7 +741,7 @@ def plan_normalize(root, target_db=-1.0, compensate=True, progress=None):
 
 
 # --------------------------------------------------------------------------------------------------------------------
-# Zurückspielen, and writing
+# Restore, and writing
 
 
 def plan_restore(backup):
@@ -1150,19 +1153,6 @@ def settings_path():
     return (Path(base) / "DelugeBaseline" if base else Path.home() / ".config" / "deluge_baseline") / "settings.json"
 
 
-def system_language():
-    """de if the computer speaks German, else en: the window's language until it is switched."""
-    try:
-        if sys.platform.startswith("win"):
-            import ctypes
-            return "de" if ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF == 0x07 else "en"
-        import locale
-        code = locale.getlocale()[0] or os.environ.get("LC_ALL") or os.environ.get("LANG") or ""
-        return "de" if code.lower().startswith("de") else "en"
-    except Exception:
-        return "de"
-
-
 def find_card():
     """A Deluge card among the drives (Windows): the first with a SONGS folder."""
     if not sys.platform.startswith("win"):
@@ -1180,7 +1170,8 @@ def song_name(rel):
 
 
 def backup_name(name):
-    """A backup's folder name short enough for a line: 2026-09-28 07-18-35 Pegel -> 28.09.26 07:18 Pegel."""
+    """A backup's folder name short enough for a line: 2026-09-28 07-18-35 Levels -> 28.09.26 07:18 Levels (the
+    function as it was called in the window's language then)."""
     m = re.match(r"\d\d(\d\d)-(\d\d)-(\d\d) (\d\d)-(\d\d)-\d\d (.*)", name)
     return f"{m[3]}.{m[2]}.{m[1]} {m[4]}:{m[5]} {m[6]}" if m else name
 
@@ -1214,8 +1205,8 @@ def plan_items(plan, song_index):
 
 
 class App:
-    """The window. What it does: a function (PEGEL or NORM) in a mode (LESEN: only read, ANPASSEN: show, then write
-    on the second START), written onto the SD card directly or into a copy folder."""
+    """The window. What it does: a function (LEVELS or NORM) in a mode (READ: only read, APPLY: show, then write on
+    the second START), written onto the SD card directly or into a copy folder."""
     W, H = 900, 614  # The panel at scale 1, in the Deluge's (and DelugeRec's) proportions: 305 x 208 mm
     ROWS, PADS = 5, 32  # Lines of a list on the display; pads (two rows of 16)
     DISPLAY = (170, 64)  # The display's pixels: 28 characters on 5 lines and a bottom line, at 3 x as big as the
@@ -1240,7 +1231,8 @@ class App:
             except (OSError, ValueError):
                 saved = {}
         self.card = card or saved.get("card") or find_card()
-        self.lang = lang or (saved.get("lang") if saved.get("lang") in ("de", "en") else system_language())
+        # The language: as the command line says, else as chosen in the window before, else the computer's
+        self.lang = lang or (saved.get("lang") if saved.get("lang") in ("de", "en") else bc.system_language())
         bc.LANG = self.lang
         self.function = saved.get("function") if saved.get("function") in ("levels", "normalize") else "levels"
         self.mode = saved.get("mode") if saved.get("mode") in ("read", "apply") else "read"
@@ -1278,13 +1270,13 @@ class App:
         self.bound = []  # The keys bound for the language set
 
         root.title(f"DELUGE BASELINE v{VERSION}")
-        self.icon = tk.PhotoImage(data=ICON_PNG)
+        self.icon = tk.PhotoImage(data=ICON_PNG, master=root)
         root.iconphoto(True, self.icon)
         root.configure(bg=PANEL)
         root.resizable(False, False)
         self.c = tk.Canvas(root, width=self.Z(self.W), height=self.Z(self.H), bg=PANEL, highlightthickness=0)
         self.c.pack()
-        self.img = tk.PhotoImage(width=self.oled.W * scale, height=self.oled.H * scale)
+        self.img = tk.PhotoImage(width=self.oled.W * scale, height=self.oled.H * scale, master=root)
         self.build()
         self.bind_keys()
         for k in ("<Return>", "<KP_Enter>"):
@@ -2049,32 +2041,36 @@ class App:
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="DelugeBaseline", description="Deluge-Songs und -Samples auf die Baseline. "
-                                                                     "Deluge songs and samples to the baseline.")
+    ap = argparse.ArgumentParser(prog="DelugeBaseline", description="Deluge songs and samples to the baseline "
+                                                                     "master. Without a command it opens its window.")
     ap.add_argument("--version", action="version", version=f"DelugeBaseline v{VERSION}")
-    ap.add_argument("--lang", choices=("de", "en"), help="Sprache, language (Standard/default: de)")
+    ap.add_argument("--lang", choices=("de", "en"),
+                    help="German or English (default: in the window the one chosen there before, else the computer's "
+                         "language; on the command line the computer's language)")
     ap.add_argument("--selftest", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--out", help=argparse.SUPPRESS)  # The self-test's folder
     sub = ap.add_subparsers(dest="cmd")
-    p = sub.add_parser("check", help="prüfen, liest nur / check, only reads")
+    p = sub.add_parser("check", help="check the songs, only reads")
     p.add_argument("card")
     p.add_argument("--out", dest="report")
-    for name, text in (("levels", "Pegel der Songs auf die Baseline / the songs' levels to the baseline"),
-                       ("normalize", "Samples normalisieren / normalize the samples")):
+    for name, text in (("levels", "the songs' levels to the baseline"),
+                       ("normalize", "normalize the samples, the songs compensated")):
         p = sub.add_parser(name, help=text)
         p.add_argument("card")
-        p.add_argument("--to", help="in diesen Ordner statt auf die Karte / into this folder instead of the card")
-        p.add_argument("--yes", action="store_true", help="wirklich schreiben / really write (else only show)")
+        p.add_argument("--to", help="into this folder instead of onto the card")
+        p.add_argument("--yes", action="store_true", help="really write (else it only shows what it would do)")
         if name == "normalize":
-            p.add_argument("--target", type=float, default=-1.0, help="Ziel/target dBFS <= 0 (-1)")
-            p.add_argument("--no-compensate", action="store_true", help="nicht ausgleichen / don't compensate")
-    p = sub.add_parser("restore", help="eine Sicherung zurückspielen / restore a backup")
+            p.add_argument("--target", type=float, default=-1.0,
+                           help="the target peak in dBFS, at most 0 (default -1)")
+            p.add_argument("--no-compensate", action="store_true",
+                           help="don't lower the oscillator levels (the songs get louder)")
+    p = sub.add_parser("restore", help="put back the files of a backup")
     p.add_argument("backup")
-    p.add_argument("--yes", action="store_true")
+    p.add_argument("--yes", action="store_true", help="really write (else it only shows what it would do)")
     args = ap.parse_args(argv)
     if args.selftest:
         return 0 if selftest(args.out or ".") else 1
-    bc.LANG = args.lang or "de"
+    bc.LANG = args.lang or bc.system_language()
     if args.cmd is None:
         if sys.platform.startswith("win"):
             try:  # Sharp text on scaled Windows displays

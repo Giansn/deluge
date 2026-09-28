@@ -11,19 +11,21 @@ audio clips and time-stretched samples are pitch-shifted keeping their length (R
 else are copied as they are. Peaks that resampling puts over full scale: the file as 32-bit float, or a little
 quieter; never clipped.
 
-Its window: KARTE chooses the card, ZIEL the folder for the new card (that folder if it is empty, else a new folder in
-it, "Deluge 432 Hz", numbered if taken; beside it if it is a card itself), the gold knob the tuning (415.3 to 466.2 Hz:
-1 Hz a step, 0.1 Hz with Shift or the arrow keys; a click on the number types it), boxes to tick the sample rate and
-what happens to peaks. Two modes: LESEN only reads and shows what it would do, UMSTIMMEN writes the new card (the
+Its window: CARD chooses the card, OUTPUT the folder for the new card (that folder if it is empty, else a new folder
+in it, "Deluge 432 Hz", numbered if taken; beside it if it is a card itself), the gold knob the tuning (415.3 to
+466.2 Hz: 1 Hz a step, 0.1 Hz with Shift or the arrow keys; a click on the number types it), boxes to tick the sample
+rate and what happens to peaks. Two modes: READ only reads and shows what it would do, RETUNE writes the new card (the
 progress on the display and the pads). ESC, or closing the window, stops it once the files being converted are done:
-START with the same card, folder and settings continues (FORTSETZEN). BERICHT opens the report. German or English:
-the switch in the window.
+START with the same card, folder and settings continues (CONTINUE). REPORT opens the report. German or English: the
+computer's language to start with (system_language(): Windows' display language, the locale on macOS and Linux),
+then the switch in the window, which it keeps.
 
-Usage (Windows: py instead of python3): python3 deluge_tuner.py [--lang en]   (the window; the command line is
+Usage (Windows: py instead of python3): python3 deluge_tuner.py [--lang de|en]   (the window; the command line is
 retune_library.py's). Needs numpy and soxr (pip install numpy soxr), pylibrb for audio clips and time-stretched samples.
 
 Versions:
   1  the first build: read or retune a card into a new folder, 415.3 to 466.2 Hz, stop and continue, German and English
+  2  the computer's language to start with (Windows: its display language; macOS, Linux: the locale); code in English
 """
 import argparse
 import json
@@ -44,7 +46,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import retune_library as rl  # noqa: E402
 
-VERSION = 1
+VERSION = 2
 START_TENTHS = 4320  # The gold knob at the first start: 432 Hz
 GROWTH = 1.05  # The new card's size to the card's, about: longer files at a lower tuning (440/432 = 1.0185), headroom
 REPORT = "RETUNE_REPORT.txt"
@@ -613,16 +615,20 @@ def settings_path():
 
 
 def system_language():
-    """de if the computer speaks German, else en: the window's language until it is switched."""
+    """de if the computer speaks German, else en: the window's language until one is chosen in it. Windows: the
+    language of its user interface; macOS and Linux: the locale (LC_ALL, LC_MESSAGES, LANG, the first one set, else
+    Python's locale). English where it can't be read."""
     try:
         if sys.platform.startswith("win"):
             import ctypes
-            return "de" if ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF == 0x07 else "en"
-        import locale
-        code = locale.getlocale()[0] or os.environ.get("LC_ALL") or os.environ.get("LANG") or ""
+            return "de" if ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF == 0x07 else "en"  # LANG_GERMAN
+        code = next((os.environ[k] for k in ("LC_ALL", "LC_MESSAGES", "LANG") if os.environ.get(k)), None)
+        if code is None:
+            import locale
+            code = locale.getlocale()[0] or ""
         return "de" if code.lower().startswith("de") else "en"
     except Exception:
-        return "de"
+        return "en"
 
 
 def find_card():
@@ -636,8 +642,8 @@ def find_card():
 
 
 class App:
-    """The window: a card, a folder for the new card, the tuning, and a mode (LESEN: only read, UMSTIMMEN: write the
-    new card), then START."""
+    """The window: a card, a folder for the new card, the tuning, and a mode (READ: only read, RETUNE: write the new
+    card), then START."""
     W, H = 900, 614  # The panel at scale 1, in the Deluge's (and DelugeRec's) proportions: 305 x 208 mm
     ROWS, PADS = 5, 32  # Lines of a list on the display; pads (two rows of 16)
     DISPLAY = (170, 64)  # The display's pixels: 28 characters on 5 lines and a bottom line, as DelugeBaseline's
@@ -662,6 +668,7 @@ class App:
                 saved = {}
         self.card = card or saved.get("card") or find_card()
         self.out = out or saved.get("out", "")
+        # The language: as the command line says, else as chosen in the window before, else the computer's
         self.lang = LANG = lang or (saved.get("lang") if saved.get("lang") in ("de", "en") else system_language())
         self.mode = saved.get("mode") if saved.get("mode") in ("read", "retune") else "read"
         tenths = saved.get("tuning", START_TENTHS)
@@ -697,13 +704,13 @@ class App:
         self.after_id = None  # The next tick
 
         root.title(f"DELUGE TUNER v{VERSION}")
-        self.icon = tk.PhotoImage(data=ICON_PNG)
+        self.icon = tk.PhotoImage(data=ICON_PNG, master=root)
         root.iconphoto(True, self.icon)
         root.configure(bg=PANEL)
         root.resizable(False, False)
         self.c = tk.Canvas(root, width=self.Z(self.W), height=self.Z(self.H), bg=PANEL, highlightthickness=0)
         self.c.pack()
-        self.img = tk.PhotoImage(width=self.oled.W * scale, height=self.oled.H * scale)
+        self.img = tk.PhotoImage(width=self.oled.W * scale, height=self.oled.H * scale, master=root)
         self.build()
         self.bind_keys()
         for k in ("<Return>", "<KP_Enter>"):
@@ -1485,11 +1492,13 @@ class App:
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="DelugeTuner", description="Eine Deluge-Sample-Bibliothek einmal auf die "
-                                                                 "Master-Stimmung umstimmen. Retune a Deluge sample "
-                                                                 "library once to the master tune.")
+    ap = argparse.ArgumentParser(prog="DelugeTuner", description="Retunes a Deluge sample library once to the master "
+                                                                 "tune, in a window (the command line is "
+                                                                 "retune_library.py's).")
     ap.add_argument("--version", action="version", version=f"DelugeTuner v{VERSION}")
-    ap.add_argument("--lang", choices=("de", "en"), help="Sprache, language")
+    ap.add_argument("--lang", choices=("de", "en"),
+                    help="the window's language: German or English (default: the one chosen in the window before, else "
+                         "the computer's language)")
     ap.add_argument("--selftest", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--out", help=argparse.SUPPRESS)  # The self-test's folder
     args = ap.parse_args(argv)

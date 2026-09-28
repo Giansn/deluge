@@ -448,7 +448,7 @@ def test_peaks(work):
                 err = float(np.max(np.abs(y - ref)))
                 check(y.max() > 1.2 and err < 1e-6, f"peaks: {rel}: peak {y.max():.4f}, off the unclipped resample "
                                                      f"by up to {err:.2e}")
-                check("Als 32-Bit-Float geschrieben, weil Spitzen über 0 dBFS (3)" in rep
+                check("Written as 32-bit float, because resampling put peaks over full scale (3)" in rep
                       and f"{bits}-bit PCM -> 32-bit float, peak +" in line,
                       f"peaks: {rel} not listed as written as float: {line!r}")
                 check(outs.get("written_as") == "32-bit float", f"peaks: JSON of {rel}: {outs}")
@@ -466,7 +466,7 @@ def test_peaks(work):
                                         f"(clipped?)")
                 check(max(y.max() * 2 ** (bits - 1), -y.min() * 2 ** (bits - 1) - 1) > 2 ** (bits - 1) - 3,
                       f"peaks (--no-float): {rel}: lowered more than needed (peak {y.max():.6f} / {y.min():.6f})")
-                check("Leiser geschrieben, weil Spitzen über 0 dBFS (3, --no-float)" in rep
+                check("Written a little quieter, because resampling put peaks over full scale (3, --no-float)" in rep
                       and line.startswith(f"  {rel}: -") and " dB (" in line,
                       f"peaks (--no-float): {rel} not listed with its dB: {line!r}")
         # A float file stays float and keeps its peaks; the report says the firmware limits them

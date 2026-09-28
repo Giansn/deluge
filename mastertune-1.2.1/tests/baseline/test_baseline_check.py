@@ -11,6 +11,7 @@
 - Stages after the knobs: SATURATION, compressor, analog delay with feedback, LPF drive, resonance of an active filter,
   on a kit, an audio track, a synth, a row and the song, and what doesn't count (a digital delay, open filters).
 - Files: songs in subfolders, lower-case .xml, "._" files, a broken XML, --out, --card.
+- The language: the computer's to start with (Windows: its display language; macOS, Linux: the locale), --lang wins.
 - The card copy: «New Sitar Grii 10» and «Rescue», as checked by hand (device/analysis/2026-09-27-baseline-master.md).
 
 Usage: python3 test_baseline_check.py   (stdlib only)
@@ -19,16 +20,19 @@ import contextlib
 import io
 import math
 import os
+import shutil
 import struct
 import sys
 import tempfile
+import types
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "tools"))
 import baseline_check as bc  # noqa: E402
 
-KARTE = os.path.join(HERE, "..", "..", "device", "card")
+CARD_COPY = os.path.join(HERE, "..", "..", "device", "card")
 LIVE = ", ohne Noten: klingt nur live gespielt"
 V40, V45, V50, DEFAULT35 = "0x4CCCCCA8", "0x66666662", "0x7FFFFFFF", "0x3504F334"
 
@@ -350,6 +354,60 @@ class Stages(Case):
         self.assertEqual(notes_of(song(kit, clip), self.root), [])
 
 
+class SystemLanguage(unittest.TestCase):
+    """The language to start with: German if the computer speaks German, else English. Windows: its user interface's
+    language; macOS and Linux: the locale."""
+
+    def on_windows(self, langid):
+        import ctypes
+
+        def ui_language():
+            if isinstance(langid, Exception):
+                raise langid
+            return langid
+        windll = types.SimpleNamespace(kernel32=types.SimpleNamespace(GetUserDefaultUILanguage=ui_language))
+        with mock.patch.object(bc.sys, "platform", "win32"), mock.patch.object(ctypes, "windll", windll, create=True):
+            return bc.system_language()
+
+    def on_unix(self, env, code=None):
+        import locale
+        with mock.patch.object(bc.sys, "platform", "linux"), mock.patch.dict(bc.os.environ, env, clear=True), \
+                mock.patch.object(locale, "getlocale", lambda *a: (code, "UTF-8")):
+            return bc.system_language()
+
+    def test_windows(self):
+        for langid, lang in ((0x0807, "de"), (0x0407, "de"), (0x0C07, "de"), (0x0409, "en"), (0x0809, "en"),
+                             (0x040C, "en"), (OSError("no API"), "en")):
+            self.assertEqual(self.on_windows(langid), lang, hex(langid) if isinstance(langid, int) else langid)
+
+    def test_macos_linux(self):
+        self.assertEqual(self.on_unix({"LANG": "de_CH.UTF-8"}), "de")
+        self.assertEqual(self.on_unix({"LANG": "en_US.UTF-8"}), "en")
+        self.assertEqual(self.on_unix({"LANG": "fr_CH.UTF-8"}), "en")
+        self.assertEqual(self.on_unix({"LC_ALL": "de_DE.UTF-8", "LANG": "en_US.UTF-8"}), "de")
+        self.assertEqual(self.on_unix({"LC_MESSAGES": "en_GB.UTF-8", "LANG": "de_CH.UTF-8"}), "en")
+        self.assertEqual(self.on_unix({"LANG": "C"}), "en")
+        self.assertEqual(self.on_unix({}, "de_AT"), "de")  # Nothing set: Python's locale
+        self.assertEqual(self.on_unix({}, None), "en")
+
+    def test_command_line(self):
+        """Without --lang the report is in the computer's language; --lang wins."""
+        root = tempfile.mkdtemp()
+        try:
+            write(os.path.join(root, "SONGS", "A.XML"), song().encode())
+            de, en = "# Baseline-Prüfung: 1 Song", "# Baseline check: 1 song"
+            for system, argv, heading in (("de", [], de), ("en", [], en), ("de", ["--lang", "en"], en),
+                                          ("en", ["--lang", "de"], de)):
+                with contextlib.redirect_stdout(io.StringIO()) as console, \
+                        mock.patch.object(sys, "argv", ["baseline_check.py", root] + argv), \
+                        mock.patch.object(bc, "system_language", lambda: system):
+                    bc.main()
+                self.assertTrue(console.getvalue().startswith(heading), (system, argv, console.getvalue()[:60]))
+        finally:
+            bc.LANG = "de"
+            shutil.rmtree(root)
+
+
 class Files(Case):
     def test_card(self):
         loud = self.sample("SAMPLES/loud.wav", wav, pcm(0, 16))
@@ -360,7 +418,7 @@ class Files(Case):
         write(os.path.join(self.root, "SONGS", "Broken.XML"), b"<song><instruments></song>")
         out = os.path.join(self.root, "report.md")
         with contextlib.redirect_stdout(io.StringIO()) as console:
-            sys.argv = ["baseline_check.py", self.root, "--out", out]
+            sys.argv = ["baseline_check.py", self.root, "--out", out, "--lang", "de"]
             bc.main()
         text = console.getvalue()
         with open(out, encoding="utf-8") as f:
@@ -380,10 +438,10 @@ class Files(Case):
         self.assertIn("wirkt wie 50,0", bc.report(bc.song_files([away], self.root)))
 
 
-@unittest.skipUnless(os.path.isdir(os.path.join(KARTE, "SONGS")), "no card copy in device/card")
+@unittest.skipUnless(os.path.isdir(os.path.join(CARD_COPY, "SONGS")), "no card copy in device/card")
 class CardCopy(unittest.TestCase):
     def test_songs(self):
-        text = bc.report(bc.song_files([KARTE]))
+        text = bc.report(bc.song_files([CARD_COPY]))
         self.assertIn("# Baseline-Prüfung: 2 Songs, 1 mit Hinweisen", text)
         self.assertIn("| New Sitar Grii 10 | 35,4 (0,00 dB) | aus | 35,4 (0,00 dB) | 50,0 (+12,04 dB) | 6 |", text)
         # Rescue's loudest row: 34.8, which the report used to round to 35
