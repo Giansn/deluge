@@ -1,0 +1,179 @@
+<h2 class="chapter" id="ch-ref">11. Nachschlagen</h2>
+
+<h3 id="ref-menu">11.1 Neue und geänderte Menüpunkte</h3>
+<table style="break-inside:auto">
+  <thead>
+  <tr><th style="width:34%">Menüpunkt</th><th>Werte</th><th style="width:12%">7-Segment</th><th style="width:9%">Seit</th><th style="width:6%">Siehe</th></tr>
+  </thead>
+  <tbody>
+  <tr style="break-inside:avoid"><td colspan="5" style="background:#f3f5f9"><b>Settings</b></td></tr>
+  <tr style="break-inside:avoid"><td>Tuning → Master tune (Hz)</td><td>415,3–466,2 Hz in Schritten von 0,1 Hz, Standard 440,0</td><td><code>TUNE</code> → <code>MTUN</code></td><td>v2</td><td>2.1</td></tr>
+  <tr style="break-inside:avoid"><td>Community features → USB audio</td><td>aus (Standard), an; wirkt nach einem Neustart</td><td><code>UAUD</code></td><td>v8</td><td>4.2</td></tr>
+  <tr style="break-inside:avoid"><td>Community features → Kit RAM saver</td><td>an (Standard), aus</td><td><code>KRAM</code></td><td>v9</td><td>3.3</td></tr>
+  <tr style="break-inside:avoid"><td>Community features → Flicker-free dimming</td><td>an (Standard), aus</td><td></td><td>v13</td><td>7.5</td></tr>
+  <tr style="break-inside:avoid"><td>Community features → Output limiter</td><td>aus (Standard), an</td><td><code>LIMT</code></td><td>v18</td><td>5.8</td></tr>
+  <tr style="break-inside:avoid"><td>Community features → Filter crossing guard</td><td>aus (Standard), an</td><td><code>CROS</code></td><td>v18</td><td>5.5</td></tr>
+  <tr style="break-inside:avoid"><td>CPU monitor</td><td>Off, On, Alerts, Profile</td><td><code>CPU</code></td><td>v13</td><td>3.4</td></tr>
+  <tr style="break-inside:avoid"><td>OLED brightness</td><td>1–10, 10 = wie bisher</td><td></td><td>v18</td><td>7.4</td></tr>
+  <tr style="break-inside:avoid"><td>Firmware version</td><td>lesbar, ohne Hash</td><td></td><td>v18</td><td>1.4</td></tr>
+  <tr style="break-inside:avoid"><td colspan="5" style="background:#f3f5f9"><b>Reverb</b> (Song und Sound)</td></tr>
+  <tr style="break-inside:avoid"><td>Model</td><td>neu: Digital</td><td><code>DIGI</code></td><td>v10</td><td>5.10</td></tr>
+  <tr style="break-inside:avoid"><td>Damping</td><td>0 hell … 50 dunkel (Mutable jetzt richtig herum)</td><td></td><td>v10</td><td>5.10</td></tr>
+  <tr style="break-inside:avoid"><td>HPF</td><td>0 = 20 Hz, 25 = 190 Hz, 50 = 540 Hz</td><td></td><td>v10</td><td>5.10</td></tr>
+  <tr style="break-inside:avoid"><td>LPF</td><td>0 = 500 Hz … 49 = 18,6 kHz, 50 = aus (Standard)</td><td></td><td>v10</td><td>5.10</td></tr>
+  <tr style="break-inside:avoid"><td>Modulation (nach LPF)</td><td>0–50, Standard 0</td><td></td><td>v14</td><td>5.10</td></tr>
+  <tr style="break-inside:avoid"><td>Pre-delay</td><td>0–100 ms, Standard 0</td><td></td><td>v14</td><td>5.10</td></tr>
+  <tr style="break-inside:avoid"><td colspan="5" style="background:#f3f5f9"><b>Delay</b> (Sound, Kit, Audio-Spur, Song)</td></tr>
+  <tr style="break-inside:avoid"><td>Time change (nach Type)</td><td>Fade (Standard), Tape</td><td></td><td>v14</td><td>5.11</td></tr>
+  <tr style="break-inside:avoid"><td>LPF, HPF (nach Sync)</td><td>LPF 50 = aus (Standard); HPF 0 = aus (Standard)</td><td></td><td>v11</td><td>5.11</td></tr>
+  <tr style="break-inside:avoid"><td colspan="5" style="background:#f3f5f9"><b>Arpeggiator</b> (Synth, Kit-Reihe, MIDI- und Gate-Reihen)</td></tr>
+  <tr style="break-inside:avoid"><td>Preset</td><td>in der Liste, mit Walk</td><td></td><td>v5</td><td>6.1</td></tr>
+  <tr style="break-inside:avoid"><td>Latch</td><td>aus, an</td><td></td><td>v5</td><td>6.2</td></tr>
+  <tr style="break-inside:avoid"><td>Step repeat</td><td>1–8</td><td></td><td>v5</td><td>6.1</td></tr>
+  <tr style="break-inside:avoid"><td>Note mode</td><td>neu: Walk 1–3, Pattern</td><td></td><td>v5</td><td>6.1</td></tr>
+  <tr style="break-inside:avoid"><td>Ratchet notes</td><td>Auto, 2–8, Roll</td><td></td><td>v6, v13</td><td>6.3</td></tr>
+  <tr style="break-inside:avoid"><td>Ratchet bounce</td><td>−10 … +10</td><td></td><td>v5</td><td>6.3</td></tr>
+  <tr style="break-inside:avoid"><td>Bounce length</td><td>1–16</td><td></td><td>v13</td><td>6.3</td></tr>
+  <tr style="break-inside:avoid"><td>Bounce velocity</td><td>Even, Fade, Rise</td><td></td><td>v6, v13</td><td>6.3</td></tr>
+  <tr style="break-inside:avoid"><td>Randomizer (eigenes Menü nach Arpeggiator)</td><td>Lock, Streuungen, Wahrscheinlichkeiten</td><td></td><td>v5</td><td>6.5</td></tr>
+  <tr style="break-inside:avoid"><td>Kit arpeggiator (Kit, Affect Entire); Include in kit arp (Reihe)</td><td></td><td></td><td>v5</td><td>6.1</td></tr>
+  <tr style="break-inside:avoid"><td colspan="5" style="background:#f3f5f9"><b>Überall</b></td></tr>
+  <tr style="break-inside:avoid"><td>Jede Lautstärke und jeder Pegel</td><td>0,5 dB pro Raste, in dB angezeigt, <code>OFF</code> ganz unten</td><td>z. B. <code>-3.5</code></td><td>v18</td><td>5.7</td></tr>
+  <tr style="break-inside:avoid"><td>Song-Menü (<span class="key">SELECT</span> in der Song-Ansicht) → Drone</td><td>öffnet die Drone-Ansicht</td><td></td><td>v12</td><td>Kap. 9</td></tr>
+  </tbody>
+</table>
+
+<h3 id="ref-keys">11.2 Tasten und Kürzel</h3>
+<table>
+  <tr><th style="width:30%">Wo</th><th style="width:30%">Drücken</th><th>Was passiert</th></tr>
+  <tr><td>jede Ansicht, auch beim Spielen</td><td><span class="key">LEARN</span> halten, <span class="key">TEMPO</span> drücken</td><td>CPU-Monitor aus oder zurück zum letzten Modus (§3.4)</td></tr>
+  <tr><td>Master tune (Hz)</td><td>horizontaler Encoder</td><td>bewegt den Cursor zwischen der 1-Hz- und der 0,1-Hz-Stelle (§2.1)</td></tr>
+  <tr><td>Song-Browser, Gruppenzeile</td><td><span class="key">SELECT</span> oder <span class="key">LOAD</span></td><td>öffnet die Gruppe (§7.1)</td></tr>
+  <tr><td>Song-Browser, eine Version</td><td><span class="key">BACK</span></td><td>schliesst ihre Gruppe (§7.1)</td></tr>
+  <tr><td>Song-Browser, eine Version</td><td><span class="key">SHIFT</span> + <span class="key">SAVE</span></td><td>löscht; auf einer geschlossenen Gruppenzeile gesperrt (§7.1)</td></tr>
+  <tr><td>Songwechsel vorgemerkt</td><td>Goldknöpfe, Mod-Tasten</td><td>wirken auf die Master-Effekte des laufenden Songs (§7.2)</td></tr>
+  <tr><td>Song-Ansicht</td><td><span class="key">SCALE</span></td><td>öffnet die Drone-Ansicht (Kapitel 9)</td></tr>
+  <tr><td>Drone-Ansicht</td><td><span class="key">SHIFT</span> + <span class="key">KIT</span></td><td>legt eine Drone-Spur an (Kapitel 9)</td></tr>
+  <tr><td>Kit-Clip-Ansicht, Audition-Pad gehalten</td><td><span class="key">SHIFT</span> + <span class="key">KIT</span></td><td>macht die Reihe zur Drone-Reihe (Kapitel 9)</td></tr>
+</table>
+
+<h3 id="ref-display">11.3 Anzeigen und Meldungen</h3>
+<table>
+  <tr><th style="width:26%">Anzeige</th><th style="width:14%">Wo</th><th>Bedeutung</th></tr>
+  <tr><td><code>UGAP</code>, «USB audio gap»</td><td>7-Segment, OLED</td><td>Der Computer bekam ein leeres USB-Audio-Paket: eine Lücke von 1 ms in der Aufnahme. Höchstens alle 10 s. Bitte melden (§4.6).</td></tr>
+  <tr><td><code>C-ON</code>, <code>COFF</code>, <code>C-AL</code></td><td>7-Segment</td><td>Das Kürzel hat den CPU-Monitor auf On, Off oder Alerts gestellt (§3.4).</td></tr>
+  <tr><td><code>-3.5</code>, <code>OFF</code></td><td>7-Segment</td><td>Eine Lautstärke in dB; <code>OFF</code> ganz unten (§5.7).</td></tr>
+  <tr><td>eine blinkende Zahl</td><td>7-Segment</td><td>Songwechsel: verbleibende Loops. Ohne Blinken: Takte. Mit Punkt: Schläge (§7.2).</td></tr>
+  <tr><td>«Bars remaining 3»</td><td>OLED</td><td>Countdown zum Songwechsel in der Titelzeile (§7.2).</td></tr>
+  <tr><td>«Open the group first»</td><td>OLED</td><td>Du wolltest im Song-Browser auf einer geschlossenen Gruppenzeile löschen (§7.1).</td></tr>
+  <tr><td>kleine Animation oben rechts</td><td>OLED</td><td>Der Deluge lädt oder speichert (§7.3).</td></tr>
+  <tr><td><code>1.2.1-mastertune-</code> / <code>v18.3-l2d</code></td><td>OLED</td><td>Settings → Firmware version (§1.4).</td></tr>
+</table>
+
+<h3 id="ref-cpu">11.4 Abkürzungen des CPU-Monitors</h3>
+<table>
+  <tr><th style="width:16%">Anzeige</th><th style="width:22%">Wo</th><th>Bedeutung</th></tr>
+  <tr><td><code>CPU 39%</code></td><td>OLED-Zeile</td><td>Last der Audio-Routine. Ab v17 die echte Last, ohne aktives Warten.</td></tr>
+  <tr><td><code>14V</code></td><td>OLED-Zeile</td><td>Stimmen, die jetzt klingen.</td></tr>
+  <tr><td><code>QL</code></td><td>OLED-Zeile, Live-Ansicht</td><td>Qualität gesenkt (quality lowered): Der Deluge ist im Rückstand (Direness über 0) und rechnet einfacher. Nur sichtbar, solange es geschieht.</td></tr>
+  <tr><td><code>VC</code></td><td>OLED-Zeile</td><td>Abgeschaltete Stimmen (voices cut). Blinkt und bleibt bis 2 s nach der letzten Abschaltung.</td></tr>
+  <tr><td>peak</td><td>Live-Ansicht, Seite</td><td>Das teuerste Audiofenster der letzten Sekunde.</td></tr>
+  <tr><td>cut</td><td>Live-Ansicht</td><td>Vom CPU-Schutz abgeschaltete Stimmen. Die Zahl, die zählt.</td></tr>
+  <tr><td>gap</td><td>Live-Ansicht, Seite</td><td>Längste Pause zwischen zwei Läufen der Audio-Routine. Ab etwa 2,9 ms droht ein Aussetzer.</td></tr>
+  <tr><td>SD</td><td>Live-Ansicht, Seite</td><td>Ladevorgänge von der Karte, mittlere und längste Dauer.</td></tr>
+  <tr><td>direness</td><td>Seite, Live-Ansicht</td><td>0–14. Über 0 ist die Qualität gesenkt; ab etwa 80 Samples Rückstand werden Stimmen abgeschaltet.</td></tr>
+</table>
+<p class="small">«Live-Ansicht» ist die Zeile von <code>tools/deluge_profiler.py live</code> (§8.6), «Seite» ist <code>tools/cpu_monitor.html</code> (§8.5).</p>
+
+<h3 id="ref-files">11.5 Dateien auf der Karte</h3>
+<table>
+  <tr><th style="width:32%">Datei oder Ordner</th><th>Was mastertune dort ablegt</th></tr>
+  <tr><td>die <code>.bin</code> der Firmware (Hauptordner)</td><td>Nur zum Installieren; lass dort nur eine liegen (§1.3).</td></tr>
+  <tr><td><code>CommunityFeatures.XML</code> (Hauptordner)</td><td>Die Community-Einstellungen, der Master Tune (<code>masterTune</code>, in Zehntel-Hz), der Modus des CPU-Monitors.</td></tr>
+  <tr><td><code>SONGS/</code></td><td>Songs, mit dem Drone und den Drone-Spuren (Kapitel 9).</td></tr>
+  <tr><td><code>SYNTHS/</code></td><td>Synth-Presets, zum Beispiel die Ping-Pong-Presets (§6.4).</td></tr>
+  <tr><td>Aufnahmen (WAV)</td><td>Bei einer anderen Stimmung als 440 Hz mit einem <code>mtun</code>-Chunk (§2.3).</td></tr>
+  <tr><td><code>BASELINE-BACKUP/</code></td><td>Sicherungen, die DelugeBaseline schreibt (§8.4).</td></tr>
+</table>
+
+<h3 id="ref-trouble">11.6 Fehlersuche</h3>
+<p>Such dein Problem in seiner Gruppe. Jede Zeile nennt die Ursache und was zu tun ist.</p>
+<h4>Installation und Einstellungen</h4>
+<table>
+  <tr><td style="width:31%">Der Deluge installiert die Firmware nicht.</td><td>Lass nur eine <code>.bin</code> im Hauptordner und halte beim Einschalten <span class="key">SHIFT</span> (§1.3).</td></tr>
+  <tr><td>Er stürzt ab oder verhält sich seltsam.</td><td>Installiere <code>deluge-1.2.1-mastertune-v18-124aeaa2.bin</code>, v18 ohne L2, und melde, was passiert ist (§11.8).</td></tr>
+  <tr><td>Der Master Tune steht nach dem Ausschalten wieder auf dem alten Wert.</td><td>Er wird gespeichert, wenn du das Menü Settings verlässt. Verlass es zuerst mit <span class="key">BACK</span> (§2.1).</td></tr>
+  <tr><td>Output limiter, Crossing guard und OLED brightness stehen wieder auf ihrem Standardwert.</td><td>Du hast auf v17 oder 1.2.1 gewechselt und zurück; diese verlieren Einstellungen, die sie nicht kennen. Stell sie neu ein (§7.6).</td></tr>
+</table>
+<h4>Stimmung</h4>
+<table>
+  <tr><td style="width:31%">Ein externer Synth folgt dem Master Tune nicht.</td><td>Er muss RPN 1 (Channel Fine Tuning) auswerten. Ein später eingeschaltetes Gerät bekommt die Stimmung nach dem nächsten Start der Wiedergabe (§2.4).</td></tr>
+  <tr><td>Eine Aufnahme mit 432 Hz klingt nach dem Bearbeiten am Computer verstimmt.</td><td>Manche Editoren entfernen den <code>mtun</code>-Chunk; die Kopie gilt dann als 440-Hz-Material. Nimm die Originalaufnahme (§2.3).</td></tr>
+</table>
+<h4>Last</h4>
+<table>
+  <tr><td style="width:31%"><code>QL</code> oder <code>VC</code> erscheinen.</td><td>Der Deluge kommt nicht nach. Was CPU kostet, steht in §3.5: Wandle bei 432 Hz die Samples mit DelugeTuner um; nimm weniger Drone-Töne mit Life.</td></tr>
+  <tr><td>Der CPU-Monitor zeigt 85–90 %, obwohl nichts spielt.</td><td>Bis v16 war das aktives Warten, keine Überlast. Ab v17 zeigt der Monitor die echte Last (§3.4).</td></tr>
+  <tr><td>Der erste Schlag einer unbenutzten Kit-Reihe kommt zu spät.</td><td>Der Kit RAM saver hat ihren Sample-Anfang freigegeben. Schalte ihn aus, wenn dich das stört (§3.3).</td></tr>
+</table>
+<h4>USB</h4>
+<table>
+  <tr><td style="width:31%">Der Computer zeigt den Audio-Eingang nicht.</td><td>Schalte USB-Audio ein, starte neu und schliesse den Deluge als USB-Gerät an, nicht als Host (§4.2).</td></tr>
+  <tr><td>USB-Audio ist nach einem Neustart wieder aus.</td><td>Bis v15 wurde die Einstellung erst gespeichert, wenn du das Menü mit <span class="key">BACK</span> verlassen hast. Ab v16 wird sie sofort gespeichert.</td></tr>
+  <tr><td>Der Deluge wird nicht erkannt oder hängt mit USB-Audio.</td><td>Zieh das USB-Kabel, starte den Deluge, schalte USB-Audio aus (§4.6).</td></tr>
+  <tr><td>Die DAW hat die MIDI-Ports des Deluge verloren.</td><td>Mit eingeschaltetem USB-Audio sieht der Computer ein neues Gerät. Weise die Ports neu zu (§4.6).</td></tr>
+  <tr><td><code>UGAP</code> erscheint.</td><td>Eine Lücke von 1 ms unter sehr hoher Last. Bitte melden (§4.6).</td></tr>
+  <tr><td>deluge-editor meldet «needs community 1.3.0 or later».</td><td>Der Deluge meldet 1.2.1. Ignoriere es: Öffnen und Speichern funktionieren (§8.7).</td></tr>
+  <tr><td>Eine Datei mit Umlauten im Namen öffnet sich über USB nicht.</td><td>Verwende in Namen nur A–Z, 0–9 und _ (§8.7).</td></tr>
+</table>
+<h4>Klang</h4>
+<table>
+  <tr><td style="width:31%">Ein Song mit Routing Parallel ist leiser.</td><td>Seit v18 hat die parallele Summe die halbe Lautstärke, −6 dB. Erhöhe die Lautstärke des Songs (§5.2).</td></tr>
+  <tr><td>Das Filter pfeift, oder ein Ton folgt dem Cutoff-Knopf.</td><td>Die Resonanz ist so hoch, dass das Filter von selbst schwingt. Dreh die Resonanz zurück (§5.3).</td></tr>
+  <tr><td>Das Reverb eines alten Songs klingt statischer.</td><td>Songs ohne die neuen Einstellungen laden mit Modulation 0. Stell Modulation auf 50 für den alten Klang (§5.10).</td></tr>
+  <tr><td>Die Tonhöhe der Echos verbiegt sich, wenn sich die Delay-Zeit ändert.</td><td>Time change steht auf Tape; alte Songs mit modulierter oder automatisierter Delay-Rate laden so. Wähle Fade (§5.11).</td></tr>
+  <tr><td>Hartes Sidechain-Pumpen klingt weicher.</td><td>Seit v18 dauert das Ducking mindestens 5 ms (§5.7).</td></tr>
+  <tr><td>Der Ausgang übersteuert.</td><td>Nur die Summe am Ausgang übersteuert, bei 0 dBFS. Senke die Song-Lautstärke, bis die Spitze bei −6 dBFS liegt, oder schalte den Output limiter ein (§5.8).</td></tr>
+  <tr><td>Ein Knacks beim Umschalten des Output limiter.</td><td>Der Ausgang verschiebt sich einmal um 0,7 ms. Das ist normal (§5.8).</td></tr>
+</table>
+<h4>Werkzeuge</h4>
+<table>
+  <tr><td style="width:31%">Windows warnt beim Start eines Werkzeugs.</td><td>Die Programme sind nicht signiert. Klicke auf Weitere Informationen, dann auf Trotzdem ausführen (§8.1).</td></tr>
+  <tr><td>DelugeRec nennt den Take bei v18.3 «… 1.2.1 v18.WAV».</td><td>DelugeRec v6 schneidet die Version beim Punkt ab. Nimm v7 oder neuer (§8.2).</td></tr>
+  <tr><td>Der Profiler zeigt falsche Funktionsnamen.</td><td>Lade die <code>.symbols.json</code>, die neben der installierten <code>.bin</code> liegt (§8.6).</td></tr>
+</table>
+
+<h3 id="ref-history">11.7 Versionsgeschichte</h3>
+<table>
+  <tr><th style="width:10%">Version</th><th>Was sie brachte</th></tr>
+  <tr><td>v2</td><td>Master Tune 415,3–466,2 Hz; alles folgt, Aufnahmen behalten ihre Stimmung.</td></tr>
+  <tr><td>v3</td><td>Günstigere Sample-Interpolation; Sidechain ohne Knacks.</td></tr>
+  <tr><td>v4</td><td>Sanfteres Culling wie in der Community-Firmware; stille Kits und Audio-Spuren überspringen ihre Effekte.</td></tr>
+  <tr><td>v5</td><td>Der Arpeggiator aus 1.3, mit Latch und Ratchet bounce.</td></tr>
+  <tr><td>v6</td><td>Feste Zahl von Ratchet-Noten, Bounce ohne Leiserwerden.</td></tr>
+  <tr><td>v7</td><td>Die SD-Karte über USB für DEx und deluge-editor.</td></tr>
+  <tr><td>v8</td><td>USB-Audio: der Ausgang des Deluge als Audio-Eingang am Computer.</td></tr>
+  <tr><td>v9</td><td>Klügeres Sample-Streaming, Kit RAM saver.</td></tr>
+  <tr><td>v10</td><td>Reverb: neues Modell Digital, Mutable und Freeverb repariert, HPF und LPF.</td></tr>
+  <tr><td>v11</td><td>Delay: saubere Wiederholungen, keine Knackser bei Zeitänderungen, LPF und HPF im Feedback; kein Knistern beim Speichern.</td></tr>
+  <tr><td>v12</td><td>Frequenz-Drone mit bis zu 16 Tönen.</td></tr>
+  <tr><td>v13</td><td>Mehr Leistung, Ping-Pong-Roll, flimmerfreies Dimmen, schnelleres Speichern, genaueres MIDI, CPU-Monitor in Worten, Feinschliff am Drone.</td></tr>
+  <tr><td>v14</td><td>Reverb ohne Wabern, Delay ohne Tonhöhensprünge, Countdown beim Songwechsel, zwei Korrekturen für die SD-Karte.</td></tr>
+  <tr><td>v15</td><td>Lebendiger Drone (Life, FM, Pulse), CPU-Monitor in einer Zeile, Sections per CC starten, USB-MIDI ohne Paketverlust, Clock-Ausgänge bei externer Clock.</td></tr>
+  <tr><td>v16</td><td>Drone-Spuren, Profiler, USB-Audio bleibt nach einem Neustart an.</td></tr>
+  <tr><td>v17</td><td>Viel weniger Last bei mittlerer Last (Scheduling-Korrektur, Mindestfenster, stille Spuren), Song-Browser mit Versionen, Kürzel für den CPU-Monitor, Drone-Ansicht ohne Hänger, leiseres HPF-Pfeifen; Hauptdatei mit L2-Cache.</td></tr>
+  <tr><td>v18</td><td>Filter ohne Rauschen und mit sauberen Übergängen, Lautstärke in 0,5-dB-Schritten und in dB angezeigt, EQ mit echten Shelving-Filtern, Output limiter, Filter crossing guard, OLED brightness, lesbare Version, Songname für DelugeRec.</td></tr>
+  <tr><td>v18.2</td><td>Filter, EQ und Lautstärke direkt nach einer Stille richtig. Nur als L2-Variante.</td></tr>
+  <tr><td>v18.3</td><td>Drive mit Oversampling wie in 1.2.1; unbekannte Einstellungen und die Sync-Stufe der Reverb-Sidechain bleiben erhalten. Nur als L2-Variante.</td></tr>
+</table>
+
+<div class="avoid">
+<h3 id="ref-bugs">11.8 Fehler melden</h3>
+<p>mastertune ist ein privater Fork. <b>Melde seine Fehler nicht den Community-Entwicklern.</b> Melde sie unter <code>github.com/Giansn/deluge/issues</code>, mit:</p>
+<ul>
+  <li>der Version aus Settings → Firmware version;</li>
+  <li>dem, was du genau getan hast;</li>
+  <li>dem, was die Anzeige zeigte: eingefroren, ein Neustart oder eine Meldung wie «E…»;</li>
+  <li>bei Lastproblemen, wenn möglich, einer CSV der CPU-Monitor-Seite (§8.5) oder einer <code>.jsonl</code>-Aufnahme des Profilers (§8.6).</li>
+</ul>
+</div>

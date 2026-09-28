@@ -1,0 +1,157 @@
+<h2 class="chapter" id="ch-tools">8. Werkzeuge für den Computer</h2>
+
+<p class="lead">Drei kleine Windows-Programme nehmen den Deluge auf, stimmen eine Sample-Bibliothek um und gleichen die Pegel einer Karte aus. Zwei Browserseiten protokollieren den CPU-Monitor und den Profiler, und zwei Web-Apps erreichen die SD-Karte über USB.</p>
+
+<h3 id="tools-overview">8.1 Überblick</h3>
+<table>
+  <tr><th style="width:19%">Werkzeug</th><th>Was es tut</th><th style="width:31%">Wo du es bekommst</th></tr>
+  <tr><td>DelugeRec</td><td>Nimmt das USB-Audio des Deluge auf, mit Mithören über Kopfhörer (§8.2).</td><td>Release <code>deluge-rec</code> (v7)</td></tr>
+  <tr><td>DelugeTuner</td><td>Stimmt die Sample-Bibliothek einer Karte einmalig auf den Master Tune um (§8.3).</td><td>Release <code>deluge-tuner</code> (v2)</td></tr>
+  <tr><td>DelugeBaseline</td><td>Prüft die Pegel aller Songs einer Karte und gleicht sie aus, mit Sicherung (§8.4).</td><td>Release <code>deluge-baseline</code> (v4)</td></tr>
+  <tr><td>CPU-Monitor-Seite</td><td>Protokolliert den CPU-Monitor live und als CSV (§8.5).</td><td><code>tools/cpu_monitor.html</code></td></tr>
+  <tr><td>Profiler</td><td>Zeigt die CPU-Zeit pro Spur, Task und Funktion (§8.6).</td><td><code>tools/profiler.html</code>, <code>tools/deluge_profiler.py</code></td></tr>
+  <tr><td>DEx, deluge-editor</td><td>Dateien und Presets auf der SD-Karte über USB (§8.7).</td><td><code>dex.silicak.es</code>, <code>cyface.github.io/deluge-editor</code></td></tr>
+</table>
+<ul>
+  <li><b>Die Windows-Programme</b> sind je eine <code>.exe</code>, ohne Installation. Die neueste Version liegt immer in ihrem Release unter <code>github.com/Giansn/deluge/releases</code>. Windows fragt einmal nach, weil sie nicht signiert sind: Klicke auf <b>Weitere Informationen</b> (More info), dann auf <b>Trotzdem ausführen</b> (Run anyway).</li>
+  <li><b>Als Python-Skripte</b> liegen sie in <code>mastertune-1.2.1/tools/</code>.</li>
+  <li><b>Alle drei</b> haben den Look des Deluge, und jeder Knopf zeigt darunter seine Taste auf der Tastatur. DelugeTuner und DelugeBaseline wechseln zwischen Deutsch und Englisch (SPRACHE / LANGUAGE) und starten in der Sprache des Computers. DelugeRec gibt es nur auf Englisch. Die Bilder zeigen die englische Oberfläche; die englischen Beschriftungen stehen hier in Klammern.</li>
+</ul>
+
+<h3 id="tools-rec">8.2 DelugeRec</h3>
+
+<p>DelugeRec nimmt den Eingang «Deluge» von USB-Audio (Kapitel 4) bitgenau als 24-Bit-WAV-Datei auf. Unter Windows nutzt es den exklusiven WASAPI-Modus, und die Anzeige zeigt, ob wirklich 24 Bit ankommen. Es hört nur zu: Es sendet nichts an den Deluge.</p>
+<div class="grid2">
+<figure class="figure">
+  <img class="shot window" src="../../../screenshots/deluge_rec.png" alt="Fenster von DelugeRec beim Aufnehmen">
+  <figcaption>DelugeRec beim Aufnehmen: 44,1 kHz und 24 Bit kommen an, die Pads zeigen den Pegel.</figcaption>
+</figure>
+<table>
+  <tr><th style="width:20%">Element</th><th>Was es tut</th></tr>
+  <tr><td>REC</td><td>Startet die Aufnahme.</td></tr>
+  <tr><td>ARM</td><td>Startet, sobald das Signal eine Schwelle (THRESH) überschreitet, mit 0,3 s Vorlauf.</td></tr>
+  <tr><td>STOP</td><td>Beendet den Take.</td></tr>
+  <tr><td>MON</td><td>Das Mithören über Kopfhörer.</td></tr>
+  <tr><td>FOLDER</td><td>Öffnet den Ordner mit den Aufnahmen.</td></tr>
+  <tr><td>VOL</td><td>Lass ihn auf 0 dB: Dann ist die Aufnahme bitgenau. Herunterdrehen repariert kein Übersteuern, das schon im Deluge passiert.</td></tr>
+  <tr><td>Pads</td><td>Der Pegel. Für die Baseline in §5.8 sollte das Pad bei −3 dunkel bleiben.</td></tr>
+</table>
+</div>
+<ul>
+  <li><b>Namen der Takes:</b> Mit Firmware v18 oder neuer benennt DelugeRec jeden Take nach Song, Datum und Firmware, zum Beispiel «Songname, 28.09.2026 - 1.2.1 v18.3.WAV». Der Deluge meldet den Songnamen, solange der Audio-Stream offen ist (§4.5). Ab v18.2 brauchst du DelugeRec v7: v6 schneidet die Version beim Punkt ab.</li>
+  <li><b>Als Skript:</b> <code>pip install sounddevice numpy</code>, dann <code>python tools/deluge_rec.py</code>. Ohne Deluge: <code>--demo</code>.</li>
+</ul>
+
+<h3 id="tools-tuner">8.3 DelugeTuner</h3>
+<figure class="figure">
+  <img class="shot window" src="../../../screenshots/deluge_tuner.png" alt="DelugeTuner nach dem Lesen einer Karte">
+  <figcaption>DelugeTuner nach LESEN (READ): was es auf 432,0 Hz umstimmen würde, und wie viel.</figcaption>
+</figure>
+<p>Abseits von 440 Hz rechnet der Deluge jede Sample-Stimme um (§2.5). DelugeTuner wandelt die Sample-Bibliothek einer Karte einmalig auf den Master Tune um. Die umgewandelten Dateien tragen den <code>mtun</code>-Chunk (§2.3), so spielt der Deluge sie wieder direkt. Die Firmware braucht dafür keine Änderung.</p>
+<ol>
+  <li><b>KARTE (CARD):</b> Wähle die SD-Karte oder eine Kopie davon. Sie wird nur gelesen.</li>
+  <li><b>ZIEL (OUTPUT):</b> Wähle einen Ordner auf dem Computer für die neue Karte. Ein leerer Ordner wird zur neuen Karte; sonst entsteht darin ein neuer Ordner «Deluge 432 Hz», wenn nötig nummeriert. Ein Ordner innerhalb der Karte wird abgelehnt.</li>
+  <li><b>Goldknopf:</b> die Stimmung, 415,3 bis 466,2 Hz, zu Beginn 432 Hz. Ziehen, das Mausrad oder + und − ändern sie um 1 Hz; mit Shift oder den Pfeiltasten links und rechts um 0,1 Hz. Klicke auf die Zahl, um sie einzutippen.</li>
+  <li><b>Kästchen:</b> 44,1 kHz oder die eigene Rate jeder Datei; Spitzen über 0 dBFS als 32-Bit-Float oder etwas leiser.</li>
+  <li><b>MODUS (MODE):</b> <b>LESEN</b> (READ) zeigt nur, was es tun würde, <b>UMSTIMMEN</b> (RETUNE) schreibt die neue Karte. Drück <b>START</b>; Anzeige und Pads zeigen den Fortschritt, dann die Zusammenfassung. <b>BERICHT</b> (REPORT) öffnet <code>RETUNE_REPORT.txt</code> (auf Englisch).</li>
+  <li>Kopiere die neue Karte auf eine leere SD-Karte und stell am Deluge denselben Master Tune ein.</li>
+</ol>
+<p>Vorher prüft es den freien Platz im Zielordner: etwa 5 % mehr als die Karte. <b>ESC</b> oder das Schliessen des Fensters hält an, sobald die laufenden Dateien fertig sind. START mit derselben Karte, demselben Zielordner und denselben Einstellungen macht dort weiter, wo es aufgehört hat.</p>
+<p><b>Was es mit der Karte macht:</b></p>
+<ul>
+  <li>Rechnet jedes Sample im exakten Verhältnis um (440/432 = 55/54): Ein 440-Hz-Ton misst danach 432,00 Hz, und die Datei wird um den Faktor 55/54 länger. Dateien mit 48 und 96 kHz werden im selben Durchgang zu 44,1 kHz.</li>
+  <li>Passt Start- und Endmarker, Loops und die Positionen von Audio-Clips in allen Songs, Kits und Synths an, dazu die Chunks <code>smpl</code> und <code>cue</code> in den Dateien.</li>
+  <li>Gibt Audio-Clips und Samples mit Time-Stretch eine Kopie <code>_ts</code>, die nur die Tonhöhe verschiebt und die Länge behält. AIFF-Dateien werden zu WAV, weil der Deluge <code>mtun</code> nur in WAV liest.</li>
+  <li>Übersteuert nichts: Eine Datei, deren Spitzen über 0 dBFS gingen, wird als 32-Bit-Float geschrieben oder genau so viel leiser gemacht wie nötig. Der Deluge begrenzt Float-Samples beim Laden auf 0 dBFS. Der Bericht listet diese Dateien auf.</li>
+  <li>Ändert nie die Originalkarte. Ein zweiter Durchlauf ändert nichts mehr. Wavetables, Dateien, die schon die Zielstimmung tragen, und Dateien, die der Deluge nicht lesen kann, bleiben, wie sie sind.</li>
+</ul>
+<p><b>Was es bringt</b> (Emulator, 432 Hz): Jede nicht transponierte Stimme spielt direkt. Pro Stimme und Block sinkt die Arbeit von 13 300 auf 2490 Befehle (mono) und von 19 800 auf 3000 (Audio-Clip). Die ganze Testkarte brauchte ohne Sample-Cache 34 % weniger, mit ihm 6 % weniger.</p>
+<div class="box warn">
+  <ul>
+    <li><b>Immer die ganze Karte:</b> Wandle eine Kopie der ganzen Karte um und kopiere das ganze Ergebnis auf eine zweite Karte, nie einzelne Ordner. Sonst würden Samples, die sich mehrere Songs teilen, umgewandelt, die Positionen in den anderen Songs aber nicht.</li>
+    <li><b>Transponierte Noten</b> werden weiterhin umgerechnet, zum Beispiel ein melodisch gespieltes Synth-Sample. Bei 440 Hz klingen die umgewandelten Samples dank <code>mtun</code> richtig, kosten aber wieder Umrechnung.</li>
+    <li><b>Sehr kurze Loops und Single-Cycle-Samples</b> können um bis zu 1,4 Cent verstimmt sein, weil Loop-Längen auf ganze Samples gerundet werden. Das Werkzeug warnt davor. In <code>_ts</code>-Kopien können sich Anschläge um bis zu 4,6 ms verschieben.</li>
+    <li><b>Loops, die kein Song nutzt,</b> werden wie einzelne Samples behandelt. Machst du später einen Audio-Clip daraus, streckt der Deluge ihn erneut. Nimm solche Loops aus einer Kopie der Originale.</li>
+    <li>Umgewandelte Karten sind noch nicht auf einem echten Deluge gespielt worden.</li>
+  </ul>
+</div>
+<p class="small">Kommandozeile: <code>pip install numpy soxr pylibrb</code>, dann <code>python3 tools/retune_library.py --card CARD_COPY --out NEW_CARD</code> (Standard 432 Hz, 44,1 kHz). <code>--dry-run</code> zeigt nur, <code>--resume</code> macht nach einer Unterbrechung weiter, <code>--no-float</code> macht Spitzen leiser, statt Float zu schreiben.</p>
+
+<h3 id="tools-baseline">8.4 DelugeBaseline</h3>
+<figure class="figure">
+  <img class="shot window" src="../../../screenshots/deluge_baseline.png" alt="DelugeBaseline nach dem Lesen einer Karte">
+  <figcaption>DelugeBaseline nach dem Lesen einer Karte: ein Pad pro Song, grün in Ordnung, orange mit Hinweisen.</figcaption>
+</figure>
+<p>DelugeBaseline prüft alle Songs einer Karte gegen die Pegel-Baseline in §5.8 und kann sie darauf setzen. Es hat zwei Funktionen, jede im Modus <b>LESEN</b> (READ: zeigt nur) oder <b>ANPASSEN</b> (APPLY: zeigt und schreibt dann beim zweiten START):</p>
+<table>
+  <tr><th style="width:18%">Funktion</th><th>Was ANPASSEN (APPLY) ändert</th></tr>
+  <tr><td>PEGEL (LEVELS)</td><td>Song-Lautstärke über 35 auf 35, Master-Kompressor aus. Kits und Audio-Spuren über 35 auf 35. Synths und Kit-Reihen so weit herunter, dass sie mit einem voll ausgesteuerten Sample höchstens wie 40 wirken. Automation behält ihre Form. Sättigung, die Kompressoren der Spuren, Analog-Delay und Filter bleiben: Das ist Klang, kein Pegel.</td></tr>
+  <tr><td>NORM</td><td>Hebt jedes Sample unter <code>SAMPLES/</code>, dessen Spitze unter dem Ziel liegt, bis zum Ziel an, nie darüber. Das Ziel stellt der Knopf ZIEL (TARGET) ein, Standard −1 dBFS. Nichts übersteuert; Format, Bittiefe und Chunks bleiben. Mit <b>AUSGLEICHEN</b> (COMPENSATE, standardmässig an) wird jeder Oszillator, der ein angehobenes Sample spielt, um genau so viel leiser gestellt, in jedem Song, Kit und Synth. So klingen die Songs wie vorher. Wavetables und Audio-Clips bleiben immer unberührt.</td></tr>
+</table>
+<ul>
+  <li><b>Knöpfe:</b> FUNKTION (FUNCTION) wählt PEGEL (LEVELS, Taste P) oder NORM (Taste N), MODUS (MODE) wählt LESEN (READ, Taste L) oder ANPASSEN (APPLY, Taste A). Dazu START (Enter), KARTE (CARD, Taste K), BERICHT (REPORT, Taste B) öffnet den ganzen Bericht als Text, ZURÜCK (RESTORE, Taste Z) zeigt die Sicherungen. Im englischen Fenster sind die Tasten L, N, R, A, C, T und B.</li>
+  <li><b>ANPASSEN</b> (APPLY) zeigt zuerst, was sich ändern würde, und die Pads der betroffenen Songs blinken. Ein zweites START schreibt, Esc bricht ab.</li>
+  <li><b>SCHREIBEN NACH (WRITE TO):</b> SD-KARTE DIREKT (SD CARD DIRECTLY), mit den alten Dateien in <code>BASELINE-BACKUP/</code>, oder KOPIE-ORDNER (COPY FOLDER), mit nur den geänderten Dateien im Aufbau der Karte. ZURÜCK (RESTORE) spielt eine Sicherung zurück.</li>
+  <li><b>Der Bericht</b> listet Songs, Kits oder Audio-Spuren über 35, einen eingeschalteten Master-Kompressor, Synths und Kit-Reihen über 40 («ohne Noten», wenn die Reihe keine Noten hat) und Stufen, die mit mehr Pegel stärker verzerren: Sättigung, Kompressor, Analog-Delay mit Feedback, Tiefpass mit Drive, Filter mit Resonanz ab 25. Jeder Pegel steht als Wert und in dB wie am Deluge, zum Beispiel «40,0 (+8,16 dB)».</li>
+  <li><b>Seine Grenze:</b> Es sagt dir nicht, ob ein Song übersteuert. Das zeigt nur eine Messung, zum Beispiel mit DelugeRec.</li>
+</ul>
+<p class="small">Ohne Fenster: <code>py tools/deluge_baseline.py [--lang en] check|levels|normalize E:\ [--yes]</code>. Ohne <code>--yes</code> zeigt es nur, was es tun würde.</p>
+
+<h3 id="tools-cpu">8.5 Die CPU-Monitor-Seite</h3>
+<ol>
+  <li>Verbinde den Deluge per USB und schalte den CPU-Monitor ein (§3.4).</li>
+  <li>Öffne <code>tools/cpu_monitor.html</code> in Chrome oder Edge; die Datei ins Fenster zu ziehen genügt. Klicke auf <b>Connect</b> und erlaube MIDI mit SysEx.</li>
+  <li>Lass den Eingang auf «All inputs» oder wähle Port 3 des Deluge. Kacheln und ein Diagramm der letzten 5 Minuten laufen live mit.</li>
+  <li><b>Export CSV</b> speichert jede empfangene Sekunde: eine Zeile pro Sekunde, Semikolon als Trennzeichen.</li>
+</ol>
+<table>
+  <tr><th style="width:26%">Wert</th><th>Bedeutung</th></tr>
+  <tr><td>CPU mean</td><td>Rechenzeit der Audio-Routine geteilt durch die Dauer des erzeugten Audios. Dauernd über etwa 90 % wird es eng.</td></tr>
+  <tr><td>CPU peak</td><td>Der teuerste einzelne Durchlauf. Einzelne Spitzen über 100 % fängt der Ausgangspuffer auf (128 Samples, 2,9 ms).</td></tr>
+  <tr><td>Voices</td><td>Aktive Stimmen, jetzt und das Maximum.</td></tr>
+  <tr><td>Direness</td><td>0–14. Über 0 hinkt die Audio-Routine dem Ausgang hinterher, und die Qualität wird gesenkt (<code>QL</code>). Der Anteil sagt, wie viel des Audios so entstand.</td></tr>
+  <tr><td>Culling</td><td>Stimmen pro Sekunde, die der CPU-Schutz wirklich ausblendet oder abschaltet (<code>VC</code>). Voice-Stealing wegen der Polyphonie zählt nicht.</td></tr>
+  <tr><td>SD card</td><td>Reine Lesezeit eines Sample-Clusters, Mittel und Maximum. Sie zeigt, wie schnell die Karte ist.</td></tr>
+  <tr><td>SD latency incl. audio</td><td>Dieselben Zugriffe von Anfang bis Ende, samt dem Audio, das derweil gerechnet wird: wie lange das Streaming auf einen Cluster wartet. Ist sie viel grösser als die Kartenzeit, bremst die CPU das Streaming, nicht die Karte.</td></tr>
+  <tr><td>Longest audio gap</td><td>Der längste Abstand zwischen zwei Durchläufen der Audio-Routine. Ab etwa 2,9 ms drohen Aussetzer.</td></tr>
+</table>
+
+<h3 id="tools-prof">8.6 Der Profiler</h3>
+<p>Mit <b>Settings → CPU monitor → Profile</b> zeigt der Deluge die gewohnte Zeile und sendet zusätzlich 1000-mal pro Sekunde, wo in seinem Code er gerade arbeitet, dazu die genaue CPU-Zeit jeder Spur. <span class="tag">v16</span> Das kostet etwa 0,04 % CPU und etwa 8 KB/s auf USB-MIDI-Port 3; der Puffer lässt immer 1 KB frei, damit Noten und Clock nicht warten.</p>
+<ol>
+  <li>Öffne <code>tools/profiler.html</code> in Chrome oder Edge und klicke auf <b>Connect</b>.</li>
+  <li><b>Load symbols:</b> Wähle die <code>.symbols.json</code> neben der Firmware, die du installiert hast. Nur die passende Datei liefert die richtigen Funktionsnamen.</li>
+  <li>Stell den Deluge auf Profile und spiele. <b>Reset</b> trennt zwei Abschnitte, zum Beispiel Leerlauf und Spielen.</li>
+  <li>Lies die Tabellen <b>by track</b>, <b>by task</b> und <b>by function</b>, oder speichere mit <b>Save recording</b> eine <code>.jsonl</code>-Datei.</li>
+</ol>
+<p class="small">Während eine Spur rechnet, sind die Interrupts aus. Diese Zeit erscheint gesammelt als <code>Song::renderAudio</code>; welche Spur es war, steht unter «by track».</p>
+<p><b>Ohne Browser</b> macht <code>tools/deluge_profiler.py</code> dasselbe (<code>pip install mido python-rtmidi</code>; unter Windows mit Python 3.12). <code>ports</code> listet die drei Ports des Deluge, <code>live</code> gibt eine Zeile pro Sekunde aus, <code>record -s 60 -o profile.jsonl</code> nimmt auf, <code>report profile.jsonl --symbols FILE</code> wertet aus. Port 3 findet es selbst. Die Live-Zeile:</p>
+<p><code>CPU 43.0 % (peak 71.0)  voices  24 (max  30)  QL 0 (0.0 % of the time)  cut 0  gap 3.1 ms  SD 11 loads, avg 1.7 max 9.0 ms</code></p>
+<table>
+  <tr><th style="width:18%">Teil</th><th>Bedeutung</th></tr>
+  <tr><td>CPU</td><td>Last der Audiofenster: Mittel und Spitze der letzten Sekunde. Ab v17 ist das die echte Last; bis v16 zeigte ein untätiger Deluge 85–90 % aktives Warten.</td></tr>
+  <tr><td>voices</td><td>Klingende Stimmen, jetzt und das Maximum.</td></tr>
+  <tr><td>QL</td><td>Qualität gesenkt (quality lowered): die Direness (0–14) und für welchen Anteil der Zeit.</td></tr>
+  <tr><td>cut</td><td>Vom CPU-Schutz abgeschaltete Stimmen (voices cut). Die Zahl, die zählt.</td></tr>
+  <tr><td>gap</td><td>Die längste Pause zwischen zwei Läufen der Audio-Routine. Ab etwa 2,9 ms droht ein Aussetzer.</td></tr>
+  <tr><td>SD</td><td>Ladevorgänge von der Karte, mittlere und längste Dauer.</td></tr>
+</table>
+<p class="small">Mit Profile zeigt <code>live</code> alle 5 s zusätzlich den Anteil der Audio-Routine, die teuersten Spuren und Tasks und, mit <code>--symbols</code>, Funktionen.</p>
+
+<h3 id="tools-dex">8.7 Die SD-Karte über USB: DEx und deluge-editor <span class="tag">v7</span></h3>
+<p>Die Karte bleibt im Deluge. Verbinde den Deluge per USB, öffne die Web-App in Chrome, Edge oder Opera und erlaube den MIDI-Zugriff. Die Apps finden den Dateizugriff selbst.</p>
+<table>
+  <tr><th style="width:22%">App</th><th>Was geht</th></tr>
+  <tr><td>DEx <code>dex.silicak.es</code></td><td>Dateibrowser: Ordner ansehen, Dateien hoch- und herunterladen, umbenennen, kopieren, verschieben, löschen, Ordner anlegen. Wie bisher auch Spiegeln der Anzeige und Screenshots.</td></tr>
+  <tr><td>deluge-editor <code>cyface.github.io/deluge-editor</code></td><td>Synth- und Kit-Presets direkt von der Karte öffnen und wieder dorthin speichern.</td></tr>
+</table>
+<p>Der Dateizugriff geht nur über USB; an den DIN-Buchsen ignoriert der Deluge solche Anfragen. Sein USB-MIDI-Sendepuffer ist viermal so gross wie in 1.2.1, so passt auch eine volle Ordnerseite mit langen Namen hinein.</p>
+<div class="box warn">
+  <ul>
+    <li><b>deluge-editor zeigt rot «needs community 1.3.0 or later»,</b> weil der Deluge ehrlich 1.2.1 meldet. Ignoriere es: Öffnen und Speichern funktionieren.</li>
+    <li><b>deluge-editor blendet Regler aus, die es erst ab 1.3 kennt,</b> darunter die Arp-Erweiterungen (Kapitel 6). Stell diese am Deluge ein; sie bleiben in der Datei erhalten. «Live Edit» funktioniert nicht.</li>
+    <li><b>Namen mit Umlauten</b> werden falsch angezeigt, und solche Dateien lassen sich meist nicht öffnen. Verwende in Namen nur A–Z, 0–9 und _.</li>
+    <li><b>Während der Wiedergabe</b> lösche oder überschreibe keine Samples, die der Song braucht. Grosse Übertragungen sind über MIDI langsam; für ganze Sample-Sammlungen ist ein Kartenleser schneller.</li>
+    <li><b>Übertrage keine Dateien, während du mit einer DAW über USB spielst:</b> Noten und Clock zum Computer teilen sich den Sendepuffer und können zu spät ankommen. DIN-MIDI ist nicht betroffen.</li>
+  </ul>
+</div>
