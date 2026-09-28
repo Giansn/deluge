@@ -489,6 +489,28 @@ void selfOsc() {
 		}
 	}
 }
+// 3. edge: the linear ladder's spectral radius (1: where it starts to sing) at the top of the cutoff's range, per
+// display cutoff and resonance, in ppm from 1 (printed only). Above 1 the noiseless ladder keeps a tone however slowly
+// it grows (lpf_whistle: the 24 dB ladder at 80 % resonance and ~19.7 kHz, which 1.2.1's analog noise on the cutoff
+// happened to damp)
+void edge() {
+	for (bool twelve : {false, true}) {
+		FilterMode mode = twelve ? FilterMode::TRANSISTOR_12DB : FilterMode::TRANSISTOR_24DB;
+		for (int cut = 36; cut <= 42; cut++) { // (from 41 on the cutoff is at its top: the same)
+			int32_t knob = (int32_t)std::min<int64_t>((int64_t)std::lround(cut * 128.0 / 50 - 64) << 25, INT32_MAX);
+			int32_t freq = getFinalParameterValueExp(2000000, cableToExpParamShortcut(knob)); // as lpf_whistle
+			printf("edge %s cutoff %2d:", twelve ? "12dB" : "24dB", cut);
+			for (int res = 36; res <= 50; res += 2) {
+				LpLadderFilter f{};
+				f.configure(freq, linearParam(res), mode, 0, 134217728);
+				printf(" r%d %+8.0f", res, (radius(probe(twelve, coefsOf(f))) - 1) * 1e6);
+			}
+			LpLadderFilter f{};
+			f.configure(freq, linearParam(40), mode, 0, 134217728);
+			printf("  (%.0f Hz)\n", cutoffHz(f.moveability));
+		}
+	}
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -499,6 +521,9 @@ int main(int argc, char** argv) {
 	}
 	if (!only || !strcmp(only, "selfosc")) {
 		selfOsc();
+	}
+	if (!only || !strcmp(only, "edge")) {
+		edge();
 	}
 	if (failures) {
 		printf("FAIL: %d ramps unstable or off the real ladder by more than %.1f dB\n", failures, kMaxDeviationDb);

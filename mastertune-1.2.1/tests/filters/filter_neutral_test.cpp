@@ -25,9 +25,16 @@
 // 4. fadein: a filter switched on fades in from its input: linear, the same weight for left and right, exact after
 //    320 frames (see fadeIn()).
 // 5. slots: more crossfades at once than there are slots: the one beyond switches at once, counted (see slots()).
+// 6. jumps: the cutoff jumping from 28 Hz to 16 kHz and back every block: no mid-ramp ringing (see jumps()).
+// 7. hpres: the HP ladder's level in the resonance's finest steps: no 1 / resonance to 8 bits (see hpRes()).
+// 8. glide: the filter params' 10 ms glide: its time constant, and a MIDI CC's steps on the cutoff (see glide()).
 //
-// Arguments: the part (static, zipper, clicks, fadein, slots or all), then verbose: every static case's hash.
+// Arguments: the part (static, zipper, clicks, fadein, slots, jumps, hpres, glide or all), then verbose: every static case's hash.
 #include "dsp/filter/filter_set.h"
+#if __has_include("dsp/filter/param_glide.h")
+#include "dsp/filter/param_glide.h"
+#define FILTER_PARAM_GLIDE
+#endif
 #include "util/functions.h"
 #include <algorithm>
 #include <cmath>
@@ -47,6 +54,7 @@ namespace {
 constexpr double kFs = 44100;
 constexpr int kBlock = 128;
 constexpr double kMaxZipper = -55; // dBc above 2 kHz, the block-set configuration against the per-sample one
+constexpr double kMaxZipperSlow = -100; // ... for the slow sweeps
 constexpr double kMaxStep = 2.5;   // the largest sample step after a change against the one before it
 constexpr double kMaxBurst = 6;    // dB above 4 kHz after a change against the case without it
 constexpr double kMinBurst = -70;  // dBc above 4 kHz that don't count (a 7 ms linear crossfade's corners: -80 dBc)
@@ -162,13 +170,19 @@ struct Runner {
 #ifdef FILTERSET_RAMP_GAIN
 			fs->renderLongStereo(buf.data(), buf.data() + 2 * n, isGlobal(ctx) ? kHpSatGlobal : kHpSatVoice,
 			                     isGlobal(ctx) ? kLpSatGlobal : kLpSatVoice, isGlobal(ctx));
-#else
+#elif defined(LPF_SATURATION_PER_CONTEXT)
 			fs->renderLongStereo(buf.data(), buf.data() + 2 * n, isGlobal(ctx) ? kHpSatGlobal : kHpSatVoice,
 			                     isGlobal(ctx) ? kLpSatGlobal : kLpSatVoice);
+#else // (mastertune-v17: the HP ladder's saturation only)
+			fs->renderLongStereo(buf.data(), buf.data() + 2 * n, isGlobal(ctx) ? kHpSatGlobal : kHpSatVoice);
 #endif
 		}
 		else {
+#ifdef LPF_SATURATION_PER_CONTEXT
 			fs->renderLong(buf.data(), buf.data() + n, n, 1, kHpSatVoice, kLpSatVoice);
+#else
+			fs->renderLong(buf.data(), buf.data() + n, n, 1, kHpSatVoice);
+#endif
 		}
 		double og = isGlobal(ctx) ? (double)gain / gainIn(ctx) : 1.0;
 		for (int i = 0; i < n; i++) {
@@ -317,6 +331,8 @@ struct Sweep {
 	Settings s;
 	double Settings::*param;
 	double from, to;
+	double limit;       // dBc above 2 kHz
+	double level = 1.0; // the tone's level against the common one (-16 dBFS)
 };
 
 double settingAt(const Sweep& z, double t) { // t: 0 to 1, up for the first half, down for the second
@@ -328,17 +344,17 @@ int zipper() {
 	const int frames = (int)kFs; // 1 s
 	// A tone below 600 Hz: a filter that moves smoothly puts nothing above 2 kHz, steps every block do (at the block
 	// rate, 345 Hz, and its multiples, around the tone)
-	std::vector<float> in(2 * frames);
+	std::vector<float> in0(2 * frames);
 	for (int i = 0; i < frames; i++) {
 		double t = i / kFs;
 		float v = (float)(0.15 * std::sin(2 * M_PI * 110 * t) + 0.06 * std::sin(2 * M_PI * 330 * t + 1)
 		                  + 0.04 * std::sin(2 * M_PI * 550 * t + 2));
-		in[2 * i] = v;
-		in[2 * i + 1] = v * 0.95f;
+		in0[2 * i] = v;
+		in0[2 * i + 1] = v * 0.95f;
 	}
 	std::vector<Sweep> sweeps;
 	auto add = [&](const char* name, Ctx ctx, FilterMode lm, FilterMode hm, double Settings::*p, double from,
-	               double to, double cut, double res) {
+	               double to, double cut, double res, double limit = kMaxZipper) {
 		Settings s;
 		s.lpfMode = lm;
 		s.hpfMode = hm;
@@ -346,7 +362,7 @@ int zipper() {
 		s.res = res;
 		s.hcut = hm != FilterMode::OFF ? cut : 10;
 		s.hres = hm != FilterMode::OFF ? res : 0;
-		sweeps.push_back({name, ctx, s, p, from, to});
+		sweeps.push_back({name, ctx, s, p, from, to, limit});
 	};
 	add("LP24 cutoff", Ctx::SYNTH, FilterMode::TRANSISTOR_24DB, FilterMode::OFF, &Settings::cut, 8, 45, 0, 25);
 	add("LP12 cutoff", Ctx::SYNTH, FilterMode::TRANSISTOR_12DB, FilterMode::OFF, &Settings::cut, 8, 45, 0, 25);
@@ -357,12 +373,38 @@ int zipper() {
 	add("LP24 reso", Ctx::SYNTH, FilterMode::TRANSISTOR_24DB, FilterMode::OFF, &Settings::res, 0, 45, 25, 0);
 	add("LP24 morph", Ctx::KIT_ROW, FilterMode::TRANSISTOR_24DB, FilterMode::OFF, &Settings::morph, 0, 40, 25, 20);
 	add("HPL cutoff", Ctx::KIT, FilterMode::OFF, FilterMode::HPLADDER, &Settings::hcut, 2, 35, 10, 25);
-	add("HPL reso", Ctx::KIT_ROW, FilterMode::OFF, FilterMode::HPLADDER, &Settings::hres, 0, 45, 12, 0);
+	// At -16 dBFS the HP ladder's tanh, which switches on at a resonance of 39 % (hpfProcessedResonance 750000000,
+	// 1.2.1's threshold, per block), changes the level by itself there (14 dB in that block), in the block-set one a
+	// block earlier than in the per-sample one: -38 dBc above 2 kHz from that alone (limit -35 here). At a voice's
+	// usual level (-46 dBFS) the tanh doesn't change it, and the usual limit holds
+	add("HPL reso", Ctx::KIT_ROW, FilterMode::OFF, FilterMode::HPLADDER, &Settings::hres, 0, 45, 12, 0, -35);
+	add("HPL reso -46", Ctx::KIT_ROW, FilterMode::OFF, FilterMode::HPLADDER, &Settings::hres, 0, 45, 12, 0);
+	sweeps.back().level = 0.0316;
 	add("SVF HP cutoff", Ctx::KIT, FilterMode::OFF, FilterMode::SVF_NOTCH, &Settings::hcut, 2, 35, 10, 25);
+	// Slow sweeps: about 1 and 1/8 octave per second (a display step is about 0.2 octave here), where 1.2.1's steps
+	// were small but still there every block (v17: -89 to -105 dBc above 2 kHz; v18: -131 to -153), against the
+	// stricter kMaxZipperSlow
+	add("LP24 slow 1oct", Ctx::SYNTH, FilterMode::TRANSISTOR_24DB, FilterMode::OFF, &Settings::cut, 18, 20.5, 0, 25,
+	    kMaxZipperSlow);
+	add("LP24 slow 1/8", Ctx::KIT, FilterMode::TRANSISTOR_24DB, FilterMode::OFF, &Settings::cut, 18, 18.3, 0, 25,
+	    kMaxZipperSlow);
+	add("LP12 slow 1oct", Ctx::KIT_ROW, FilterMode::TRANSISTOR_12DB, FilterMode::OFF, &Settings::cut, 18, 20.5, 0, 25,
+	    kMaxZipperSlow);
+	add("SVF slow 1oct", Ctx::KIT, FilterMode::SVF_BAND, FilterMode::OFF, &Settings::cut, 18, 20.5, 0, 25,
+	    kMaxZipperSlow);
+	add("HPL slow 1oct", Ctx::SYNTH, FilterMode::OFF, FilterMode::HPLADDER, &Settings::hcut, 15, 17.5, 10, 12,
+	    kMaxZipperSlow);
 	int failures = 0;
 	double worst = -300;
 	for (Sweep& z : sweeps) {
+		if (getenv("ONLY") && !strstr(z.name, getenv("ONLY"))) {
+			continue;
+		}
 		std::vector<double> blk, ref;
+		std::vector<float> in = in0;
+		for (float& v : in) {
+			v *= (float)z.level;
+		}
 		{ // per block: the setting at the block's end, as the params give it when the block is set up
 			Runner run(z.ctx);
 			for (int b = 0; b < frames / kBlock; b++) {
@@ -406,7 +448,7 @@ int zipper() {
 		// Above 2 kHz: the difference, and the output's own against the per-sample one's (where the configuration
 		// itself moves in steps, as the HPF's resonance does in 256, the per-sample one has them too, as clicks)
 		double full = db(e) - db(sig), hf = db(eh) - db(sig), more = db(bh) - db(rh);
-		bool bad = hf > kMaxZipper && more > -1;
+		bool bad = hf > z.limit && more > -1;
 		failures += bad;
 		worst = std::max(worst, hf);
 		printf("zipper %-7s %-13s %4.1f..%4.1f: out %6.1f dBFS, block vs per-sample %6.1f dBc, above 2 kHz %6.1f dBc "
@@ -656,6 +698,197 @@ int slots() {
 	return bad;
 }
 #endif
+// 6. jumps: the cutoff jumping between about 28 Hz and 16 kHz (display 5 and 40) every block, the most a ramp has to
+//    cover in one block, at resonance 0, 13, 25 and 38, every LP mode and the HP ladder, as a synth and a kit: the
+//    output's peak against the larger of the peaks with the filter held at either end. Fails where it's more than
+//    kMaxJumpDb above that (a set in the middle of a ramp that rings or runs away)
+int jumps() {
+	constexpr double kMaxJumpDb = 6;
+	const int blocks = 120;
+	std::vector<float> music = makeMusic(blocks * kBlock);
+	int failures = 0;
+	double worst = -300;
+	const FilterMode modes[] = {FilterMode::TRANSISTOR_24DB, FilterMode::TRANSISTOR_12DB,
+	                            FilterMode::TRANSISTOR_24DB_DRIVE, FilterMode::SVF_BAND, FilterMode::HPLADDER};
+	for (Ctx ctx : {Ctx::SYNTH, Ctx::KIT}) {
+		for (FilterMode m : modes) {
+			for (double res : {0.0, 13.0, 25.0, 38.0}) {
+				bool hp = m == FilterMode::HPLADDER;
+				Settings lo, hi;
+				for (Settings* s : {&lo, &hi}) {
+					if (hp) {
+						s->hpfMode = m;
+						s->hres = res;
+						s->hcut = s == &lo ? 5 : 40;
+					}
+					else {
+						s->lpfMode = m;
+						s->res = res;
+						s->cut = s == &lo ? 5 : 40;
+					}
+				}
+				auto peak = [&](int pattern) { // 0: lo, 1: hi, 2: alternating
+					Runner run(ctx);
+					std::vector<double> out;
+					for (int b = 0; b < blocks; b++) {
+						bool high = pattern == 1 || (pattern == 2 && (b & 1));
+						run.block(high ? hi : lo, &music[2 * b * kBlock], kBlock, out, nullptr);
+					}
+					double p = 1e-12;
+					for (size_t i = 2 * 8 * kBlock; i < out.size(); i++) { // after the first 8 blocks
+						p = std::max(p, std::fabs(out[i]));
+					}
+					return p;
+				};
+				double held = std::max(peak(0), peak(1)), jump = peak(2);
+				double over = 20 * std::log10(jump / held);
+				bool bad = over > kMaxJumpDb;
+				failures += bad;
+				worst = std::max(worst, over);
+				if (verbose || bad) {
+					printf("jumps %-7s %-5s res %4.1f: peak %6.1f dBFS, %+5.1f dB over the larger held one%s\n",
+					       ctxName(ctx), modeName(m), res, 20 * std::log10(jump), over, bad ? "  FAIL" : "");
+				}
+			}
+		}
+	}
+	printf("jumps: cutoff 28 Hz <-> 16 kHz every block: the peak at most %+.1f dB over the larger held one (limit "
+	       "%+.0f)\n",
+	       worst, kMaxJumpDb);
+	return failures;
+}
+// 7. hpres: the HP ladder's level as its resonance moves in its finest steps (1.2.1: 256 over the range): a 500 Hz
+//    tone (500 Hz: the antialiased tanh from a resonance of 50 %, a two-sample average, takes 0.1 dB off 2 kHz) at
+//    -57 dBFS (below the ladder's tanh) through the HP ladder at cutoff 5, a synth's, at 360 resonances from 0
+//    to 45 (above that the level rises steeply of itself towards self-oscillation); the largest level step against
+//    its neighbours' slope. 1.2.1 normalised with 1 / resonance to 8 bits and cut the resonance to 256 steps (steps up
+//    to 0.77 dB); fails above kMaxHpStepDb
+int hpRes() {
+	constexpr double kMaxHpStepDb = 0.1; // (where the resonance leaves its minimum, 1.2.1's, the slope bends: 0.085)
+	const int frames = 16 * kBlock;
+	std::vector<float> tone(2 * frames);
+	for (int i = 0; i < frames; i++) {
+		tone[2 * i] = tone[2 * i + 1] = (float)(0.002 * std::sin(2 * M_PI * 500 * i / kFs)); // -57 dBFS: below the tanh
+	}
+	std::vector<double> levels;
+	for (int k = 0; k <= 360; k++) {
+		Settings s;
+		s.hpfMode = FilterMode::HPLADDER;
+		s.hcut = 5;
+		s.hres = 45.0 * k / 360;
+		Runner run(Ctx::SYNTH);
+		std::vector<double> out;
+		for (int b = 0; b < frames / kBlock; b++) {
+			run.block(s, &tone[2 * b * kBlock], kBlock, out, nullptr);
+		}
+		double p = 0;
+		for (int i = frames; i < 2 * frames; i += 2) { // the second half
+			p += out[i] * out[i];
+		}
+		levels.push_back(db(p / (frames / 2)));
+	}
+	// A step against the neighbours' slope: |L[k+1] - 2 L[k] + L[k-1]| (the level's own slope, steep at low
+	// resonance, doesn't count)
+	double worst = 0, worstAt = 0;
+	for (size_t k = 1; k + 1 < levels.size(); k++) {
+		double d = std::fabs(levels[k + 1] - 2 * levels[k] + levels[k - 1]);
+		if (d > worst) {
+			worst = d;
+			worstAt = 45.0 * k / 360;
+		}
+		if (verbose) {
+			printf("  hpres %6.3f: %8.3f dBFS (%+.3f)\n", 45.0 * k / 360, levels[k], d);
+		}
+	}
+	bool bad = worst > kMaxHpStepDb;
+	printf("hpres: HP ladder level at 500 Hz as the resonance moves: largest step %.3f dB (at %.2f; limit %.2f)%s\n",
+	       worst, worstAt, kMaxHpStepDb, bad ? "  FAIL" : "");
+	return bad;
+}
+#ifdef FILTER_PARAM_GLIDE
+// 8. glide: the filter params' one-pole (dsp/filter/param_glide.h), as Sound::doFilterGlide() and
+//    GlobalEffectable::setupFilterSetConfig() run it once per block. (a) Its time constant: a step, advanced in blocks
+//    of 32, 60 and 128 samples, reaches 1 - 1/e after 10 ms (441 samples) within one block, and lands exactly on the
+//    target, no overshoot. (b) A MIDI CC turning the song's LPF cutoff (a kit's LP24, resonance 25): one CC step
+//    (a display step of 50 / 128) every 10 ms, 0.5 s up and down, taken at once (1.2.1: every block the new value) and
+//    through the glide: the output's energy above 2 kHz from the steps (against the same cutoff moving per sample in
+//    a straight line). Fails where the glide leaves more than kMaxGlideHfDb of it.
+int glide() {
+	using deluge::dsp::filter::FilterParamGlide;
+	int failures = 0;
+	for (int block : {32, 60, 128}) {
+		FilterParamGlide g{};
+		g.value[0] = 0;
+		const int32_t target = 1 << 30;
+		int n = 0, reached = -1;
+		bool over = false;
+		while (g.value[0] != target && n < 44100) {
+			g.active |= 1;
+			g.advance(0, target, FilterParamGlide::blockFactor(block));
+			n += block;
+			over |= g.value[0] > target;
+			if (reached < 0 && g.value[0] >= (int32_t)(target * (1 - std::exp(-1.0)))) {
+				reached = n;
+			}
+		}
+		bool bad = over || g.value[0] != target || std::abs(reached - 441) > block;
+		failures += bad;
+		printf("glide: blocks of %3d: 63 %% after %d samples (10 ms: 441), exactly there after %d, overshoot %s%s\n",
+		       block, reached, n, over ? "yes" : "no", bad ? "  FAIL" : "");
+	}
+	constexpr double kMaxGlideHfDb = -12;
+	const int frames = (int)kFs;
+	std::vector<float> in = makeTone(frames);
+	auto cc = [&](int i) { // the CC's value at sample i, display units: one step (50 / 128) every 441 samples
+		double t = (double)i / frames, u = t < 0.5 ? t * 2 : 2 - t * 2;
+		return 10 + std::floor(u * 25 * 128 / 50) * 50 / 128; // 10 to 35 on the display
+	};
+	auto run = [&](int how) { // 0: at once per block, 1: glide per block, 2: glide per sample (the reference)
+		Runner r(Ctx::KIT);
+		std::vector<double> out;
+		FilterParamGlide g{};
+		bool started = false;
+		int step = how == 2 ? 1 : kBlock;
+		for (int i = 0; i + step <= frames; i += step) {
+			double target = cc(i);
+			if (!started) {
+				g.value[0] = (int32_t)(target * 1e6);
+				started = true;
+			}
+			g.advance(0, (int32_t)(target * 1e6), FilterParamGlide::blockFactor(step));
+			Settings s;
+			s.lpfMode = FilterMode::TRANSISTOR_24DB;
+			s.res = 25;
+			s.cut = how == 0 ? target : g.value[0] / 1e6;
+			r.block(s, &in[2 * i], step, out, nullptr);
+		}
+		return out;
+	};
+	std::vector<double> atOnce = run(0), glided = run(1), ref = run(2);
+	auto hf = [&](const std::vector<double>& y) {
+		HP h(2000), hr(2000);
+		double e = 0;
+		for (size_t i = 0; i < y.size() && i < ref.size(); i += 2) {
+			double d = h(y[i] - ref[i]);
+			if (i > 2 * 4096) {
+				e += d * d;
+			}
+		}
+		return db(e);
+	};
+	double sig = 0;
+	for (size_t i = 0; i < ref.size(); i += 2) {
+		sig += ref[i] * ref[i];
+	}
+	double eOnce = hf(atOnce) - db(sig), eGlide = hf(glided) - db(sig);
+	bool bad = eGlide - eOnce > kMaxGlideHfDb;
+	failures += bad;
+	printf("glide: a CC step every 10 ms on the kit's LPF: above 2 kHz against the glide per sample: at once %.1f dBc, "
+	       "glided per block %.1f dBc (%+.1f dB; limit %+.0f)%s\n",
+	       eOnce, eGlide, eGlide - eOnce, kMaxGlideHfDb, bad ? "  FAIL" : "");
+	return failures;
+}
+#endif
 } // namespace
 
 int main(int argc, char** argv) {
@@ -678,6 +911,17 @@ int main(int argc, char** argv) {
 #ifdef FILTERSET_FADES
 	if (!only || !strcmp(only, "slots")) {
 		failures += slots();
+	}
+#endif
+	if (!only || !strcmp(only, "jumps")) {
+		failures += jumps();
+	}
+	if (!only || !strcmp(only, "hpres")) {
+		failures += hpRes();
+	}
+#ifdef FILTER_PARAM_GLIDE
+	if (!only || !strcmp(only, "glide")) {
+		failures += glide();
 	}
 #endif
 	if (failures) {

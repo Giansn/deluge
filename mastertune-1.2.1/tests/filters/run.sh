@@ -59,13 +59,15 @@ mkdir -p "$B/prec/dsp/filter" "$B/prec/util"
 sed 's/^private:/public:/' "$F/lpladder.h" > "$B/prec/dsp/filter/lpladder.h"
 # (and Filter's protected members: the ramps' pieces, for lpf_ramp_math)
 sed 's/^protected:/public:/' "$F/filter.h" > "$B/prec/dsp/filter/filter.h"
+# (and the SVF's, for svf_precision)
+sed 's/^private:/public:/' "$F/svf.h" > "$B/prec/dsp/filter/svf.h"
 awk '/_rounded\(q31_t.*\) \{$/ {r = 1} r && /int64_t\)b\) >> 32\)/ {sub(/\* \(int64_t\)b\) >> 32\)/, "* (int64_t)b + 0x80000000LL) >> 32)"); r = 0} /^}/ {r = 0} {print}' \
     "$D/deluge/util/fixedpoint.h" > "$B/prec/util/fixedpoint.h"
 grep -q '0x80000000LL) >> 32)' "$B/prec/util/fixedpoint.h" || { echo "run.sh: fixedpoint.h's rounded multiplies not found"; exit 1; }
 status=0
-for t in ${TEST:-filter_tone hpf_whistle lpf_whistle lpf_precision lpf_ramp_math filter_neutral}; do
+for t in ${TEST:-filter_tone hpf_whistle lpf_whistle lpf_precision svf_precision lpf_ramp_math filter_neutral}; do
   INC=""
-  { [ "$t" = lpf_precision ] || [ "$t" = lpf_ramp_math ]; } && INC="-I $B/prec"
+  { [ "$t" = lpf_precision ] || [ "$t" = lpf_ramp_math ] || [ "$t" = svf_precision ]; } && INC="-I $B/prec"
   $CXX $DEFS $INC -I "$T/bench/filters/stubs" -I "$T/delay/stubs" -I "$T/arm" -I "$D/deluge" -I "$D" -include host_shim.h \
       -include definitions_cxx.hpp -o "$B/$t" "$HERE/${t}_test.cpp" "$F/filter_set.cpp" \
       "$F/lpladder.cpp" "$F/hpladder.cpp" "$F/svf.cpp" "$F/filter.cpp" "$D/deluge/util/waves.cpp" \
@@ -90,6 +92,9 @@ for t in ${TEST:-filter_tone hpf_whistle lpf_whistle lpf_precision lpf_ramp_math
     $RUN "$B/$t" clicks || status=1
     $RUN "$B/$t" fadein || status=1
     $RUN "$B/$t" slots || status=1
+    $RUN "$B/$t" jumps || status=1
+    $RUN "$B/$t" hpres || status=1
+    $RUN "$B/$t" glide || status=1
     continue
   fi
   $RUN "$B/$t" || status=1
