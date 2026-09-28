@@ -15,7 +15,7 @@
 | ![Song change armed: 2 bars remaining](mastertune-1.2.1/screenshots/oled_songchange.png) | ![The song's volume knob: master level −8.5 dB](mastertune-1.2.1/screenshots/oled_volume_db.png) |
 | Song-change countdown | Volume in 0.5 dB steps, shown in dB |
 
-<sub>The OLED of the real v18.3 firmware, run in the emulator (`tests/screenshots`).</sub>
+<sub>The OLED of the real v18.3 firmware, run in the emulator (`mastertune-1.2.1/tests/screenshots`).</sub>
 
 **Lighter on the CPU**
 - **About 20–25% less CPU work per sample than stock 1.2.1**, measured the same way for both in the emulator on three songs. At moderate load the audio routine's time can roughly halve, because a scheduling bug from 1.2.1 is fixed; near full load that advantage disappears. In a full-load test song 32 voices stay on average instead of 20 before any are cut. Method, numbers and caveats: [`tests/vs121/README.md`](mastertune-1.2.1/tests/vs121/README.md).
@@ -50,11 +50,11 @@
 | ![DelugeTuner having read a card](mastertune-1.2.1/screenshots/deluge_tuner.png) | **DelugeTuner** ([download v2](https://github.com/Giansn/deluge/releases/download/deluge-tuner-v2/DelugeTuner-v2.exe)): retunes a card's sample library once to the master tune. The samples then play as they are instead of being resampled in every voice. |
 | ![DelugeBaseline having read a card](mastertune-1.2.1/screenshots/deluge_baseline.png) | **DelugeBaseline** ([download v4](https://github.com/Giansn/deluge/releases/download/deluge-baseline-v4/DelugeBaseline-v4.exe)): checks the levels of all songs on a card and evens them out, with a backup. |
 
-The newest version of each tool is always in its release: [deluge-rec](https://github.com/Giansn/deluge/releases/tag/deluge-rec), [deluge-tuner](https://github.com/Giansn/deluge/releases/tag/deluge-tuner), [deluge-baseline](https://github.com/Giansn/deluge/releases/tag/deluge-baseline). As Python scripts they are in `tools/`.
+The newest version of each tool is always in its release: [deluge-rec](https://github.com/Giansn/deluge/releases/tag/deluge-rec), [deluge-tuner](https://github.com/Giansn/deluge/releases/tag/deluge-tuner), [deluge-baseline](https://github.com/Giansn/deluge/releases/tag/deluge-baseline). As Python scripts they are in `mastertune-1.2.1/tools/`.
 
 **Tested:** every release is built twice with the same SHA-256. The firmware's own ARM code runs in an emulator: it boots, loads songs, renders audio and goes through hundreds of checks and stress tests. The emulator is not the hardware, though: timing, the SD card and USB can still behave differently on a real Deluge.
 
-**Source:** `patches/0001`–`0116` against `release_1_2_1`, plus `l2test/0001`–`0003` for the L2 build.
+**Source:** `mastertune-1.2.1/patches/0001`–`0116` against `release_1_2_1`, plus `mastertune-1.2.1/l2test/0001`–`0003` for the L2 build.
 
 ## All versions
 
