@@ -25,10 +25,11 @@ Scenarios:
               4 KB real, the rest sparse): DEFAULT (the heavy song, playing) and ~1,000 songs in groups that both
               v17's rule (the first word) and v18's (the name without its number) group the same: 150 groups "G001 mix",
               "G001 mix 2", .. (1, 2, 3, 5, 8 or 12 versions), "LIVE set" .. "LIVE set 120" (larger than the browser's
-              window of 100 file items), 100 songs of their own "S001X solo" ... --rounds rounds: the browser opened,
-              --steps turns of +1 (20 ms of the task manager after each: a fast turn), on every 3rd folded group row
-              (LoadSongUI::selectionShownFolded()) the encoder pressed (folds out), +1 three times through its versions,
-              BACK (folds in); then -1 x 15; then BACK until the browser is closed. Per round: the worst gap, underruns,
+              window of 100 file items), 100 songs of their own "S001X solo" ... --rounds rounds: the browser opened
+              (on DEFAULT, "LIVE set 60", "G075 mix 5", "S050X solo" in turn: the current song's name set first),
+              --steps turns of +1 (-1 in every 2nd round; 20 ms of the task manager after each: a fast turn), on every
+              3rd folded group row (LoadSongUI::selectionShownFolded()) the encoder pressed (folds out), three more
+              turns through its versions, BACK (folds in); then 15 turns back; then BACK until the browser is closed. Per round: the worst gap, underruns,
               folder reads (Browser::readFileItemsFromFolderAndMemory()), per action instructions and emulated time;
               the heap after it.
   save        the heavy song (DEFAULT) playing, saved --saves times to SONGS/SAVETEST.XML as SaveSongUI does
@@ -408,8 +409,13 @@ class Rig:
             waited += slice_s
         return waited
 
-    def open_browser(self):
-        """openUI(&loadSongUI) (it opens on the current song), then the task manager until its scroll-in is over."""
+    def open_browser(self, start=None):
+        """openUI(&loadSongUI) (it opens on the current song; with start, the current song's name set to that first,
+        as tests/browser does), then the task manager until its scroll-in is over."""
+        if start:
+            self.emu.uc.mem_write(STOP + 0x200, start.encode() + b"\0")
+            self.emu.call(self.emu.sym["_ZN6String3setEPKcl"], self.song() + self.song_name_off, STOP + 0x200,
+                          0xFFFFFFFF)
         r0 = self.folder_reads
         ok, n = self.action("open the song browser", self.a["_Z6openUIP2UI"], self.v["loadSongUI"], limit_s=20)
         waited = self.wait_mode_none()
@@ -487,9 +493,24 @@ class Rig:
 
 # --- the cards
 
-def heavy_songs(synths):
+def scale_tempo(xml, scale):
+    """The song's tempo times scale (timePerTimerTick and its fraction: samples per tick at 96 ticks per quarter)."""
+    if scale == 1:
+        return xml
+    t = 44100 * 60 / (120 * scale) / 96
+    whole = int(t)
+    frac = round((t - whole) * 2 ** 32)
+    frac -= 2 ** 32 if frac >= 2 ** 31 else 0
+    xml, n = re.subn(r'timePerTimerTick="\d+"', f'timePerTimerTick="{whole}"', xml, count=1)
+    xml, m = re.subn(r'timerTickFraction="-?\d+"', f'timerTickFraction="{frac}"', xml, count=1)
+    assert n == m == 1, "no tempo in the song"
+    return xml
+
+
+def heavy_songs(synths, tempo_scale=1):
     """(files with the samples, {name: xml}): make_sd.py's song with `synths` synths (the kit, the audio track, the
-    drone), the same with every LPF 24dBDrive, and the drone tracks plus `synths` synths."""
+    drone), the same with every LPF 24dBDrive, and the drone tracks plus `synths` synths; at 120 BPM times
+    tempo_scale."""
     files, lengths = make_sd.samples()
     heavy = make_sd.song_xml(lengths, 1, synths)
     drive = heavy.replace('lpfMode="24dB"', 'lpfMode="24dBDrive"')
@@ -499,12 +520,13 @@ def heavy_songs(synths):
         drone = make_sd.song_xml(lengths, 1, drone_track=True)
     finally:
         make_sd.drone_tracks = orig
-    return files, dict(DEFAULT=heavy, DRIVE=drive, DRONE=drone)
+    songs = dict(DEFAULT=heavy, DRIVE=drive, DRONE=drone)
+    return files, {k: scale_tempo(v, tempo_scale) for k, v in songs.items()}
 
 
-def build_songchange_card(path, synths, start="DEFAULT"):
+def build_songchange_card(path, synths, start="DEFAULT", tempo_scale=1):
     """SONGS/DEFAULT.XML is the song loaded at boot (start); the others under their names."""
-    files, songs = heavy_songs(synths)
+    files, songs = heavy_songs(synths, tempo_scale)
     for name, xml in songs.items():
         files[f"SONGS/{name}.XML"] = xml.encode()
     if start != "DEFAULT":
@@ -610,14 +632,16 @@ def run_bigcard(a, rig, res):
     rounds = res["rounds"] = []
     actions = collections.defaultdict(list)  # kind -> [instructions]
     headers_seen = 0
+    starts = ["DEFAULT", "LIVE set 60", "G075 mix 5", "S050X solo"]
     for rnd in range(a.rounds):
         r0, t0 = rig.folder_reads, time.time()
-        opened = rig.open_browser()
+        direction = 1 if rnd % 2 == 0 else -1
+        opened = rig.open_browser(starts[rnd % len(starts)])
         actions["open"].append(opened["instructions"])
         start = rig.browser_name()
         forced = folds = 0
         for _ in range(a.steps):
-            s = rig.turn(1)
+            s = rig.turn(direction)
             actions["turn"].append(s["instructions"])
             forced += s["forced"]
             if emu.call(folded, rig.v["loadSongUI"]) & 0xFF:
@@ -640,7 +664,7 @@ def run_bigcard(a, rig, res):
                     if rig.ui_name() != "loadSongUI":  # BACK closed it (the selection wasn't in the group)
                         rig.open_browser()
         for _ in range(15):
-            s = rig.turn(-1)
+            s = rig.turn(-direction)
             actions["turn"].append(s["instructions"])
         end = rig.browser_name()
         closes = 0
@@ -820,7 +844,7 @@ def run_settings(a, out, res, tools, build):
 
     def record(label, rig, **kw):
         xml, values = community_file(sd)
-        s = dict(step=label, file=values, problems=list(rig.problems), error_popups=rig.error_popups(),
+        s = dict(step=label, file=values, file_text=xml, problems=list(rig.problems), error_popups=rig.error_popups(),
                  invalid=len(rig.invalid), **kw)
         steps.append(s)
         log(f"  {label}: " + ", ".join(f"{k} {v}" for k, v in kw.items()) + f"; file {values or 'none'}"
@@ -934,6 +958,8 @@ def main():
     ap.add_argument("--changes", type=int, default=30)
     ap.add_argument("--order", default="DRIVE,DRONE,DEFAULT", help="songchange: the songs, in turn")
     ap.add_argument("--start", default="DEFAULT", help="songchange: the song loaded at boot (DEFAULT, DRIVE, DRONE)")
+    ap.add_argument("--tempo-scale", type=float, default=1, help="songchange, save, drone: the songs' tempo times this "
+                    "(120 BPM x 4: a 4-bar loop in 2 s, so the launch after a song change comes 4 times sooner)")
     ap.add_argument("--settle", type=float, default=1.0, help="seconds of the new song after each change")
     ap.add_argument("--rounds", type=int, default=6)
     ap.add_argument("--steps", type=int, default=60)
@@ -947,7 +973,8 @@ def main():
     os.makedirs(out, exist_ok=True)
     tools = a.tools or os.path.join(os.path.dirname(os.path.abspath(a.elf)),
                                     "../../toolchain/v16/linux-x86_64/arm-none-eabi-gcc/bin/arm-none-eabi-")
-    res = dict(elf=a.elf, scenario=a.scenario, sd_latency=a.sd_latency, synths=a.synths, problems=[])
+    res = dict(elf=a.elf, scenario=a.scenario, sd_latency=a.sd_latency, synths=a.synths, tempo_scale=a.tempo_scale,
+               problems=[])
     t0 = time.time()
     rig = None
     image = os.path.join(out, f"{a.scenario}.img")
@@ -961,7 +988,7 @@ def main():
             if a.scenario == "bigcard":
                 res["songs_on_card"] = build_bigcard(image, a.synths)
             else:
-                res["songs"] = build_songchange_card(image, a.synths, a.start)
+                res["songs"] = build_songchange_card(image, a.synths, a.start, a.tempo_scale)
             rig = Rig(a.elf, tools, a.build, image, a.sd_latency)
             res["boot"] = dict(song=rig.song_name(), root=rig.ui_name(root=True), heap=rig.heap())
             log(f"{a.scenario} on {a.elf}: booted, {rig.song_name()!r} in {res['boot']['root']}, the card "

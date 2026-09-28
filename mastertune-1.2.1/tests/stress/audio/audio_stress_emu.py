@@ -44,7 +44,8 @@ Measured over the bars after the warm-up (--warmup-bars, also played in real tim
 - Output (what the firmware wrote to the codec, full scale 2^31): peak, clipped samples (at the rail, |x| >=
   0x7FFFFF00), clicks: samples where the 2nd difference of either channel is over 8 times its RMS over the previous
   10 ms (441 samples) and over -40 dBFS; also as events (clicks less than 10 ms apart are one), and for --mode-storm how
-  many events start within 10 ms after a switch. stress.wav (16 bits).
+  many events start within 10 ms and within 128 samples after a switch (and how many would by chance: the share of
+  the time those 128 samples cover); the same for cpuDireness going to or from 14. stress.wav (16 bits).
 - Heap: the GeneralMemoryAllocator's regions (song_emu.ram_usage(): internal RAM, SDRAM, the stealable SDRAM with the
   sample clusters) free and allocations after the warm-up and at the end, at the same place in the song's loop when the
   bars are a multiple of 4 (a leak shows as less free at the end), and after loading, before playback.
@@ -503,7 +504,8 @@ def main():
         functions = se.profile_by_function(emu)
         result["top_functions"] = [(n, round(v / rendered * 128)) for n, v in functions.most_common(30)]
     np.savez_compressed(os.path.join(a.out, "calls.npz"), calls=np.array(calls, dtype=np.int64).reshape(-1, 7),
-                        measured_from=marks["calls"])
+                        measured_from=marks["calls"], mode_events=np.array(storms.mode_events, dtype=np.int64),
+                        measured_from_sample=marks["out"])
     x = np.frombuffer(dma.out, dtype="<i4").reshape(-1, 2)
     wav_path = os.path.join(a.out, "stress.wav")
     with wave.open(wav_path, "wb") as f:
@@ -546,14 +548,23 @@ def main():
             out["click_events_within_10ms_after_direness_14_change"] = near14
         if a.mode_storm:
             # Events within 10 ms after a switch (the output's sample index = samples rendered since playback started,
-            # less those before the measurement)
+            # less those before the measurement), and within the 128 samples after one (a switch takes effect in the
+            # next window: a hard switch's step is there), against how many would be there by chance (the share of
+            # the time those 128 samples cover)
             sw = np.array(storms.mode_events[marks["events"]:], dtype=np.int64) - marks["out"]
-            near = 0
+            near = near128 = 0
             if len(sw) and len(events):
                 j = np.searchsorted(sw, events, side="right") - 1
-                near = int(np.sum((j >= 0) & (events - sw[np.maximum(j, 0)] <= CLICK_WINDOW)))
+                after = events - sw[np.maximum(j, 0)]
+                near = int(np.sum((j >= 0) & (after <= CLICK_WINDOW)))
+                near128 = int(np.sum((j >= 0) & (after < 128)))
+            covered = np.zeros(len(m), bool)
+            for s0 in sw[(sw >= 0) & (sw < len(m))]:
+                covered[s0:s0 + 128] = True
             out["switches"] = int(len(sw))
             out["click_events_within_10ms_after_switch"] = near
+            out["click_events_within_128_after_switch"] = near128
+            out["click_events_within_128_after_switch_by_chance"] = float(len(events) * covered.mean())
         result["output"] = out
     result["mode_switches"] = len(storms.mode_events)
     result["song_param_jumps"] = storms.song_events
@@ -581,8 +592,9 @@ def main():
         o = result["output"]
         log(f"output: peak {o['peak_dbfs']:.2f} dBFS, RMS {o['rms_dbfs']:.1f} dBFS, clipped {o['clipped_samples']}, "
             f"clicks {o['click_samples']} samples / {o['click_events']} events"
-            + (f", {o['click_events_within_10ms_after_switch']} within 10 ms after one of {o['switches']} switches"
-               if a.mode_storm else "")
+            + (f", {o['click_events_within_10ms_after_switch']} within 10 ms after one of {o['switches']} switches, "
+               f"{o['click_events_within_128_after_switch']} within 128 samples (by chance "
+               f"{o['click_events_within_128_after_switch_by_chance']:.1f})" if a.mode_storm else "")
             + (f", {o.get('click_events_within_10ms_after_direness_14_change', 0)} within 10 ms after one of "
                f"{o.get('direness_14_changes', 0)} changes of cpuDireness to or from 14"))
     log(f"heap free internal / external: loaded {hfree(result['heap_loaded'])}, after warm-up "

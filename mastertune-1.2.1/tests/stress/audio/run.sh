@@ -18,6 +18,11 @@
 #               tures.XML, "on") and both off ("off"); the old build with the same card as "on" (it has neither)
 #   clipping    the song pushed into clipping (every volume at the knob's maximum) and the mode storm, BARS_CLIP bars,
 #               new on / new off / old: with the limiter on no sample may clip
+# Not in the default list, to find where a difference comes from:
+#   storm1      the mode storm switching one object at a time (--storm-objects 1, as a user would), BARS_CLIP bars:
+#               the new build's crossfades (24 at once at most) against the old build's hard switches
+#   automation-parts  the automation song with only the filters, only EQ, only volume and pan automated (stress_sd.py
+#               --automate), without the song storm, BARS_PART bars (default 2)
 # BARS_LONG (default 64), BARS (32), BARS_CLIP (8), WARMUP (1): bars; the measurement starts after the warm-up.
 # Results: <out>/<scenario>-<build>/result.json, stress.wav, log; <out>/summary.md. Run one at a time (one emulator
 # process); about 15 s per bar at the default song's load (the full list at the default bars: about 3 hours).
@@ -98,6 +103,14 @@ for s in $SCENARIOS; do
 		case_run clipping new new-on "$BARS_CLIP" --song clipping --limiter --guard -- --mode-storm
 		case_run clipping new new-off "$BARS_CLIP" --song clipping -- --mode-storm
 		case_run clipping old old "$BARS_CLIP" --song clipping --limiter --guard -- --mode-storm ;;
+	storm1)
+		case_run storm1 new new "$BARS_CLIP" --song base -- --mode-storm --storm-objects 1
+		case_run storm1 old old "$BARS_CLIP" --song base -- --mode-storm --storm-objects 1 ;;
+	automation-parts)
+		for part in filters eq mix; do
+			case_run "automation_$part" new new "${BARS_PART:-2}" --song automation --automate "$part"
+			case_run "automation_$part" old old "${BARS_PART:-2}" --song automation --automate "$part"
+		done ;;
 	*) echo "unknown scenario $s"; exit 2 ;;
 	esac
 done

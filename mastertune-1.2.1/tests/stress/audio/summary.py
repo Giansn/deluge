@@ -13,7 +13,8 @@ import json
 import os
 import sys
 
-ORDER = ["full", "full16", "drive", "automation", "storm", "clipping"]
+ORDER = ["full", "full16", "drive", "automation", "storm", "clipping", "storm1", "automation_filters",
+         "automation_eq", "automation_mix"]
 
 
 def row(name, r):
@@ -30,7 +31,10 @@ def row(name, r):
         return f"{hs[k]['free']:,} -> {he[k]['free']:,}" if hs and he else "-"
     peak = o.get("peak_dbfs")
     extra = ""
-    if "click_events_within_10ms_after_switch" in o:
+    if "click_events_within_128_after_switch" in o:
+        extra = (f"; {o['click_events_within_128_after_switch']} within 128 samples after one of {o['switches']} "
+                 f"switches (chance {o['click_events_within_128_after_switch_by_chance']:.0f})")
+    elif "click_events_within_10ms_after_switch" in o:
         extra = f"; {o['click_events_within_10ms_after_switch']} after one of {o['switches']} switches"
     di = r.get("cpu_direness", {})
     cells = [name, status,
@@ -50,7 +54,7 @@ def main():
     for d in sorted(os.listdir(out)):
         p = os.path.join(out, d, "result.json")
         if os.path.isfile(p):
-            scenario = d.split("-")[0]
+            scenario = d.rsplit("-", 1)[0] if d.rsplit("-", 1)[0] in ORDER else d.split("-")[0]
             runs.append((ORDER.index(scenario) if scenario in ORDER else len(ORDER), d, json.load(open(p))))
     print("| run | status | CPU % mean / p99 / max | direness 14 (changes) | culls soft / force | underruns "
           "(events / samples), max gap | clicks (samples / events) | peak dBFS / clipped | heap internal free "
