@@ -67,6 +67,7 @@ filterDefs() {
   grep -q "doubled()" "$1/deluge/dsp/filter/lpladder.h" && d="$d -DLPF_RAMP_PAIRS"
   grep -q "vrhaddq_s32" "$1/deluge/dsp/filter/filter_set.cpp" && d="$d -DFILTERSET_PARALLEL_HALF"
   grep -q "driveCompensate" "$1/deluge/dsp/filter/lpladder.h" && d="$d -DDRIVE_BASS_COMP"
+  grep -q "driveWantsOversampling" "$1/deluge/dsp/filter/lpladder.h" && d="$d -DDRIVE_WHERE_121"
   echo "$d"
 }
 DEFS=$(filterDefs "$D")
@@ -82,6 +83,8 @@ sed 's/^private:/public:/' "$F/lpladder.h" > "$B/prec/dsp/filter/lpladder.h"
 sed 's/^protected:/public:/' "$F/filter.h" > "$B/prec/dsp/filter/filter.h"
 # (and the SVF's, for svf_precision)
 sed 's/^private:/public:/' "$F/svf.h" > "$B/prec/dsp/filter/svf.h"
+# (and FilterSet's, for drive's where: which way its ladder runs)
+sed 's/^private:/public:/' "$F/filter_set.h" > "$B/prec/dsp/filter/filter_set.h"
 awk '/_rounded\(q31_t.*\) \{$/ {r = 1} r && /int64_t\)b\) >> 32\)/ {sub(/\* \(int64_t\)b\) >> 32\)/, "* (int64_t)b + 0x80000000LL) >> 32)"); r = 0} /^}/ {r = 0} {print}' \
     "$D/deluge/util/fixedpoint.h" > "$B/prec/util/fixedpoint.h"
 grep -q '0x80000000LL) >> 32)' "$B/prec/util/fixedpoint.h" || { echo "run.sh: fixedpoint.h's rounded multiplies not found"; exit 1; }
