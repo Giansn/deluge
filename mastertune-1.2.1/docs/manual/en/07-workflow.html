@@ -1,8 +1,8 @@
 <h2 class="chapter" id="ch-workflow">7. Songs and workflow</h2>
 
-<p class="lead">A song browser that keeps a song's versions together, a countdown when you change songs, saving without crackle, a dimmer OLED and pads that don't flicker, plus a list of fixes for MIDI, clock and the card.</p>
+<p class="lead">A song browser that keeps a song's versions together, a countdown when you change songs, saving without crackle, a dimmer OLED and pads that don't flicker, plus fixes for MIDI, clock and the card.</p>
 
-<h3 id="wf-browser">7.1 Song browser with versions <span class="tag">v17</span> <span class="tag">v18</span></h3>
+<h3 id="wf-browser">7.1 Song browser with versions <span class="tag">v17, v18</span></h3>
 <div class="grid2">
 <div>
 <p>Songs whose names differ only by a number at the end are versions of one song: "New Sitar Grii", "New Sitar Grii 2" … "New Sitar Grii 10" appear as <b>one line with an arrow</b>. The line shows the whole name.</p>
@@ -46,7 +46,7 @@
   <li><b>Until the change</b> the gold knobs and mod buttons control the master effects of the <b>playing</b> song, from the moment you press <span class="key">LOAD</span>, even with Affect Entire off. The new song keeps its own values.</li>
 </ul>
 
-<h3 id="wf-save">7.3 Saving without crackle <span class="tag">v11</span> <span class="tag">v13</span></h3>
+<h3 id="wf-save">7.3 Saving without crackle <span class="tag">v11, v13</span></h3>
 <ul>
   <li><b>No crackle:</b> in 1.2.1 the audio engine stood still while the Deluge wrote a song or preset to the card. The output repeated its last buffer: a short crackle at every save. Now the audio keeps running, and the samples that are playing keep loading. This applies to songs, synth and kit presets and settings.</li>
   <li><b>Faster:</b> saving during playback takes 22 instead of 344 ms in the emulator (a song with 3 synths), or 66 instead of 716 ms (5 synths).</li>
@@ -68,7 +68,7 @@
 <h3 id="wf-settings">7.6 Settings that survive <span class="tag">v18.3</span></h3>
 <p>When the Deluge saves its community settings, it now keeps those it doesn't know, for example from a newer version, with their name and value. 1.2.1, v17 and the current community firmware wrote them back under a wrong name. So switching to v17 and back still resets Output limiter, Filter crossing guard and OLED brightness to their defaults. Set them again after such a switch.</p>
 
-<h3 id="wf-midi">7.7 MIDI, clock and sync fixes</h3>
+<h3 id="wf-midi">7.7 MIDI, clock and card fixes</h3>
 <table>
   <tr><th style="width:26%">Fix</th><th style="width:9%">Since</th><th>What changed</th></tr>
   <tr><td>MIDI and gate outputs on time</td><td>v13</td><td>Events late in an audio block went out a whole block (2.9 ms) too early, especially while saving. And the timer of the MIDI and gate outputs was never reset before the start: a run could come up to 38 samples early, or after an overflow about 127 ms late. Now every run is accurate to ±1.4 samples.</td></tr>
@@ -76,11 +76,7 @@
   <tr><td>Clock outputs under external clock</td><td>v15</td><td>When the Deluge followed an external MIDI clock, its gate clock and MIDI clock outputs stopped after a short burst. Now both keep running in time with the incoming clock. With the internal clock everything stays as before.</td></tr>
   <tr><td>Section launch by CC</td><td>v15</td><td>A section launch learned to a CC was lost when the song was loaded; learned notes were kept. Now the CC is kept too.</td></tr>
   <tr><td>USB MIDI from the computer</td><td>v15</td><td>If MIDI came faster than once per millisecond (dense automation from the DAW, SysEx, file access over USB), packets were lost. Now the computer waits until the Deluge is ready.</td></tr>
+  <tr><td>Card transfers</td><td>v14</td><td>Around every transfer from and to the SD card, a write happening at the same time right next to the buffer could get lost. This bug is from 1.2.1.</td></tr>
+  <tr><td>File access over USB</td><td>v14</td><td>In rare cases wrong bytes could end up in a copied file (8.7).</td></tr>
 </table>
 <p class="small">The three fixes of v15 were taken over from the current community firmware.</p>
-
-<h3 id="wf-card">7.8 Two rare card bugs fixed <span class="tag">v14</span></h3>
-<ul>
-  <li>Around every transfer from and to the SD card, a write happening at the same time right next to the buffer could get lost. This bug is from 1.2.1.</li>
-  <li>With file access over USB (8.7), wrong bytes could in rare cases end up in a copied file.</li>
-</ul>

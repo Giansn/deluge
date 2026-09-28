@@ -1,0 +1,179 @@
+<h2 class="chapter" id="ch-ref">11. Reference</h2>
+
+<h3 id="ref-menu">11.1 New and changed menu items</h3>
+<table style="break-inside:auto">
+  <thead>
+  <tr><th style="width:34%">Menu item</th><th>Values</th><th style="width:12%">7-segment</th><th style="width:9%">Since</th><th style="width:6%">See</th></tr>
+  </thead>
+  <tbody>
+  <tr style="break-inside:avoid"><td colspan="5" style="background:#f3f5f9"><b>Settings</b></td></tr>
+  <tr style="break-inside:avoid"><td>Tuning → Master tune (Hz)</td><td>415.3–466.2 Hz in 0.1 Hz steps, default 440.0</td><td><code>TUNE</code> → <code>MTUN</code></td><td>v2</td><td>2.1</td></tr>
+  <tr style="break-inside:avoid"><td>Community features → USB audio</td><td>off (default), on; acts after a restart</td><td><code>UAUD</code></td><td>v8</td><td>4.2</td></tr>
+  <tr style="break-inside:avoid"><td>Community features → Kit RAM saver</td><td>on (default), off</td><td><code>KRAM</code></td><td>v9</td><td>3.3</td></tr>
+  <tr style="break-inside:avoid"><td>Community features → Flicker-free dimming</td><td>on (default), off</td><td></td><td>v13</td><td>7.5</td></tr>
+  <tr style="break-inside:avoid"><td>Community features → Output limiter</td><td>off (default), on</td><td><code>LIMT</code></td><td>v18</td><td>5.8</td></tr>
+  <tr style="break-inside:avoid"><td>Community features → Filter crossing guard</td><td>off (default), on</td><td><code>CROS</code></td><td>v18</td><td>5.5</td></tr>
+  <tr style="break-inside:avoid"><td>CPU monitor</td><td>Off, On, Alerts, Profile</td><td><code>CPU</code></td><td>v13</td><td>3.4</td></tr>
+  <tr style="break-inside:avoid"><td>OLED brightness</td><td>1–10, 10 = as before</td><td></td><td>v18</td><td>7.4</td></tr>
+  <tr style="break-inside:avoid"><td>Firmware version</td><td>readable, without hash</td><td></td><td>v18</td><td>1.4</td></tr>
+  <tr style="break-inside:avoid"><td colspan="5" style="background:#f3f5f9"><b>Reverb</b> (song and sound)</td></tr>
+  <tr style="break-inside:avoid"><td>Model</td><td>adds Digital</td><td><code>DIGI</code></td><td>v10</td><td>5.10</td></tr>
+  <tr style="break-inside:avoid"><td>Damping</td><td>0 bright … 50 dark (Mutable now the right way round)</td><td></td><td>v10</td><td>5.10</td></tr>
+  <tr style="break-inside:avoid"><td>HPF</td><td>0 = 20 Hz, 25 = 190 Hz, 50 = 540 Hz</td><td></td><td>v10</td><td>5.10</td></tr>
+  <tr style="break-inside:avoid"><td>LPF</td><td>0 = 500 Hz … 49 = 18.6 kHz, 50 = off (default)</td><td></td><td>v10</td><td>5.10</td></tr>
+  <tr style="break-inside:avoid"><td>Modulation (after LPF)</td><td>0–50, default 0</td><td></td><td>v14</td><td>5.10</td></tr>
+  <tr style="break-inside:avoid"><td>Pre-delay</td><td>0–100 ms, default 0</td><td></td><td>v14</td><td>5.10</td></tr>
+  <tr style="break-inside:avoid"><td colspan="5" style="background:#f3f5f9"><b>Delay</b> (sound, kit, audio track, song)</td></tr>
+  <tr style="break-inside:avoid"><td>Time change (after Type)</td><td>Fade (default), Tape</td><td></td><td>v14</td><td>5.11</td></tr>
+  <tr style="break-inside:avoid"><td>LPF, HPF (after Sync)</td><td>LPF 50 = off (default); HPF 0 = off (default)</td><td></td><td>v11</td><td>5.11</td></tr>
+  <tr style="break-inside:avoid"><td colspan="5" style="background:#f3f5f9"><b>Arpeggiator</b> (synth, kit row, MIDI and gate rows)</td></tr>
+  <tr style="break-inside:avoid"><td>Preset</td><td>in the list, with Walk</td><td></td><td>v5</td><td>6.1</td></tr>
+  <tr style="break-inside:avoid"><td>Latch</td><td>off, on</td><td></td><td>v5</td><td>6.2</td></tr>
+  <tr style="break-inside:avoid"><td>Step repeat</td><td>1–8</td><td></td><td>v5</td><td>6.1</td></tr>
+  <tr style="break-inside:avoid"><td>Note mode</td><td>adds Walk 1–3, Pattern</td><td></td><td>v5</td><td>6.1</td></tr>
+  <tr style="break-inside:avoid"><td>Ratchet notes</td><td>Auto, 2–8, Roll</td><td></td><td>v6, v13</td><td>6.3</td></tr>
+  <tr style="break-inside:avoid"><td>Ratchet bounce</td><td>−10 … +10</td><td></td><td>v5</td><td>6.3</td></tr>
+  <tr style="break-inside:avoid"><td>Bounce length</td><td>1–16</td><td></td><td>v13</td><td>6.3</td></tr>
+  <tr style="break-inside:avoid"><td>Bounce velocity</td><td>Even, Fade, Rise</td><td></td><td>v6, v13</td><td>6.3</td></tr>
+  <tr style="break-inside:avoid"><td>Randomizer (own menu after Arpeggiator)</td><td>Lock, spreads, probabilities</td><td></td><td>v5</td><td>6.5</td></tr>
+  <tr style="break-inside:avoid"><td>Kit arpeggiator (kit, Affect Entire); Include in kit arp (row)</td><td></td><td></td><td>v5</td><td>6.1</td></tr>
+  <tr style="break-inside:avoid"><td colspan="5" style="background:#f3f5f9"><b>Everywhere</b></td></tr>
+  <tr style="break-inside:avoid"><td>Every volume and level</td><td>0.5 dB per detent, shown in dB, <code>OFF</code> at the bottom</td><td>e.g. <code>-3.5</code></td><td>v18</td><td>5.7</td></tr>
+  <tr style="break-inside:avoid"><td>Song menu (<span class="key">SELECT</span> in song view) → Drone</td><td>opens the drone view</td><td></td><td>v12</td><td>ch. 9</td></tr>
+  </tbody>
+</table>
+
+<h3 id="ref-keys">11.2 Buttons and shortcuts</h3>
+<table>
+  <tr><th style="width:30%">Where</th><th style="width:30%">Press</th><th>What happens</th></tr>
+  <tr><td>any view, also playing</td><td>hold <span class="key">LEARN</span>, press <span class="key">TEMPO</span></td><td>CPU monitor off, or back to the last mode (3.4)</td></tr>
+  <tr><td>Master tune (Hz)</td><td>horizontal encoder</td><td>moves the cursor between the 1 Hz and the 0.1 Hz digit (2.1)</td></tr>
+  <tr><td>song browser, group line</td><td><span class="key">SELECT</span> or <span class="key">LOAD</span></td><td>opens the group (7.1)</td></tr>
+  <tr><td>song browser, a version</td><td><span class="key">BACK</span></td><td>closes its group (7.1)</td></tr>
+  <tr><td>song browser, a version</td><td><span class="key">SHIFT</span> + <span class="key">SAVE</span></td><td>deletes; blocked on a closed group line (7.1)</td></tr>
+  <tr><td>song change armed</td><td>gold knobs, mod buttons</td><td>act on the master effects of the playing song (7.2)</td></tr>
+  <tr><td>song view</td><td><span class="key">SCALE</span></td><td>opens the drone view (chapter 9)</td></tr>
+  <tr><td>drone view</td><td><span class="key">SHIFT</span> + <span class="key">KIT</span></td><td>creates a drone track (chapter 9)</td></tr>
+  <tr><td>kit clip view, audition pad held</td><td><span class="key">SHIFT</span> + <span class="key">KIT</span></td><td>turns the row into a drone row (chapter 9)</td></tr>
+</table>
+
+<h3 id="ref-display">11.3 Displays and messages</h3>
+<table>
+  <tr><th style="width:26%">Display</th><th style="width:14%">Where</th><th>Meaning</th></tr>
+  <tr><td><code>UGAP</code>, "USB audio gap"</td><td>7-segment, OLED</td><td>The computer got an empty USB audio packet: a 1 ms gap in the recording. At most every 10 s. Please report it (4.6).</td></tr>
+  <tr><td><code>C-ON</code>, <code>COFF</code>, <code>C-AL</code></td><td>7-segment</td><td>The shortcut set the CPU monitor to On, Off or Alerts (3.4).</td></tr>
+  <tr><td><code>-3.5</code>, <code>OFF</code></td><td>7-segment</td><td>A volume in dB; <code>OFF</code> at the very bottom (5.7).</td></tr>
+  <tr><td>a blinking number</td><td>7-segment</td><td>Song change: loops remaining. Without blinking: bars. With a dot: beats (7.2).</td></tr>
+  <tr><td>"Bars remaining 3"</td><td>OLED</td><td>Song change countdown in the title line (7.2).</td></tr>
+  <tr><td>"Open the group first"</td><td>OLED</td><td>You tried to delete on a closed group line in the song browser (7.1).</td></tr>
+  <tr><td>small animation, top right</td><td>OLED</td><td>The Deluge is loading or saving (7.3).</td></tr>
+  <tr><td><code>1.2.1-mastertune-</code> / <code>v18.3-l2d</code></td><td>OLED</td><td>Settings → Firmware version (1.4).</td></tr>
+</table>
+
+<h3 id="ref-cpu">11.4 CPU monitor abbreviations</h3>
+<table>
+  <tr><th style="width:16%">Shown</th><th style="width:22%">Where</th><th>Meaning</th></tr>
+  <tr><td><code>CPU 39%</code></td><td>OLED line</td><td>Load of the audio routine. From v17 on the real load, without busy waiting.</td></tr>
+  <tr><td><code>14V</code></td><td>OLED line</td><td>Voices sounding now.</td></tr>
+  <tr><td><code>QL</code></td><td>OLED line, live view</td><td>Quality lowered: the Deluge is behind (direness above 0) and computes more simply. Shown only while it happens.</td></tr>
+  <tr><td><code>VC</code></td><td>OLED line</td><td>Voices cut. Blinks and stays for 2 s after the last cut.</td></tr>
+  <tr><td>peak</td><td>live view, page</td><td>The most expensive audio window of the last second.</td></tr>
+  <tr><td>cut</td><td>live view</td><td>Voices cut by the CPU protection. The number that counts.</td></tr>
+  <tr><td>gap</td><td>live view, page</td><td>Longest pause between two runs of the audio routine. From about 2.9 ms on a dropout threatens.</td></tr>
+  <tr><td>SD</td><td>live view, page</td><td>Loads from the card, mean and longest duration.</td></tr>
+  <tr><td>direness</td><td>page, live view</td><td>0–14. Above 0 the quality is lowered; from about 80 samples behind voices are cut.</td></tr>
+</table>
+<p class="small">"Live view" is the line of <code>tools/deluge_profiler.py live</code> (8.6), "page" is <code>tools/cpu_monitor.html</code> (8.5).</p>
+
+<h3 id="ref-files">11.5 Files on the card</h3>
+<table>
+  <tr><th style="width:32%">File or folder</th><th>What mastertune keeps there</th></tr>
+  <tr><td>the firmware <code>.bin</code> (root folder)</td><td>Only for installing; leave only one there (1.3).</td></tr>
+  <tr><td><code>CommunityFeatures.XML</code> (root folder)</td><td>The community settings, the master tune (<code>masterTune</code>, in tenths of a Hz), the CPU monitor mode.</td></tr>
+  <tr><td><code>SONGS/</code></td><td>Songs, with the drone and drone tracks (chapter 9).</td></tr>
+  <tr><td><code>SYNTHS/</code></td><td>Synth presets, for example the ping-pong presets (6.4).</td></tr>
+  <tr><td>recordings (WAV)</td><td>At a tuning other than 440 Hz with an <code>mtun</code> chunk (2.3).</td></tr>
+  <tr><td><code>BASELINE-BACKUP/</code></td><td>Backups written by DelugeBaseline (8.4).</td></tr>
+</table>
+
+<h3 id="ref-trouble">11.6 Troubleshooting</h3>
+<p>Find your problem in its group. Each line gives the cause and what to do.</p>
+<h4>Installing and settings</h4>
+<table>
+  <tr><td style="width:31%">The Deluge doesn't install the firmware.</td><td>Leave only one <code>.bin</code> in the root folder and hold <span class="key">SHIFT</span> while switching on (1.3).</td></tr>
+  <tr><td>It crashes or behaves strangely.</td><td>Install <code>deluge-1.2.1-mastertune-v18-124aeaa2.bin</code>, v18 without L2, and report what happened (11.8).</td></tr>
+  <tr><td>The master tune is back at the old value after switching off.</td><td>It is saved when you leave the Settings menu. Leave it with <span class="key">BACK</span> first (2.1).</td></tr>
+  <tr><td>Output limiter, crossing guard and OLED brightness are back at their defaults.</td><td>You switched to v17 or 1.2.1 and back; they lose settings they don't know. Set them again (7.6).</td></tr>
+</table>
+<h4>Tuning</h4>
+<table>
+  <tr><td style="width:31%">An external synth doesn't follow the master tune.</td><td>It must evaluate RPN 1 (Channel Fine Tuning). A device switched on later gets the tuning after the next play start (2.4).</td></tr>
+  <tr><td>A recording made at 432 Hz sounds off after editing it on the computer.</td><td>Some editors remove the <code>mtun</code> chunk; the copy then counts as 440 Hz material. Use the original recording (2.3).</td></tr>
+</table>
+<h4>Load</h4>
+<table>
+  <tr><td style="width:31%"><code>QL</code> or <code>VC</code> appear.</td><td>The Deluge can't keep up. See what costs CPU in 3.5: at 432 Hz convert the samples with DelugeTuner; use fewer living drone tones.</td></tr>
+  <tr><td>The CPU monitor shows 85–90% while nothing plays.</td><td>Up to v16 that was busy waiting, not overload. From v17 on the monitor shows the real load (3.4).</td></tr>
+  <tr><td>The first hit of an unused kit row comes late.</td><td>The Kit RAM saver released its sample start. Switch it off if this bothers you (3.3).</td></tr>
+</table>
+<h4>USB</h4>
+<table>
+  <tr><td style="width:31%">The computer doesn't show the audio input.</td><td>Switch USB audio on, restart, and connect the Deluge as a USB device, not as a host (4.2).</td></tr>
+  <tr><td>USB audio is off again after a restart.</td><td>Up to v15 the setting was saved only when you left the menu with <span class="key">BACK</span>. From v16 on it is saved at once.</td></tr>
+  <tr><td>The Deluge isn't recognised or hangs with USB audio.</td><td>Unplug the USB cable, start the Deluge, switch USB audio off (4.6).</td></tr>
+  <tr><td>The DAW lost the Deluge's MIDI ports.</td><td>With USB audio on, the computer sees a new device. Assign the ports again (4.6).</td></tr>
+  <tr><td><code>UGAP</code> appears.</td><td>A 1 ms gap under very high load. Please report it (4.6).</td></tr>
+  <tr><td>deluge-editor says "needs community 1.3.0 or later".</td><td>The Deluge reports 1.2.1. Ignore it: opening and saving work (8.7).</td></tr>
+  <tr><td>A file with umlauts in its name doesn't open over USB.</td><td>Use only A–Z, 0–9 and _ in names (8.7).</td></tr>
+</table>
+<h4>Sound</h4>
+<table>
+  <tr><td style="width:31%">A song with routing Parallel is quieter.</td><td>Since v18 the parallel sum has half the volume, −6 dB. Raise the song's volume (5.2).</td></tr>
+  <tr><td>The filter whistles, or a tone follows the cutoff knob.</td><td>The resonance is so high that the filter oscillates by itself. Turn the resonance down (5.3).</td></tr>
+  <tr><td>An old song's reverb sounds stiller.</td><td>Songs without the new settings load with Modulation 0. Set Modulation to 50 for the old sound (5.10).</td></tr>
+  <tr><td>Echoes bend in pitch when the delay time changes.</td><td>Time change is on Tape; old songs with a modulated or automated delay rate load that way. Choose Fade (5.11).</td></tr>
+  <tr><td>Hard sidechain pumping sounds softer.</td><td>Since v18 ducking takes at least 5 ms (5.7).</td></tr>
+  <tr><td>The output clips.</td><td>Only the sum at the output clips, at 0 dBFS. Lower the song volume until the peak lies at −6 dBFS, or switch the Output limiter on (5.8).</td></tr>
+  <tr><td>A click when switching the Output limiter.</td><td>The output moves once by 0.7 ms. This is expected (5.8).</td></tr>
+</table>
+<h4>Tools</h4>
+<table>
+  <tr><td style="width:31%">Windows warns when you start a tool.</td><td>The programs are not signed. Click More info, then Run anyway (8.1).</td></tr>
+  <tr><td>DelugeRec names the take "… 1.2.1 v18.WAV" with v18.3.</td><td>DelugeRec v6 cuts the version at the dot. Use v7 or later (8.2).</td></tr>
+  <tr><td>The profiler shows wrong function names.</td><td>Load the <code>.symbols.json</code> that lies next to the <code>.bin</code> you installed (8.6).</td></tr>
+</table>
+
+<h3 id="ref-history">11.7 Version history</h3>
+<table>
+  <tr><th style="width:10%">Version</th><th>What it added</th></tr>
+  <tr><td>v2</td><td>Master tune 415.3–466.2 Hz; everything follows, recordings keep their tuning.</td></tr>
+  <tr><td>v3</td><td>Cheaper sample interpolation; sidechain without click.</td></tr>
+  <tr><td>v4</td><td>Gentler culling as in the community firmware; silent kits and audio tracks skip their effects.</td></tr>
+  <tr><td>v5</td><td>The arpeggiator from 1.3, with latch and ratchet bounce.</td></tr>
+  <tr><td>v6</td><td>A fixed number of ratchet notes, bounce without getting quieter.</td></tr>
+  <tr><td>v7</td><td>The SD card over USB for DEx and deluge-editor.</td></tr>
+  <tr><td>v8</td><td>USB audio: the Deluge's output as an audio input on the computer.</td></tr>
+  <tr><td>v9</td><td>Smarter sample streaming, Kit RAM saver.</td></tr>
+  <tr><td>v10</td><td>Reverb: new model Digital, Mutable and Freeverb repaired, HPF and LPF.</td></tr>
+  <tr><td>v11</td><td>Delay: clean repeats, no clicks on time changes, LPF and HPF in the feedback; no crackle when saving.</td></tr>
+  <tr><td>v12</td><td>Frequency drone with up to 16 tones.</td></tr>
+  <tr><td>v13</td><td>More performance, ping-pong roll, flicker-free dimming, faster saving, more precise MIDI, CPU monitor in words, drone polish.</td></tr>
+  <tr><td>v14</td><td>Reverb without wobble, delay without pitch jumps, countdown on song change, two card fixes.</td></tr>
+  <tr><td>v15</td><td>Living drone (Life, FM, Pulse), CPU monitor in one line, section launch by CC, USB MIDI without packet loss, clock outputs under external clock.</td></tr>
+  <tr><td>v16</td><td>Drone tracks, profiler, USB audio stays on after a restart.</td></tr>
+  <tr><td>v17</td><td>Much less load at moderate load (scheduling fix, minimum window, silent tracks), song browser with versions, CPU monitor shortcut, drone view without hangs, quieter HPF whistle; main file with L2 cache.</td></tr>
+  <tr><td>v18</td><td>Filters without rustle and with clean transitions, volume in 0.5 dB steps shown in dB, real shelving EQ, Output limiter, Filter crossing guard, OLED brightness, readable version, song name for DelugeRec.</td></tr>
+  <tr><td>v18.2</td><td>Filters, EQ and volume right after a silence. L2 variant only.</td></tr>
+  <tr><td>v18.3</td><td>Drive oversampled like 1.2.1, unknown settings and the reverb sidechain's sync level kept. L2 variant only.</td></tr>
+</table>
+
+<div class="avoid">
+<h3 id="ref-bugs">11.8 Reporting bugs</h3>
+<p>mastertune is a personal fork. <b>Don't report its bugs to the community developers.</b> Report them at <code>github.com/Giansn/deluge/issues</code>, with:</p>
+<ul>
+  <li>the version from Settings → Firmware version;</li>
+  <li>what you did, exactly;</li>
+  <li>what the display showed: frozen, a restart, or a message like "E…";</li>
+  <li>for load problems, if you can, a CSV from the CPU monitor page (8.5) or a <code>.jsonl</code> recording from the profiler (8.6).</li>
+</ul>
+</div>

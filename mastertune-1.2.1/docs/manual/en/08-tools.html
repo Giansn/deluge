@@ -1,0 +1,157 @@
+<h2 class="chapter" id="ch-tools">8. Tools for the computer</h2>
+
+<p class="lead">Three small Windows programs record the Deluge, retune a sample library and even out the levels of a card. Two browser pages log the CPU monitor and the profiler, and two web apps reach the SD card over USB.</p>
+
+<h3 id="tools-overview">8.1 Overview</h3>
+<table>
+  <tr><th style="width:19%">Tool</th><th>What it does</th><th style="width:31%">Where to get it</th></tr>
+  <tr><td>DelugeRec</td><td>Records the Deluge's USB audio, with a monitor on the headphones (8.2).</td><td>Release <code>deluge-rec</code> (v7)</td></tr>
+  <tr><td>DelugeTuner</td><td>Retunes a card's sample library once to the master tune (8.3).</td><td>Release <code>deluge-tuner</code> (v2)</td></tr>
+  <tr><td>DelugeBaseline</td><td>Checks the levels of all songs on a card and evens them out, with a backup (8.4).</td><td>Release <code>deluge-baseline</code> (v4)</td></tr>
+  <tr><td>CPU monitor page</td><td>Logs the CPU monitor live and as CSV (8.5).</td><td><code>tools/cpu_monitor.html</code></td></tr>
+  <tr><td>Profiler</td><td>Shows the CPU time per track, task and function (8.6).</td><td><code>tools/profiler.html</code>, <code>tools/deluge_profiler.py</code></td></tr>
+  <tr><td>DEx, deluge-editor</td><td>Files and presets on the SD card over USB (8.7).</td><td><code>dex.silicak.es</code>, <code>cyface.github.io/deluge-editor</code></td></tr>
+</table>
+<ul>
+  <li><b>The Windows programs</b> are one <code>.exe</code> each, with nothing to install. The newest version is always in its release at <code>github.com/Giansn/deluge/releases</code>. Windows asks once, because they are not signed: click <b>More info</b>, then <b>Run anyway</b>.</li>
+  <li><b>As Python scripts</b> they are in <code>mastertune-1.2.1/tools/</code>.</li>
+  <li><b>All three</b> have the Deluge's look, and each button shows its keyboard key below it. DelugeTuner and DelugeBaseline switch between German and English (SPRACHE / LANGUAGE).</li>
+</ul>
+
+<h3 id="tools-rec">8.2 DelugeRec</h3>
+
+<p>DelugeRec records the "Deluge" input from USB audio (chapter 4) bit-exact as a 24-bit WAV file. On Windows it uses WASAPI exclusive mode, and the display shows whether 24 bits really arrive. It only listens: it sends nothing to the Deluge.</p>
+<div class="grid2">
+<figure class="figure">
+  <img class="shot window" src="../../../screenshots/deluge_rec.png" alt="DelugeRec window while recording">
+  <figcaption>DelugeRec while recording: 44.1 kHz and 24 bit arrive, the pads show the level.</figcaption>
+</figure>
+<table>
+  <tr><th style="width:20%">Control</th><th>What it does</th></tr>
+  <tr><td>REC</td><td>Starts recording.</td></tr>
+  <tr><td>ARM</td><td>Starts as soon as the signal exceeds a threshold (THRESH), with 0.3 s of pre-roll.</td></tr>
+  <tr><td>STOP</td><td>Ends the take.</td></tr>
+  <tr><td>MON</td><td>The monitor on the headphones.</td></tr>
+  <tr><td>FOLDER</td><td>Opens the folder with the recordings.</td></tr>
+  <tr><td>VOL</td><td>Leave it at 0 dB: then the recording is bit-exact. Turning it down doesn't repair clipping that already happens in the Deluge.</td></tr>
+  <tr><td>Pads</td><td>The level. For the baseline in 5.8 the pad at −3 should stay dark.</td></tr>
+</table>
+</div>
+<ul>
+  <li><b>Take names:</b> with firmware v18 or later, DelugeRec names each take after the song, the date and the firmware, for example "Song name, 28.09.2026 - 1.2.1 v18.3.WAV". The Deluge reports the song name while the audio stream is open (4.5). From v18.2 on you need DelugeRec v7: v6 cuts the version off at the dot.</li>
+  <li><b>As a script:</b> <code>pip install sounddevice numpy</code>, then <code>python tools/deluge_rec.py</code>. Without a Deluge: <code>--demo</code>.</li>
+</ul>
+
+<h3 id="tools-tuner">8.3 DelugeTuner</h3>
+<figure class="figure">
+  <img class="shot window" src="../../../screenshots/deluge_tuner.png" alt="DelugeTuner having read a card">
+  <figcaption>DelugeTuner after READ: what it would retune at 432.0 Hz, and how much.</figcaption>
+</figure>
+<p>Away from 440 Hz the Deluge resamples every sample voice (2.5). DelugeTuner converts the sample library of a card once to the master tune. The converted files carry the <code>mtun</code> chunk (2.3), so the Deluge plays them directly again. The firmware needs no change for this.</p>
+<ol>
+  <li><b>CARD:</b> choose the SD card or a copy of it. It is only read.</li>
+  <li><b>OUTPUT:</b> choose a folder on the computer for the new card. An empty folder becomes the new card; otherwise a new folder "Deluge 432 Hz" is created inside it, numbered if needed. A folder inside the card is refused.</li>
+  <li><b>Gold knob:</b> the tuning, 415.3 to 466.2 Hz, 432 Hz at the start. Drag, the mouse wheel or + and − change it by 1 Hz; with Shift or the arrow keys left and right by 0.1 Hz. Click the number to type it.</li>
+  <li><b>Checkboxes:</b> 44.1 kHz or each file's own rate; peaks above 0 dBFS as 32-bit float or a little quieter.</li>
+  <li><b>MODE:</b> <b>READ</b> only shows what it would do, <b>RETUNE</b> writes the new card. Press <b>START</b>; display and pads show the progress, then the summary. <b>REPORT</b> opens <code>RETUNE_REPORT.txt</code> (in English).</li>
+  <li>Copy the new card to an empty SD card and set the same master tune on the Deluge.</li>
+</ol>
+<p>Beforehand it checks the free space at the output folder: about 5% more than the card. <b>ESC</b> or closing the window stops as soon as the files in progress are finished. START with the same card, output folder and settings continues where it stopped.</p>
+<p><b>What it does to the card:</b></p>
+<ul>
+  <li>Resamples every sample at the exact ratio (440/432 = 55/54): a 440 Hz tone then measures 432.00 Hz, and the file gets 55/54 longer. 48 and 96 kHz files become 44.1 kHz in the same pass.</li>
+  <li>Adjusts start and end markers, loops and audio clip positions in all songs, kits and synths, and the <code>smpl</code> and <code>cue</code> chunks in the files.</li>
+  <li>Gives time-stretched audio clips and samples a <code>_ts</code> copy that only shifts the pitch and keeps the length. AIFF files become WAV, because the Deluge reads <code>mtun</code> only in WAV.</li>
+  <li>Clips nothing: a file whose peaks would go above 0 dBFS is written as 32-bit float, or made just as much quieter as needed. The Deluge limits float samples to 0 dBFS when it loads them. The report lists these files.</li>
+  <li>Never changes the original card. A second run changes nothing more. Wavetables, files that already carry the target tuning and files the Deluge can't read stay as they are.</li>
+</ul>
+<p><b>What it gains</b> (emulator, 432 Hz): every untransposed voice plays directly. Per voice and block the work drops from 13,300 to 2,490 instructions (mono) and from 19,800 to 3,000 (audio clip). The whole test card needed 34% less without the sample cache, 6% less with it.</p>
+<div class="box warn">
+  <ul>
+    <li><b>Always the whole card:</b> convert a copy of the whole card and copy the whole result to a second card, never single folders. Otherwise samples that several songs share would be converted, but the positions in the other songs would not.</li>
+    <li><b>Transposed notes</b> are still resampled, for example a synth sample played melodically. At 440 Hz the converted samples sound right thanks to <code>mtun</code>, but cost resampling again.</li>
+    <li><b>Very short loops and single-cycle samples</b> can be detuned by up to 1.4 cents, because loop lengths are rounded to whole samples. The tool warns about this. In <code>_ts</code> copies attacks can shift by up to 4.6 ms.</li>
+    <li><b>Loops that no song uses</b> are treated like single samples. If you later make an audio clip from one, the Deluge stretches it again. Take such loops from a copy of the originals.</li>
+    <li>Converted cards have not been played on a real Deluge yet.</li>
+  </ul>
+</div>
+<p class="small">Command line: <code>pip install numpy soxr pylibrb</code>, then <code>python3 tools/retune_library.py --card CARD_COPY --out NEW_CARD</code> (default 432 Hz, 44.1 kHz). <code>--dry-run</code> only shows, <code>--resume</code> continues after an interruption, <code>--no-float</code> makes peaks quieter instead of writing float.</p>
+
+<h3 id="tools-baseline">8.4 DelugeBaseline</h3>
+<figure class="figure">
+  <img class="shot window" src="../../../screenshots/deluge_baseline.png" alt="DelugeBaseline having read a card">
+  <figcaption>DelugeBaseline after reading a card: one pad per song, green in order, orange with notes.</figcaption>
+</figure>
+<p>DelugeBaseline checks all songs on a card against the level baseline in 5.8 and can set them to it. It has two functions, each in the mode <b>READ</b> (only shows) or <b>APPLY</b> (shows, then writes on the second START):</p>
+<table>
+  <tr><th style="width:18%">Function</th><th>What APPLY changes</th></tr>
+  <tr><td>LEVELS</td><td>Song volume above 35 to 35, master compressor off. Kits and audio tracks above 35 to 35. Synths and kit rows down far enough that they act at most like 40 with a fully driven sample. Automation keeps its shape. Saturation, the tracks' compressors, analog delay and filters stay: that is sound, not level.</td></tr>
+  <tr><td>NORM</td><td>Raises every sample under <code>SAMPLES/</code> whose peak lies below the target (TARGET knob, default −1 dBFS) up to the target, never above. Nothing clips; format, bit depth and chunks stay. With <b>COMPENSATE</b> (on by default) every oscillator that plays a raised sample is turned down by exactly as much, in every song, kit and synth, so the songs sound as before. Wavetables and audio clips are never touched.</td></tr>
+</table>
+<ul>
+  <li><b>Buttons:</b> FUNCTION LEVELS (L) or NORM (N), MODE READ (R) or APPLY (A), START (Enter), CARD (C), REPORT (T) opens the whole report as text, RESTORE (B) shows the backups.</li>
+  <li><b>APPLY</b> first shows what would change, and the pads of the songs concerned blink. START again writes, Esc cancels.</li>
+  <li><b>WRITE TO:</b> SD CARD DIRECTLY, with the old files in <code>BASELINE-BACKUP/</code>, or COPY FOLDER, with only the changed files in the card's layout. RESTORE plays a backup back.</li>
+  <li><b>The report</b> lists songs, kits or audio tracks above 35, a master compressor that is on, synths and kit rows above 40 ("without notes" if the row has no notes), and stages that distort more with level: saturation, compressor, analog delay with feedback, low-pass with drive, filters with resonance from 25. Every level is shown as the value and in dB as on the Deluge, for example "40.0 (+8.16 dB)".</li>
+  <li><b>Its limit:</b> it doesn't tell you whether a song clips. Only measuring shows that, for example with DelugeRec.</li>
+</ul>
+<p class="small">Without a window: <code>py tools/deluge_baseline.py [--lang en] check|levels|normalize E:\ [--yes]</code>. Without <code>--yes</code> it only shows what it would do.</p>
+
+<h3 id="tools-cpu">8.5 The CPU monitor page</h3>
+<ol>
+  <li>Connect the Deluge by USB and switch the CPU monitor on (3.4).</li>
+  <li>Open <code>tools/cpu_monitor.html</code> in Chrome or Edge; dragging the file into the window is enough. Click <b>Connect</b> and allow MIDI with SysEx.</li>
+  <li>Leave the input on "All inputs" or choose the Deluge's port 3. Tiles and a graph of the last 5 minutes run live.</li>
+  <li><b>Export CSV</b> saves every second received: one line per second, semicolon as separator.</li>
+</ol>
+<table>
+  <tr><th style="width:26%">Value</th><th>Meaning</th></tr>
+  <tr><td>CPU mean</td><td>Computing time of the audio routine divided by the duration of the audio it produced. Above about 90% all the time, it gets tight.</td></tr>
+  <tr><td>CPU peak</td><td>The most expensive single pass. Single peaks above 100% are absorbed by the output buffer (128 samples, 2.9 ms).</td></tr>
+  <tr><td>Voices</td><td>Active voices, now and the maximum.</td></tr>
+  <tr><td>Direness</td><td>0–14. Above 0 the audio routine is behind the output and the quality is lowered (<code>QL</code>). The share says how much of the audio was made that way.</td></tr>
+  <tr><td>Culling</td><td>Voices per second that the CPU protection really fades or switches off (<code>VC</code>). Voice stealing because of the polyphony doesn't count.</td></tr>
+  <tr><td>SD card</td><td>Pure read time of a sample cluster, mean and longest. It shows how fast the card is.</td></tr>
+  <tr><td>SD latency incl. audio</td><td>The same accesses from start to end, including the audio computed meanwhile: how long streaming waits for a cluster. If it is much bigger than the card time, the CPU slows streaming down, not the card.</td></tr>
+  <tr><td>Longest audio gap</td><td>The longest interval between two passes of the audio routine. From about 2.9 ms on, dropouts threaten.</td></tr>
+</table>
+
+<h3 id="tools-prof">8.6 The profiler</h3>
+<p>With <b>Settings → CPU monitor → Profile</b> the Deluge shows the usual line and also sends, 1000 times a second, where in its code it is working, plus the exact CPU time of each track. <span class="tag">v16</span> It costs about 0.04% CPU and about 8 KB/s on USB MIDI port 3; the buffer always leaves 1 KB free, so notes and clock don't wait.</p>
+<ol>
+  <li>Open <code>tools/profiler.html</code> in Chrome or Edge and click <b>Connect</b>.</li>
+  <li><b>Load symbols:</b> choose the <code>.symbols.json</code> next to the firmware you installed. Only the matching file gives the right function names.</li>
+  <li>Set the Deluge to Profile and play. <b>Reset</b> separates two parts, for example idle and playing.</li>
+  <li>Read the tables <b>by track</b>, <b>by task</b> and <b>by function</b>, or <b>Save recording</b> as a <code>.jsonl</code> file.</li>
+</ol>
+<p class="small">While a track computes, interrupts are off. That time shows up collected as <code>Song::renderAudio</code>; which track it was is under "by track".</p>
+<p><b>Without a browser</b>, <code>tools/deluge_profiler.py</code> does the same (<code>pip install mido python-rtmidi</code>; on Windows use Python 3.12). <code>ports</code> lists the Deluge's three ports, <code>live</code> prints one line per second, <code>record -s 60 -o profile.jsonl</code> records, <code>report profile.jsonl --symbols FILE</code> evaluates. It finds port 3 by itself. The live line:</p>
+<p><code>CPU 43.0 % (peak 71.0)  voices  24 (max  30)  QL 0 (0.0 % of the time)  cut 0  gap 3.1 ms  SD 11 loads, avg 1.7 max 9.0 ms</code></p>
+<table>
+  <tr><th style="width:18%">Part</th><th>Meaning</th></tr>
+  <tr><td>CPU</td><td>Load of the audio windows: mean and peak of the last second. From v17 on this is the real load; up to v16 an idle Deluge showed 85–90% of busy waiting.</td></tr>
+  <tr><td>voices</td><td>Sounding voices, now and the maximum.</td></tr>
+  <tr><td>QL</td><td>Quality lowered: the direness (0–14) and for how much of the time.</td></tr>
+  <tr><td>cut</td><td>Voices cut by the CPU protection. The number that counts.</td></tr>
+  <tr><td>gap</td><td>The longest pause between two runs of the audio routine. From about 2.9 ms on a dropout threatens.</td></tr>
+  <tr><td>SD</td><td>Loads from the card, mean and longest duration.</td></tr>
+</table>
+<p class="small">With Profile, <code>live</code> adds every 5 s the audio routine's share, the most expensive tracks and tasks and, with <code>--symbols</code>, functions.</p>
+
+<h3 id="tools-dex">8.7 The SD card over USB: DEx and deluge-editor <span class="tag">v7</span></h3>
+<p>The card stays in the Deluge. Connect the Deluge by USB, open the web app in Chrome, Edge or Opera and allow MIDI access. The apps find the file access by themselves.</p>
+<table>
+  <tr><th style="width:22%">App</th><th>What works</th></tr>
+  <tr><td>DEx <code>dex.silicak.es</code></td><td>File browser: view folders, upload and download files, rename, copy, move, delete, create folders. As before also display mirroring and screenshots.</td></tr>
+  <tr><td>deluge-editor <code>cyface.github.io/deluge-editor</code></td><td>Open synth and kit presets directly from the card and save them back.</td></tr>
+</table>
+<p>File access works only over USB; the Deluge ignores such requests on the DIN sockets. Its USB MIDI send buffer is four times as large as in 1.2.1, so even a full folder page with long names fits.</p>
+<div class="box warn">
+  <ul>
+    <li><b>deluge-editor shows "needs community 1.3.0 or later" in red,</b> because the Deluge honestly reports 1.2.1. Ignore it: opening and saving work.</li>
+    <li><b>deluge-editor hides controls it only knows from 1.3 on,</b> among them the arp additions (chapter 6). Set those on the Deluge; they are kept in the file. "Live Edit" doesn't work.</li>
+    <li><b>Names with umlauts</b> are shown wrongly, and such files usually can't be opened. Use only A–Z, 0–9 and _ in names.</li>
+    <li><b>During playback</b> don't delete or overwrite samples the song needs. Large transfers are slow over MIDI; for whole sample collections a card reader is faster.</li>
+    <li><b>Don't transfer files while you play with a DAW over USB:</b> notes and clock to the computer share the send buffer and can arrive late. DIN MIDI is not affected.</li>
+  </ul>
+</div>

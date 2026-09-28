@@ -72,7 +72,7 @@
 </ul>
 <div class="box"><b>Example: "the LPF has no effect".</b> In one song the song LPF's resonance was at maximum. From about 36 on the cutoff knob, the filter oscillated by itself, about 10 dB above the music, and its tone followed the knob down. Fix: in song view, with the filter button on LPF, turn the lower gold knob (resonance) below about 35, then save. To delete an automation of the filter as well, hold <span class="key">SHIFT</span> and press the upper gold knob ("Automation deleted"); without <span class="key">SHIFT</span> the press changes the filter type.</div>
 
-<h3 id="sound-drive">5.4 Drive <span class="tag">v18</span> <span class="tag">v18.3</span></h3>
+<h3 id="sound-drive">5.4 Drive <span class="tag">v18, v18.3</span></h3>
 <ul>
   <li><b>The bass stays:</b> with resonance, Drive now loses at most 0.53 dB of bass. Before v18 it lost up to 13 dB.</li>
   <li><b>Real 2× oversampling</b> with half-band filters: the mirror images drop to −88 dB. 1.2.1 only doubled samples.</li>
@@ -221,14 +221,14 @@
   <li>When it is off, everything stays bit for bit the same.</li>
 </ul>
 
-<h3 id="sound-sidechain">5.9 Sidechain <span class="tag">v3</span> <span class="tag">v18</span></h3>
+<h3 id="sound-sidechain">5.9 Sidechain <span class="tag">v3, v18</span></h3>
 <ul>
   <li><b>No click when ducking.</b> In 1.2.1 the volume ramp of each buffer started at the new value and overshot; with more than 6 dB of ducking within one buffer, the gain even flipped polarity. Now the ramp runs from the old to the new value, and the reverb return follows smoothly. The bug is also in the current community firmware.</li>
   <li><b>At least 5 ms</b> for jumps over 6 dB since v18 (5.7).</li>
   <li><b>The song's reverb sidechain keeps its sync level</b> <span class="tag">v18.3</span>. Since 1.2.1 it slipped one step lower at every save and load. Existing songs load with the saved value.</li>
 </ul>
 
-<h3 id="sound-reverb">5.10 Reverb <span class="tag">v10</span> <span class="tag">v14</span></h3>
+<h3 id="sound-reverb">5.10 Reverb <span class="tag">v10, v14</span></h3>
 <p>All settings are in the reverb menu as before, for the song and in every sound.</p>
 <table>
   <tr><th style="width:21%">Setting</th><th style="width:20%">Models</th><th>Values and effect</th></tr>
@@ -254,7 +254,7 @@
   </ul>
 </div>
 
-<h3 id="sound-delay">5.11 Delay <span class="tag">v11</span> <span class="tag">v14</span></h3>
+<h3 id="sound-delay">5.11 Delay <span class="tag">v11, v14</span></h3>
 <p>For sounds, kits, audio tracks and the song. Two new menu items:</p>
 <ul>
   <li><b>Time change</b> (after Type) <span class="tag">v14</span>: <b>Fade</b> (default) or <b>Tape</b>.</li>
