@@ -22,6 +22,10 @@ extern uint32_t audioSampleTimer;            // bench.cpp
 extern uint32_t timeThereWasLastSomeReverb; // bench.cpp
 } // namespace AudioEngine
 
+#if __has_include("dsp/gain_ramp.h")
+#include "dsp/gain_ramp.h"
+#endif
+
 // The optimised trees keep the effects' inner loops here
 #if __has_include("model/mod_controllable/track_fx_kernels.h")
 #include "model/mod_controllable/track_fx_kernels.h"
@@ -61,10 +65,21 @@ public:
 	               const Delay::State& delayWorkingState, int32_t* postFXVolume, ParamManager* paramManager);
 	void processSRRAndBitcrushing(StereoSample* buffer, int32_t numSamples, int32_t* postFXVolume,
 	                              ParamManager* paramManager);
+#if __has_include("dsp/gain_ramp.h")
+	// mastertune v18: the volume stage's ramps (dsp/gain_ramp.h)
+	void processReverbSendAndVolume(StereoSample* buffer, int32_t numSamples, int32_t* reverbBuffer,
+	                                int32_t postFXVolume, int32_t postReverbVolume, int32_t reverbSendAmount,
+	                                int32_t pan = 0, bool doAmplitudeIncrement = false,
+	                                StereoSample* addToBuffer = nullptr, float gainRampStart = 1.0f);
+	deluge::dsp::gain::GainRamp volumeRampL_;
+	deluge::dsp::gain::GainRamp volumeRampR_;
+	deluge::dsp::gain::GainRamp reverbSendRamp_;
+#else
 	void processReverbSendAndVolume(StereoSample* buffer, int32_t numSamples, int32_t* reverbBuffer,
 	                                int32_t postFXVolume, int32_t postReverbVolume, int32_t reverbSendAmount,
 	                                int32_t pan = 0, bool doAmplitudeIncrement = false,
 	                                StereoSample* addToBuffer = nullptr);
+#endif
 	bool isBitcrushingEnabled(ParamManager* paramManager);
 	bool isSRREnabled(ParamManager* paramManager);
 	bool hasBassAdjusted(ParamManager* paramManager);

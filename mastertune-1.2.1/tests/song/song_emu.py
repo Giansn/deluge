@@ -79,6 +79,7 @@ UNCACHED_MIRROR_OFFSET = 0x40000000
 STOP = 0x7FFF0000  # Return address of the calls made from here: nothing is executed there
 PROGRAM_STACK_TOP = 0x20300000
 
+RAW_OUT = False  # --raw-out: also measured.npy (set in main())
 CPU_HZ = 400e6  # Emulated instructions per second: 1 per cycle at 400 MHz (set_instructions_per_cycle())
 PERIPHERAL_HZ = 33.33e6
 SAMPLE_RATE = 44100
@@ -915,6 +916,9 @@ def measure(emu, player, warmup_bars, bars, out_dir, log, song_names=()):
     out = np.concatenate([w[4] for w in windows])
     peak = float(np.max(np.abs(out)))
     rms = float(np.sqrt(np.mean(out ** 2)))
+    if RAW_OUT:
+        # (mastertune v18: the output at full precision, the codec's full scale 1.0, float64: measured.npy)
+        np.save(os.path.join(out_dir, "measured.npy"), out)
     pcm = (np.clip(out, -1, 1) * 32767).astype("<i2").tobytes()
     with open(os.path.join(out_dir, "measured.wav"), "wb") as f:
         f.write(b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " +
@@ -1874,6 +1878,9 @@ def main():
     ap.add_argument("--bars", type=float, default=2)
     ap.add_argument("--culling", action="store_true",
                     help="as on the Deluge: routine() culls voices and sets cpuDireness by its emulated duration")
+    ap.add_argument("--raw-out", action="store_true",
+                    help="also save the output at full precision (float64, before measured.wav's 16 bits) as "
+                    "measured.npy, to compare builds below 16 bits")
     ap.add_argument("--write-back", help="also save the song as the firmware writes it after loading, to this file")
     ap.add_argument("--save-while-playing", action="store_true",
                     help="instead of the measurement: after the warm-up bars, save the playing song (to "
@@ -1909,6 +1916,8 @@ def main():
                     help="write this 32-bit value to the firmware's variable after boot (e.g. to try a setting of a "
                          "build that keeps it in a variable)")
     args = ap.parse_args()
+    global RAW_OUT
+    RAW_OUT = args.raw_out
     tools = args.tools or os.path.join(os.path.dirname(os.path.abspath(args.elf)),
                                        "../../toolchain/v16/linux-x86_64/arm-none-eabi-gcc/bin/arm-none-eabi-")
     os.makedirs(args.out, exist_ok=True)

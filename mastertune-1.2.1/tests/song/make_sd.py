@@ -2,6 +2,7 @@
 """Builds the SD card image for the song benchmark: generated samples and the song SONGS/DEFAULT.XML.
 
 Usage: make_sd.py <image> [--reverb-model N] [--xml-out file] [--synths N] [--midi-track] [--drone-track]
+                  [--no-sidechain] [--xml-in file]
 
 The song ("everything at once", 120 BPM, 4/4, the firmware's default resolution of 96 ticks per quarter note):
 - 8 synth tracks, all playing 4-bar clips of 4-note chords (Cm9, Abmaj7, Fm9, G7sus4, one chord per bar), 2
@@ -592,9 +593,19 @@ def main():
     ap.add_argument("--static-filters", action="store_true",
                     help="no patch cables to the filters (cutoff, resonance, morph): every filter's configuration stays "
                     "the same all song long, e.g. to compare two builds where only moving filters should differ")
+    ap.add_argument("--no-sidechain", action="store_true",
+                    help="the kick sends nothing to the sidechain: no ducking anywhere, every volume stays the same all "
+                    "song long (mastertune v18: to compare two builds where only moving gains should differ)")
+    ap.add_argument("--xml-in", help="this song XML as SONGS/DEFAULT.XML instead of the generated one (e.g. one a "
+                    "firmware saved: song_emu.py --write-back), with the generated samples")
     args = ap.parse_args()
     files, lengths = samples()
     xml = song_xml(lengths, args.reverb_model, args.synths, args.midi_track, args.drone_life, args.drone_track)
+    if args.xml_in:
+        xml = open(args.xml_in).read()
+    if args.no_sidechain:
+        xml, n = re.subn(r'\s*sideChainSend="\d+"', "", xml)
+        assert n, "no sideChainSend in the song"
     if args.lpf_mode:
         xml = xml.replace('lpfMode="24dB"', f'lpfMode="{args.lpf_mode}"')
     if args.static_filters:
