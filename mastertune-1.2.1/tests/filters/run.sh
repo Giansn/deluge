@@ -28,7 +28,11 @@
 # its own tone (level, pitch), aliasing 2x against 1x, the half-band pair (passband, images, delay), the CPU guard's
 # switch (crossfaded), instructions per block (ARM); an older tree gives its numbers only.
 # filter_neutral parallel (v18): the parallel route's levels (an off filter adds nothing, both at half level).
-# TEST=drive, TEST=filter_tone, TEST=hpf_whistle, TEST=lpf_whistle, TEST=lpf_precision, TEST=svf_precision, TEST=lpf_ramp_math or
+# crossing_guard_test.cpp (v18, Community features > Filter crossing guard): with both filters on and the HPF near the
+# LPF or above it, the combined resonance peak within 1 dB of the higher single one (off: up to 24 dB above), the
+# resonance moving smoothly with a swept cutoff, bit for bit as off where it mustn't act. A tree without the guard:
+# skipped.
+# TEST=crossing_guard, TEST=drive, TEST=filter_tone, TEST=hpf_whistle, TEST=lpf_whistle, TEST=lpf_precision, TEST=svf_precision, TEST=lpf_ramp_math or
 # TEST=filter_neutral: only that one.
 # song_filter_emu.py, master_filter_emu.py --check 10: the same in the whole firmware (song view, the gold knob).
 set -e
@@ -79,7 +83,11 @@ awk '/_rounded\(q31_t.*\) \{$/ {r = 1} r && /int64_t\)b\) >> 32\)/ {sub(/\* \(in
     "$D/deluge/util/fixedpoint.h" > "$B/prec/util/fixedpoint.h"
 grep -q '0x80000000LL) >> 32)' "$B/prec/util/fixedpoint.h" || { echo "run.sh: fixedpoint.h's rounded multiplies not found"; exit 1; }
 status=0
-for t in ${TEST:-filter_tone hpf_whistle lpf_whistle lpf_precision svf_precision lpf_ramp_math filter_neutral drive}; do
+for t in ${TEST:-filter_tone hpf_whistle lpf_whistle lpf_precision svf_precision lpf_ramp_math filter_neutral drive crossing_guard}; do
+  if [ "$t" = crossing_guard ] && ! grep -q crossingGuard "$F/filter_set.h"; then
+    echo "== $t: no crossing guard in this tree"
+    continue
+  fi
   INC=""
   { [ "$t" = lpf_precision ] || [ "$t" = lpf_ramp_math ] || [ "$t" = svf_precision ] || [ "$t" = drive ]; } && INC="-I $B/prec"
   $CXX $DEFS $INC -I "$T/bench/filters/stubs" -I "$T/delay/stubs" -I "$T/arm" -I "$D/deluge" -I "$D" -include host_shim.h \
