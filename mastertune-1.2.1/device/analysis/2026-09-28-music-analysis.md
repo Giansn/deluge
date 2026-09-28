@@ -24,7 +24,7 @@ Libraries: librosa 1.0.0, Essentia 2.1-beta6-dev, madmom 0.17.dev0 (from git), m
   - The rest: 17 to 22 of 24.
   - The errors are related keys, mostly the relative key or a fourth away.
   - Real electronic music is harder: the best tools reach about 75 %.
-- **Loudness:** Equal peaks can hide very different loudness. For a DJ's auto gain the right measure is loudness (EBU R128), not the peak.
+- **Loudness:** The peak says little about loudness. Two files with the same peak are 3.1 LU apart, and the file with the highest peak is the quietest, 11 to 14 LU below the others. For a DJ's auto gain the right measure is loudness (EBU R128), not the peak.
 - **For the Deluge:** tempo, beat and key analysis belongs on the computer.
   - The firmware already reads a root note and loop points from the WAV file, but no tempo.
   - Loops cut to 1, 2, 4, 8 … bars already play in sync in an audio clip.
