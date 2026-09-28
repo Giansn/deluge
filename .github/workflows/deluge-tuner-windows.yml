@@ -2,7 +2,7 @@ name: DelugeTuner for Windows
 # Builds mastertune-1.2.1/tools/deluge_tuner.py (with retune_library.py) into DelugeTuner-vN.exe (N = VERSION in
 # deluge_tuner.py; PyInstaller: one file, no console, with numpy, soxr and pylibrb for Rubber Band) after its tests,
 # checks the .exe on Windows with its self-test (soxr, Rubber Band, read, convert with the .exe's own worker
-# processes, stop and continue, the window, English, the version) and puts it on its own release "deluge-tuner-vN".
+# processes, the check by ear, stop and continue, the window, English, the version) and puts it on its own release "deluge-tuner-vN".
 # The release "deluge-tuner" always has the newest one as its only file. A released version is never replaced: if the
 # program, retune_library.py or the icon changed since, the build stops until VERSION is raised; if not, it only
 # builds and tests, and deluge-tuner gets the released file. retune_library.py's own tests: tests/retune/run.sh.
@@ -97,7 +97,7 @@ jobs:
           "$($exe.Name): $($exe.Length) bytes, version $($exe.VersionInfo.ProductVersion), SHA-256 $((Get-FileHash $exe.FullName).Hash)"
           if ($p.ExitCode -ne 0) { throw "self-test failed (exit $($p.ExitCode))" }
           if ($txt -notcontains "version: v$env:V") { throw "the program does not say v$env:V" }
-          foreach ($step in "soxr", "rubberband", "read", "convert", "processes", "resume", "window", "english") {
+          foreach ($step in "soxr", "rubberband", "read", "convert", "processes", "ear", "resume", "window", "english") {
             if ($txt -notcontains "${step}: ok") { throw "self-test step $step failed" }
           }
           if ($exe.VersionInfo.ProductVersion -ne $env:V) { throw "the file's version is not $env:V" }
@@ -114,7 +114,7 @@ jobs:
         run: |
           notes() {
             printf '%s\n\n%s\n\n%s\n' "$1" \
-              "Retunes the sample library of a Deluge card once to the master tune (mastertune firmware), so that its samples play natively: retune_library.py in a window, in German or English (the computer's language to start with, then the switch in the window). CARD: the SD card or a copy of it, only read. OUTPUT: a folder on the computer for the new card, to copy onto an empty SD card. The gold knob: the tuning, 415.3 to 466.2 Hz (432 to start with). READ shows what it would do, RETUNE writes the new card; ESC stops it, START continues. Download $EXE and run it, nothing to install. Windows asks at the first start because the file is not signed: More info, then Run anyway." \
+              "Retunes the sample library of a Deluge card once to the master tune (mastertune firmware), so that its samples play natively: retune_library.py in a window, in German or English (the computer's language to start with, then the switch in the window). CARD: the SD card or a copy of it, only read. OUTPUT: a folder on the computer for the new card, to copy onto an empty SD card. The gold knob: the tuning, 415.3 to 466.2 Hz (432 to start with). READ shows what it would do, RETUNE writes the new card; ESC stops it, START continues. A file without its tuning tag that already sounds in the chosen tuning (a 432 Hz library), and so do most pitched files in its folder, is only tagged, not lowered a second time. Download $EXE and run it, nothing to install. Windows asks at the first start because the file is not signed: More info, then Run anyway." \
               "Built from ${BUILT:0:8}. Source: mastertune-1.2.1/tools/deluge_tuner.py, its list Versions says what changed."
           }
           if [ "$RELEASE" = yes ]; then
