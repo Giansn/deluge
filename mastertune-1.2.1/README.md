@@ -2,11 +2,31 @@
 
 ## In short (English)
 
-**mastertune** is the official Deluge community firmware **1.2.1** with a master tune, cleaner sound, half the load and a few tools around it. Latest: **v18.3**, [`deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin`](https://github.com/Giansn/deluge/raw/claude/wizardly-brahmagupta-nnrk07/mastertune-1.2.1/deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin). Every version, the details and the measurements are further down, in German. Install it like any Deluge firmware: the .bin in the SD card's root folder (only one .bin there), then switch the Deluge on while holding SHIFT.
+**mastertune** is my fork of the official Deluge community firmware **1.2.1**: lighter on the CPU, with a CPU monitor, the Deluge as a USB audio interface, a master tune and a few tools around it. Latest: **v18.3**, [`deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin`](https://github.com/Giansn/deluge/raw/claude/wizardly-brahmagupta-nnrk07/mastertune-1.2.1/deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin). Install it like any Deluge firmware: the .bin in the SD card's root folder (only one .bin there), then switch the Deluge on while holding SHIFT. Every version, the details and the measurements are further down, in German.
 
-![Song change armed: 2 bars remaining](screenshots/oled_songchange.png)
+**Written with Claude (AI).** This is a personal fork, not a contribution to the official firmware: please don't report its bugs to the community developers, report them in this repository's [issues](https://github.com/Giansn/deluge/issues). Every change is tested in an emulator that runs the firmware's real ARM code (below), but **v18.x has not been played on a real Deluge yet.** Keep a copy of your card.
 
-<sub>The song-change countdown on the OLED of the real v18.3 firmware, run in the emulator (`tests/screenshots`).</sub>
+| | |
+|:-:|:-:|
+| ![The CPU monitor's line over Song view](screenshots/oled_cpu_monitor.png) | ![Settings → Tuning → Master tune at 432.0 Hz](screenshots/oled_master_tune.png) |
+| CPU monitor: load and voices in one line | Master tune, here 432.0 Hz |
+| ![The drone view: a binaural tone at 100 Hz with a 4 Hz beat](screenshots/oled_drone.png) | ![The song browser with a song's versions folded out](screenshots/oled_song_browser.png) |
+| Frequency drone: a binaural tone | Song browser: a song's versions under one name |
+| ![Song change armed: 2 bars remaining](screenshots/oled_songchange.png) | ![The song's volume knob: master level −8.5 dB](screenshots/oled_volume_db.png) |
+| Song-change countdown | Volume in 0.5 dB steps, shown in dB |
+
+<sub>The OLED of the real v18.3 firmware, run in the emulator (`tests/screenshots`).</sub>
+
+**Lighter on the CPU**
+- About **half the CPU load** in heavy songs: a scheduling bug from 1.2.1 fixed. In the emulator a test song went from 93% to 41% CPU, and a streaming test cut no voices any more (25 before).
+- Silent tracks skipped, L2 cache for code and data, smarter sample streaming, a RAM saver for kits.
+
+**CPU monitor**
+- One line on the OLED, e.g. `CPU 39% 14V`: the load and the sounding voices, plus `QL` while the Deluge lowers its quality and a blinking `VC` while it cuts voices. The Alerts mode shows only those.
+- Hold LEARN and press TEMPO to switch it on or off, in any view. It stays as it is after a restart.
+
+**USB audio interface**
+- The Deluge shows up on the computer as a stereo audio input next to MIDI: 24 bit, 44.1 kHz, no driver, bit-exact. Switch it on in Settings → Community features → USB audio. DelugeRec (below) records it.
 
 **Tuning**
 - **Master tune** from 415.3 to 466.2 Hz in 0.1 Hz steps (Settings → Tuning → Master tune), for example 432 Hz. Everything that sounds follows: synths, kits, samples, FM and DX7, audio clips (time-stretched, the tempo stays), held notes, CV outputs and external MIDI gear (RPN 1 fine tuning). Recordings remember the tuning they were made in, so they are never tuned twice.
@@ -18,10 +38,8 @@
 - **Frequency drone:** up to 16 tones, binaural, monaural or isochronic, tempo sync, sidechain, Life, FM and Pulse; drone tracks in song and arranger view.
 - **Arpeggiator from 1.3** with latch, ratchet bounce and ping-pong.
 
-**Load and workflow**
-- About **half the CPU load** in heavy songs (a scheduling bug from 1.2.1 fixed, silent tracks skipped), L2 cache for code and data, smarter sample streaming, a RAM saver for kits.
-- Song-change countdown, song browser with versions, CPU monitor on the OLED (hold LEARN, press TEMPO), readable firmware version, OLED brightness, flicker-free pad dimming.
-- SD card over USB (DEx, deluge-editor), the Deluge as a USB audio input on the computer (stereo, 24 bit).
+**Workflow and fixes**
+- Song-change countdown, song browser with versions, readable firmware version, OLED brightness, flicker-free pad dimming, SD card over USB (DEx, deluge-editor).
 - Fixed: sidechain click, crackle when saving, clock outputs under external clock, USB MIDI receive, section launch by CC, settings of other versions lost on saving, the song's reverb sidechain sync level slipping at every save.
 
 **Tools for Windows** (one .exe each, nothing to install; Windows asks once because they are not signed: More info, Run anyway)
@@ -34,7 +52,7 @@
 
 The newest version of each tool is always in its release: [deluge-rec](https://github.com/Giansn/deluge/releases/tag/deluge-rec), [deluge-tuner](https://github.com/Giansn/deluge/releases/tag/deluge-tuner), [deluge-baseline](https://github.com/Giansn/deluge/releases/tag/deluge-baseline). As Python scripts they are in `tools/`.
 
-**Tested:** every release is built twice with the same SHA-256. The firmware's own ARM code runs in an emulator: it boots, loads songs, renders audio and goes through hundreds of checks and stress tests. **v18.x has not been played on a real Deluge yet.** Keep a copy of your card, and feedback is welcome.
+**Tested:** every release is built twice with the same SHA-256. The firmware's own ARM code runs in an emulator: it boots, loads songs, renders audio and goes through hundreds of checks and stress tests. The emulator is not the hardware, though: timing, the SD card and USB can still behave differently on a real Deluge.
 
 **Source:** `patches/0001`–`0116` against `release_1_2_1`, plus `l2test/0001`–`0003` for the L2 build.
 
