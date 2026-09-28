@@ -25,6 +25,7 @@ import shutil
 import struct
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -206,10 +207,10 @@ class Levels(Case):
         self.assertEqual(list(plan.changes), ["SONGS/Demo.XML"])
         lines = plan.changes["SONGS/Demo.XML"].lines
         self.assertEqual(lines, [
-            "Song-Lautstärke: 40,0 auf 35,4, -2,1 dB",
+            "Song-Lautstärke: 40,0 (+2,14 dB) auf 35,4 (0,00 dB), -2,14 dB",
             "Master-Kompressor aus (Threshold war 25)",
-            "Kit «Drums» (Clip 1): 40,0 auf 35,4, -2,1 dB",
-            "Reihe «Kick» in Kit «Drums» (Clip 1): 50,0 auf 40,0, -3,9 dB"])
+            "Kit «Drums» (Clip 1): 40,0 (+2,14 dB) auf 35,4 (0,00 dB), -2,14 dB",
+            "Reihe «Kick» in Kit «Drums» (Clip 1): 50,0 (+12,04 dB) auf 40,0 (+8,16 dB), -3,88 dB"])
         after = plan.changes["SONGS/Demo.XML"].data.decode("utf-8")
         self.assertEqual(changed_attrs(before, after), [
             ("songParams", "volume", "0x4CCCCCA8", "0x3504F334"),
@@ -230,7 +231,8 @@ class Levels(Case):
         self.assertEqual((backups[0] / "SONGS" / "Demo.XML").read_bytes().decode("utf-8"), before)
         self.assertTrue((backups[0] / "BASELINE.txt").exists())
         self.assertEqual(db.plan_levels(card).changes, {})
-        self.assertIn("| Demo | 35 | aus | 35 | 50 | ok |", bc.report(bc.song_files([str(card)])))
+        self.assertIn("| Demo | 35,4 (0,00 dB) | aus | 35,4 (0,00 dB) | 50,0 (+12,04 dB) | ok |",
+                      bc.report(bc.song_files([str(card)])))
 
     def test_automation_and_clips(self):
         wav(self.root / "SAMPLES" / "k.wav", signal(0, 16))
@@ -252,14 +254,35 @@ class Levels(Case):
         self.assertAlmostEqual(bc.knob(max(bc.param_values(rows[0].get("volume")))), 40, places=5)
         self.assertAlmostEqual(bc.knob(bc.param_values(rows[0].get("volume"))[0]), 32, places=5)  # 40 * 40/50
         self.assertEqual(rows[1].get("volume"), "0x4CCCCCA8")  # 45 down to 40
-        self.assertEqual(plan.changes["SONGS/A.XML"].lines[-1], "Reihe «k» in Kit «K» (Clip 2): 45,0 auf 40,0, -2,0 dB")
+        self.assertEqual(plan.changes["SONGS/A.XML"].lines[-1],
+                         "Reihe «k» in Kit «K» (Clip 2): 45,0 (+10,21 dB) auf 40,0 (+8,16 dB), -2,05 dB")
 
     def test_without_notes(self):
         text = song_text(kit("K", [sound("saw", osc1_type="saw")]), clips=kit_clip("K", [(0, params("0x7FFFFFFF"))])
                          .replace(' noteDataWithLift="0x0000000000000060400000"', ""))
         self.song("C.XML", text)
         self.assertEqual(db.plan_levels(self.root).changes["SONGS/C.XML"].lines,
-                         ["Reihe «saw» in Kit «K» (Clip 1): 50,0 auf 40,0, -3,9 dB, ohne Noten"])
+                         ["Reihe «saw» in Kit «K» (Clip 1): 50,0 (+12,04 dB) auf 40,0 (+8,16 dB), -3,88 dB, "
+                          "ohne Noten"])
+
+    def test_between_the_steps(self):
+        """mastertune v18 stores its 0.5 dB steps between the old 0-50 ones: they are read as they are, in dB too."""
+        def v18(db, song_kit=False):  # volume::dbToStored() of volume_steps.cpp (patch 0101)
+            x = 10 ** ((db + (20 * math.log10(2) if song_kit else 0.0)) / 40)
+            return "0x%08X" % (round((x - 1) * 2 ** 31) & 0xFFFFFFFF)
+        saw = sound("saw", osc1_type="saw")
+        self.song("A.XML", song_text(kit("K", [saw]), clips=kit_clip("K", [(0, params(v18(8.5)))], v18(3.0, True)),
+                                     song_params=f'volume="{v18(1.5, True)}" compressorThreshold="0x00000000"'))
+        self.song("B.XML", song_text(kit("K", [saw]), clips=kit_clip("K", [(0, params(v18(8.0)))], v18(0.0, True)),
+                                     song_params=f'volume="{v18(0.0, True)}" compressorThreshold="0x00000000"'))
+        plan = db.plan_levels(self.root)
+        self.assertEqual(list(plan.changes), ["SONGS/A.XML"])  # B: at 0 dB and +8.0 dB, at the limits or below
+        self.assertEqual(plan.changes["SONGS/A.XML"].lines, [
+            "Song-Lautstärke: 38,5 (+1,50 dB) auf 35,4 (0,00 dB), -1,50 dB",
+            "Kit «K» (Clip 1): 42,0 (+3,00 dB) auf 35,4 (0,00 dB), -3,00 dB",
+            "Reihe «saw» in Kit «K» (Clip 1): 40,8 (+8,50 dB) auf 40,0 (+8,16 dB), -0,34 dB"])
+        db.write_plan(plan)
+        self.assertEqual(db.plan_levels(self.root).changes, {})
 
     def test_same_name_other_folder(self):
         # Two kits «K», in KITS/A and KITS/B: each clip goes by its own kit, as in the firmware (name and folder)
@@ -276,7 +299,7 @@ class Levels(Case):
         self.assertEqual(bc.check_all(bc.song_files([str(self.root)]))[0]["notes"], [])
         self.song("F.XML", song_text(kits, clips=clips.replace("KITS/A", "kits/b")))  # Case doesn't count
         self.assertEqual(db.plan_levels(self.root).changes["SONGS/F.XML"].lines,
-                         ["Reihe «q» in Kit «K» (Clip 1): 50,0 auf 40,0, -3,9 dB"])
+                         ["Reihe «q» in Kit «K» (Clip 1): 50,0 (+12,04 dB) auf 40,0 (+8,16 dB), -3,88 dB"])
 
     def test_what_stays(self):
         # Samples that can't be read: nothing changes, and the report says so; a row with an oscillator: 40 exactly
@@ -286,7 +309,7 @@ class Levels(Case):
         plan = db.plan_levels(self.root)
         self.assertEqual(plan.changes["SONGS/B.XML"].lines, [
             "Reihe «gone» in Kit «K»: nicht geändert (Sample fehlt: SAMPLES/gone.wav)",
-            "Reihe «saw» in Kit «K» (Clip 1): 50,0 auf 40,0, -3,9 dB"])
+            "Reihe «saw» in Kit «K» (Clip 1): 50,0 (+12,04 dB) auf 40,0 (+8,16 dB), -3,88 dB"])
 
 
 class Normalize(Case):
@@ -536,7 +559,7 @@ class Oled(unittest.TestCase):
             items = db.plan_items(db.plan_levels(card), {db.rel_key("SONGS/Demo.XML"): 0})
             self.assertEqual(items[0], ("1 Song gelesen, 1 zu ändern", False, None))
             self.assertIn(("Demo", True, 0), items)
-            self.assertIn(("Song-Lautstärke: 40,0 auf 35,4, -2,1 dB", False, 0), items)
+            self.assertIn(("Song-Lautstärke: 40,0 (+2,14 dB) auf 35,4 (0,00 dB), -2,14 dB", False, 0), items)
             items = db.plan_items(db.plan_normalize(card, -1.0, True), {db.rel_key("SONGS/Demo.XML"): 0})
             self.assertIn(("Angehoben", True, None), items)
             self.assertIn(("Ausgeglichen: Demo", True, 0), items)
@@ -559,13 +582,15 @@ class English(unittest.TestCase):
     def test_texts(self):
         text = bc.report(bc.song_files([str(self.card)]))
         self.assertIn("# Baseline check: 1 song, 1 with notes", text)
-        self.assertIn("| Demo | 40 | on | 40 | 50 | 4 |", text)
-        self.assertIn("- Song volume 40: +2.1 dB above the default 35", text)
-        self.assertIn("- Row «Kick» in Kit «Drums»: 50, sample up to 0.0 dBFS, as loud as 50.0", text)
+        self.assertIn("| Demo | 40.0 (+2.14 dB) | on | 40.0 (+2.14 dB) | 50.0 (+12.04 dB) | 4 |", text)
+        self.assertIn("- Song volume 40.0 (+2.14 dB): +2.14 dB above the default 35.4 (0.00 dB)", text)
+        self.assertIn("- Row «Kick» in Kit «Drums»: 50.0 (+12.04 dB), sample up to 0.0 dBFS, as loud as 50.0 "
+                      "(+12.04 dB), +3.88 dB above 40.0 (+8.16 dB)", text)
         plan = db.plan_levels(self.card)
         self.assertEqual(plan.changes["SONGS/Demo.XML"].lines, [
-            "Song volume: 40.0 to 35.4, -2.1 dB", "Master compressor off (threshold was 25)",
-            "Kit «Drums» (Clip 1): 40.0 to 35.4, -2.1 dB", "Row «Kick» in Kit «Drums» (Clip 1): 50.0 to 40.0, -3.9 dB"])
+            "Song volume: 40.0 (+2.14 dB) to 35.4 (0.00 dB), -2.14 dB", "Master compressor off (threshold was 25)",
+            "Kit «Drums» (Clip 1): 40.0 (+2.14 dB) to 35.4 (0.00 dB), -2.14 dB",
+            "Row «Kick» in Kit «Drums» (Clip 1): 50.0 (+12.04 dB) to 40.0 (+8.16 dB), -3.88 dB"])
         plan = db.plan_normalize(self.card, -1.0, True)
         self.assertEqual(plan.action, "Normalize")
         self.assertEqual(dict(plan.sections)["Stay as they are"], ["SAMPLES/table.wav: wavetable",
@@ -672,10 +697,21 @@ class Window(unittest.TestCase):
         self.assertEqual(json.loads(self.settings.read_text())["lang"], "en")
         self.press("start")
         self.assertEqual(self.app.list["title"], "1 SONG, 1 WITH NOTES")
-        self.assertIn(("Song volume 40: +2.1 dB above the default 35", False, 0), self.app.list["items"])
+        self.assertIn(("Song volume 40.0 (+2.14 dB): +2.14 dB above the default 35.4 (0.00 dB)", False, 0),
+                      self.app.list["items"])
         self.assertEqual(sorted(self.app.bound), sorted("aAbBcClLnNrRtTdDeE"))
         self.app.set_lang("de")
         self.assertEqual((bc.LANG, self.app.view), ("de", "home"))
+
+    def test_limits_in_db(self):
+        shown = []
+        self.app.oled.text = lambda x, y, s, *a, **k: shown.append(s)
+        self.app.draw_oled(time.monotonic() + 60, True)
+        self.assertIn("SONG 0,00 dB, SYNTH +8,16 dB", shown)
+        self.app.set_lang("en")
+        shown.clear()
+        self.app.draw_oled(time.monotonic() + 60, True)
+        self.assertIn("SONG 0.00 dB, SYNTH +8.16 dB", shown)
 
     def test_without_a_card(self):
         self.app.card = ""
@@ -719,8 +755,8 @@ class CardCopy(unittest.TestCase):
             db.write_plan(db.plan_levels(card))
             section = bc.report(bc.song_files([str(card)])).split("## New Sitar Grii 10")[1]
             self.assertEqual([line for line in section.splitlines() if line.startswith("- ")], [
-                "- Reihe «hihatlong» in Kit «Hihat»: 50, +3,9 dB über 40 (Sample fehlt: SAMPLES/PsyPack/hihatlong.wav), "
-                "ohne Noten: klingt nur live gespielt"])
+                "- Reihe «hihatlong» in Kit «Hihat»: 50,0 (+12,04 dB), +3,88 dB über 40,0 (+8,16 dB) (Sample fehlt: "
+                "SAMPLES/PsyPack/hihatlong.wav), ohne Noten: klingt nur live gespielt"])
 
 
 if __name__ == "__main__":

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Tests for tools/baseline_check.py: a made-up card with every case, and the card copy in geraet/karte.
 
-- Levels: song and kit above 35, synth and row above 40, 40 itself allowed, automation's loudest point, the master
-  compressor.
+- Levels: song and kit above 35.4 (0 dB), synth and row above 40, 40 itself allowed, values between the knob's steps
+  as they are (mastertune v18 steps by 0.5 dB) and in dB as the Deluge shows them, automation's loudest point, the
+  master compressor.
 - Samples: the peak of every format the firmware reads (WAV PCM 8, 16, 24 and 32 bit, 32-bit float limited to full
   scale, AIFF 16, 24 and 8 bit signed), within the zone; what it can't read (WAVE_FORMAT_EXTENSIBLE); a missing file; a
   path in CP437 bytes as the Deluge writes it; a sound that plays more than samples (an audible oscillator, FM) gets no
@@ -142,28 +143,32 @@ class Levels(Case):
         self.assertEqual(notes_of(song(), self.root), [])
         self.assertEqual(notes_of(song(volume="0x1999997E"), self.root), [])  # 30: below the default is the headroom
         n = notes_of(song(volume=V40, compressor="0x40000000"), self.root)
-        self.assertEqual(n, ["Song-Lautstärke 40: +2,1 dB über dem Standard 35", "Master-Kompressor an (Threshold 25)"])
+        self.assertEqual(n, ["Song-Lautstärke 40,0 (+2,14 dB): +2,14 dB über dem Standard 35,4 (0,00 dB)",
+                             "Master-Kompressor an (Threshold 25)"])
 
     def test_kit_and_automation(self):
         kit = f'<kit presetName="K"><soundSources>{sound("a")}</soundSources></kit>'
         self.assertEqual(notes_of(song(kit, kit_clip("K", [row(0, V40)])), self.root), [])
         self.assertEqual(notes_of(song(kit, kit_clip("K", [row(0, V40)], volume=V40)), self.root),
-                         ["Kit «K»: 40, +2,1 dB über 35"])
+                         ["Kit «K»: 40,0 (+2,14 dB), +2,14 dB über 35,4 (0,00 dB)"])
         # Automation: the value now is 35, a node reaches 45
         auto = DEFAULT35 + "66666662" + "80000060"
         self.assertEqual(notes_of(song(kit, kit_clip("K", [row(0, V40)], volume=auto)), self.root),
-                         ["Kit «K»: 45, +4,2 dB über 35"])
+                         ["Kit «K»: 45,0 (+4,19 dB), +4,19 dB über 35,4 (0,00 dB)"])
 
     def test_synth_and_audio(self):
         synth = sound("Saw")
         clip = f'<instrumentClip instrumentPresetName="Saw"><soundParams volume="{V45}" /></instrumentClip>'
-        self.assertEqual(notes_of(song(synth, clip), self.root), ["Synth «Saw»: 45, +2,0 dB über 40"])
+        self.assertEqual(notes_of(song(synth, clip), self.root),
+                         ["Synth «Saw»: 45,0 (+10,21 dB), +2,05 dB über 40,0 (+8,16 dB)"])
         fm = sound("Bell", path=self.sample("SAMPLES/q.wav", wav, pcm(-20, 16)), mode="fm")
         clip = f'<instrumentClip instrumentPresetName="Bell"><soundParams volume="{V45}" /></instrumentClip>'
-        self.assertEqual(notes_of(song(fm, clip), self.root), ["Synth «Bell»: 45, +2,0 dB über 40"])
+        self.assertEqual(notes_of(song(fm, clip), self.root),
+                         ["Synth «Bell»: 45,0 (+10,21 dB), +2,05 dB über 40,0 (+8,16 dB)"])
         track = '<audioTrack name="A1" lpfMode="24dB"><delay analog="0" /></audioTrack>'
         clip = f'<audioClip trackName="A1"><params volume="{V40}" /></audioClip>'
-        self.assertEqual(notes_of(song(track, clip), self.root), ["Audio-Spur «A1»: 40, +2,1 dB über 35"])
+        self.assertEqual(notes_of(song(track, clip), self.root),
+                         ["Audio-Spur «A1»: 40,0 (+2,14 dB), +2,14 dB über 35,4 (0,00 dB)"])
 
     def test_multisample_synth(self):
         ranges = [self.sample("SAMPLES/lo.wav", wav, pcm(-12, 16)), self.sample("SAMPLES/hi.wav", wav, pcm(-3, 16))]
@@ -171,7 +176,65 @@ class Levels(Case):
         clip = (f'<instrumentClip instrumentPresetName="Keys"><soundParams volume="{V50}" oscBVolume="0x80000000" />'
                 f'</instrumentClip>')
         self.assertEqual(notes_of(song(synth, clip), self.root),
-                         ["Synth «Keys»: 50, Sample bis -3,0 dBFS, wirkt wie 42,1"])
+                         ["Synth «Keys»: 50,0 (+12,04 dB), Sample bis -3,0 dBFS, wirkt wie 42,1 (+9,04 dB), "
+                          "+0,88 dB über 40,0 (+8,16 dB)"])
+
+
+def v18(db, song_kit=False):
+    """The value mastertune v18 stores for a volume knob at db (volume::dbToStored() in volume_steps.cpp, patch 0101),
+    as the XML holds it."""
+    x = 10 ** ((db + (20 * math.log10(2) if song_kit else 0.0)) / 40)
+    v = max(-2 ** 31, min(2 ** 31 - 1, round((x - 1) * 2 ** 31)))
+    return "0x%08X" % (v & 0xFFFFFFFF)
+
+
+class Decibels(Case):
+    """The volumes in dB as the Deluge shows them from mastertune v18 on, and its 0.5 dB steps read as they are."""
+
+    def test_db(self):
+        at = lambda knob: round(knob * bc.KNOB_STEP - 2 ** 31)  # noqa: E731
+        self.assertEqual(bc.level(at(35), True), "35,0 (-0,18 dB)")  # Song 35
+        self.assertEqual(bc.level(bc.SONG_KIT_LIMIT, True), "35,4 (0,00 dB)")  # Its default: 0 dB
+        self.assertEqual(bc.level(bc.SOUND_LIMIT), "40,0 (+8,16 dB)")  # Synth 40
+        self.assertEqual(bc.level(at(25)), "25,0 (0,00 dB)")
+        self.assertEqual(bc.level(2 ** 31 - 1), "50,0 (+12,04 dB)")  # The top: sounds +12.0, the rest +6.0
+        self.assertEqual(bc.level(2 ** 31 - 1, True), "50,0 (+6,02 dB)")
+        self.assertEqual(bc.level(-2 ** 31, True), "0,0 (-inf dB)")  # Off
+        self.assertEqual(bc.db_text(-100.0), "-inf dB")  # As the Deluge: -100 dB and below is off
+        for db in (-60.0, -3.5, 0.5, 8.0, 8.5, 12.0):  # The steps: exact, not rounded to 0-50
+            self.assertAlmostEqual(bc.volume_db(bc.param_values(v18(db))[0]), db, places=6)
+            self.assertAlmostEqual(bc.volume_db(bc.param_values(v18(db / 2, True))[0], True), db / 2, places=6)
+        self.assertEqual(bc.level(bc.param_values(v18(-3.5))[0]), "20,4 (-3,50 dB)")  # 25 x 10^(-3.5/40)
+        bc.LANG = "en"
+        try:
+            self.assertEqual(bc.level(bc.SOUND_LIMIT), "40.0 (+8.16 dB)")
+        finally:
+            bc.LANG = "de"
+
+    def test_between_the_steps(self):
+        # The song at +0.5 dB (a step of v18: 36.4, between 36 and 37); at 0.0 dB (v18 stores its default, 35.4)
+        self.assertEqual(notes_of(song(volume=v18(0.5, True)), self.root),
+                         ["Song-Lautstärke 36,4 (+0,50 dB): +0,50 dB über dem Standard 35,4 (0,00 dB)"])
+        self.assertEqual(bc.param_values(v18(0.0, True))[0], bc.SONG_KIT_LIMIT)
+        self.assertEqual(notes_of(song(volume=v18(0.0, True)), self.root), [])
+        self.assertEqual(notes_of(song(volume="0x3504F335"), self.root), [])  # One above: less than 0.01 dB
+        self.assertEqual(notes_of(song(volume=v18(-0.5, True)), self.root), [])
+        # A kit at +6.0 dB, its top step (49.94: the stored top 50 would be +6.02 dB)
+        kit = f'<kit presetName="K"><soundSources>{sound("a")}</soundSources></kit>'
+        self.assertEqual(notes_of(song(kit, kit_clip("K", [row(0, V40)], volume=v18(6.0, True))), self.root),
+                         ["Kit «K»: 49,9 (+6,00 dB), +6,00 dB über 35,4 (0,00 dB)"])
+        # A synth at +8.0 dB (39.6) is below 40 (+8.16 dB), at +8.5 dB (40.8) above it
+        synth = sound("Saw")
+        clip = '<instrumentClip instrumentPresetName="Saw"><soundParams volume="{}" /></instrumentClip>'
+        self.assertEqual(notes_of(song(synth, clip.format(v18(8.0))), self.root), [])
+        self.assertEqual(notes_of(song(synth, clip.format(v18(8.5))), self.root),
+                         ["Synth «Saw»: 40,8 (+8,50 dB), +0,34 dB über 40,0 (+8,16 dB)"])
+        # A row a little above 40 with a full-scale sample (automation, MIDI): 40.08, as it is, not counted as 40
+        path = self.sample("SAMPLES/full.wav", wav, pcm(0, 24), 24)
+        kit = f'<kit presetName="K"><soundSources>{sound("full", path)}</soundSources></kit>'
+        self.assertEqual(notes_of(song(kit, kit_clip("K", [row(0, v18(8.2))])), self.root), [
+            "Reihe «full» in Kit «K»: 40,1 (+8,20 dB), Sample bis 0,0 dBFS, wirkt wie 40,1 (+8,20 dB), +0,04 dB über "
+            "40,0 (+8,16 dB)"])
 
 
 class Rows(Case):
@@ -201,18 +264,28 @@ class Rows(Case):
                                                   row(12, V40 + "7FFFFFFF00000060"), row(13, V50), row(14, V45),
                                                   row(15, V45)]
         kit = f'<kit presetName="K"><soundSources>{"".join(drums)}</soundSources></kit>'
+        full = "50,0 (+12,04 dB), Sample bis 0,0 dBFS, wirkt wie 50,0 (+12,04 dB), +3,88 dB über 40,0 (+8,16 dB)"
         self.assertEqual(notes_of(song(kit, kit_clip("K", rows)), self.root), [
-            "Reihe «full24» in Kit «K»: 50, Sample bis 0,0 dBFS, wirkt wie 50,0",
-            "Reihe «aiff24» in Kit «K»: 50, Sample bis -1,0 dBFS, wirkt wie 47,2",
-            "Reihe «float» in Kit «K»: 50, Sample bis 0,0 dBFS, wirkt wie 50,0",
-            "Reihe «eight» in Kit «K»: 50, Sample bis -2,5 dBFS, wirkt wie 43,3",
-            "Reihe «ext» in Kit «K»: 50, +3,9 dB über 40 (WAVE_FORMAT_EXTENSIBLE, das liest der Deluge nicht)",
-            "Reihe «missing» in Kit «K»: 50, +3,9 dB über 40 (Sample fehlt: SAMPLES/nope.wav)",
-            "Reihe «umlaut» in Kit «K»: 50, Sample bis 0,0 dBFS, wirkt wie 50,0" + LIVE,  # No notes: only live
-            "Reihe «osc» in Kit «K»: 50, +3,9 dB über 40",
-            "Reihe «auto» in Kit «K»: 50, Sample bis 0,0 dBFS, wirkt wie 50,0",
-            "Reihe «aiff8» in Kit «K»: 50, Sample bis -2,1 dBFS, wirkt wie 44,2",
-            "Reihe «int32» in Kit «K»: 45, Sample bis -0,5 dBFS, wirkt wie 43,7",
+            "Reihe «full24» in Kit «K»: " + full,
+            "Reihe «aiff24» in Kit «K»: 50,0 (+12,04 dB), Sample bis -1,0 dBFS, wirkt wie 47,2 (+11,04 dB), +2,88 dB "
+            "über 40,0 (+8,16 dB)",
+            "Reihe «float» in Kit «K»: " + full,
+            "Reihe «eight» in Kit «K»: 50,0 (+12,04 dB), Sample bis -2,5 dBFS, wirkt wie 43,3 (+9,54 dB), +1,38 dB "
+            "über 40,0 (+8,16 dB)",
+            "Reihe «ext» in Kit «K»: 50,0 (+12,04 dB), +3,88 dB über 40,0 (+8,16 dB) (WAVE_FORMAT_EXTENSIBLE, das "
+            "liest der Deluge nicht)",
+            "Reihe «missing» in Kit «K»: 50,0 (+12,04 dB), +3,88 dB über 40,0 (+8,16 dB) (Sample fehlt: "
+            "SAMPLES/nope.wav)",
+            "Reihe «umlaut» in Kit «K»: " + full + LIVE,  # No notes: only live
+            "Reihe «osc» in Kit «K»: 50,0 (+12,04 dB), +3,88 dB über 40,0 (+8,16 dB)",
+            "Reihe «auto» in Kit «K»: " + full,
+            "Reihe «aiff8» in Kit «K»: 50,0 (+12,04 dB), Sample bis -2,1 dBFS, wirkt wie 44,2 (+9,90 dB), +1,73 dB "
+            "über 40,0 (+8,16 dB)",
+            # 45 with a sample at -2 dBFS: 0.05 dB above, counted as it is (nothing rounded)
+            "Reihe «aiff16» in Kit «K»: 45,0 (+10,21 dB), Sample bis -2,0 dBFS, wirkt wie 40,1 (+8,21 dB), +0,05 dB "
+            "über 40,0 (+8,16 dB)",
+            "Reihe «int32» in Kit «K»: 45,0 (+10,21 dB), Sample bis -0,5 dBFS, wirkt wie 43,7 (+9,71 dB), +1,55 dB "
+            "über 40,0 (+8,16 dB)",
         ])
 
     def test_peak_reader(self):
@@ -293,11 +366,12 @@ class Files(Case):
         with open(out, encoding="utf-8") as f:
             self.assertEqual(f.read(), text)
         self.assertIn("# Baseline-Prüfung: 3 Songs, 2 mit Hinweisen", text)
-        self.assertIn("| A | 35 | aus | - | - | ok |", text)
-        self.assertIn("| b | 35 | aus | 35 | 50 | 1 |", text)
+        self.assertIn("| A | 35,4 (0,00 dB) | aus | - | - | ok |", text)
+        self.assertIn("| b | 35,4 (0,00 dB) | aus | 35,4 (0,00 dB) | 50,0 (+12,04 dB) | 1 |", text)
         self.assertIn("| Broken | - | - | - | - | nicht lesbar |", text)
         self.assertIn("Nicht lesbar: </song> schliesst <instruments>", text)
-        self.assertIn("- Reihe «r» in Kit «K»: 50, Sample bis 0,0 dBFS, wirkt wie 50,0", text)
+        self.assertIn("- Reihe «r» in Kit «K»: 50,0 (+12,04 dB), Sample bis 0,0 dBFS, wirkt wie 50,0 (+12,04 dB)",
+                      text)
         self.assertNotIn("._A", text)
         # A song away from the card: --card says where the samples are
         away = os.path.join(self.root, "away.XML")
@@ -311,16 +385,25 @@ class CardCopy(unittest.TestCase):
     def test_songs(self):
         text = bc.report(bc.song_files([KARTE]))
         self.assertIn("# Baseline-Prüfung: 2 Songs, 1 mit Hinweisen", text)
-        self.assertIn("| New Sitar Grii 10 | 35 | aus | 35 | 50 | 6 |", text)
-        self.assertIn("| Rescue | 35 | aus | - | 35 | ok |", text)
+        self.assertIn("| New Sitar Grii 10 | 35,4 (0,00 dB) | aus | 35,4 (0,00 dB) | 50,0 (+12,04 dB) | 6 |", text)
+        # Rescue's loudest row: 34.8, which the report used to round to 35
+        self.assertIn("| Rescue | 35,4 (0,00 dB) | aus | - | 34,8 (+5,73 dB) | ok |", text)
         section = text[text.index("## New Sitar Grii 10"):]
+        over = " über 40,0 (+8,16 dB)" + LIVE
         self.assertEqual([line for line in section.splitlines() if line.startswith("- ")], [
-            "- Reihe «RADJ_Syn_Bass_Note_Amin_2» in Kit «3L3Ctr0»: 50, Sample bis 0,0 dBFS, wirkt wie 49,6" + LIVE,
-            "- Reihe «NA_B_Double-Bass-Shot» in Kit «3L3Ctr0»: 50, Sample bis -1,0 dBFS, wirkt wie 47,2" + LIVE,
-            "- Reihe «00DB_Kick_Power_people2» in Kit «3L3Ctr0»: 43, Sample bis -1,0 dBFS, wirkt wie 40,8" + LIVE,
-            "- Reihe «LP24_OrgPerc_Kick_01» in Kit «3L3Ctr0»: 50, Sample bis 0,0 dBFS, wirkt wie 49,9" + LIVE,
-            "- Reihe «LP24_OrgPerc_Kick_02» in Kit «3L3Ctr0»: 50, Sample bis 0,0 dBFS, wirkt wie 49,9" + LIVE,
-            "- Reihe «hihatlong» in Kit «Hihat»: 50, +3,9 dB über 40 (Sample fehlt: SAMPLES/PsyPack/hihatlong.wav)" + LIVE,
+            # Its value is 49.6, between the steps: not 50
+            "- Reihe «RADJ_Syn_Bass_Note_Amin_2» in Kit «3L3Ctr0»: 49,6 (+11,90 dB), Sample bis 0,0 dBFS, wirkt wie "
+            "49,6 (+11,90 dB), +3,74 dB" + over,
+            "- Reihe «NA_B_Double-Bass-Shot» in Kit «3L3Ctr0»: 50,0 (+12,04 dB), Sample bis -1,0 dBFS, wirkt wie 47,2 "
+            "(+11,04 dB), +2,88 dB" + over,
+            "- Reihe «00DB_Kick_Power_people2» in Kit «3L3Ctr0»: 43,3 (+9,54 dB), Sample bis -1,0 dBFS, wirkt wie 40,8 "
+            "(+8,51 dB), +0,34 dB" + over,
+            "- Reihe «LP24_OrgPerc_Kick_01» in Kit «3L3Ctr0»: 50,0 (+12,04 dB), Sample bis 0,0 dBFS, wirkt wie 49,9 "
+            "(+12,01 dB), +3,85 dB" + over,
+            "- Reihe «LP24_OrgPerc_Kick_02» in Kit «3L3Ctr0»: 50,0 (+12,04 dB), Sample bis 0,0 dBFS, wirkt wie 49,9 "
+            "(+12,02 dB), +3,86 dB" + over,
+            "- Reihe «hihatlong» in Kit «Hihat»: 50,0 (+12,04 dB), +3,88 dB über 40,0 (+8,16 dB) (Sample fehlt: "
+            "SAMPLES/PsyPack/hihatlong.wav)" + LIVE,
         ])
 
 

@@ -30,9 +30,9 @@ Where it writes: onto the card, keeping a copy of every file it changes in BASEL
 on the card first (not under SONGS, so the Deluge doesn't list them), or into a folder of its own: only the changed
 files, in the card's layout, to copy onto the card. It never writes anything before showing what it would do.
 
-Firmware (mastertune v17 on release_1_2_1): see baseline_check.py. The oscillator levels LOCAL_OSC_A/B_VOLUME are
-volume params like the rest (getFinalParameterValueVolume(): the gain goes with the knob squared) and scale the sample
-in Voice::render() before anything else happens to it.
+Firmware (mastertune v17 on release_1_2_1, from v18 on with its volumes in dB): see baseline_check.py. The
+oscillator levels LOCAL_OSC_A/B_VOLUME are volume params like the rest (getFinalParameterValueVolume(): the gain goes
+with the knob squared) and scale the sample in Voice::render() before anything else happens to it.
 
 Usage (Windows: py instead of python3; without arguments it opens its window):
   python3 deluge_baseline.py [--lang en] check CARD [--out REPORT.md]
@@ -45,6 +45,7 @@ Needs numpy to normalize (pip install numpy); everything else only Python 3.8.
 Versions:
   1  the first build: levels and normalize, read or apply, onto the SD card or into a copy folder, German and English
   2  the display's text smaller: 28 characters on 5 lines instead of 21 on 4
+  3  mastertune v18: every level also in dB as the Deluge shows it, values between its 0.5 dB steps as they are
 """
 import argparse
 import datetime
@@ -69,7 +70,7 @@ try:
 except ImportError:  # Only normalizing needs it: checked there
     np = None
 
-VERSION = 2
+VERSION = 3
 AUDIO_EXTENSIONS = (".wav", ".aif", ".aiff")
 XML_FOLDERS = ("SONGS", "KITS", "SYNTHS")
 # Why a sample stays as it is. Wavetables and audio clips always; the other reasons only when it compensates
@@ -228,8 +229,10 @@ class Plan:
 # Pegel: the songs' levels to the baseline
 
 
-def limit(edit, node, name, top, label, clip, suffix=""):
-    """Lowers a volume param whose loudest value is above top (a param value) to top, automation alike."""
+def limit(edit, node, name, top, label, clip, suffix="", song_kit=False):
+    """Lowers a volume param whose loudest value is above top (a param value) to top, automation alike. Its line
+    shows both as they are and in dB as the Deluge does from mastertune v18 on (song_kit: a kit's, an audio track's,
+    the song's volume)."""
     values = bc.param_values(node.get(name)) if node is not None else []
     span = node.span(name) if node is not None else None
     if not values or bc.knob(max(values)) <= bc.knob(top) + 1e-3 or span is None:  # 0x7FFFFFFF is 50 too
@@ -241,8 +244,8 @@ def limit(edit, node, name, top, label, clip, suffix=""):
     else:
         edit.replace(span, scale_text(edit.text[span[0]:span[1]], new / old))
     where = f" (Clip {clip})" if clip else ""
-    edit.lines.append(f"{label}{where}: {bc.num(old)} " + bc.t("auf", "to") +
-                      f" {bc.num(new)}, {bc.signed_db(bc.db_between(old, new))}" + suffix)
+    edit.lines.append(f"{label}{where}: {bc.level(max(values), song_kit)} " + bc.t("auf", "to") +
+                      f" {bc.level(top, song_kit)}, {bc.signed_db(bc.db_between(old, new), 2)}" + suffix)
 
 
 def sound_top(sound, params, card, label, edit):
@@ -284,7 +287,8 @@ def plan_levels(root):
             continue
         edit = XmlEdit(rel, text)
         params = song.child("songParams")
-        limit(edit, params, "volume", bc.SONG_KIT_LIMIT, bc.t("Song-Lautstärke", "Song volume"), None)
+        limit(edit, params, "volume", bc.SONG_KIT_LIMIT, bc.t("Song-Lautstärke", "Song volume"), None,
+              song_kit=True)
         comp = bc.loudest(params, "compressorThreshold") if params is not None else None
         span = params.span("compressorThreshold") if params is not None else None
         if comp is not None and comp > 0 and span is not None:
@@ -314,10 +318,10 @@ def plan_levels(root):
             name = clip_name(clip, number[key])
             if clip.name == "audioClip":
                 limit(edit, clip.child("params"), "volume", bc.SONG_KIT_LIMIT,
-                      bc.t("Audio-Spur", "Audio track") + f" «{track}»", name)
+                      bc.t("Audio-Spur", "Audio track") + f" «{track}»", name, song_kit=True)
             elif clip.child("kitParams") is not None:
                 label = f"Kit «{track}»"
-                limit(edit, clip.child("kitParams"), "volume", bc.SONG_KIT_LIMIT, label, name)
+                limit(edit, clip.child("kitParams"), "volume", bc.SONG_KIT_LIMIT, label, name, song_kit=True)
                 kit = kits.get(key)
                 sources = kit.child("soundSources") if kit is not None else None
                 drums = sources.children if sources is not None else []
@@ -947,7 +951,7 @@ def selftest(out):
         def levels():
             write_plan(plan_levels(card))
             text = bc.report(bc.song_files([str(card)]))
-            assert "| Demo | 35 | aus | 35 | 50 | ok |" in text, text
+            assert "| Demo | 35,4 (0,00 dB) | aus | 35,4 (0,00 dB) | 50,0 (+12,04 dB) | ok |" in text, text
 
         def normalize():
             plan = plan_normalize(card, -1.0, True)
@@ -977,7 +981,8 @@ def selftest(out):
                     settle(root, app)
                     assert app.list and app.list["title"] == title, app.list
                 assert [s["status"] for s in app.songs] == ["ok"], app.songs
-                assert "| Demo | 35 | aus | 35 | 50 | ok |" in bc.report(bc.song_files([str(fresh)]))
+                assert "| Demo | 35,4 (0,00 dB) | aus | 35,4 (0,00 dB) | 50,0 (+12,04 dB) | ok |" in bc.report(
+                    bc.song_files([str(fresh)]))
                 app.set_lang("en")
                 for key in ("read", "start"):
                     app.press(key)
@@ -995,7 +1000,8 @@ def selftest(out):
                 assert "Song volume 40" in text and "Master compressor on" in text, text
                 plan = plan_levels(fresh)
                 assert plan.summary[0] == "1 song read, 1 to change", plan.summary
-                assert "Song volume: 40.0 to 35.4, -2.1 dB" in plan.changes["SONGS/Demo.XML"].lines, plan.report()
+                assert "Song volume: 40.0 (+2.14 dB) to 35.4 (0.00 dB), -2.14 dB" in plan.changes[
+                    "SONGS/Demo.XML"].lines, plan.report()
             finally:
                 bc.LANG = "de"
 
@@ -2028,7 +2034,8 @@ class App:
             o.text(0, 30, t("ZIEL ", "TARGET ") + f"{bc.num(self.target)} DBFS, " + (
                 t("AUSGL AN", "COMP ON") if self.compensate else t("AUSGL AUS", "COMP OFF")))
         else:
-            o.text(0, 30, "SONG 35, SYNTH 40")
+            o.text(0, 30, f"SONG {bc.db_text(bc.volume_db(bc.SONG_KIT_LIMIT, True))}, "
+                          f"SYNTH {bc.db_text(bc.volume_db(bc.SOUND_LIMIT))}")
         card = self.card if len(self.card) <= 21 else ".." + self.card[-19:]
         o.text(0, 39, t("KARTE ", "CARD ") + card)
         if self.songs and all(song["status"] for song in self.songs):
