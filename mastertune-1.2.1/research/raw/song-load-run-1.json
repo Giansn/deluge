@@ -1,10 +1,10 @@
 {
  "harness": {
   "works": true,
-  "runPath": "/home/user/deluge/mastertune-1.2.1/tests/song/run.sh <Firmware-Baum|deluge.elf> [out] [Takte]  (ca. 1 min; Dateien: song_emu.py, make_sd.py, fat32.py, blockcount.c)",
-  "song": "120 BPM, 96 PPQN, alles gleichzeitig: 8 Synths mit 4-Ton-Akkorden (Cm9/Abmaj7/Fm9/G7sus4, 4-Takt-Clips, Noten 2 Schläge, Release ca. 0,85 s), je Saw+Square, 24-dB-Ladder-LPF, Sidechain-Ducking, Reverb-Send: PADA Unison 4+HPF+LFO→LPF+Chorus, PADB Unison 4+Phaser+Delay, PADC HPF+Flanger+Kompressor, PADD Bitcrush+SRR, ARP 16tel (2 Okt.)+Delay, PADE Unison 4+HPF, FM (DX7, Algorithmus 5), WT (Wavetable+LFO2). Kit mit 8 Spuren im 16tel-Muster (Kick→Sidechain, Tom +5 und Glocke −7 Halbtöne). Audiospur: Loop mit 100 BPM, per Time-Stretch auf 120 BPM. Song-Reverb Mutable und 4 binaurale Drone-Töne.",
-  "sanity": "Ausgabe Peak −1,5 dBFS, RMS −18 dBFS, 0 geclippte Samples, kein NaN. Pumpen im Beat, Spektrum plausibel, measured.wav liegt bei. Stimmen: Mittel 29,7, Spitze 36, Minimum 4. cullVoice(): 0 Aufrufe. Das Ergebnis ist deterministisch (zwei Läufe identisch). Die Firmware hat den Song zurückgeschrieben (--write-back): 16 Sounds und 10 Clips, alle Parameter angekommen.",
-  "notes": "Ergebnis: Diese Runde braucht im Mittel 83 % CPU, die Spitzen liegen bei 112 %. Die Spitzen fallen auf die Akkordwechsel. Dort würde der echte Deluge Stimmen cullen.\n\nWie gemessen wurde: Die echte deluge.elf lief unverändert, der Baum wurde nicht angefasst und nichts gebaut. Ablauf: resetprg/deluge_main bis registerTasks, dann setupStartupSong (lädt SONGS/DEFAULT.XML), playButtonPressed, danach AudioEngine::routine() pro Fenster. FatFS läuft auf einem FAT32-Image mit 32-KB-Clustern. Nur die Hardware ist nachgebildet: Timer, DMA, SPI, Flash sowie ein Sprung über die SDHI-Initialisierung.\n\nEinschränkungen:\n- Gezählt sind Instruktionen, nicht Zyklen. Speicher-Stalls oder Dual-Issue können das Ergebnis auf der Hardware verschieben.\n- Die Fenster haben immer 128 Samples. Das ist der günstigste Fall; kleinere Fenster auf dem Gerät kosten mehr.\n- Fenster, die an Clock-Ticks gekürzt werden (10 Samples), kosten rund 200k Instruktionen. Das ist hoher Fixaufwand pro Fenster, etwa 6k pro Stimme.\n\nVariante: Mit Release 1,6 s steigen die Stimmen auf 58, der Schnitt auf 108 % und die Spitze auf 151 %.\n\nDigital-Reverb statt Mutable: 54k statt 40k pro 128 Samples, gesamt 84,3 % statt 82,9 %.\n\nNicht committet.",
+  "runPath": "/home/user/deluge/mastertune-1.2.1/tests/song/run.sh <firmware tree|deluge.elf> [out] [bars]  (approx. 1 min; files: song_emu.py, make_sd.py, fat32.py, blockcount.c)",
+  "song": "120 BPM, 96 PPQN, everything at once: 8 synths with 4-note chords (Cm9/Abmaj7/Fm9/G7sus4, 4-bar clips, notes 2 beats, release approx. 0.85 s), each Saw+Square, 24 dB ladder LPF, sidechain ducking, reverb send: PADA Unison 4+HPF+LFO→LPF+Chorus, PADB Unison 4+Phaser+Delay, PADC HPF+Flanger+Compressor, PADD Bitcrush+SRR, ARP 16ths (2 oct.)+Delay, PADE Unison 4+HPF, FM (DX7, algorithm 5), WT (Wavetable+LFO2). Kit with 8 tracks in a 16th pattern (Kick→Sidechain, Tom +5 and Bell −7 semitones). Audio track: loop at 100 BPM, time-stretched to 120 BPM. Song reverb Mutable and 4 binaural drone tones.",
+  "sanity": "Output peak −1.5 dBFS, RMS −18 dBFS, 0 clipped samples, no NaN. Pumping on the beat, spectrum plausible, measured.wav attached. Voices: mean 29.7, peak 36, minimum 4. cullVoice(): 0 calls. The result is deterministic (two runs identical). The firmware wrote the song back (--write-back): 16 sounds and 10 clips, all parameters arrived.",
+  "notes": "Result: this round needs 83% CPU on average, with peaks at 112%. The peaks fall on the chord changes. There the real Deluge would cull voices.\n\nHow it was measured: the real deluge.elf ran unchanged; the tree was not touched and nothing was built. Sequence: resetprg/deluge_main up to registerTasks, then setupStartupSong (loads SONGS/DEFAULT.XML), playButtonPressed, then AudioEngine::routine() per window. FatFS runs on a FAT32 image with 32 KB clusters. Only the hardware is emulated: timers, DMA, SPI, flash, plus a jump over the SDHI initialization.\n\nLimitations:\n- Instructions are counted, not cycles. Memory stalls or dual issue can shift the result on the hardware.\n- The windows always have 128 samples. That is the most favorable case; smaller windows on the device cost more.\n- Windows cut short at clock ticks (10 samples) cost around 200k instructions. That is a high fixed overhead per window, about 6k per voice.\n\nVariant: with a release of 1.6 s the voices rise to 58, the mean to 108% and the peak to 151%.\n\nDigital reverb instead of Mutable: 54k instead of 40k per 128 samples, total 84.3% instead of 82.9%.\n\nNot committed.",
   "blocksMeasured": 2816,
   "peakVoices": 36,
   "perBlock": {
@@ -15,22 +15,22 @@
   },
   "areas": [
    {
-    "area": "Filter (LP/HP-Ladder)",
+    "area": "Filters (LP/HP ladder)",
     "percentOfTotal": 35.1,
     "instructionsPerBlock": 337531
    },
    {
-    "area": "Oszillatoren (inkl. Wavetable)",
+    "area": "Oscillators (incl. wavetable)",
     "percentOfTotal": 26.3,
     "instructionsPerBlock": 252990
    },
    {
-    "area": "Spur-FX (ModFX, Bitcrush, Volume/Pan/Reverb-Send)",
+    "area": "Track FX (ModFX, bitcrush, volume/pan/reverb send)",
     "percentOfTotal": 10.6,
     "instructionsPerBlock": 101722
    },
    {
-    "area": "Stimmen/Patcher/Hüllkurven/LFOs",
+    "area": "Voices/patcher/envelopes/LFOs",
     "percentOfTotal": 9.3,
     "instructionsPerBlock": 89696
    },
@@ -40,12 +40,12 @@
     "instructionsPerBlock": 39909
    },
    {
-    "area": "Sidechain/Kompressoren",
+    "area": "Sidechain/compressors",
     "percentOfTotal": 3.2,
     "instructionsPerBlock": 31177
    },
    {
-    "area": "Sample-Lesen/Interpolation/Timestretch",
+    "area": "Sample reading/interpolation/timestretch",
     "percentOfTotal": 2.2,
     "instructionsPerBlock": 21265
    },
@@ -65,12 +65,12 @@
     "instructionsPerBlock": 19989
    },
    {
-    "area": "Speicher/Sonstiges",
+    "area": "Memory/other",
     "percentOfTotal": 1.4,
     "instructionsPerBlock": 13611
    },
    {
-    "area": "Song/Master-FX, Ausgabe",
+    "area": "Song/master FX, output",
     "percentOfTotal": 1.2,
     "instructionsPerBlock": 11495
    },
@@ -97,26 +97,26 @@
   "sound": true,
   "problems": [
    {
-    "problem": "Es läuft nicht durchgehend alles gleichzeitig: Im letzten Achtel jedes Takts schweigen die Synths.",
-    "evidence": "Mein Zusatzskript (scratchpad/chk/chk.py) wertet nach 16teln aus. Die 16tel 0–13 kosten 84–92 % bei 28–35 Stimmen, das 16tel 14 nur 54 %, das 16tel 15 nur 22 % bei 6 Stimmen. Das sind 260 Fenster unter 500k Instruktionen (5. Perzentil 22 %). Grund: Akkorde von 2 Schlägen mit 0,85 s Release enden vor dem Taktende. Der ARP spielt nur 55 % der Zeit. Im Dauerzustand liegt das Mittel bei etwa 89 %, nicht bei 83 %.",
-    "fix": "In make_sd.py die Akkord- und ARP-Noten über den ganzen Takt legen (384 Ticks, legato). Zusätzlich ein Mittel nur über die Fenster ausweisen, in denen alle 16 Sounds Stimmen haben."
+    "problem": "Not everything runs at the same time throughout: in the last eighth of every bar the synths are silent.",
+    "evidence": "My extra script (scratchpad/chk/chk.py) evaluates by 16ths. The 16ths 0–13 cost 84–92% at 28–35 voices, the 16th 14 only 54%, the 16th 15 only 22% at 6 voices. That is 260 windows below 500k instructions (5th percentile 22%). Reason: chords of 2 beats with 0.85 s release end before the end of the bar. The ARP plays only 55% of the time. In the steady state the mean is about 89%, not 83%.",
+    "fix": "In make_sd.py, stretch the chord and ARP notes over the whole bar (384 ticks, legato). In addition, report a mean only over the windows in which all 16 sounds have voices."
    },
    {
-    "problem": "Die Aussage zum Culling ist falsch: Der echte Deluge würde dauernd cullen, nicht nur an den Spitzen.",
-    "evidence": "getLastRunTimeforCurrentTask() liefert durationStats.average der Audio-Task. Der Harness leert taskManager, deshalb kommt 0 zurück. In cullVoices() beginnt der Soft-Cull ab 80 Samples (62,5 % eines 128er-Fensters), der Hard-Cull ab 112 Samples (87,5 %). Bei 89–92 % Dauerlast würde das Gerät also laufend Hard-Culls machen.",
-    "fix": "getLastRunTimeforCurrentTask abfangen und die emulierte Dauer des vorigen routine()-Aufrufs liefern (Instruktionen / 400 MHz). Dann beide Werte berichten: den Lauf mit Culling (Culls, Stimmen) und den Bedarf ohne Culling."
+    "problem": "The claim about culling is wrong: the real Deluge would cull constantly, not only at the peaks.",
+    "evidence": "getLastRunTimeforCurrentTask() returns durationStats.average of the audio task. The harness empties taskManager, so 0 comes back. In cullVoices() the soft cull starts from 80 samples (62.5% of a 128-sample window), the hard cull from 112 samples (87.5%). At 89–92% sustained load the device would therefore make hard culls all the time.",
+    "fix": "Intercept getLastRunTimeforCurrentTask and return the emulated duration of the previous routine() call (instructions / 400 MHz). Then report both values: the run with culling (culls, voices) and the demand without culling."
    },
    {
-    "problem": "Ob alle Spuren spielen, wird pro Lauf nicht geprüft.",
-    "evidence": "Erst das Zusatzskript zeigt es: 16 Sounds haben Stimmen. 6 Pads spielen 90 % der Zeit mit 4 Stimmen, ein Synth im Mittel mit 2,5, der ARP mit höchstens 2. Alle 8 Kit-Reihen sind aktiv (10–100 % der Zeit).",
-    "fix": "Die Stimmen je Sound (activeVoices nach Sound*) in result.json aufnehmen."
+    "problem": "Whether all tracks play is not checked per run.",
+    "evidence": "Only the extra script shows it: 16 sounds have voices. 6 pads play with 4 voices 90% of the time, one synth with 2.5 on average, the ARP with at most 2. All 8 kit rows are active (10–100% of the time).",
+    "fix": "Add the voices per sound (activeVoices by Sound*) to result.json."
    },
    {
-    "problem": "Der Digital-Vergleich misst andere Takte.",
-    "evidence": "Digital läuft über 2 Takte, Mutable über 4. Der Vergleich 84,3 % gegen 82,9 % vermischt also Reverb- und Akkordunterschied.",
-    "fix": "Dieselbe Taktzahl messen oder nur die Reverb-Fläche vergleichen (54k gegen 40k)."
+    "problem": "The Digital comparison measures different bars.",
+    "evidence": "Digital runs over 2 bars, Mutable over 4. So the comparison 84.3% against 82.9% mixes the reverb difference with the chord difference.",
+    "fix": "Measure the same number of bars or compare only the reverb area (54k against 40k)."
    }
   ],
-  "crossCheck": "Der Rerun ist identisch: 962 920 Instruktionen pro Block (Spitze 1 303 588), 36 Stimmen, 0 Culls, −1,5/−18 dBFS, kein NaN. Gezählt wird ganz AudioEngine::routine(), samt Ticks und doSomeOutputting. Playback-Task und Cluster-Laden laufen separat und kosten nur 92 pro Block. Die Flächen summieren sich exakt auf das Gesamt (963 013). Voice::render ist in Sound::render inlined, die Zuordnung zu «Stimmen» stimmt also. Instruktionen gegen Stimmen: 28k pro Stimme plus 126k fix, r=0,98. Filter-Bench (ARM): LpLadder 252,6k auf rund 22,5 LPF-Stimmen ergibt 11,2k pro Stimme, der Bench (LP24 res30 mono) zeigt 10,8k. HpLadder: 78k auf 10,8 Stimmen ergibt 7,2k, der Bench 7,7k. Oszillator-Bench: Saw Unison 4 kostet 6,3k, einfache Wellen 1,6k. Mal Stimmen ergibt das rund 179k, gemessen 178k. Nicht nachgelaufen sind die Benches für Effekte, Reverb, Delay und Drone."
+  "crossCheck": "The rerun is identical: 962,920 instructions per block (peak 1,303,588), 36 voices, 0 culls, −1.5/−18 dBFS, no NaN. The whole AudioEngine::routine() is counted, including ticks and doSomeOutputting. The playback task and cluster loading run separately and cost only 92 per block. The areas add up exactly to the total (963,013). Voice::render is inlined into Sound::render, so the attribution to \"voices\" is correct. Instructions against voices: 28k per voice plus 126k fixed, r=0.98. Filter bench (ARM): LpLadder 252.6k over around 22.5 LPF voices gives 11.2k per voice; the bench (LP24 res30 mono) shows 10.8k. HpLadder: 78k over 10.8 voices gives 7.2k, the bench 7.7k. Oscillator bench: saw unison 4 costs 6.3k, simple waves 1.6k. Times the voices that gives around 179k, measured 178k. The benches for effects, reverb, delay and drone were not rerun."
  }
 }

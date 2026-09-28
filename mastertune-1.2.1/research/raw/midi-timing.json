@@ -5,29 +5,29 @@
  "result": {
   "r": {
    "works": true,
-   "commit": "89db1920 (Branch midi-timing, Worktree /home/user/work/midi-timing, Basis c6201e47)",
-   "model": "Das Modell stimmt. routine_() läuft nur, wenn doSomeOutputting() true liefert, also wenn der Renderpuffer leer ist. Der TX-Puffer hält dann genau 128 - due ungespielte Samples. Im Emulator begann jedes von rund 11'000 Fenstern dort, wo das vorige endete (0 Abweichungen, 0 Underruns). Das Sample an Position t spielt 128 - due + t - movement nach dem Timer-Start.",
-   "before": "Basis, Timer wie geplant (TGRA) gegen den Zeitpunkt, an dem die DMA das Fenster-Sample erreicht:\n- Normales Abspielen: 192 Läufe, alle zwischen -1.2 und +0.2 Samples. Mit 16er-Fenstern bricht nichts um.\n- Beim Speichern: 97 Läufe, davon 25 bei -128 Samples, also 2.9 ms zu früh. Betroffen sind die MIDI-Clocks, die später im 64er-Fenster liegen (31 % der Clocks mit t>0).",
-   "after": "Normales Abspielen: 192 Läufe, alle zwischen -1.2 und +0.1 Samples. Beim Speichern: 97 Läufe, alle zwischen -1.4 und +0.2 Samples, keine Ausreisser bei -128, obwohl 29 davon mehr als 128 Samples Vorlauf brauchten. Das gespeicherte XML ist identisch (gleicher sha256).",
-   "change": "In audio_engine.cpp, scheduleMidiGateOutISR(): s = 128 + t - due - (movement & 127).\n- Ist s <= 0 und t >= 0, liegt ein Underrun vor, und s wird um 128 erhöht, wie bisher.\n- Ist s <= 0 und t < 0, ist das Sample schon gespielt, und s wird 1.\n- Die Sonderfälle -1 → 0 und die Mindest-Aus-Zeit des Gates bleiben.\n- Neu wird s auf höchstens 5605 begrenzt, damit das 16-Bit-TGRA nicht überläuft.\n- Formatiert mit clang-format, keine neuen Warnungen.",
-   "howToRun": "MIDI=1 ./run.sh <tree|elf> [out] in /home/user/deluge/mastertune-1.2.1/tests/song, Dauer etwa 2 bis 3 Minuten. Die Ergebnisse liegen in out/midi-play/midi_timing.json und out/midi-save/midi_timing.json. Einstellbar sind MIDI_SYNTHS, MIDI_BARS und MIDI_SAVE_BARS. Direkt geht es mit song_emu.py --midi-timing, optional zusammen mit --save-while-playing.",
-   "notes": "- Harness-Umbau: blockcount.c hat Deadlines für Interrupts bekommen. song_emu.py modelliert neu den Timer (MTU2 Kanal 2) und den MIDI-UART (DMA, 16-Byte-FIFO, 31250 Baud) mit Interrupts, spielt in Echtzeit wie der Task-Manager und speichert wiederholt. make_sd.py hat die Option --midi-track, der Standard-Song bleibt bitgleich. Alles ist im Kopf von run.sh dokumentiert.\n- Separater Befund: Song::renderAudio() sperrt die Interrupts pro Output (DISABLE_ALL_INTERRUPTS). Der Timer-Interrupt kommt dadurch tatsächlich bis 33 Samples (normal) bzw. 41 Samples (beim Speichern) zu spät, in Basis und Fix gleich.\n- Die Timer-Konstante 515616 statt 520833 Hz macht rund 1 % aus, etwa -1 Sample.\n- Gate-Ausgänge wurden nicht getestet, weil der Song keine CV-Spur hat.\n- In /home/user/deluge ist nichts committet."
+   "commit": "89db1920 (branch midi-timing, worktree /home/user/work/midi-timing, base c6201e47)",
+   "model": "The model is correct. routine_() only runs when doSomeOutputting() returns true, i.e. when the render buffer is empty. The TX buffer then holds exactly 128 - due unplayed samples. In the emulator each of around 11,000 windows started where the previous one ended (0 deviations, 0 underruns). The sample at position t plays 128 - due + t - movement after the timer start.",
+   "before": "Base, timer as planned (TGRA) against the moment the DMA reaches the window sample:\n- Normal playback: 192 runs, all between -1.2 and +0.2 samples. With 16-sample windows nothing wraps around.\n- When saving: 97 runs, 25 of them at -128 samples, i.e. 2.9 ms too early. Affected are the MIDI clocks that lie later in the 64-sample window (31% of the clocks with t>0).",
+   "after": "Normal playback: 192 runs, all between -1.2 and +0.1 samples. When saving: 97 runs, all between -1.4 and +0.2 samples, no outliers at -128, although 29 of them needed more than 128 samples of lead time. The saved XML is identical (same sha256).",
+   "change": "In audio_engine.cpp, scheduleMidiGateOutISR(): s = 128 + t - due - (movement & 127).\n- If s <= 0 and t >= 0, there is an underrun, and s is increased by 128, as before.\n- If s <= 0 and t < 0, the sample has already played, and s becomes 1.\n- The special cases -1 → 0 and the gate's minimum off time stay.\n- New: s is limited to at most 5605, so that the 16-bit TGRA does not overflow.\n- Formatted with clang-format, no new warnings.",
+   "howToRun": "MIDI=1 ./run.sh <tree|elf> [out] in /home/user/deluge/mastertune-1.2.1/tests/song, takes about 2 to 3 minutes. The results are in out/midi-play/midi_timing.json and out/midi-save/midi_timing.json. MIDI_SYNTHS, MIDI_BARS and MIDI_SAVE_BARS can be set. It also works directly with song_emu.py --midi-timing, optionally together with --save-while-playing.",
+   "notes": "- Harness rework: blockcount.c got deadlines for interrupts. song_emu.py now models the timer (MTU2 channel 2) and the MIDI UART (DMA, 16-byte FIFO, 31250 baud) with interrupts, plays in real time like the task manager and saves repeatedly. make_sd.py has the option --midi-track; the default song stays bit-identical. Everything is documented in the header of run.sh.\n- Separate finding: Song::renderAudio() disables the interrupts per output (DISABLE_ALL_INTERRUPTS). The timer interrupt therefore actually comes up to 33 samples (normal) or 41 samples (when saving) too late, the same in base and fix.\n- The timer constant 515616 instead of 520833 Hz makes up around 1%, about -1 sample.\n- Gate outputs were not tested, because the song has no CV track.\n- Nothing is committed in /home/user/deluge."
   },
   "v": {
    "ok": false,
-   "reproduced": "Nachgemessen mit MIDI=1 run.sh, midi-base.elf gegen midi-fix2.elf (dieselbe Datei wie build/Release). Beim Speichern liegen in der Basis 25 von 97 Timer-Läufen bei -128, mit dem Fix alle zwischen -1.4 und +0.2. Beim normalen Abspielen liegen beide zwischen -1.2 und +0.2, der sha256 ist gleich. Das Modell stimmt: routine_() läuft nur bei leerem Renderpuffer, und doSomeOutputting() schreibt nie über saddr hinaus. Die Formel gilt deshalb modular auch bei einem Underrun. Geprüft und in Ordnung: t<0→1, Clamp 5605, Gate-Mindest-Aus-Zeit, externe Clock, No-Song (t=0 rechnet wie vorher). Die Formel selbst ist korrekt, beim normalen Abspielen wird nichts schlechter.",
+   "reproduced": "Remeasured with MIDI=1 run.sh, midi-base.elf against midi-fix2.elf (the same file as build/Release). When saving, 25 of 97 timer runs in the base are at -128; with the fix all are between -1.4 and +0.2. In normal playback both are between -1.2 and +0.2, and the sha256 is the same. The model is correct: routine_() only runs with an empty render buffer, and doSomeOutputting() never writes past saddr. So the formula also holds modularly with an underrun. Checked and fine: t<0→1, clamp 5605, gate minimum off time, external clock, no song (t=0 computes as before). The formula itself is correct; nothing gets worse in normal playback.",
    "problems": [
     {
-     "problem": "TCNT_2 wird vor dem Start des Timers nie auf 0 gesetzt. Die MTU2 löscht TCNT beim Compare-Match und zählt weiter, bis die ISR den Timer stoppt. Solange Song::renderAudio() die Interrupts sperrt, sind das bis zu 465 Counts. Der nächste Lauf kommt um diesen Rest zu früh. Ist TGRA kleiner als der Rest, feuert er erst nach dem 16-Bit-Überlauf, rund 127 ms zu spät. Der neue Pfad s=1 (TGRA 11) läuft fast immer in diesen Überlauf.",
-     "where": "src/deluge/processing/engines/audio_engine.cpp, scheduleMidiGateOutISR(), vor enableTimer(TIMER_MIDI_GATE_OUTPUT)",
-     "evidence": "Harness-Kopie mit TCNT-Modell: scratchpad/h/song_emu.py, Logs scratchpad/tbase.log und tfix.log. Rest über 40 Counts in 110/193 Läufen (normal) und 41/97 (Speichern), höchstens 376 bzw. 451. Geplante Zeit: normal in Basis und Fix bis -32 Samples, beim Speichern mit Fix bis -38. Basis beim Speichern: Timer bis +5408 Samples (123 ms) zu spät, Clocks auf dem Draht bis +811.",
-     "fix": "*TCNT[TIMER_MIDI_GATE_OUTPUT] = 0; direkt vor enableTimer() setzen (der Timer steht dort still). Danach gilt das bisherige Harness-Modell mit Start bei 0, also -1.4 bis +0.2. Das TCNT-Modell gehört auch in song_emu.py."
+     "problem": "TCNT_2 is never set to 0 before the timer starts. The MTU2 clears TCNT on the compare match and keeps counting until the ISR stops the timer. While Song::renderAudio() disables the interrupts, that is up to 465 counts. The next run comes early by this remainder. If TGRA is smaller than the remainder, it only fires after the 16-bit overflow, around 127 ms too late. The new path s=1 (TGRA 11) almost always runs into this overflow.",
+     "where": "src/deluge/processing/engines/audio_engine.cpp, scheduleMidiGateOutISR(), before enableTimer(TIMER_MIDI_GATE_OUTPUT)",
+     "evidence": "Harness copy with the TCNT model: scratchpad/h/song_emu.py, logs scratchpad/tbase.log and tfix.log. Remainder above 40 counts in 110/193 runs (normal) and 41/97 (saving), at most 376 and 451 respectively. Planned time: normal, in base and fix, up to -32 samples; when saving with the fix, up to -38. Base when saving: timer up to +5408 samples (123 ms) too late, clocks on the wire up to +811.",
+     "fix": "Set *TCNT[TIMER_MIDI_GATE_OUTPUT] = 0; directly before enableTimer() (the timer is stopped there). After that the previous harness model with a start at 0 applies, i.e. -1.4 to +0.2. The TCNT model also belongs in song_emu.py."
     },
     {
-     "problem": "Noten gehen rund 2.5 ms vor dem Audio hinaus: Fällt eine Clock auf den Noten-Tick, flusht doMIDIClockOutTick() den Puffer sofort. Das bestand schon vorher, der Fix ändert nichts daran. Der Harness misst nur Clocks. Ausserdem setzt er MidiTiming.source nach einem Interrupt nie zurück, die Zuordnung 'UART transfer-end' ist darum falsch.",
+     "problem": "Notes go out around 2.5 ms before the audio: if a clock falls on the note tick, doMIDIClockOutTick() flushes the buffer immediately. This existed before; the fix does not change it. The harness only measures clocks. Also, it never resets MidiTiming.source after an interrupt, so the attribution 'UART transfer-end' is wrong.",
      "where": "src/deluge/playback/playback_handler.cpp doMIDIClockOutTick(); tests/song/song_emu.py MidiTiming",
-     "evidence": "Note-Statusbytes gegen Sample 0 ihres Fensters, Basis gleich wie Fix: -60 bis -119 Samples, Median -107 (normal) bzw. -116 (Speichern). Logs: scratchpad/nbase.log, nfix.log.",
-     "fix": "Separat angehen: Noten wie Clocks über den Timer senden statt sofort zu flushen, oder das Verhalten bewusst belassen. Im Harness source nach Rückkehr aus der ISR zurücksetzen und Noten mitmessen."
+     "evidence": "Note status bytes against sample 0 of their window, base the same as fix: -60 to -119 samples, median -107 (normal) and -116 (saving). Logs: scratchpad/nbase.log, nfix.log.",
+     "fix": "Tackle separately: send notes via the timer like clocks instead of flushing immediately, or deliberately keep the behavior. In the harness, reset source after returning from the ISR and measure notes as well."
     }
    ]
   }
@@ -56,14 +56,14 @@
    "queuedAt": 1790455160433,
    "attempt": 1,
    "lastToolName": "StructuredOutput",
-   "lastToolSummary": "89db1920 (Branch midi-timing, Worktree /home/user/work/midi…",
+   "lastToolSummary": "89db1920 (branch midi-timing, worktree /home/user/work/midi…",
    "promptPreview": "Firmware repo /home/user/work/DelugeFirmware-121 (READ-ONLY; do not edit, build or check out there, nor in other worktrees: drone-v13, delay-v14, save-speed, v13-verify, deluge-diag, baseline-*, v13-check). Base: branch mastertune-v13 at commit c6201e47 (includes the faster saving: while a file is saved/loaded, AudioEngine::routine() renders at least AudioEngine::minNumSamplesToRender = 64 samples…",
    "promptFramed": true,
    "lastProgressAt": 1790457506028,
    "tokens": 286947,
    "toolCalls": 95,
    "durationMs": 2345565,
-   "resultPreview": "{\"works\":true,\"commit\":\"89db1920 (Branch midi-timing, Worktree /home/user/work/midi-timing, Basis c6201e47)\",\"model\":\"Das Modell stimmt. routine_() läuft nur, wenn doSomeOutputting() true liefert, also wenn der Renderpuffer leer ist. Der TX-Puffer hält dann genau 128 - due ungespielte Samples. Im Emulator begann jedes von rund 11'000 Fenstern dort, wo das vorige endete (0 Abweichungen, 0 Underruns…"
+   "resultPreview": "{\"works\":true,\"commit\":\"89db1920 (branch midi-timing, worktree /home/user/work/midi-timing, base c6201e47)\",\"model\":\"The model is correct. routine_() only runs when doSomeOutputting() returns true, i.e. when the render buffer is empty. The TX buffer then holds exactly 128 - due unplayed samples. In the emulator each of around 11,000 windows started where the previous one ended (0 deviations, 0 underruns…"
   },
   {
    "type": "workflow_agent",
@@ -78,14 +78,14 @@
    "queuedAt": 1790457508664,
    "attempt": 1,
    "lastToolName": "StructuredOutput",
-   "lastToolSummary": "Nachgemessen mit MIDI=1 run.sh, midi-base.elf gegen midi-fi…",
+   "lastToolSummary": "Remeasured with MIDI=1 run.sh, midi-base.elf against midi-fi…",
    "promptPreview": "Firmware repo /home/user/work/DelugeFirmware-121 (READ-ONLY; do not edit, build or check out there, nor in other worktrees: drone-v13, delay-v14, save-speed, v13-verify, deluge-diag, baseline-*, v13-check). Base: branch mastertune-v13 at commit c6201e47 (includes the faster saving: while a file is saved/loaded, AudioEngine::routine() renders at least AudioEngine::minNumSamplesToRender = 64 samples…",
    "promptFramed": true,
    "lastProgressAt": 1790458153868,
    "tokens": 148955,
    "toolCalls": 40,
    "durationMs": 645174,
-   "resultPreview": "{\"ok\":false,\"reproduced\":\"Nachgemessen mit MIDI=1 run.sh, midi-base.elf gegen midi-fix2.elf (dieselbe Datei wie build/Release). Beim Speichern liegen in der Basis 25 von 97 Timer-Läufen bei -128, mit dem Fix alle zwischen -1.4 und +0.2. Beim normalen Abspielen liegen beide zwischen -1.2 und +0.2, der sha256 ist gleich. Das Modell stimmt: routine_() läuft nur bei leerem Renderpuffer, und doSomeOutp…"
+   "resultPreview": "{\"ok\":false,\"reproduced\":\"Remeasured with MIDI=1 run.sh, midi-base.elf against midi-fix2.elf (the same file as build/Release). When saving, 25 of 97 timer runs in the base are at -128; with the fix all are between -1.4 and +0.2. In normal playback both are between -1.2 and +0.2, and the sha256 is the same. The model is correct: routine_() only runs with an empty render buffer, and doSomeOutp…"
   }
  ],
  "totalTokens": 435902,

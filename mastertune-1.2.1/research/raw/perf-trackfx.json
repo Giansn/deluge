@@ -1,59 +1,59 @@
 [
  {
   "works": true,
-  "commit": "9b73dd78 auf perf-trackfx (Basis ef5caee8); Patch: /home/user/deluge/mastertune-1.2.1/perf/0004-Track-FX-NEON-volume-pan-reverb-send-phaser-chorus-f.patch",
+  "commit": "9b73dd78 on perf-trackfx (base ef5caee8); patch: /home/user/deluge/mastertune-1.2.1/perf/0004-Track-FX-NEON-volume-pan-reverb-send-phaser-chorus-f.patch",
   "changes": [
    {
-    "what": "Volume/Pan/Reverb-Send mit NEON, 4 Samples pro Schritt, eine Schleife pro Fall",
-    "where": "processReverbSendAndVolume, neu track_fx_kernels.h",
-    "saving": "Song 59'412 → 13'977; Bench 3'918 → 945",
-    "whyExact": "smmul = vmull.s32 + vuzp (exakte High-Words, ohne Sättigung). Rampe mod 2^32 ist gleich bei 1 oder 4 Schritten. Adds wrappen wie vorher. Die Puffer sind getrennt; in place wird gelesen, bevor geschrieben wird."
+    "what": "Volume/pan/reverb send with NEON, 4 samples per step, one loop per case",
+    "where": "processReverbSendAndVolume, new track_fx_kernels.h",
+    "saving": "Song 59,412 → 13,977; bench 3,918 → 945",
+    "whyExact": "smmul = vmull.s32 + vuzp (exact high words, without saturation). The ramp mod 2^32 is the same with 1 or 4 steps. Adds wrap as before. The buffers are separate; in place, the read happens before the write."
    },
    {
-    "what": "Phaser, Chorus und Flanger je in eigener Schleife, Zustand in Registern; Phaser a1 im Voraus für 32 Samples, L und R getrennt",
+    "what": "Phaser, chorus and flanger each in their own loop, state in registers; phaser a1 in advance for 32 samples, L and R separate",
     "where": "processFX",
-    "saving": "Song 38'643 → 24'040; Phaser 19'947 → 11'582, Chorus 8'928 → 5'751",
-    "whyExact": "Pro Sample gleiche Operationen in gleicher Reihenfolge. L und R teilen nur a1. Puffer liegt nie im Objekt. Grain bleibt die alte Schleife."
+    "saving": "Song 38,643 → 24,040; phaser 19,947 → 11,582, chorus 8,928 → 5,751",
+    "whyExact": "Per sample the same operations in the same order. L and R only share a1. The buffer never lies inside the object. Grain keeps the old loop."
    },
    {
-    "what": "EQ als eq<bass,treble> mit lokalen Zuständen",
-    "where": "processFX (doEQ entfernt)",
-    "saving": "Bench 7'210 → 4'021 (Song ohne EQ)",
-    "whyExact": "Gleiche Formeln, Kanäle unabhängig, Adds wrappen."
+    "what": "EQ as eq<bass,treble> with local states",
+    "where": "processFX (doEQ removed)",
+    "saving": "Bench 7,210 → 4,021 (song without EQ)",
+    "whyExact": "Same formulas, channels independent, adds wrap."
    },
    {
-    "what": "SRR mit lokalem Zustand; Bitcrush allein mit NEON vand",
+    "what": "SRR with local state; bitcrush alone with NEON vand",
     "where": "processSRRAndBitcrushing",
-    "saving": "Song 5'397 → 5'014; Bitcrush 723 → 445",
-    "whyExact": "SRR-Code unverändert, nur mit lokalen Variablen; die Maske wird pro int32 gleich angewendet."
+    "saving": "Song 5,397 → 5,014; bitcrush 723 → 445",
+    "whyExact": "SRR code unchanged, only with local variables; the mask is applied the same way per int32."
    }
   ],
-  "bench": "ARM=1: alle 22 Hashes gleich wie v12-perf, nämlich 18 feste Fälle und 4×4000 Zufallsfälle. Die Zufallsfälle decken wechselnde Parameter, 1–128 Samples (auch ungerade), Mono/Stereo, Stille, Vollaussteuerung, Extremwerte und zufällige Startzustände ab. Die PC-Hashes sind ebenfalls gleich.",
-  "songTrace": "tests/bench/effects/song_trace.sh mit EMU_OPTS=\"--init-sounds --seed 1\": alle 165'312 Aufrufe identisch (je 55'104), measured.wav ebenfalls identisch. Ohne diese Optionen sind schon die Eingaben verschieden, wegen der uninitialisierten LFO-Phasen.",
+  "bench": "ARM=1: all 22 hashes the same as v12-perf, namely 18 fixed cases and 4×4000 random cases. The random cases cover changing parameters, 1–128 samples (odd counts too), mono/stereo, silence, full scale, extreme values and random start states. The PC hashes are also the same.",
+  "songTrace": "tests/bench/effects/song_trace.sh with EMU_OPTS=\"--init-sounds --seed 1\": all 165,312 calls identical (55,104 each), measured.wav also identical. Without these options even the inputs differ, because of the uninitialized LFO phases.",
   "song": {
    "demandBefore": 1095537,
    "demandAfter": 1035101,
-   "note": "−5,5 %. Per-Track-FX 106'189 → 45'769. Device-Lauf: Stimmen im Mittel 28,5 → 31,9. Das finale Binary ist dasselbe wie das gemessene (sha 707da73a)."
+   "note": "−5.5%. Per-track FX 106,189 → 45,769. Device run: voices on average 28.5 → 31.9. The final binary is the same as the measured one (sha 707da73a)."
   },
-  "codeAndStack": "Code +2'510 Bytes: processFX +1'494, Volume +890, SRR +114. Stack: processFX +320 Bytes (a1-Array), Volume +120 (vpush d8–d15), SRR +24. Mit -Wall -Wextra keine neuen Warnungen. Das :64 bei vld2 hat GCC per LTO selbst abgeleitet; alle Puffer sind ≥32-Byte-aligned.",
-  "dropped": "Kompressor nicht geändert. Die Float-Rechnung in render() wählt je nach Kontext NEON-vrecpe oder VFP-vdiv (-funsafe-math). Nach der Schleifenänderung wich der Zufallstest ab, und der Loop-Gewinn im Bench betrug nur etwa 650. Der Bug mit hpfL bleibt wie er war.",
-  "notes": "Bench, Tracer und stubs_pc liegen in /home/user/deluge/mastertune-1.2.1/tests/bench/effects/ und sind nicht committet. Dort wurden geändert bzw. neu angelegt: run.sh, bench.cpp, stubs/fx_shim.h, song_trace.sh/.py und stubs_pc/arm_neon.h. Offene kleine Reste: beim Chorus Spills und SLP (etwa 1'000 pro Spur), beim SRR etwa 1'500."
+  "codeAndStack": "Code +2,510 bytes: processFX +1,494, volume +890, SRR +114. Stack: processFX +320 bytes (a1 array), volume +120 (vpush d8–d15), SRR +24. With -Wall -Wextra no new warnings. GCC derived the :64 on vld2 itself via LTO; all buffers are ≥32-byte aligned.",
+  "dropped": "Compressor not changed. The float calculation in render() picks NEON vrecpe or VFP vdiv depending on the context (-funsafe-math). After the loop change the random test differed, and the loop gain in the bench was only about 650. The hpfL bug stays as it was.",
+  "notes": "Bench, tracer and stubs_pc are in /home/user/deluge/mastertune-1.2.1/tests/bench/effects/ and not committed. Changed or newly created there: run.sh, bench.cpp, stubs/fx_shim.h, song_trace.sh/.py and stubs_pc/arm_neon.h. Small open leftovers: spills and SLP in the chorus (about 1,000 per track), about 1,500 in the SRR."
  },
  {
   "ok": true,
-  "reproduced": "Ich konnte die Bit-Exaktheit nicht widerlegen. Geprüft habe ich die Commits aus git archive (Basis ef5caee8, neu 9b73dd78), nicht die Arbeitsbäume.\n1. Bench ARM=1: Alle 22 Hashes sind gleich. Die Instruktionszahlen stimmen mit dem Bericht überein (Volume 3918 → 945, Phaser 19947 → 11582, Chorus 8928 → 5751, EQ 7210 → 4021, Bitcrush 723 → 445).\n2. Eigene Extremfälle (scratchpad/adv/adv.cpp) liefen auf ARM, mit gleichen Hashes in beiden Bäumen. Abgedeckt waren alle 5 Mod-FX-Typen samt EQ, Blockgrössen 1–9, 15–17, 31–34, 63–65, 95–97, 100, 127 und 128, Läufe von 20–40 Blöcken, Zustände und Parameter auf INT32_MIN/MAX sowie volle Aussteuerung auf Nyquist. Bei Volume kamen Send, Pan, Ramp, Mono und addTo dazu (auch addTo == buffer), beim SRR Positionen an den Grenzen 4194303/4194304/0xFFFFFFFF. Eine absichtlich eingebaute Mutation der Rampe hat den Hash verändert, der Test greift also.\n3. Song-Trace mit --init-sounds --seed 1: alle 165'312 Aufrufe identisch (cmp), measured.wav ebenfalls identisch. Der Bedarf sinkt von 1'095'569 auf 1'035'133. Die Offsets im Tracer sind plausibel (LFO-Phase +128·rate, Write-Index +128).\n4. Code-Review: Wellenform, Reihenfolge, Wrap und Sättigung sind gleich wie vorher, alle Pfade inklusive Grain ohne Puffer bleiben erhalten, und es gibt keine Überlappung von Puffern an den Aufrufstellen. Die :64-Hints hat GCC über IPA hergeleitet. Die Adressen stimmen: soundBuffer 0x200828a0, renderingBuffer und reverbBuffer 32-aligned, globalEffectableBufferMemory alignas(32).\n5. Mit -Wall -Wextra -O2 gibt es keine neuen Warnungen (216 statt 218). Der Stack wächst um +120/+320/+24 B, das .bin um 2512 B, clang-format ist sauber und der Patch entspricht dem Commit.",
+  "reproduced": "I could not refute the bit-exactness. I checked the commits from git archive (base ef5caee8, new 9b73dd78), not the working trees.\n1. Bench ARM=1: all 22 hashes are the same. The instruction counts match the report (volume 3918 → 945, phaser 19947 → 11582, chorus 8928 → 5751, EQ 7210 → 4021, bitcrush 723 → 445).\n2. Own extreme cases (scratchpad/adv/adv.cpp) ran on ARM, with the same hashes in both trees. Covered were all 5 mod FX types plus EQ, block sizes 1–9, 15–17, 31–34, 63–65, 95–97, 100, 127 and 128, runs of 20–40 blocks, states and parameters at INT32_MIN/MAX, and full scale at Nyquist. For volume, send, pan, ramp, mono and addTo were added (also addTo == buffer), for the SRR positions at the limits 4194303/4194304/0xFFFFFFFF. A deliberately inserted mutation of the ramp changed the hash, so the test works.\n3. Song trace with --init-sounds --seed 1: all 165,312 calls identical (cmp), measured.wav also identical. The demand drops from 1,095,569 to 1,035,133. The offsets in the tracer are plausible (LFO phase +128·rate, write index +128).\n4. Code review: waveform, order, wrap and saturation are the same as before, all paths including Grain without a buffer are kept, and there is no overlap of buffers at the call sites. GCC derived the :64 hints via IPA. The addresses are right: soundBuffer 0x200828a0, renderingBuffer and reverbBuffer 32-aligned, globalEffectableBufferMemory alignas(32).\n5. With -Wall -Wextra -O2 there are no new warnings (216 instead of 218). The stack grows by +120/+320/+24 B, the .bin by 2512 B, clang-format is clean, and the patch matches the commit.",
   "problems": [
    {
-    "problem": "Die Werkzeuge für den Beweis sind nicht versioniert. Ohne sie ist die Bit-Exaktheit nicht reproduzierbar.",
-    "where": "/home/user/deluge/mastertune-1.2.1/tests/bench/effects (bench.cpp, run.sh, stubs/fx_shim.h geändert; song_trace.sh/.py und stubs_pc/ neu)",
-    "evidence": "git status: ' M' bei bench.cpp, run.sh und fx_shim.h, '??' bei song_trace.* und stubs_pc/",
-    "fix": "Der Hauptagent committet diese Dateien zusammen mit dem Patch 0004 in /home/user/deluge."
+    "problem": "The tools for the proof are not under version control. Without them the bit-exactness cannot be reproduced.",
+    "where": "/home/user/deluge/mastertune-1.2.1/tests/bench/effects (bench.cpp, run.sh, stubs/fx_shim.h changed; song_trace.sh/.py and stubs_pc/ new)",
+    "evidence": "git status: ' M' for bench.cpp, run.sh and fx_shim.h, '??' for song_trace.* and stubs_pc/",
+    "fix": "The main agent commits these files together with patch 0004 in /home/user/deluge."
    },
    {
-    "problem": "Das Problem ist nicht neu und wurde nur übernommen: Bei GRAIN rendert der LFO mit einem uninitialisierten modFXLFOWaveType. Der Patch verhält sich hier unverändert wie vorher.",
-    "where": "mod_controllable_audio.cpp, Grain-Schleife (modFXLFO.render(1, modFXLFOWaveType, ...))",
-    "evidence": "modFXLFOWaveType wird nur im Zweig Flanger/Phaser/Chorus gesetzt; das alte -Wmaybe-uninitialized-Muster bestätigt das.",
-    "fix": "Nicht hier ändern, weil es bit-exakt bleiben soll. Separat melden."
+    "problem": "The problem is not new and was only carried over: with GRAIN the LFO renders with an uninitialized modFXLFOWaveType. The patch behaves the same here as before.",
+    "where": "mod_controllable_audio.cpp, Grain loop (modFXLFO.render(1, modFXLFOWaveType, ...))",
+    "evidence": "modFXLFOWaveType is only set in the Flanger/Phaser/Chorus branch; the old -Wmaybe-uninitialized pattern confirms this.",
+    "fix": "Do not change it here, because it is meant to stay bit-exact. Report it separately."
    }
   ]
  }

@@ -5,45 +5,45 @@
  "result": {
   "r": {
    "works": true,
-   "commit": "cd7f09ef auf delay-v14 (/home/user/work/delay-v14, Firmware build/Release/deluge.bin, nur RWX-Linkerwarnung wie bisher)",
-   "mechanism": "Die Pufferlänge ist die Delayzeit. Bei einer Zeitänderung dreht der Puffer schneller oder langsamer (Spin = neue/native Rate, kubisch resampelt, pro Block gleitend). Was schon drin liegt, wurde mit dem alten Tempo aufgenommen und wird mit dem neuen abgespielt. Die Tonhöhe verschiebt sich also um das Ratenverhältnis (25 % kürzer ergibt +386 Cent), und das Feedback trägt die Verschiebung weiter. Nach 31 ms Ruhe wird ein nativer Sekundärpuffer eine Runde lang mitbeschrieben und dann getauscht. Das verbessert nur die Qualität, die Tonhöhe ist dann schon verbogen.",
-   "fadeDesign": "Die neue Zeit läuft in einem frischen Puffer mit eigener Geschwindigkeit. Der Eingang wird in 23 ms dorthin übergeblendet. Der alte Puffer spielt die Echos, die schon unterwegs sind, mit Originalzeit und -tonhöhe aus. Die Zeit wird übernommen nach 31 ms Ruhe oder spätestens nach 125 ms Drehen. Es läuft immer nur ein Wechsel, dazu gilt 0,05 % Toleranz für Tempozittern. Einstellung unter Delay > Time change (Fade/Tape), gespeichert als Attribut timeChange. Tape entspricht bitgenau dem bisherigen Verhalten.",
-   "uncleanFindings": "Behoben: (1) Das erste Echo nach einer Pause verlor bis zu 128 Samples, das gab einen Klick (Fehler 0,12, jetzt 0,001). (2) Das Echo-Ende wurde 42 bis 60 dB unter dem Signal abgeschnitten, jetzt blendet es aus (−109 dB). (3) Delays über 2 s aliasten, bei 3 s lag ein Spiegelton +1 dB über dem Echo. Der Maximalpuffer ist jetzt 4 s, darunter sind die Echos exakt. Offen: über 4 s bleibt das Aliasing (5 s: −6,8 dB). Tape-Glides erzeugen Artefakte bei −46 bis −78 dB, Fade liegt ≤ −85 dB. Digital bei vollem Feedback läuft hart ins Clipping (0,75 FS). DC 0, Rauschen −125 dB.",
-   "pingPong": "Ping-Pong funktioniert: R-L-R-L, auch durch Zeitwechsel. Einschalten über Delay > Pingpong (Standard an) oder durch Drücken des oberen Goldknopfs (Rate) in der Delay-Sektion. Aber: Ping-Pong wirkt nur bei Stereo-Rendering, also mit Kopfhörer oder eingestecktem R-Ausgang. Über den internen Lautsprecher oder nur L ist es mono. Das ist vermutlich der Grund, warum es nicht zu finden war.",
-   "tests": "delay_test in /home/user/deluge/mastertune-1.2.1/tests/delay: 56 Checks, PC und ARM=1 grün. Fade-Tonhöhe ≤ 0,008 Cent (auch synchronisiert, Analog, Filter, Ping-Pong), Tape +386 Cent, kein Klick. run_all.sh both grün. Gegen v13 schlägt der Test 10-fach an.",
-   "cpuAndMemory": "Cortex-A9 pro 128er-Block: v13 9192 Instruktionen, Tape 9223, Fade im Ruhezustand 9246 (0,8 %), während eines Wechsels 12 748 (1,1 %). Speicher: Delayzeit × 8 B, also 0,37 s = 131 KB und bis 1,41 MB bei 4 s (bisher Deckel 0,7 MB). Während eines Wechsels zwei Puffer, wie beim bisherigen Tausch.",
-   "notes": "Fade ist neu Standard, auch für alte Dateien. Ein LFO auf die Delayrate springt darin stufenweise statt zu vibrieren, für Vibrato-Echos Tape wählen. Testdatei in /home/user/deluge ist geändert, aber nicht committet."
+   "commit": "cd7f09ef on delay-v14 (/home/user/work/delay-v14, firmware build/Release/deluge.bin, only the RWX linker warning as before)",
+   "mechanism": "The buffer length is the delay time. On a time change the buffer spins faster or slower (spin = new/native rate, cubically resampled, gliding per block). What is already in it was recorded at the old speed and is played back at the new one. So the pitch shifts by the rate ratio (25% shorter gives +386 cents), and the feedback carries the shift on. After 31 ms of rest, a native secondary buffer is written alongside for one round and then swapped in. That only improves the quality; by then the pitch is already bent.",
+   "fadeDesign": "The new time runs in a fresh buffer at its own speed. The input is crossfaded over to it in 23 ms. The old buffer plays out the echoes already on their way with the original time and pitch. The time is taken over after 31 ms of rest or at the latest after 125 ms of turning. Only one change runs at a time, and a 0.05% tolerance applies for tempo jitter. Setting under Delay > Time change (Fade/Tape), saved as the attribute timeChange. Tape matches the previous behavior bit-exactly.",
+   "uncleanFindings": "Fixed: (1) The first echo after a pause lost up to 128 samples, which gave a click (error 0.12, now 0.001). (2) The echo end was cut off 42 to 60 dB below the signal; now it fades out (−109 dB). (3) Delays over 2 s aliased; at 3 s a mirror tone lay +1 dB above the echo. The maximum buffer is now 4 s, and below that the echoes are exact. Open: above 4 s the aliasing remains (5 s: −6.8 dB). Tape glides produce artifacts at −46 to −78 dB, Fade stays ≤ −85 dB. Digital at full feedback runs hard into clipping (0.75 FS). DC 0, noise −125 dB.",
+   "pingPong": "Ping-pong works: R-L-R-L, also through time changes. Switch it on via Delay > Pingpong (default on) or by pressing the upper gold knob (Rate) in the delay section. But: ping-pong only has an effect with stereo rendering, i.e. with headphones or the R output plugged in. Through the internal speaker or with only L it is mono. That is probably why it could not be found.",
+   "tests": "delay_test in /home/user/deluge/mastertune-1.2.1/tests/delay: 56 checks, PC and ARM=1 green. Fade pitch ≤ 0.008 cents (also synced, analog, filters, ping-pong), Tape +386 cents, no click. run_all.sh both green. Against v13 the test trips 10 times.",
+   "cpuAndMemory": "Cortex-A9 per 128-sample block: v13 9192 instructions, Tape 9223, Fade at rest 9246 (0.8%), during a change 12,748 (1.1%). Memory: delay time × 8 B, so 0.37 s = 131 KB and up to 1.41 MB at 4 s (previous cap 0.7 MB). During a change two buffers, as with the previous swap.",
+   "notes": "Fade is the new default, also for old files. An LFO on the delay rate jumps in steps with it instead of vibrating; choose Tape for vibrato echoes. The test file in /home/user/deluge is changed but not committed."
   },
   "v": {
    "ok": false,
-   "reproduced": "delay_test grün: PC und ARM=1, 56/56. CPU-Werte bestätigt (Tape 9223, Fade 9246, während Wechsel 12748). Eigene Tests in scratchpad/adv (adv_test.cpp, adv2.cpp), alle unter UBSan und ohne Absturz: Fade-Tonhöhe 0,001 Cent auch bei 3,9↔4,1 s und 6→7 s (Tape 87 bzw. 267 Cent). Dauerdrehen −86,6 dB Höhen, Sprünge 0,05↔3,5 s −92 dB (Tape −12), Temporampe −87,5 dB. Bei Feedback 0,95/0,99 gleicher Pegel wie Tape. Analog+Ping-Pong+Filter in Ordnung, Moduswechsel alle 100 ms in Ordnung. clang-format sauber. Alte Firmware ignoriert das Attribut timeChange. Mono über den Lautsprecher bestätigt (deluge.cpp:150). Tape ist bitgleich zu v13, wenn dort kMaxSize auf 176400 steht (cmp).",
+   "reproduced": "delay_test green: PC and ARM=1, 56/56. CPU values confirmed (Tape 9223, Fade 9246, during a change 12748). Own tests in scratchpad/adv (adv_test.cpp, adv2.cpp), all under UBSan and without a crash: Fade pitch 0.001 cents also at 3.9↔4.1 s and 6→7 s (Tape 87 and 267 cents respectively). Continuous turning −86.6 dB highs, jumps 0.05↔3.5 s −92 dB (Tape −12), tempo ramp −87.5 dB. At feedback 0.95/0.99 the same level as Tape. Analog+ping-pong+filters fine, mode change every 100 ms fine. clang-format clean. Old firmware ignores the attribute timeChange. Mono through the speaker confirmed (deluge.cpp:150). Tape is bit-identical to v13 if kMaxSize is set to 176400 there (cmp).",
    "problems": [
     {
-     "problem": "Fade: Während des Wechsels zählen die Umläufe des neuen, kürzeren Puffers repeatsUntilAbandon herunter. Sind die Noten aus, wird das Delay freigegeben, bevor der alte Puffer seine Echos ausgespielt hat.",
-     "where": "delay.cpp process(), Lesezweig if (fading): wrapped=true; dazu lastTimeRound",
-     "evidence": "adv2 B2: fb 0,2, Zeit 0,5→0,12 s bei 0,6 s nach Notenende. Die 2. Wiederholung (erwartet −28 dB) fehlt, das Delay ist schon vor 0,98 s frei. B: 1→0,05 s bei fb 0,5: Das Echo mit −12 dB wird mitten im Burst ausgeblendet, die folgenden (−14,5 dB) fehlen.",
-     "fix": "Solange fading läuft, nicht zählen: wrapped im Fade-Lesezweig nicht setzen und lastTimeRound nur bei !fading. Nach copySecondaryToPrimary() wieder zählen.",
+     "problem": "Fade: during the change the rounds of the new, shorter buffer count repeatsUntilAbandon down. When the notes are off, the delay is released before the old buffer has played out its echoes.",
+     "where": "delay.cpp process(), read branch if (fading): wrapped=true; plus lastTimeRound",
+     "evidence": "adv2 B2: fb 0.2, time 0.5→0.12 s at 0.6 s after the note end. The 2nd repeat (expected −28 dB) is missing; the delay is already free before 0.98 s. B: 1→0.05 s at fb 0.5: the echo at −12 dB is faded out in the middle of the burst, the following ones (−14.5 dB) are missing.",
+     "fix": "Do not count while fading runs: do not set wrapped in the fade read branch, and set lastTimeRound only when !fading. Count again after copySecondaryToPrimary().",
      "severity": "medium"
     },
     {
-     "problem": "Das Ausblenden des Echo-Endes greift nicht, wenn repeatsUntilAbandon mitten im Umlauf auf 1 fällt. Das passiert bei Menge unter etwa 3 % (fb < 2^25) oder wenn die Menge nach Notenende zurückgedreht wird. Der Schritt rechnet mit einem ganzen Umlauf, geschnitten wird aber schon beim nächsten Wrap.",
-     "where": "delay.cpp Tail-Fade: step = kFullLevel/timeRound",
-     "evidence": "adv A: fb 0,025, Stopp bei 8 Phasen. Das letzte Sample liegt −33,8 dB unter dem Ton, also auf voller Echohöhe. Das ist ein Klick, in beiden Modi.",
-     "fix": "Den Schritt pro Block als tailGain / Samples bis zum nächsten Wrap des zählenden Puffers rechnen, (end_−current_)·2^24/spinRate.",
+     "problem": "The fade-out of the echo end does not work when repeatsUntilAbandon drops to 1 in the middle of a round. This happens with an amount below about 3% (fb < 2^25) or when the amount is turned back after the note end. The step assumes a whole round, but the cut already happens at the next wrap.",
+     "where": "delay.cpp tail fade: step = kFullLevel/timeRound",
+     "evidence": "adv A: fb 0.025, stop at 8 phases. The last sample lies −33.8 dB below the tone, i.e. at full echo level. That is a click, in both modes.",
+     "fix": "Compute the step per block as tailGain / samples until the next wrap of the counting buffer, (end_−current_)·2^24/spinRate.",
      "severity": "low"
     },
     {
-     "problem": "Die Aussage «Tape bitgenau» stimmt nicht ganz. kMaxSize 4 s ändert auch den Halbraten-Puffer von Tape.",
+     "problem": "The claim \"Tape bit-exact\" is not quite right. kMaxSize 4 s also changes Tape's half-rate buffer.",
      "where": "delay_buffer.h kMaxSize",
-     "evidence": "Bei 0,2→1,5 s entsteht ein 3-s-Puffer statt eines auf 2 s begrenzten. Die Ausgabe weicht ab 9,49 s ab. Mit gleichem kMaxSize ist sie identisch.",
-     "fix": "Nur die Aussage korrigieren. Das Verhalten ist eine Verbesserung.",
+     "evidence": "At 0.2→1.5 s a 3 s buffer is created instead of one limited to 2 s. The output differs from 9.49 s on. With the same kMaxSize it is identical.",
+     "fix": "Only correct the claim. The behavior is an improvement.",
      "severity": "info"
     },
     {
-     "problem": "Fade ist Standard auch für alte Dateien. Presets mit LFO oder Patch-Kabel auf die Delay-Rate klingen danach stufig statt moduliert.",
+     "problem": "Fade is the default also for old files. Presets with an LFO or patch cable on the delay rate then sound stepped instead of modulated.",
      "where": "mod_controllable_audio.cpp readTagFromFile",
-     "evidence": "Laut Design und notes: Ein LFO springt stufenweise.",
-     "fix": "Fehlt timeChange in der Datei, Tape wählen, wenn ein Kabel auf die Delay-Rate zielt.",
+     "evidence": "According to the design and notes: an LFO jumps in steps.",
+     "fix": "If timeChange is missing in the file, choose Tape when a cable targets the delay rate.",
      "severity": "low"
     }
    ]
@@ -73,14 +73,14 @@
    "queuedAt": 1790453140981,
    "attempt": 1,
    "lastToolName": "StructuredOutput",
-   "lastToolSummary": "cd7f09ef auf delay-v14 (/home/user/work/delay-v14, Firmware…",
+   "lastToolSummary": "cd7f09ef on delay-v14 (/home/user/work/delay-v14, firmware…",
    "promptPreview": "Firmware repo /home/user/work/DelugeFirmware-121 (READ-ONLY; do not edit, build or check out there, nor in other worktrees: drone-v13, save-speed, v13-verify, deluge-diag, baseline-*, v13-check). Base: branch mastertune-v13 (commit db9f9d9d; v12 + bit-exact speedups + drone v13 + fixes). Work in your own worktree: git -C /home/user/work/DelugeFirmware-121 worktree add /home/user/work/delay-v14 -b …",
    "promptFramed": true,
    "lastProgressAt": 1790456217036,
    "tokens": 357898,
    "toolCalls": 85,
    "durationMs": 3076011,
-   "resultPreview": "{\"works\":true,\"commit\":\"cd7f09ef auf delay-v14 (/home/user/work/delay-v14, Firmware build/Release/deluge.bin, nur RWX-Linkerwarnung wie bisher)\",\"mechanism\":\"Die Pufferlänge ist die Delayzeit. Bei einer Zeitänderung dreht der Puffer schneller oder langsamer (Spin = neue/native Rate, kubisch resampelt, pro Block gleitend). Was schon drin liegt, wurde mit dem alten Tempo aufgenommen und wird mit dem…"
+   "resultPreview": "{\"works\":true,\"commit\":\"cd7f09ef on delay-v14 (/home/user/work/delay-v14, firmware build/Release/deluge.bin, only the RWX linker warning as before)\",\"mechanism\":\"The buffer length is the delay time. On a time change the buffer spins faster or slower (spin = new/native rate, cubically resampled, gliding per block). What is already in it was recorded at the old speed and is played back at the…"
   },
   {
    "type": "workflow_agent",
@@ -95,14 +95,14 @@
    "queuedAt": 1790456220344,
    "attempt": 1,
    "lastToolName": "StructuredOutput",
-   "lastToolSummary": "delay_test grün: PC und ARM=1, 56/56. CPU-Werte bestätigt (…",
+   "lastToolSummary": "delay_test green: PC and ARM=1, 56/56. CPU values confirmed (…",
    "promptPreview": "Firmware repo /home/user/work/DelugeFirmware-121 (READ-ONLY; do not edit, build or check out there, nor in other worktrees: drone-v13, save-speed, v13-verify, deluge-diag, baseline-*, v13-check). Base: branch mastertune-v13 (commit db9f9d9d; v12 + bit-exact speedups + drone v13 + fixes). Work in your own worktree: git -C /home/user/work/DelugeFirmware-121 worktree add /home/user/work/delay-v14 -b …",
    "promptFramed": true,
    "lastProgressAt": 1790456761229,
    "tokens": 152431,
    "toolCalls": 27,
    "durationMs": 540837,
-   "resultPreview": "{\"ok\":false,\"reproduced\":\"delay_test grün: PC und ARM=1, 56/56. CPU-Werte bestätigt (Tape 9223, Fade 9246, während Wechsel 12748). Eigene Tests in scratchpad/adv (adv_test.cpp, adv2.cpp), alle unter UBSan und ohne Absturz: Fade-Tonhöhe 0,001 Cent auch bei 3,9↔4,1 s und 6→7 s (Tape 87 bzw. 267 Cent). Dauerdrehen −86,6 dB Höhen, Sprünge 0,05↔3,5 s −92 dB (Tape −12), Temporampe −87,5 dB. Bei Feedback…"
+   "resultPreview": "{\"ok\":false,\"reproduced\":\"delay_test green: PC and ARM=1, 56/56. CPU values confirmed (Tape 9223, Fade 9246, during a change 12748). Own tests in scratchpad/adv (adv_test.cpp, adv2.cpp), all under UBSan and without a crash: Fade pitch 0.001 cents also at 3.9↔4.1 s and 6→7 s (Tape 87 and 267 cents respectively). Continuous turning −86.6 dB highs, jumps 0.05↔3.5 s −92 dB (Tape −12), tempo ramp −87.5 dB. At feedback…"
   }
  ],
  "totalTokens": 510329,

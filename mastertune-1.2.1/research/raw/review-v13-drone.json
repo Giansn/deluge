@@ -1,34 +1,34 @@
 [
  {
   "ok": false,
-  "tested": "Diff v12-perf..v13 gelesen (Audio-Pfad, UI, Datei-I/O, LFO/Arp). Drone-Test Host (UBSan) und ARM=1: 46/46 bestanden. Build lag schon vor, kein eigener Build. Geprüft und in Ordnung: Triplet-Mathematik und Lock, Sync-Stufen, DIRECT/BUFFERED ohne doppeltes Rendern, Sidechain einmal pro Block, Glide des Sends, Stem-Export, Fade ohne Song, int64-Summe, Clamping, Tone wird bei nur neuen Feldern geschrieben (defaulted ==), LEDs beim Wechsel in Song View.",
+  "tested": "Read the diff v12-perf..v13 (audio path, UI, file I/O, LFO/arp). Drone test host (UBSan) and ARM=1: 46/46 passed. The build already existed, no own build. Checked and fine: triplet math and lock, sync steps, DIRECT/BUFFERED without double rendering, sidechain once per block, glide of the send, stem export, fade without a song, int64 sum, clamping, Tone is written when there are only new fields (defaulted ==), LEDs when switching to Song View.",
   "problems": [
    {
-    "problem": "Der Hall des Drones bekommt die Song-Lautstärke doppelt: Wet skaliert mit Volume², Dry nur mit Volume.",
+    "problem": "The drone's reverb gets the song volume twice: wet scales with volume², dry only with volume.",
     "where": "src/deluge/processing/engines/audio_engine.cpp:952, 986, 1054",
-    "evidence": "context.volume (Song-Volume) ist schon im Drone-Signal (drone.cpp:258). Dieses Signal geht in reverbBuffer, und der Hall wird vor renderSongFX gemischt, das mit compressor.render(songVolume>>3) die Lautstärke noch einmal anwendet. Der trockene Drone kommt erst danach dazu (mixDrone).",
-    "fix": "Die Send-Verstärkung durch context.volume teilen (nur wenn >0), damit der Hall die Song-Lautstärke nur einmal bekommt.",
+    "evidence": "context.volume (song volume) is already in the drone signal (drone.cpp:258). This signal goes into reverbBuffer, and the reverb is mixed before renderSongFX, which applies the volume once more with compressor.render(songVolume>>3). The dry drone is only added after that (mixDrone).",
+    "fix": "Divide the send gain by context.volume (only if >0), so the reverb gets the song volume only once.",
     "severity": "medium"
    },
    {
-    "problem": "std::clamp mit lo>hi (UB), wenn beatHz >500 Hz: die Flanken werden dann >0.5 und der Puls springt (Klick).",
+    "problem": "std::clamp with lo>hi (UB) when beatHz >500 Hz: the edges then become >0.5 and the pulse jumps (click).",
     "where": "src/deluge/dsp/drone/drone.cpp:196-198",
-    "evidence": "shortest = 0.001*beatHz. Synchron 1/64T = 24 Zyklen pro Viertel, das ergibt ab etwa 1250 BPM (kMinTimePerTimerTick=1 erlaubt das) oder mit externer Clock und einem Ton ≥500 Hz shortest >0.5. v12 hat sicher auf [0.001,0.25] begrenzt.",
+    "evidence": "shortest = 0.001*beatHz. Synced 1/64T = 24 cycles per quarter; from about 1250 BPM (kMinTimePerTimerTick=1 allows that) or with an external clock and a tone ≥500 Hz this gives shortest >0.5. v12 safely limited it to [0.001,0.25].",
     "fix": "float shortest = std::min(kMinEdgeSeconds * beatHz, 0.5f);",
     "severity": "low"
    },
    {
-    "problem": "Auf dem 7-Segment zeigt das Menü Attack/Release 0-50, das Knopf-Popup zeigt 0-100 (edge*2), das OLED-Menü zeigt %.",
+    "problem": "On the 7-segment display the menu shows Attack/Release 0-50, the knob popup shows 0-100 (edge*2), and the OLED menu shows %.",
     "where": "src/deluge/gui/menu_item/drone/items.h:215 (PulseEdge); drone_view.cpp:472",
-    "evidence": "Integer::drawValue nutzt getDisplayValue() (= getValue()). PulseEdge überschreibt nur drawInteger, also nur für das OLED.",
-    "fix": "In PulseEdge getDisplayValue() überschreiben mit return getValue()*2.",
+    "evidence": "Integer::drawValue uses getDisplayValue() (= getValue()). PulseEdge only overrides drawInteger, i.e. only for the OLED.",
+    "fix": "In PulseEdge, override getDisplayValue() with return getValue()*2.",
     "severity": "low"
    },
    {
-    "problem": "Wenn Song-Parameter automatisiert abgespielt werden, überschreibt das die Knopf-Anzeigen des Drones mit Song-Werten.",
+    "problem": "When song parameters play back automated, this overwrites the drone's knob indicators with song values.",
     "where": "drone_view.cpp:164 (setActiveModControllableTimelineCounter(currentSong)); view.cpp:1601-1603",
-    "evidence": "notifyParamAutomationOccurred passt zum paramManager des Songs, und displayAutomation() ruft dann setKnobIndicatorLevels() für den modKnobMode des Songs auf.",
-    "fix": "In DroneView die Anzeige nach einem DISPLAY_AUTOMATION-Update wiederherstellen, z.B. mit graphicsRoutine: showKnobSection(), wenn sich Werte geändert haben. Oder in displayAutomation überspringen, wenn getRootUI()==&droneView.",
+    "evidence": "notifyParamAutomationOccurred matches the song's paramManager, and displayAutomation() then calls setKnobIndicatorLevels() for the song's modKnobMode.",
+    "fix": "In DroneView, restore the display after a DISPLAY_AUTOMATION update, e.g. with graphicsRoutine: showKnobSection() when values have changed. Or skip it in displayAutomation when getRootUI()==&droneView.",
     "severity": "low"
    }
   ]
