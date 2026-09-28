@@ -15,7 +15,9 @@
   "ref": "wie gespeichert: Kits 21.1-27.0, Reihen meist 40",
   "kits35": "alle kitParams volume = 0x3504F334 (35.4, Standard)",
   "kits40": "alle kitParams volume = 0x4CCCCCA8 (40)",
-  "rows50": "alle soundParams volume 0x4CCCCCA8 (40) auf 0x7FFFFFFF (50)"
+  "rows50": "alle soundParams volume 0x4CCCCCA8 (40) auf 0x7FFFFFFF (50)",
+  "normalisiert": "deluge_baseline.py normalize --yes (Ziel -1 dBFS, ausgeglichen): 73 Samples angehoben, 59 Oszillatoren ausgeglichen; gegen ref höchstens 1 LSB (16 Bit), Differenz im Mittel -102,8 dBFS",
+  "pegel": "deluge_baseline.py levels --yes: die Reihen über 40 in 3L3Ctr0 gesenkt; sie haben keine Noten, darum gleich wie ref"
  },
  "results": {
   "ref": {
@@ -36,6 +38,16 @@
   "rows50": {
    "peak_dbfs": -5.15,
    "rms_dbfs": -25.38,
+   "clipped_samples": 0
+  },
+  "normalisiert": {
+   "peak_dbfs": -6.146,
+   "rms_dbfs": -25.784,
+   "clipped_samples": 0
+  },
+  "pegel": {
+   "peak_dbfs": -6.147,
+   "rms_dbfs": -25.785,
    "clipped_samples": 0
   }
  }

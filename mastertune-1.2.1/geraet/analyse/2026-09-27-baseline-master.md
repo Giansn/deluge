@@ -89,9 +89,40 @@ Alle Lautstärkeregler (Song, Kit, Kit-Reihe, Synth, 0–50) folgen derselben Pa
   - Ein Synth auf 34,8, nicht gemessen.
   - Im Master steht die Resonanz des Tiefpasses auf dem Maximum. Solange der Tiefpass ganz offen ist, läuft der Filter nicht. Dreht man ihn zu, arbeitet er mit voller Resonanz.
 
-## Alle Songs prüfen
+## Alle Songs prüfen und auf die Baseline setzen: DelugeBaseline
 
-`tools/baseline_check.py` prüft alle Songs einer Karte gegen diese Baseline. Es liest nur und braucht nichts ausser Python 3.8.
+**DelugeBaseline-vN.exe** (Release `deluge-baseline` auf GitHub, gebaut von `.github/workflows/deluge-baseline-windows.yml` aus `tools/deluge_baseline.py` und `tools/baseline_check.py`) hat vier Funktionen:
+
+- **Prüfen:** liest nur. Der Bericht von `baseline_check.py`, siehe unten.
+- **Pegel anwenden:**
+  - Song-Lautstärke über 35 auf 35, Master-Kompressor aus
+  - Kits und Audio-Spuren über 35 auf 35
+  - Synths und Kit-Reihen so weit hinunter, dass sie höchstens wie 40 mit einem voll ausgesteuerten Sample wirken
+  - Automation behält ihre Form, alle Werte sinken gleich.
+  - SATURATION, Kompressoren der Spuren, Analog-Delay und Filter bleiben: Das ist Klang, kein Pegel.
+- **Samples normalisieren:**
+  - Hebt jedes Sample unter `SAMPLES/`, dessen Spitze unter dem Ziel liegt (Standard −1 dBFS), bis zum Ziel an, nie darüber. Keine Spitze wird geschnitten, nichts clippt.
+  - Samples am Ziel oder darüber bleiben. Format, Bittiefe und alle Chunks bleiben, nur das Audio ändert sich.
+  - Die Bereiche eines Multisamples bekommen eine gemeinsame Verstärkung, damit ihr Verhältnis bleibt.
+  - **Ausgleichen** (Standard an): Jeder Oszillator, der ein angehobenes Sample spielt, wird um genau so viel leiser gestellt (Osc A/B Volume), in jedem Clip jedes Songs und in den Kits und Synths von `KITS/` und `SYNTHS/`. Die Stimme bekommt dasselbe Signal wie vorher, noch vor Filtern und Effekten.
+  - Nie angefasst: Wavetables und Audio-Clips. Mit Ausgleich bleiben auch Samples, deren Oszillator-Pegel nicht gespeichert ist oder ein Kabel hat.
+- **Sicherung zurückspielen:** holt den alten Stand.
+- **Schreiben:** immer erst nach einer Vorschau, wahlweise auf die Karte (die alten Dateien kommen nach `BASELINE-BACKUP/<Datum Zeit Funktion>/`) oder in einen Ordner (nur die geänderten Dateien, im Aufbau der Karte).
+
+Ohne Fenster, zum Beispiel für die lokale Session: `py mastertune-1.2.1/tools/deluge_baseline.py check|levels|normalize E:\ [--yes]`. Ohne `--yes` zeigt es nur, was es tun würde.
+
+**Geprüft im Emulator** (v17-l2d, «New Sitar Grii 10», alle 7 Clips, dieselben 302'400 Samples wie oben):
+
+| Karte | Spitze | RMS | Unterschied zum Original |
+|---|---|---|---|
+| Original | −6,147 dBFS | −25,785 dBFS | |
+| normalisiert und ausgeglichen: 73 Samples um 0,2 bis 23,2 dB angehoben, 59 Oszillatoren ausgeglichen | −6,146 dBFS | −25,784 dBFS | höchstens 1 LSB (16 Bit), im Mittel −103 dBFS |
+| Pegel angewendet | −6,147 dBFS | −25,785 dBFS | keiner |
+
+- **Normalisieren mit Ausgleich:** Der Song klingt gleich.
+- **Pegel:** ändert hier nichts Hörbares. Die zu lauten Reihen in 3L3Ctr0 haben im Clip keine Noten und klingen nur, wenn man sie live spielt. Die Spitze machen Reihen auf 40, also innerhalb der Baseline. Der Bericht schreibt «ohne Noten» dazu.
+
+### Was «Prüfen» meldet (`baseline_check.py`)
 
 ```
 py mastertune-1.2.1/tools/baseline_check.py E:\ --out baseline-karte.md
@@ -100,12 +131,12 @@ py mastertune-1.2.1/tools/baseline_check.py E:\ --out baseline-karte.md
 - **Es meldet:**
   - Song, Kit oder Audio-Spur über 35
   - den Master-Kompressor, wenn er an ist
-  - Synths und Kit-Reihen über 40
+  - Synths und Kit-Reihen über 40, mit «ohne Noten», wenn die Reihe in keinem Clip Noten hat
   - Stufen nach den Reglern, die mit dem Pegel stärker verzerren: SATURATION, Kompressor, Analog-Delay mit Feedback, Tiefpass mit Drive, aktive Filter mit Resonanz ab 25
-- **Leise Samples:** Eine Reihe über 40 ist erlaubt, wenn ihr Sample leise genug ist. Das Skript liest dazu die Spitze des Samples im gespielten Ausschnitt. «Wirkt wie» ist der Regler, den ein voll ausgesteuertes Sample für denselben Pegel bräuchte: Regler mal 10^(Spitze/40). Ein Sample mit −4,6 dBFS auf 50 wirkt wie 38,4 und ist in Ordnung.
+- **Leise Samples:** Eine Reihe über 40 ist erlaubt, wenn ihr Sample leise genug ist. Das Skript liest dazu die Spitze des Samples im gespielten Ausschnitt und den Pegel des Oszillators. «Wirkt wie» ist der Regler, den ein voll ausgesteuertes Sample für denselben Pegel bräuchte: Regler mal 10^(Spitze/40), mal Osc-Pegel durch 50. Ein Sample mit −4,6 dBFS auf 50 wirkt wie 38,4 und ist in Ordnung.
 - **Ohne diese Erlaubnis:** Spielt die Stimme auch einen Oszillator, Rauschen oder FM, zählt der Regler allein.
 - **Auf der Kartenkopie:**
-  - «New Sitar Grii 10»: fünf Reihen im Kit 3L3Ctr0 (Kicks und Bässe, wirken wie 40,8 bis 49,9) und die Reihe «hihatlong» auf 50, deren Sample hier fehlt
+  - «New Sitar Grii 10»: fünf Reihen im Kit 3L3Ctr0 (Kicks und Bässe, wirken wie 40,8 bis 49,9, alle ohne Noten) und die Reihe «hihatlong» auf 50, deren Sample hier fehlt
   - «Rescue»: in Ordnung
 - **Grenze:** Ob ein Song clippt, sagt es nicht. Das zeigt nur das Messen.
 

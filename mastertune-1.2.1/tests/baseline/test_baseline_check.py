@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "..", "tools"))
 import baseline_check as bc  # noqa: E402
 
 KARTE = os.path.join(HERE, "..", "..", "geraet", "karte")
+LIVE = ", ohne Noten: klingt nur live gespielt"
 V40, V45, V50, DEFAULT35 = "0x4CCCCCA8", "0x66666662", "0x7FFFFFFF", "0x3504F334"
 
 
@@ -96,8 +97,9 @@ def sound(name, path=None, zone=None, osc2="square", mode="subtractive", ranges=
     return f'<sound name="{name}" presetName="{name}" mode="{mode}" {extra}>{osc1}<osc2 type="{osc2}" /></sound>'
 
 
-def row(index, volume, osc_b="0x80000000", extra=""):
-    return (f'<noteRow drumIndex="{index}"><soundParams volume="{volume}" oscAVolume="0x7FFFFFFF" '
+def row(index, volume, osc_b="0x80000000", extra="", notes=True):
+    played = ' noteDataWithLift="0x0000000000000060400000"' if notes else ""
+    return (f'<noteRow drumIndex="{index}"{played}><soundParams volume="{volume}" oscAVolume="0x7FFFFFFF" '
             f'oscBVolume="{osc_b}" noiseVolume="0x80000000" compressorThreshold="0x00000000" {extra} /></noteRow>')
 
 
@@ -194,7 +196,8 @@ class Rows(Case):
             sound("int32", s("SAMPLES/i32.wav", wav, pcm(-0.5, 32), 32)),
         ]
         s("SAMPLES/Kick äöü.wav", wav, pcm(0, 16))
-        rows = [row(i, V50) for i in range(9)] + [row(9, V50, osc_b="0x7FFFFFFF"), row(10, V50), row(11, V40),
+        rows = [row(i, V50) for i in range(8)] + [row(8, V50, notes=False), row(9, V50, osc_b="0x7FFFFFFF"),
+                                                  row(10, V50), row(11, V40),
                                                   row(12, V40 + "7FFFFFFF00000060"), row(13, V50), row(14, V45),
                                                   row(15, V45)]
         kit = f'<kit presetName="K"><soundSources>{"".join(drums)}</soundSources></kit>'
@@ -205,7 +208,7 @@ class Rows(Case):
             "Reihe «eight» in Kit «K»: 50, Sample bis -2,5 dBFS, wirkt wie 43,3",
             "Reihe «ext» in Kit «K»: 50, +3,9 dB über 40 (WAVE_FORMAT_EXTENSIBLE, das liest der Deluge nicht)",
             "Reihe «missing» in Kit «K»: 50, +3,9 dB über 40 (Sample fehlt: SAMPLES/nope.wav)",
-            "Reihe «umlaut» in Kit «K»: 50, Sample bis 0,0 dBFS, wirkt wie 50,0",
+            "Reihe «umlaut» in Kit «K»: 50, Sample bis 0,0 dBFS, wirkt wie 50,0" + LIVE,  # No notes: only live
             "Reihe «osc» in Kit «K»: 50, +3,9 dB über 40",
             "Reihe «auto» in Kit «K»: 50, Sample bis 0,0 dBFS, wirkt wie 50,0",
             "Reihe «aiff8» in Kit «K»: 50, Sample bis -2,1 dBFS, wirkt wie 44,2",
@@ -312,12 +315,12 @@ class CardCopy(unittest.TestCase):
         self.assertIn("| Rescue | 35 | aus | - | 35 | ok |", text)
         section = text[text.index("## New Sitar Grii 10"):]
         self.assertEqual([line for line in section.splitlines() if line.startswith("- ")], [
-            "- Reihe «RADJ_Syn_Bass_Note_Amin_2» in Kit «3L3Ctr0»: 50, Sample bis 0,0 dBFS, wirkt wie 49,6",
-            "- Reihe «NA_B_Double-Bass-Shot» in Kit «3L3Ctr0»: 50, Sample bis -1,0 dBFS, wirkt wie 47,2",
-            "- Reihe «00DB_Kick_Power_people2» in Kit «3L3Ctr0»: 43, Sample bis -1,0 dBFS, wirkt wie 40,8",
-            "- Reihe «LP24_OrgPerc_Kick_01» in Kit «3L3Ctr0»: 50, Sample bis 0,0 dBFS, wirkt wie 49,9",
-            "- Reihe «LP24_OrgPerc_Kick_02» in Kit «3L3Ctr0»: 50, Sample bis 0,0 dBFS, wirkt wie 49,9",
-            "- Reihe «hihatlong» in Kit «Hihat»: 50, +3,9 dB über 40 (Sample fehlt: SAMPLES/PsyPack/hihatlong.wav)",
+            "- Reihe «RADJ_Syn_Bass_Note_Amin_2» in Kit «3L3Ctr0»: 50, Sample bis 0,0 dBFS, wirkt wie 49,6" + LIVE,
+            "- Reihe «NA_B_Double-Bass-Shot» in Kit «3L3Ctr0»: 50, Sample bis -1,0 dBFS, wirkt wie 47,2" + LIVE,
+            "- Reihe «00DB_Kick_Power_people2» in Kit «3L3Ctr0»: 43, Sample bis -1,0 dBFS, wirkt wie 40,8" + LIVE,
+            "- Reihe «LP24_OrgPerc_Kick_01» in Kit «3L3Ctr0»: 50, Sample bis 0,0 dBFS, wirkt wie 49,9" + LIVE,
+            "- Reihe «LP24_OrgPerc_Kick_02» in Kit «3L3Ctr0»: 50, Sample bis 0,0 dBFS, wirkt wie 49,9" + LIVE,
+            "- Reihe «hihatlong» in Kit «Hihat»: 50, +3,9 dB über 40 (Sample fehlt: SAMPLES/PsyPack/hihatlong.wav)" + LIVE,
         ])
 
 

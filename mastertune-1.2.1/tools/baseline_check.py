@@ -49,13 +49,15 @@ EQUIVALENT_TOLERANCE = 0.4  # A full-scale sample at 40 must not be reported for
 
 
 class Node:
-    __slots__ = ("name", "attrs", "children", "text", "parent")
+    __slots__ = ("name", "attrs", "spans", "children", "text", "text_span", "parent", "name_end")
 
-    def __init__(self, name, parent):
-        self.name, self.parent = name, parent
+    def __init__(self, name, parent, name_end=0):
+        self.name, self.parent, self.name_end = name, parent, name_end  # name_end: where attributes can be added
         self.attrs = {}
+        self.spans = {}  # Attribute -> (start, end) of its value in the text
         self.children = []
         self.text = None
+        self.text_span = None
 
     def get(self, name):
         """A value as the firmware's readTagOrAttributeValue() finds it: attribute or child tag."""
@@ -63,6 +65,13 @@ class Node:
             return self.attrs[name]
         c = self.child(name)
         return None if c is None else (c.text or "")
+
+    def span(self, name):
+        """(start, end) of the value get() finds, in the text, or None (a child tag without text has none)."""
+        if name in self.spans:
+            return self.spans[name]
+        c = self.child(name)
+        return c.text_span if c is not None else None
 
     def child(self, name):
         return next((c for c in self.children if c.name == name), None)
@@ -83,7 +92,10 @@ def parse_xml(text):
     cur, pos = root, 0
     for m in TOKEN.finditer(text):
         if m.start() > pos and cur.text is None and not cur.children and text[pos:m.start()].strip():
-            cur.text = text[pos:m.start()].strip()
+            raw = text[pos:m.start()]
+            cur.text = raw.strip()
+            lead = pos + len(raw) - len(raw.lstrip())
+            cur.text_span = (lead, lead + len(cur.text))
         pos = m.end()
         if m.group(2) is None:
             continue
@@ -93,9 +105,12 @@ def parse_xml(text):
                 raise ValueError(f"</{name}> schliesst <{cur.name}>")
             cur = cur.parent
             continue
-        node = Node(name, cur)
+        node = Node(name, cur, m.end(2))
+        base = m.start(3)
         for a in ATTR.finditer(rest):
-            node.attrs[a.group(1)] = a.group(2) if a.group(2) is not None else a.group(3)
+            g = 2 if a.group(2) is not None else 3
+            node.attrs[a.group(1)] = a.group(g)
+            node.spans[a.group(1)] = (base + a.start(g), base + a.end(g))  # The last of a twice written one counts
         cur.children.append(node)
         if not rest.rstrip().endswith("/"):
             cur = node
@@ -191,52 +206,65 @@ def _block_peak(b, bits, is_float, big):
     return max(max(a), -min(a)) / 2 ** (bits - 1)
 
 
+def audio_format(fh):
+    """Where the audio of an open WAV or AIFF file is and how the firmware reads it: {"pos", "size", "channels",
+    "bits", "float", "big"}, or the reason (text) why the Deluge can't read it."""
+    fh.seek(0, os.SEEK_END)
+    size = fh.tell()
+    fh.seek(0)
+    head = fh.read(12)
+    if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+        fmt = data = None
+        for cid, at, n in _chunks(fh, size, "<I"):
+            if cid == b"fmt ":
+                fh.seek(at)
+                fmt = fh.read(min(n, 40))
+            elif cid == b"data":
+                data = (at, n)
+        if fmt is None or data is None or len(fmt) < 16:
+            return "kein fmt oder data"
+        tag, channels, _, _, align, bits = struct.unpack_from("<HHIIHH", fmt)
+        if tag == 0xFFFE:
+            return "WAVE_FORMAT_EXTENSIBLE, das liest der Deluge nicht"
+        if not ((tag == 1 and bits in (8, 16, 24, 32)) or (tag == 3 and bits == 32)):
+            return f"Format {tag} mit {bits} Bit, das liest der Deluge nicht"
+        is_float, big = tag == 3, False
+    elif head[:4] == b"FORM" and head[8:12] == b"AIFF":
+        comm = ssnd = None
+        for cid, at, n in _chunks(fh, size, ">I"):
+            if cid == b"COMM":
+                fh.seek(at)
+                comm = fh.read(min(n, 18))
+            elif cid == b"SSND" and n >= 8:
+                fh.seek(at)
+                offset = struct.unpack(">I", fh.read(8)[:4])[0]
+                ssnd = (at + 8 + offset, max(0, n - 8 - offset))
+        if comm is None or ssnd is None or len(comm) < 8:
+            return "kein COMM oder SSND"
+        channels, _, bits = struct.unpack_from(">hIh", comm)
+        if bits not in (8, 16, 24, 32):
+            return f"AIFF mit {bits} Bit"
+        is_float, big, data = False, True, ssnd
+        align = channels * bits // 8
+    else:
+        return "kein WAV oder AIFF, das liest der Deluge nicht"
+    if channels not in (1, 2) or align != channels * bits // 8:
+        return f"{channels} Kanäle, das liest der Deluge nicht"
+    return {"pos": data[0], "size": data[1] // align * align, "channels": channels, "bits": bits, "float": is_float,
+            "big": big}
+
+
 def sample_peak(path, start=0, end=None):
     """(peak as a fraction of full scale, None) or (None, reason) for frames [start, end) of a WAV or AIFF file."""
     with open(path, "rb") as fh:
-        size = os.fstat(fh.fileno()).st_size
-        head = fh.read(12)
-        if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
-            fmt = data = None
-            for cid, at, n in _chunks(fh, size, "<I"):
-                if cid == b"fmt ":
-                    fh.seek(at)
-                    fmt = fh.read(min(n, 40))
-                elif cid == b"data":
-                    data = (at, n)
-            if fmt is None or data is None or len(fmt) < 16:
-                return None, "kein fmt oder data"
-            tag, channels, _, _, align, bits = struct.unpack_from("<HHIIHH", fmt)
-            if tag == 0xFFFE:
-                return None, "WAVE_FORMAT_EXTENSIBLE, das liest der Deluge nicht"
-            is_float, big = tag == 3, False
-            if not ((tag == 1 and bits in (8, 16, 24, 32)) or (is_float and bits == 32)):
-                return None, f"Format {tag} mit {bits} Bit, das liest der Deluge nicht"
-        elif head[:4] == b"FORM" and head[8:12] == b"AIFF":
-            comm = ssnd = None
-            for cid, at, n in _chunks(fh, size, ">I"):
-                if cid == b"COMM":
-                    fh.seek(at)
-                    comm = fh.read(min(n, 18))
-                elif cid == b"SSND" and n >= 8:
-                    fh.seek(at)
-                    offset = struct.unpack(">I", fh.read(8)[:4])[0]
-                    ssnd = (at + 8 + offset, max(0, n - 8 - offset))
-            if comm is None or ssnd is None or len(comm) < 8:
-                return None, "kein COMM oder SSND"
-            channels, _, bits = struct.unpack_from(">hIh", comm)
-            if bits not in (8, 16, 24, 32):
-                return None, f"AIFF mit {bits} Bit"
-            is_float, big, data = False, True, ssnd
-            align = channels * bits // 8
-        else:
-            return None, "kein WAV oder AIFF, das liest der Deluge nicht"
-        if channels not in (1, 2) or align != channels * bits // 8:
-            return None, f"{channels} Kanäle, das liest der Deluge nicht"
-        frames = data[1] // align
+        f = audio_format(fh)
+        if isinstance(f, str):
+            return None, f
+        align = f["channels"] * f["bits"] // 8
+        frames = f["size"] // align
         start = min(max(start or 0, 0), frames)
         end = frames if end is None or end <= start else min(end, frames)
-        fh.seek(data[0] + start * align)
+        fh.seek(f["pos"] + start * align)
         left, peak = (end - start) * align, 0.0
         block = max(align, (1 << 22) // align * align)
         while left > 0:
@@ -244,7 +272,7 @@ def sample_peak(path, start=0, end=None):
             b = b[:len(b) // align * align]
             if not b:
                 break
-            peak = max(peak, _block_peak(b, bits, is_float, big))
+            peak = max(peak, _block_peak(b, f["bits"], f["float"], f["big"]))
             left -= len(b)
         return peak, None
 
@@ -303,6 +331,7 @@ class Track:
         self.volume = None  # The loudest over its clips
         self.params = []  # kitParams / soundParams / params of every clip
         self.rows = {}  # drumIndex -> its soundParams in every clip
+        self.played = set()  # drumIndexes with notes in some clip
 
 
 def track_key(node, prefix):
@@ -313,6 +342,12 @@ def track_key(node, prefix):
         return name
     slot = node.get(prefix + "Slot")
     return f"#{slot}.{node.get(prefix + 'SubSlot') or ''}" if slot is not None else "?"
+
+
+def has_notes(row):
+    """Whether a note row has notes (noteData, noteDataWithLift, ... or a notes tag of old files)."""
+    return any(k.startswith("noteData") and v for k, v in row.attrs.items()) or any(
+        c.name in ("notes", "noteData") for c in row.children)
 
 
 def more(a, b):
@@ -348,6 +383,8 @@ def check_song(root, card):
                     if sp is None or index is None or not index.isdigit():
                         continue
                     t.rows.setdefault(int(index), []).append(sp)
+                    if has_notes(nr):
+                        t.played.add(int(index))
             elif clip.child("soundParams") is not None:
                 t = tracks.setdefault(("synth", key), Track("synth", key))
                 p = clip.child("soundParams")
@@ -399,7 +436,8 @@ def check_song(root, card):
                 name = readable(drum.get("name")) if drum is not None else f"Reihe {index + 1}"
                 for p in rows:
                     loudest_sound = more(loudest_sound, loudest(p, "volume"))
-                notes += sound_notes(f"Reihe «{name}» in {label}", drum, rows, card)
+                notes += sound_notes(f"Reihe «{name}» in {label}", drum, rows, card,
+                                     "" if index in t.played else ", ohne Noten: klingt nur live gespielt")
                 if any((loudest(p, "compressorThreshold") or 0) > 0 for p in rows):
                     stages.append(f"Kompressor nach dem Regler der Reihe «{name}» in {label}")
     settings["group"], settings["sound"] = loudest_group, loudest_sound
@@ -408,7 +446,7 @@ def check_song(root, card):
     return settings, notes
 
 
-def sound_notes(label, sound, params, card):
+def sound_notes(label, sound, params, card, suffix=""):
     """A synth's or row's volume above 40, unless all it plays is samples quiet enough for it."""
     volume = None
     for p in params:
@@ -419,23 +457,36 @@ def sound_notes(label, sound, params, card):
     over = f"{label}: {round(k)}, {signed_db(db_between(40, k))} über 40"
     samples, other = sources(sound, params)
     if other or not samples:
-        return [over]  # An oscillator, noise or FM sound: no sample to go by
-    peaks, problems = [], []
-    for path, start, end in samples:
-        peak, error = card.peak(path, start, end)
-        (problems if peak is None else peaks).append(error if peak is None else peak)
+        return [over + suffix]  # An oscillator, noise or FM sound: no sample to go by
+    level, problems = sample_level(samples, card)
     if problems:
-        return [over + " (" + "; ".join(sorted(set(problems))) + ")"]
-    peak = max(peaks)
-    equivalent = k * math.sqrt(peak)  # The gain goes with the knob squared: a peak p is the knob times sqrt(p)
+        return [over + " (" + "; ".join(problems) + ")" + suffix]
+    equivalent = k * level[0]
     if equivalent <= 40 + EQUIVALENT_TOLERANCE:
         return []
-    return [f"{label}: {round(k)}, Sample bis {num(20 * math.log10(peak))} dBFS, wirkt wie {num(equivalent)}"]
+    osc = f", Osc {round(level[2])}" if level[2] < 49.5 else ""
+    return [f"{label}: {round(k)}, Sample bis {num(20 * math.log10(level[1]))} dBFS{osc}, wirkt wie {num(equivalent)}"
+            + suffix]
+
+
+def sample_level(samples, card):
+    """((factor, peak, osc knob), problems) of the loudest sample: the factor makes a knob into the knob a full-scale
+    sample needs for the same level. The gain goes with the knob squared, in the volume and in the oscillator's level:
+    a peak p at osc level o is the knob times sqrt(p) * o / 50. ((0, 0, 50), problems) if a sample can't be read."""
+    best, problems = (0.0, 0.0, 50.0), set()
+    for path, start, end, osc in samples:
+        peak, error = card.peak(path, start, end)
+        if peak is None:
+            problems.add(error)
+        elif peak > 0 and math.sqrt(peak) * osc / 50 > best[0]:
+            best = (math.sqrt(peak) * osc / 50, peak, osc)
+    return best, sorted(problems)
 
 
 def sources(sound, params):
-    """(the samples a sound plays as (path, start, end), whether anything else sounds: an oscillator, noise, FM).
-    An oscillator counts if its level reaches above 0 in any clip, or isn't saved."""
+    """(the samples a sound plays as (path, start, end, its oscillator's loudest level as a knob), whether anything
+    else sounds: an oscillator, noise, FM). An oscillator counts if its level reaches above 0 in any clip, or isn't
+    saved (then at the default, 50)."""
     if sound is None or sound.name != "sound" or (sound.get("mode") or "subtractive") != "subtractive":
         return [], True
     samples, other = [], False
@@ -444,6 +495,7 @@ def sources(sound, params):
         levels = [loudest(p, level) for p in params]
         if node is None or not any(v is None or v > PARAM_MIN for v in levels or [None]):
             continue
+        osc_knob = 50.0 if not levels or None in levels else knob(max(levels))
         ranges = [r for g in node.children if g.name == "sampleRanges" for r in g.children]
         holders = [h for h in [node] + ranges if h.get("fileName")]
         if node.get("type") not in (None, "sample") or not holders:
@@ -452,7 +504,7 @@ def sources(sound, params):
         for h in holders:
             zone = h.child("zone")
             pos = [param_values(zone.get(k)) if zone is not None else [] for k in ("startSamplePos", "endSamplePos")]
-            samples.append((h.get("fileName"), pos[0][0] if pos[0] else 0, pos[1][0] if pos[1] else None))
+            samples.append((h.get("fileName"), pos[0][0] if pos[0] else 0, pos[1][0] if pos[1] else None, osc_knob))
     if any((loudest(p, "noiseVolume") or PARAM_MIN) > PARAM_MIN for p in params):
         other = True
     return samples, other
@@ -543,7 +595,7 @@ def report(files):
         if notes:
             with_notes += 1
             sections.append(f"## {name}\n\n" + "\n".join("- " + n for n in notes) + "\n")
-    head = (f"# Baseline-Prüfung: {len(files)} Songs, {with_notes} mit Hinweisen\n\n"
+    head = (f"# Baseline-Prüfung: {len(files)} {'Song' if len(files) == 1 else 'Songs'}, {with_notes} mit Hinweisen\n\n"
             "Grenzen (Baseline Master, 27.09.2026): Song, Kit und Audio-Spur höchstens 35, Synth und Kit-Reihe höchstens "
             "40, lauter nur mit leisem Sample: «wirkt wie» ist der Regler, den ein voll ausgesteuertes Sample für "
             "denselben Pegel bräuchte (Regler mal 10^(Spitze/40)), höchstens 40. Master-Kompressor aus. Mit "

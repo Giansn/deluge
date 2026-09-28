@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Draws DelugeRec's icon: the Deluge's rain of squares in the colours of a level meter (green, yellow, red from the
 bottom up) and a red recording dot. Writes deluge_rec.ico (16 to 256 pixels) and prints ICON_PNG for deluge_rec.py.
+With --baseline DelugeBaseline's: the meter without red, its top two rows grey above a gold line (the baseline), no
+dot; deluge_baseline.ico and ICON_PNG for deluge_baseline.py.
 
-Usage:  python3 deluge_rec_icon.py [FOLDER]      (default: next to this file; --preview also writes preview.png)
+Usage:  python3 deluge_rec_icon.py [FOLDER] [--baseline]   (default: next to this file; --preview writes preview.png)
 Needs only numpy.
 """
 import base64
@@ -18,17 +20,19 @@ SQUARES = [(0, 1), (0, 4), (1, 2), (1, 5), (2, 0), (2, 3), (2, 6), (3, 1), (3, 4
            (5, 8), (6, 1), (6, 6), (6, 9), (7, 2), (7, 5), (7, 7), (7, 10), (8, 3), (8, 6), (9, 4), (9, 7)]
 ROWS, COLS = 10, 11
 GREEN, YELLOW, RED = (47, 220, 110), (242, 210, 46), (255, 45, 45)  # The pads' colours in deluge_rec.py
+GREY, GOLD = (70, 70, 78), (217, 179, 90)  # DelugeBaseline: above the line, and the line (the gold knobs' colour)
 RING, INSIDE, DOT_RING = (42, 42, 48), (16, 16, 18), (90, 16, 16)
 # Per size: the grid's pitch and the side of a square, in pixels (whole pixels keep the small sizes sharp)
 LAYOUT = {16: (1, 1), 24: (2, 2), 32: (2, 2), 48: (3, 3), 64: (4, 4), 128: (9, 8), 256: (18, 17)}
 
 
-def colour(row):
-    """A level meter from the bottom up: the lower half green, then yellow, the top two rows red."""
-    return RED if row < 2 else YELLOW if row < 5 else GREEN
+def colour(row, baseline=False):
+    """A level meter from the bottom up: the lower half green, then yellow, the top two rows red (grey above the
+    baseline)."""
+    return (GREY if baseline else RED) if row < 2 else YELLOW if row < 5 else GREEN
 
 
-def draw(size, ss=8):
+def draw(size, ss=8, baseline=False):
     """The icon as RGBA, size x size. Shapes are drawn ss times larger and averaged down (smooth edges)."""
     n = size * ss
     y, x = (np.mgrid[0:n, 0:n] + 0.5) / ss  # Pixel centres, in pixels of the icon
@@ -49,13 +53,16 @@ def draw(size, ss=8):
     off = (pitch - side) // 2  # Whole pixels: sharp edges
     for r, c in SQUARES:
         sx, sy = x0 + c * pitch + off, y0 + r * pitch + off
-        fill((x >= sx) & (x < sx + side) & (y >= sy) & (y < sy + side), colour(r))
-    # The recording dot in the empty corner at the top right, as on a Deluge with REC lit
-    cx, cy, rad = x0 + 9.2 * pitch, y0 + 1.1 * pitch, max(1.6, 1.55 * pitch)
-    d2 = (x - cx) ** 2 + (y - cy) ** 2
-    if size >= 48:
-        fill(d2 <= (rad + size / 64) ** 2, DOT_RING)
-    fill(d2 <= rad ** 2, RED)
+        fill((x >= sx) & (x < sx + side) & (y >= sy) & (y < sy + side), colour(r, baseline))
+    if baseline:  # The line right above the third row (the grey ones pass behind it), over the width of the rain
+        bottom, th = y0 + 2 * pitch + off, max(1.0, round(pitch * 0.45))
+        fill((x >= x0 - pitch * 0.3) & (x < x0 + (COLS + 0.3) * pitch) & (y >= bottom - th) & (y < bottom), GOLD)
+    else:  # The recording dot in the empty corner at the top right, as on a Deluge with REC lit
+        cx, cy, rad = x0 + 9.2 * pitch, y0 + 1.1 * pitch, max(1.6, 1.55 * pitch)
+        d2 = (x - cx) ** 2 + (y - cy) ** 2
+        if size >= 48:
+            fill(d2 <= (rad + size / 64) ** 2, DOT_RING)
+        fill(d2 <= rad ** 2, RED)
     a = alpha.reshape(size, ss, size, ss).mean(axis=(1, 3))
     premult = (rgb * alpha[..., None]).reshape(size, ss, size, ss, 3).mean(axis=(1, 3))
     out = np.zeros((size, size, 4), np.uint8)
@@ -84,11 +91,13 @@ def ico(images):
 
 
 def main():
-    args = [a for a in sys.argv[1:] if a != "--preview"]
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    baseline = "--baseline" in sys.argv
     folder = Path(args[0]) if args else Path(__file__).resolve().parent
-    images = {size: draw(size) for size in LAYOUT}
-    (folder / "deluge_rec.ico").write_bytes(ico([(s, png(im)) for s, im in images.items()]))
-    b64 = base64.b64encode(png(images[64])).decode()  # For deluge_rec.py, in its layout
+    images = {size: draw(size, baseline=baseline) for size in LAYOUT}
+    (folder / ("deluge_baseline.ico" if baseline else "deluge_rec.ico")).write_bytes(
+        ico([(s, png(im)) for s, im in images.items()]))
+    b64 = base64.b64encode(png(images[64])).decode()  # For deluge_rec.py or deluge_baseline.py, in its layout
     print("ICON_PNG = (" + "\n            ".join(f'"{b64[i:i + 104]}"' for i in range(0, len(b64), 104)) + ")")
     if "--preview" in sys.argv:  # Every size four times as large, on the app's panel colour
         sheet = np.zeros((256 * 4 + 8, sum(s * 4 + 8 for s in LAYOUT) + 8, 3), np.uint8)
