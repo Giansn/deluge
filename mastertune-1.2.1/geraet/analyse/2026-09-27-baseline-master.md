@@ -142,9 +142,16 @@ py mastertune-1.2.1/tools/baseline_check.py E:\ --out baseline-karte.md
   - Stufen nach den Reglern, die mit dem Pegel stärker verzerren: SATURATION, Kompressor, Analog-Delay mit Feedback, Tiefpass mit Drive, aktive Filter mit Resonanz ab 25
 - **Leise Samples:** Eine Reihe über 40 ist erlaubt, wenn ihr Sample leise genug ist. Das Skript liest dazu die Spitze des Samples im gespielten Ausschnitt und den Pegel des Oszillators. «Wirkt wie» ist der Regler, den ein voll ausgesteuertes Sample für denselben Pegel bräuchte: Regler mal 10^(Spitze/40), mal Osc-Pegel durch 50. Ein Sample mit −4,6 dBFS auf 50 wirkt wie 38,4 und ist in Ordnung.
 - **Ohne diese Erlaubnis:** Spielt die Stimme auch einen Oszillator, Rauschen oder FM, zählt der Regler allein.
+- **Pegel in dB wie am Deluge ab mastertune v18:** Jeder Pegel steht als Reglerwert und in dB, zum Beispiel «40,0 (+8,16 dB)». Die Formel ist die der Firmware (`volume_steps.cpp`, Patch 0101): 40·log10((p + 2³¹) / 2³¹), bei Kit, Audio-Spur und Song 6,02 dB weniger. Beispiele:
+  - Song 35 = −0,18 dB, der Standard 35,4 = 0,00 dB, Synth 40 = +8,16 dB.
+  - Oben: Synth 50 = +12,04 dB, Kit und Song 50 = +6,02 dB.
+- **Zwischen den Rasten:** v18 dreht in 0,5-dB-Schritten, gespeichert wird wie bisher. Die Werte liegen darum zwischen den alten Stellen 0–50.
+  - Bericht und Fenster zeigen sie auf 0,1 genau und die dB auf 0,01 genau. Nie wird auf eine ganze Stelle gerundet.
+  - Die Grenzen gelten in dB: Was weniger als 0,005 dB darüber liegt, gilt als an der Grenze.
+  - Dadurch meldet der Bericht jetzt auch knappe Überschreitungen, etwa eine Reihe auf 45 mit einem Sample bei −2 dBFS: +0,05 dB über 40. Die frühere Toleranz von 0,4 Stellen hat solche Fälle verschluckt.
 - **Auf der Kartenkopie:**
-  - «New Sitar Grii 10»: fünf Reihen im Kit 3L3Ctr0 (Kicks und Bässe, wirken wie 40,8 bis 49,9, alle ohne Noten) und die Reihe «hihatlong» auf 50, deren Sample hier fehlt
-  - «Rescue»: in Ordnung
+  - «New Sitar Grii 10»: fünf Reihen im Kit 3L3Ctr0 (Kicks und Bässe, wirken wie 40,8 bis 49,9, alle ohne Noten) und die Reihe «hihatlong» auf 50, deren Sample hier fehlt. Eine der Reihen steht auf 49,6 (+11,90 dB), der alte Bericht zeigte 50.
+  - «Rescue»: in Ordnung, die lauteste Reihe steht auf 34,8 (+5,73 dB)
 - **Grenze:** Ob ein Song clippt, sagt es nicht. Das zeigt nur das Messen.
 
 ## Das VU-Meter des Deluge

@@ -18,6 +18,10 @@ The firmware behind it (mastertune v17 on release_1_2_1): a volume knob's value 
 2^31, and the gain follows a parabola in it, so from a to b the level changes by 40 * log10(b / a) dB
 (getFinalParameterValueVolume() in util/functions.cpp). Song and kit have 0 dB at 35.36 (0x3504F334), synths and rows
 at 25; their default is 40 (0x4CCCCCA8). The only hard limit is the output's clip at 0 dBFS.
+From mastertune v18 on the Deluge shows these volumes in dB and steps them by 0.5 dB (modulation/params/
+volume_steps.cpp, patch 0101): 40 log10((p + 2^31) / 2^31), a kit's, an audio track's and the song's 6.02 dB lower
+(20 log10 2, their >> 1). What it stores stays the same, but a value is no longer on the 0-50 steps: the report shows
+every volume as its value to 0.1 and in these dB (Song 35.4 = 0.00 dB, Synth 40 = +8.16 dB), and judges it as it is.
 
 Usage (Windows: py instead of python3):
   python3 baseline_check.py PATH... [--card ROOT] [--out REPORT.md] [--lang de|en]
@@ -38,10 +42,13 @@ import unicodedata
 KNOB_STEP = 85899345  # One step of a 0-50 knob as a param value (value_scaling.cpp)
 SONG_KIT_LIMIT = 889516852  # 0x3504F334, "35": the default and 0 dB of song, kit and audio track volume
 SOUND_LIMIT = 1288490152  # 0x4CCCCCA8, "40": the default of synth and kit row volume
+HALF_DB = 20 * math.log10(2)  # A kit's, an audio track's and the song's volume in dB: 6.02 lower (mastertune v18)
 PARAM_MIN = -2 ** 31  # A filter's resonance or morph and a delay's feedback at 0
 LPF_OPEN = 2147483602  # From here up the low-pass filter is off (GlobalEffectable::getFilterModesForRender())
 RESONANCE_HINT = 25  # Resonance knob value from which an active filter is reported
-EQUIVALENT_TOLERANCE = 0.4  # A full-scale sample at 40 must not be reported for rounding
+# How far above a limit still counts as at it: less than the report shows (0.01 dB), so it never says "+0,00 dB
+# above". Nothing is rounded to a step: a value between them counts as it is.
+TOLERANCE_DB = 0.005
 LANG = "de"  # The language of every text it makes: "de" or "en" (--lang, and DelugeBaseline's switch)
 
 
@@ -174,8 +181,43 @@ def num(x, digits=1):
     return s if LANG == "en" else s.replace(".", ",")
 
 
-def signed_db(x):
-    return ("+" if x >= 0 else "") + num(x) + " dB"
+def signed_db(x, digits=1):
+    return ("+" if x >= 0 else "") + num(x, digits) + " dB"
+
+
+def volume_db(param, song_kit=False):
+    """The dB mastertune v18 shows for a stored volume (volume::storedToDb() in modulation/params/volume_steps.cpp):
+    40 log10((p + 2^31) / 2^31), a kit's, an audio track's and the song's (song_kit) 6.02 dB lower. -inf for off."""
+    x = (param + 2 ** 31) / 2 ** 31
+    return 40 * math.log10(x) - (HALF_DB if song_kit else 0.0) if x > 0 else -math.inf
+
+
+def knob_db(k, song_kit=False):
+    """The same for a knob's value k (0-50, maybe between the steps): 40 log10(k / 25), song_kit 6.02 dB lower."""
+    return volume_db(k * 2 ** 31 / 25 - 2 ** 31, song_kit)
+
+
+def db_text(db):
+    """dB to 0.01 (the Deluge shows 0.1): +8,16 dB, 0,00 dB, -0,18 dB; -inf dB at -100 dB and below, as off."""
+    if db <= -99.995:
+        return "-inf dB"
+    return ("+" if round(db, 2) > 0 else "") + num(db, 2) + " dB"
+
+
+def above(param, limit, song_kit=False):
+    """How many dB a volume is above its limit (as the Deluge shows dB from mastertune v18 on), or None if not."""
+    over = volume_db(param, song_kit) - volume_db(limit, song_kit)
+    return over if over > TOLERANCE_DB else None
+
+
+def level(param, song_kit=False):
+    """A volume as it is: its value to 0.1, never rounded to a whole step (mastertune v18 steps by 0.5 dB, between
+    them), and in dB as the Deluge shows it from v18 on. 40,0 (+8,16 dB)"""
+    return level_of_knob(knob(param), song_kit)
+
+
+def level_of_knob(k, song_kit=False):
+    return f"{num(k)} ({db_text(knob_db(k, song_kit))})"
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -421,11 +463,11 @@ def check_song(root, card):
     notes, stages = [], []
     params = song.child("songParams")
     settings = {"song": loudest(params, "volume"), "compressor": loudest(params, "compressorThreshold")}
-    if settings["song"] is not None and settings["song"] > SONG_KIT_LIMIT:
-        k = knob(settings["song"])
-        over = signed_db(db_between(knob(SONG_KIT_LIMIT), k))
-        notes.append(t(f"Song-Lautstärke {round(k)}: {over} über dem Standard 35",
-                       f"Song volume {round(k)}: {over} above the default 35"))
+    if settings["song"] is not None and above(settings["song"], SONG_KIT_LIMIT, True):
+        now, top = level(settings["song"], True), level(SONG_KIT_LIMIT, True)
+        over = signed_db(above(settings["song"], SONG_KIT_LIMIT, True), 2)
+        notes.append(t(f"Song-Lautstärke {now}: {over} über dem Standard {top}",
+                       f"Song volume {now}: {over} above the default {top}"))
     if settings["compressor"] is not None and settings["compressor"] > 0:
         threshold = round(unipolar_knob(settings["compressor"]))
         notes.append(t(f"Master-Kompressor an (Threshold {threshold})",
@@ -444,10 +486,10 @@ def check_song(root, card):
             readable(tr.name) + "»" + where
         if kind in ("kit", "audio"):
             loudest_group = more(loudest_group, tr.volume)
-            if tr.volume is not None and tr.volume > SONG_KIT_LIMIT:
-                k = knob(tr.volume)
-                over = signed_db(db_between(knob(SONG_KIT_LIMIT), k))
-                notes.append(t(f"{label}: {round(k)}, {over} über 35", f"{label}: {round(k)}, {over} above 35"))
+            if tr.volume is not None and above(tr.volume, SONG_KIT_LIMIT, True):
+                now, top = level(tr.volume, True), level(SONG_KIT_LIMIT, True)
+                over = signed_db(above(tr.volume, SONG_KIT_LIMIT, True), 2)
+                notes.append(t(f"{label}: {now}, {over} über {top}", f"{label}: {now}, {over} above {top}"))
             stages += effect_stages(inst, tr.params, t("im " if kind == "kit" else "in der ", "in ") + label)
         if kind == "synth":
             loudest_sound = more(loudest_sound, tr.volume)
@@ -482,23 +524,27 @@ def sound_notes(label, sound, params, card, suffix=""):
     volume = None
     for p in params:
         volume = more(volume, loudest(p, "volume"))
-    if volume is None or volume <= SOUND_LIMIT:
+    if volume is None or not above(volume, SOUND_LIMIT):
         return []
     k = knob(volume)
-    over = f"{label}: {round(k)}, {signed_db(db_between(40, k))} " + t("über 40", "above 40")
+    over = f"{label}: {level(volume)}, {signed_db(above(volume, SOUND_LIMIT), 2)} " + t("über ", "above ") + \
+        level(SOUND_LIMIT)
     samples, other = sources(sound, params)
     if other or not samples:
         return [over + suffix]  # An oscillator, noise or FM sound: no sample to go by
-    level, problems = sample_level(samples, card)
+    found, problems = sample_level(samples, card)  # (level() is the text of a volume)
     if problems:
         return [over + " (" + "; ".join(problems) + ")" + suffix]
-    equivalent = k * level[0]
-    if equivalent <= 40 + EQUIVALENT_TOLERANCE:
+    equivalent = k * found[0]
+    if knob_db(equivalent) - volume_db(SOUND_LIMIT) <= TOLERANCE_DB:
         return []
-    osc = f", Osc {round(level[2])}" if level[2] < 49.5 else ""
-    peak = num(20 * math.log10(level[1]))
-    return [t(f"{label}: {round(k)}, Sample bis {peak} dBFS{osc}, wirkt wie {num(equivalent)}",
-              f"{label}: {round(k)}, sample up to {peak} dBFS{osc}, as loud as {num(equivalent)}") + suffix]
+    osc = f", Osc {num(found[2])}" if found[2] < 49.95 else ""
+    peak = num(20 * math.log10(found[1]))
+    over = signed_db(knob_db(equivalent) - volume_db(SOUND_LIMIT), 2)
+    return [t(f"{label}: {level(volume)}, Sample bis {peak} dBFS{osc}, wirkt wie {level_of_knob(equivalent)}, "
+              f"{over} über {level(SOUND_LIMIT)}",
+              f"{label}: {level(volume)}, sample up to {peak} dBFS{osc}, as loud as {level_of_knob(equivalent)}, "
+              f"{over} above {level(SOUND_LIMIT)}") + suffix]
 
 
 def sample_level(samples, card):
@@ -636,27 +682,31 @@ def report(files, results=None):
             continue
         settings, notes = r["settings"], r["notes"]
         s, c, g, v = settings["song"], settings["compressor"], settings["group"], settings["sound"]
-        rows.append(f"| {name} | {'-' if s is None else round(knob(s))} | "
+        rows.append(f"| {name} | {'-' if s is None else level(s, True)} | "
                     f"{t('an', 'on') if c is not None and c > 0 else t('aus', 'off')} | "
-                    f"{'-' if g is None else round(knob(g))} | "
-                    f"{'-' if v is None else round(knob(v))} | {len(notes) or 'ok'} |")
+                    f"{'-' if g is None else level(g, True)} | "
+                    f"{'-' if v is None else level(v)} | {len(notes) or 'ok'} |")
         if notes:
             with_notes += 1
             sections.append(f"## {name}\n\n" + "\n".join("- " + n for n in notes) + "\n")
     n = len(results)
     head = t(f"# Baseline-Prüfung: {n} {'Song' if n == 1 else 'Songs'}, {with_notes} mit Hinweisen\n\n"
-             "Grenzen (Baseline Master, 27.09.2026): Song, Kit und Audio-Spur höchstens 35, Synth und Kit-Reihe "
-             "höchstens 40, lauter nur mit leisem Sample: «wirkt wie» ist der Regler, den ein voll ausgesteuertes "
+             "Grenzen (Baseline Master, 27.09.2026): Song, Kit und Audio-Spur höchstens 35,4 (0,00 dB), Synth und "
+             "Kit-Reihe höchstens 40,0 (+8,16 dB), lauter nur mit leisem Sample: «wirkt wie» ist der Regler, den ein "
+             "voll ausgesteuertes "
              "Sample für denselben Pegel bräuchte (Regler mal 10^(Spitze/40)), höchstens 40. Master-Kompressor aus. "
-             "Mit Automation zählt der lauteste Punkt. Ob ein Song clippt, zeigt nur das Messen: In DelugeRec bleibt "
-             "das Pad -3 dunkel.\n\n"
+             "Mit Automation zählt der lauteste Punkt. Jeder Pegel steht als Reglerwert 0-50 und in dB wie am Deluge "
+             "ab mastertune v18 (0,5 dB pro Raste, Werte dazwischen wie gespeichert). Ob ein Song clippt, zeigt nur "
+             "das Messen: In DelugeRec bleibt das Pad -3 dunkel.\n\n"
              "| Song | Song-Lautstärke | Master-Kompressor | lautestes Kit, Audio | lautester Synth, Reihe | "
              "Hinweise |\n|---|---|---|---|---|---|\n",
              f"# Baseline check: {n} {'song' if n == 1 else 'songs'}, {with_notes} with notes\n\n"
-             "Limits (baseline master, 2026-09-27): song, kit and audio track at most 35, synth and kit row at most "
-             "40, louder only with a quiet sample: «as loud as» is the knob a full-scale sample would need for the "
-             "same level (knob times 10^(peak/40)), at most 40. Master compressor off. With automation the loudest "
-             "point counts. Whether a song clips only measuring shows: in DelugeRec the pad -3 stays dark.\n\n"
+             "Limits (baseline master, 2026-09-27): song, kit and audio track at most 35.4 (0.00 dB), synth and kit "
+             "row at most 40.0 (+8.16 dB), louder only with a quiet sample: «as loud as» is the knob a full-scale "
+             "sample would need for the same level (knob times 10^(peak/40)), at most 40. Master compressor off. With "
+             "automation the loudest point counts. Every level as its knob value 0-50 and in dB as the Deluge shows "
+             "it from mastertune v18 on (0.5 dB per detent, values between as stored). Whether a song clips only "
+             "measuring shows: in DelugeRec the pad -3 stays dark.\n\n"
              "| Song | Song volume | Master compressor | loudest kit, audio | loudest synth, row | Notes |\n"
              "|---|---|---|---|---|---|\n")
     return head + "\n".join(rows) + "\n" + ("\n" + "\n".join(sections) if sections else "")
