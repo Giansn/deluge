@@ -59,6 +59,7 @@ filterDefs() {
   grep -q feedbackFromMoveability "$1/deluge/dsp/filter/lpladder.h" && d="$d -DLPF_RAMP_HORNER"
   grep -q "doubled()" "$1/deluge/dsp/filter/lpladder.h" && d="$d -DLPF_RAMP_PAIRS"
   grep -q "vrhaddq_s32" "$1/deluge/dsp/filter/filter_set.cpp" && d="$d -DFILTERSET_PARALLEL_HALF"
+  grep -q "driveCompensate" "$1/deluge/dsp/filter/lpladder.h" && d="$d -DDRIVE_BASS_COMP"
   echo "$d"
 }
 DEFS=$(filterDefs "$D")

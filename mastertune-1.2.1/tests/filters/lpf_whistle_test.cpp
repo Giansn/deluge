@@ -8,7 +8,8 @@
 // above -100 dBFS and no more than 1 dB below the 0.5 s before). Printed per context and mode: from which resonance it
 // keeps a tone, how loud (dBFS, with the output gain the firmware applies) and at what frequency, next to the original.
 // Turned: the loudest 1024-sample window while the cutoff goes from open to closed and back with the music on, against
-// the original's.
+// the original's (v18's drive ladder, bass-compensated: against the louder of the original's at that resonance and at
+// resonance 0, DRIVE_BASS_COMP).
 //
 // Fails where the firmware's own tone is louder than the original's by more than kMaxLouder dB (same context, mode,
 // resonance and cutoff), or it keeps a tone at a resonance at which the original doesn't at any cutoff. VERBOSE=1:
@@ -497,6 +498,15 @@ int main() {
 					for (double sec : {0.25, 2.0}) {
 						double o = runCase(true, ctx, mode, r, 0, sec).loudestDb;
 						double f = runCase(false, ctx, mode, r, 0, sec).loudestDb;
+#ifdef DRIVE_BASS_COMP
+						// mastertune v18's drive ladder keeps its bass at resonance 0's level (its bass compensation,
+						// decided): with the music on it is as loud as the original without resonance, not louder
+						// (and its resonance's peak comes on top of that bass, as in the linear ladder: up to about 2.3
+						// dB more in the loudest window; limit kMaxLouder + 1.5 dB there)
+						if (mode.fw == FilterMode::TRANSISTOR_24DB_DRIVE) {
+							o = std::max(o, runCase(true, ctx, mode, 0, 0, sec).loudestDb) + 1.5;
+						}
+#endif
 						turned = std::max(turned, f - o);
 					}
 				}

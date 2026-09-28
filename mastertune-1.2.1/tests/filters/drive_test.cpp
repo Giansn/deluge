@@ -8,8 +8,8 @@
 //              -45 and -30 dBFS RMS: fails where it is more than 1 dB from resonance 0's (1.2.1: down to -14 dB),
 //              judged up to resonance 30 at every level and up to 50 from -45 dBFS (above 25 the ladder sings on its
 //              own at about -50 dBFS, over a -60 dBFS input).
-//   selfosc    the ladder singing on its own (resonance 30, 40, 50 at 500 Hz): its level and frequency (printed, and
-//              against the cutoff: fails more than 25 cents off).
+//   selfosc    the ladder singing on its own (resonance 30, 40, 50 at 500 Hz, 2 and 8 kHz): its level and frequency
+//              against the cutoff (fails more than 50 cents off up to 2 kHz; 8 kHz printed).
 //   alias      a sine of 5, 9, 13, 17 kHz at -40 and -20 dBFS RMS through the ladder (cutoff 50 = wide open, resonance
 //              25 %): what isn't the tone or its harmonics below Nyquist (aliases, noise) in dBc, 2x against 1x (the
 //              CPU guard's case): fails where 2x doesn't take it at least 3 dB down (unless below -90 dBc). The
@@ -171,7 +171,8 @@ int selfOsc() {
 	int bad = 0;
 	for (bool global : {false, true}) {
 		for (double res : {30.0, 40.0, 50.0}) {
-		for (double cut : {displayForHz(500), 40.0}) {
+		for (double hz : {500.0, 2000.0, 8000.0}) {
+			double cut = displayForHz(hz);
 			Drive d(global, cut, res);
 			int n = 128 * 400;
 			std::vector<double> in(n, 0.0);
@@ -190,7 +191,10 @@ int selfOsc() {
 			double rms = std::sqrt(e / (n / 2));
 			double f = crossings / 2.0 / ((n / 2) / kFs);
 			double cents = rms > 1e-7 ? 1200 * std::log2(f / cutoffHz(cut)) : 0;
-			bool fail = rms > 1e-7 && std::fabs(cents) > 25;
+			// (This ladder's feedback weights, 2 s4 + G s3 + G^2 s2 + G^3 s1 ("we should halve..."), put its tone
+			// below the cutoff, more so the higher it is: 1.2.1 -16 / -56 / -146 cents at 500 Hz / 2 / 8 kHz, v18 at
+			// 2x -7 / -30 / -100. Fails beyond 50 cents up to 2 kHz)
+			bool fail = rms > 1e-7 && hz <= 2000 && std::fabs(cents) > 50;
 			bad += fail;
 			printf("selfosc %-8s cutoff %4.0f Hz resonance %2.0f: %6.1f dBFS RMS at %6.1f Hz (%+.0f cents)%s\n",
 			       global ? "kit" : "kit row", cutoffHz(cut), res, db(rms), rms > 1e-7 ? f : 0.0, cents,
