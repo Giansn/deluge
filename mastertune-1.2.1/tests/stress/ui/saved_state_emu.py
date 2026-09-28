@@ -40,7 +40,7 @@ def check_unknown(elf, tools, build, out):
         rig = su.Rig(elf, tools, build, sd, "instant", "unknown")
         su.set_menus(rig, [], 0)
         text, values = su.community_file(sd)
-        kept = {k: values.get(k) for k in UNKNOWN}
+        kept = {k: (int(values[k]) if values.get(k) is not None else None) for k in UNKNOWN}
         ok = kept == UNKNOWN and not rig.problems and not rig.invalid
         names = sorted(set(re.findall(r'name="([^"]*)"', text or "")))
         print(f"unknown: {'ok  ' if ok else 'FAIL'} kept by name {kept} (want {UNKNOWN}); the file's names: {names}; "
