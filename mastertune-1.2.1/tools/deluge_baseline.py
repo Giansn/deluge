@@ -44,6 +44,7 @@ Needs numpy to normalize (pip install numpy); everything else only Python 3.8.
 
 Versions:
   1  the first build: levels and normalize, read or apply, onto the SD card or into a copy folder, German and English
+  2  the display's text smaller: 28 characters on 5 lines instead of 21 on 4
 """
 import argparse
 import datetime
@@ -68,7 +69,7 @@ try:
 except ImportError:  # Only normalizing needs it: checked there
     np = None
 
-VERSION = 1
+VERSION = 2
 AUDIO_EXTENSIONS = (".wav", ".aif", ".aiff")
 XML_FOLDERS = ("SONGS", "KITS", "SYNTHS")
 # Why a sample stays as it is. Wavetables and audio clips always; the other reasons only when it compensates
@@ -1084,13 +1085,13 @@ def oled_text(s):
 
 
 class Oled:
-    """The Deluge's OLED as DelugeRec draws it: 128 x 48 pixels, each scale x scale on the screen (3 or more), with a
-    visible pixel grid and scanlines."""
-    W, H = 128, 48
+    """The Deluge's OLED as DelugeRec draws it: w x h pixels (the Deluge's 128 x 48 unless told otherwise), each
+    scale x scale on the screen (3 or more), with a visible pixel grid and scanlines."""
 
-    def __init__(self, scale):
-        self.scale = s = scale
-        self.fb = [bytearray(self.W) for _ in range(self.H)]
+    def __init__(self, scale, w=128, h=48):
+        self.scale, self.W, self.H = scale, w, h
+        s = scale
+        self.fb = [bytearray(w) for _ in range(h)]
 
         def pixel(colour, shade):  # One pixel of a line on the screen: its last column darker (the grid)
             return b"".join(bytes(int(c * shade * (0.8 if i == s - 1 else 1.0)) for c in colour) for i in range(s))
@@ -1210,7 +1211,9 @@ class App:
     """The window. What it does: a function (PEGEL or NORM) in a mode (LESEN: only read, ANPASSEN: show, then write
     on the second START), written onto the SD card directly or into a copy folder."""
     W, H = 900, 614  # The panel at scale 1, in the Deluge's (and DelugeRec's) proportions: 305 x 208 mm
-    ROWS, PADS = 4, 32  # Lines of a list on the OLED; pads (two rows of 16)
+    ROWS, PADS = 5, 32  # Lines of a list on the display; pads (two rows of 16)
+    DISPLAY = (170, 64)  # The display's pixels: 28 characters on 5 lines and a bottom line, at 3 x as big as the
+    # Deluge's 128 x 48 at 4 x
     COLOURS = {"levels": AMBER, "normalize": CYAN, "read": WHITE, "apply": RED, "start": GREEN, "card": GREEN,
                "report": WHITE, "restore": BLUE}
     # The computer's keys, by language (shown small under each button)
@@ -1244,12 +1247,12 @@ class App:
         self.target = min(TARGETS, key=lambda t: abs(t - self.target))
         self.compensate = bool(saved.get("compensate", True))
         # A little bigger than DelugeRec (more text), as big as the screen's scale asks, never bigger than the screen
-        scale = max(3, round(4 * z))
+        scale = max(3, int(3 * z + 0.5))
         sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-        while scale > 3 and (self.W * scale / 4 > sw * 0.98 or self.H * scale / 4 > sh - 90):
+        while scale > 3 and (self.W * scale / 3 > sw * 0.98 or self.H * scale / 3 > sh - 90):
             scale -= 1
-        self.oled = Oled(scale)
-        s = scale / 4  # Everything follows the OLED's size
+        self.oled = Oled(scale, *self.DISPLAY)
+        s = scale / 3  # Everything follows the display's size
         self.Z = lambda v: int(round(v * s))  # noqa: E731
         self.boot_until = time.monotonic() + 1.4
         self.view = "home"  # home, list, backups
@@ -1486,7 +1489,7 @@ class App:
     def say(self, text, seconds=2.0):
         """A message in the OLED's bottom line; a long one stays until it has scrolled through."""
         now = time.monotonic()
-        over = max(0, Oled.width(text) - (Oled.W - 1)) / 30
+        over = max(0, Oled.width(text) - (self.oled.W - 1)) / 30
         self.message, self.message_since = text, now
         self.message_until = now + (max(seconds, over + 3.0) if over else seconds)
 
@@ -1851,7 +1854,7 @@ class App:
     # --- the loop: LEDs, boxes, pads, OLED, 25 times a second
 
     def visible_rows(self):
-        return self.ROWS - 1 if self.pending else self.ROWS
+        return self.ROWS  # The question and the messages have a line of their own, at the bottom
 
     def list_top(self):
         items, sel, rows = self.list["items"], self.list["sel"], self.visible_rows()
@@ -1948,21 +1951,22 @@ class App:
         o = self.oled
         o.clear()
         message = self.message if self.message and now < self.message_until else ""
+        cols = o.W // 6
         if now < self.boot_until:  # At start the name and the version, as the Deluge shows its own
-            o.text((o.W - o.width("DELUGE", 2)) // 2, 9, "DELUGE", 2)
-            o.text((o.W - o.width(f"BASELINE V{VERSION}")) // 2, 30, f"BASELINE V{VERSION}")
+            o.text((o.W - o.width("DELUGE", 2)) // 2, 14, "DELUGE", 2)
+            o.text((o.W - o.width(f"BASELINE V{VERSION}")) // 2, 38, f"BASELINE V{VERSION}")
             return
         if self.busy:
             o.text(0, 0, self.busy)
             o.rect(0, 9, o.W, 1)
-            o.text(0, 16, self.progress[:21] if self.progress else bc.t("BITTE WARTEN", "PLEASE WAIT"))
-            for x, y, w, h in ((0, 30, o.W, 1), (0, 38, o.W, 1), (0, 30, 1, 9), (o.W - 1, 30, 1, 9)):
+            o.text(0, 16, self.progress[:cols] if self.progress else bc.t("BITTE WARTEN", "PLEASE WAIT"))
+            for x, y, w, h in ((0, 32, o.W, 1), (0, 44, o.W, 1), (0, 32, 1, 13), (o.W - 1, 32, 1, 13)):
                 o.rect(x, y, w, h)
             m = re.search(r"(\d+)/(\d+)", self.progress)
             if m and int(m.group(2)):
-                o.rect(2, 32, (o.W - 4) * int(m.group(1)) // int(m.group(2)), 5)
+                o.rect(2, 34, (o.W - 4) * int(m.group(1)) // int(m.group(2)), 9)
             else:
-                o.rect(2 + int(now * 40) % (o.W - 20), 32, 16, 5)
+                o.rect(2 + int(now * 50) % (o.W - 26), 34, 22, 9)
             return
         if self.view in ("list", "backups") and self.list:
             items, rows = self.list["items"], self.visible_rows()
@@ -1980,26 +1984,26 @@ class App:
                     o.rect(0, y - 1, o.W - 3, 9)
                     self.marquee(o, 0, y, line, self.list["since"], invert=True, width=o.W - 3)
                 else:
-                    o.text(0, y, line[:21])
+                    o.text(0, y, line[:cols])
             if len(items) > rows:  # Where in the list: a thin bar on the right
-                h = max(3, 36 * rows // len(items))
-                o.rect(o.W - 1, 11 + (36 - h) * self.list["sel"] // max(1, len(items) - 1), 1, h)
+                h = max(3, 45 * rows // len(items))
+                o.rect(o.W - 1, 11 + (45 - h) * self.list["sel"] // max(1, len(items) - 1), 1, h)
             if self.pending and not message:  # Asks: START again writes
-                o.rect(0, 39, o.W, 9, on=blink)
-                o.text(1, 40, bc.t("SCHREIBEN? START=JA", "WRITE? START=YES"), invert=blink)
+                o.rect(0, 56, o.W, 8, on=blink)
+                o.text(1, 57, bc.t("SCHREIBEN? START = JA", "WRITE? START = YES"), invert=blink)
         else:
             self.draw_home(o)
         if message:
-            o.rect(0, 39, o.W, 9)
-            self.marquee(o, 1, 40, message, self.message_since, invert=True)
+            o.rect(0, 56, o.W, 8)
+            self.marquee(o, 1, 57, message, self.message_since, invert=True)
 
     def draw_home(self, o):
         """What START will do, from the buttons and boxes set."""
         t = bc.t
         if not self.card:
-            o.text((o.W - o.width(t("KARTE?", "CARD?"), 2)) // 2, 3, t("KARTE?", "CARD?"), 2)
-            o.text(1, 22, t("KNOPF KARTE: SD-KARTE", "CARD BUTTON: CHOOSE"))
-            o.text(1, 31, t("ODER KOPIE WÄHLEN", "THE SD CARD OR COPY"))
+            o.text((o.W - o.width(t("KARTE?", "CARD?"), 2)) // 2, 6, t("KARTE?", "CARD?"), 2)
+            o.text(1, 30, t("KNOPF KARTE: DIE SD-KARTE", "CARD BUTTON: CHOOSE THE SD"))
+            o.text(1, 39, t("ODER EINE KOPIE WÄHLEN", "CARD OR A COPY OF IT"))
             return
         function = t("PEGEL", "LEVELS") if self.function == "levels" else "NORM"
         mode = t("LESEN", "READ") if self.mode == "read" else t("ANPASSEN", "APPLY")
@@ -2008,23 +2012,29 @@ class App:
         count = f"{n} SONG{'' if n == 1 else 'S'}"
         o.text(o.W - o.width(count), 0, count)
         o.rect(0, 9, o.W, 1)
-        what = {("levels", "read"): t("ZEIGT ZU LAUTE SPUREN", "SHOWS WHAT'S TOO LOUD"),
-                ("levels", "apply"): t("SONGS AUF BASELINE", "SONGS TO THE BASELINE"),
-                ("normalize", "read"): t("ZEIGT LEISE SAMPLES", "SHOWS QUIET SAMPLES"),
-                ("normalize", "apply"): t("HEBT LEISE SAMPLES AN", "RAISES QUIET SAMPLES")}[(self.function, self.mode)]
+        what = {("levels", "read"): t("ZEIGT, WAS ZU LAUT IST", "SHOWS WHAT IS TOO LOUD"),
+                ("levels", "apply"): t("SETZT DIE SONGS AUF BASELINE", "SETS THE SONGS TO BASELINE"),
+                ("normalize", "read"): t("ZEIGT, WAS ZU LEISE IST", "SHOWS WHAT IS TOO QUIET"),
+                ("normalize", "apply"): t("HEBT LEISE SAMPLES ANS ZIEL", "RAISES QUIET SAMPLES")}[(self.function,
+                                                                                                   self.mode)]
         self.marquee(o, 0, 12, what, self.boot_until)
         if self.mode == "read":
             o.text(0, 21, t("ÄNDERT NICHTS", "CHANGES NOTHING"))
         elif self.dest == "folder":
-            o.text(0, 21, t("NACH: KOPIE-ORDNER", "TO: COPY FOLDER"))
+            o.text(0, 21, t("SCHREIBT NACH: KOPIE-ORDNER", "WRITES TO: COPY FOLDER"))
         else:
-            o.text(0, 21, t("NACH: SD-KARTE", "TO: SD CARD"))
+            o.text(0, 21, t("SCHREIBT NACH: SD-KARTE", "WRITES TO: SD CARD"))
         if self.function == "normalize":
-            o.text(0, 30, t("ZIEL ", "TARGET ") + f"{bc.num(self.target)} " + (
+            o.text(0, 30, t("ZIEL ", "TARGET ") + f"{bc.num(self.target)} DBFS, " + (
                 t("AUSGL AN", "COMP ON") if self.compensate else t("AUSGL AUS", "COMP OFF")))
         else:
             o.text(0, 30, "SONG 35, SYNTH 40")
-        o.text(0, 40, t("START: LESEN", "START: READ") if self.mode == "read" else t("START: VORSCHAU",
+        card = self.card if len(self.card) <= 21 else ".." + self.card[-19:]
+        o.text(0, 39, t("KARTE ", "CARD ") + card)
+        if self.songs and all(song["status"] for song in self.songs):
+            bad = sum(song["status"] != "ok" for song in self.songs)
+            o.text(0, 48, t(f"GELESEN: {n - bad} OK, {bad} HINWEISE", f"READ: {n - bad} OK, {bad} WITH NOTES"))
+        o.text(1, 57, t("START: LESEN", "START: READ") if self.mode == "read" else t("START: VORSCHAU",
                                                                                       "START: PREVIEW"))
 
 
