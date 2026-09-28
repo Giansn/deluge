@@ -1,0 +1,81 @@
+name: Release notes in English
+# The release notes of DelugeBaseline and DelugeTuner named the buttons in German and English, as the window's two
+# languages have them ("PEGEL/LEVELS", "KARTE/CARD"). The notes are English: the English names only, as the build
+# workflows now write them. This edits every release that still has the old text (gh release edit), then checks the
+# notes of every release for German (umlauts, the German button names, common German words) and fails if any is left.
+# Runs when this file changes.
+on:
+  push:
+    branches: [device-results]
+    paths:
+      - .github/workflows/release-notes.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  notes:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: The button names in English
+        shell: python
+        run: |
+          import json, re, subprocess, tempfile
+
+          # Whole phrases first (the sentence reads better than with the pairs just cut), then any pair left
+          PHRASES = [
+              ("Two functions, PEGEL/LEVELS and NORM", "Two functions, LEVELS and NORM"),
+              ("each to read (LESEN/READ: only shows) or to apply (ANPASSEN/APPLY: shows, then writes on the second "
+               "START)", "each to READ (only shows) or to APPLY (shows, then writes on the second START)"),
+              ("(with a backup, ZURÜCK/RESTORE brings it back)", "(with a backup: RESTORE brings it back)"),
+              ("KARTE/CARD:", "CARD:"), ("ZIEL/OUTPUT:", "OUTPUT:"), ("LESEN/READ shows", "READ shows"),
+              ("UMSTIMMEN/RETUNE writes", "RETUNE writes"),
+          ]
+          GERMAN = r"PEGEL|LESEN|ANPASSEN|ZURÜCK|KARTE|ZIEL|UMSTIMMEN|BERICHT|FORTSETZEN"
+
+          def gh(*args):
+              return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
+
+          tags = [r["tagName"] for r in json.loads(gh("release", "list", "--limit", "500", "--json", "tagName"))]
+          changed = 0
+          for tag in tags:
+              body = json.loads(gh("release", "view", tag, "--json", "body"))["body"]
+              new = body
+              for old, english in PHRASES:
+                  new = new.replace(old, english)
+              new = re.sub(rf"\b(?:{GERMAN})/([A-Z]+)\b", r"\1", new)  # "LESEN/READ" -> "READ"
+              if new != body:
+                  with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as f:
+                      f.write(new)
+                  gh("release", "edit", tag, "--notes-file", f.name)
+                  changed += 1
+                  print(f"{tag}: edited")
+              else:
+                  print(f"{tag}: as it was")
+          print(f"{changed} of {len(tags)} releases edited")
+
+      - name: No German left in any release's notes
+        shell: python
+        run: |
+          import json, re, subprocess, sys
+
+          def gh(*args):
+              return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
+
+          GERMAN = re.compile(r"[äöüÄÖÜß]|\b(?:PEGEL|LESEN|ANPASSEN|ZURUECK|KARTE|ZIEL|UMSTIMMEN|BERICHT|FORTSETZEN|"
+                              r"SPRACHE|STIMMUNG|AUSGLEICHEN)\b|\b(?:und|oder|nicht|der|die|das|mit|für|auf|ist|"
+                              r"wird|eine|einen|Datei|Karte|Ordner)\b")
+          found = 0
+          for tag in [r["tagName"] for r in json.loads(gh("release", "list", "--limit", "500", "--json", "tagName"))]:
+              release = json.loads(gh("release", "view", tag, "--json", "name,body"))
+              for field in ("name", "body"):
+                  for m in GERMAN.finditer(release[field] or ""):
+                      found += 1
+                      text = release[field]
+                      print(f"{tag} ({field}): {m.group()!r} in ...{text[max(0, m.start() - 40):m.end() + 40]}...")
+          print(f"{found} German words or letters found")
+          sys.exit(1 if found else 0)
