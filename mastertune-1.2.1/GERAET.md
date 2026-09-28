@@ -52,6 +52,7 @@ Erledigt: der Bericht zu v16, l2d, der Song für den Emulator, der Retune-Test u
      - Jede Datei wird in Stücken von etwa 3 s umgerechnet. Pro Datei braucht es so etwa 60 MB Speicher statt bis zu 8,5 GB, auch bei langen Aufnahmen.
      - Wie viele Dateien gleichzeitig laufen, richtet sich nach dem freien Speicher: höchstens die Hälfte davon. Die Konsole zeigt, was gewählt wurde.
      - Das Ergebnis ist Byte für Byte gleich wie mit der alten Version.
+   - **Am einfachsten unter Windows: DelugeTuner** (`DelugeTuner-vN.exe` im Release https://github.com/Giansn/deluge/releases/tag/deluge-tuner, nichts zu installieren). KARTE: die Kopie der Karte, ZIEL: ein Ordner auf dem Computer, den Goldknopf auf 432.0 Hz, zuerst LESEN (zeigt nur, was es täte), dann UMSTIMMEN. ESC hält an, START mit denselben Angaben macht weiter. BERICHT öffnet `RETUNE_REPORT.txt`. Die Befehlszeile unten geht weiterhin.
    - **Neu beginnen:** Der eingefrorene Ordner stammt von der alten Version und lässt sich nicht fortsetzen. Ihn löschen oder umbenennen, dann in einen neuen, leeren Ordner umwandeln:
      `python tools/retune_library.py --card <Kopie der Karte> --out <neuer leerer Ordner>`
    - **Bricht es ab** (Absturz, Strom, volle Platte): denselben Befehl mit `--resume` und denselben Ordnern. Fertige Dateien bleiben, halbe werden neu gemacht.
