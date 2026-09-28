@@ -1,14 +1,15 @@
 #!/bin/bash
 # Ratchet roll and bounce length in the real firmware (emulated), with the song harness of ../song.
 # Usage: ./run.sh <deluge.elf> [out dir]
-#   arp_roll_test.py: every note-on after the arp against the formula, 7 cases (roll accelerating/decelerating/even,
-#     fixed counts over 1 and 2 steps, 16ths, unsynced); and the next arp note after each ratchet
+#   arp_roll_test.py: every note-on after the arp against the formula, 10 cases (roll accelerating/decelerating/even,
+#     fixed counts over 1 and 2 steps, 16ths, unsynced, 3 balls); and the next arp note after each ratchet
 #   edge_test.py: 11 edge cases with note-ons and note-offs (latch, sequence length, note probability, swing, release
 #     and press again; TICKS=1 also logs the arp's clock ticks)
 #   gen_presets.py: the presets in ../../presets/SYNTHS, saved by the firmware itself
 #   render_demo.py: the presets on a held A major chord, 4 bars at 120 BPM (../../presets/demo)
 #   pettra.py: PETTRA ARP (the Pettra arp, sound and arp) and its demo, 8 bars at 138 BPM
 #   pingpong.py: the ping-pong ball between two plates, computed and played as a clip (demo/PETTRA PINGPONG BALL.wav)
+#   ball.py: PETTRA BALL and PETTRA BALL BUZZ, the arp mode Ball (v18.4), and their demos
 # Needs: python3 with unicorn 2 and numpy, a C compiler (for blockcount.c).
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -25,3 +26,4 @@ BLOCKCOUNT_DIR="$OUT" python3 "$HERE/gen_presets.py" "$ELF" "$OUT/presets"
 BLOCKCOUNT_DIR="$OUT" python3 "$HERE/render_demo.py" "$ELF" "$OUT/demo"
 BLOCKCOUNT_DIR="$OUT" python3 "$HERE/pettra.py" "$ELF" "$OUT/pettra"
 BLOCKCOUNT_DIR="$OUT" python3 "$HERE/pingpong.py" "$ELF" "$OUT/pingpong"
+BLOCKCOUNT_DIR="$OUT" python3 "$HERE/ball.py" "$ELF" "$OUT/ball"

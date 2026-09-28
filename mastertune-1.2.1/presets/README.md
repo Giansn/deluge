@@ -6,7 +6,9 @@ Three synth presets for the ratchet bounce of the arpeggiator, from **v13** on. 
 |---|---|---|
 | `SYNTHS/PETTRA ARP.XML` | **The arp of Pettra "You Are The Seeds"**, sound and arp: a bright, detuned saw pluck on 1/8, random notes over 2 octaves, and now and then (about once a bar) the song's figure: 3 equally loud hits into the next step, each gap ×0.7. | `demo/PETTRA ARP.wav` (138 BPM, A major held, 8 bars) |
 | `SYNTHS/PETTRA PINGPONG.XML` | Only the figure, on every step: 3 equally loud hits in one eighth, each gap ×0.7. | `demo/PETTRA PINGPONG.wav` |
-| (no preset yet) | **The ping-pong ball between two plates** that close in slowly and part fast: computed (`tests/arp/pingpong.py`) and played as notes in a clip with the PETTRA ARP voice. Per 2 beats 5-6 hits: one long flight after the plates meet, then ever faster (x0.69 per hit) into the next meeting on beats 2 and 4, the last hits about 14 dB louder and brighter. The arp can't do this yet: its bounce either accelerates or slows down. | `demo/PETTRA PINGPONG BALL.wav` (138 BPM, 8 bars); `demo/PETTRA PINGPONG BALL B.wav`: x0.67 per hit and mostly one note, A5, as measured later (`references/pettra-arp/METHODS.md`) |
+| `SYNTHS/PETTRA BALL.XML` | **The Pettra arp as the arp mode Ball** (needs firmware v18.4): a ping-pong ball between two plates that close in and part again, over 2 beats. The hits speed up (175, 114, 74, 48, 31, 20 ms) into a buzz at 15 ms on beats 2 and 4, loudest there, then slow down again. A5 held: the ball repeats one note, as the song's plucks mostly do. | `demo/PETTRA BALL.wav` (138 BPM, 8 bars) |
+| `SYNTHS/PETTRA BALL BUZZ.XML` | The same over one beat with bounce +3: from 37 ms into the buzz and back, nearly all buzz, as at 6:39.57 in the song. | (none) |
+| (no preset) | **The ping-pong ball between two plates** that close in slowly and part fast: computed (`tests/arp/pingpong.py`) and played as notes in a clip with the PETTRA ARP voice. Per 2 beats 5-6 hits: one long flight after the plates meet, then ever faster (x0.69 per hit) into the next meeting on beats 2 and 4, the last hits about 14 dB louder and brighter. The arp can't do this yet: its bounce either accelerates or slows down. | `demo/PETTRA PINGPONG BALL.wav` (138 BPM, 8 bars); `demo/PETTRA PINGPONG BALL B.wav`: x0.67 per hit and mostly one note, A5, as measured later (`references/pettra-arp/METHODS.md`) |
 | `SYNTHS/PINGPONG ROLL.XML` | A ping-pong ball between two paddles that close in. Per ratchet 16 hits over 4 eighths, ever faster and louder, up to the next hit. | `demo/PINGPONG ROLL.wav` |
 
 The audio examples are rendered with the real firmware in the emulator: PETTRA ARP at 138 BPM on A4 C#5 E5 as at 0:55 in the song, the other two at 120 BPM on A major.
@@ -18,6 +20,18 @@ The audio examples are rendered with the real firmware in the emulator: PETTRA A
 - **Download one file:** [PETTRA ARP.XML](https://github.com/Giansn/deluge/raw/claude/wizardly-brahmagupta-nnrk07/mastertune-1.2.1/presets/SYNTHS/PETTRA%20ARP.XML).
 
 Then on the Deluge: open a synth clip and load the preset like any other; the arp settings come with it. Set the tempo to **138** (the preset stores no tempo) and hold **A, C#, E** (for example A4 C#5 E5). With **Arpeggiator → Latch** on, the arp keeps playing when you let go.
+
+## The arp mode Ball (firmware v18.4)
+
+**Arpeggiator → Ratchet notes → Ball** (after Roll). A ratchet becomes a ping-pong ball between two plates:
+- The first half of the ratchet is a roll into its middle: each gap is the one before times r (r from the ratchet bounce, 0.95 at +1 to 0.5 at +10), until the ball buzzes at 15 ms.
+- The second half is the same backwards: the plates part, the gaps grow again.
+- **Bounce length** sets how many arp steps the ratchet lasts: at 1/8, 2 = one beat, 4 = two beats.
+- **Negative bounce:** the plates meet at both ends of the ratchet (on the step) and are furthest apart in its middle.
+- **Bounce velocity Rise:** the buzz is the loudest, the slow hits half as loud.
+- Older firmware reads a Ball as 8 notes.
+
+PETTRA BALL: like PETTRA ARP (below), but ratchet notes **Ball**, bounce **+7**, bounce length **4**, bounce velocity **Rise**, ratchet probability 100 %, note mode Up, 1 octave, gate 20, envelope 1 decay 14, sustain 0, release 4 (a snappier pluck, so the buzz's hits stay single hits). Hold one note, for example A5.
 
 ## PETTRA ARP: all settings
 

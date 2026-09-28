@@ -42,6 +42,34 @@ The question: in the finished mix of Pettra "You Are The Seeds", how does the br
   - Voicing and melody selection: which contours belong to the melody.
 - The voicing step rejected 90–100 % of the frames (it is built for voice and solo lines). The salience function alone (`PitchSalienceFunction`) shows the pitch bars and was useful to look at, but it doesn't separate the arp from the pad.
 
-## Not possible in this container
+## Separating the synths with a neural network: MDX-Net (`separate.py`)
 
-Source separation with neural networks (Demucs, Open-Unmix, MDX) would separate the synths from the drums much better than HPSS, but it needs PyTorch or model weights from servers the container can't reach (download.pytorch.org, HuggingFace). On a computer with PyTorch, `demucs` on the excerpts and `analyse.py` on its "other" stem would be the next step.
+- **The model:** MDX-Net from KUIELab (Music Demixing Challenge 2021), its "other" model as the UVR project ships it (`kuielab_a_other.onnx`, 30 MB, on GitHub). A U-Net takes the complex stereo spectrogram as 4 channels (left and right, real and imaginary: [1, 4, 2048 bins, 512 frames]) and returns the target's spectrogram directly.
+- **The code around it** follows KUIELab's `ConvTDFNet.stft()/istft()` and `demix()`: n_fft 8192, hop 1024, the first 2048 bins (up to 11 kHz), chunks of 512 frames with n_fft/2 of trim on both sides, the output times 1.035. It runs with onnxruntime on the CPU, no PyTorch: 16 s for both excerpts.
+- **Result:** a synth stem without kick, hats and bass, about 20 dB below the mix (the kick and bass carry most of the energy). The plucks and their fast runs show clearly, which the kick hid in the mix.
+
+**On the stem**, the fast runs are visible:
+- 6:39.57 in the song: from the beat the hits speed up (32, 25, 22 ms), then buzz at **15 ms** for about 17 hits, then slow down again (23, 33 ms), all within one beat.
+- **22 %** of all gaps between onsets on the stem lie in the buzz (12–18 ms).
+- A pitfall: a low saw (the 110 Hz bass, 9 ms period; the pad's E3, 6 ms) has one sharp edge per period, and a high-band envelope tracker counts each edge as a hit. The tracker in `compare.py` uses the spectral flux of a short STFT instead (a steady tone is a steady spectrum) with peaks at least 11 ms apart.
+
+## Analysis by synthesis (`compare.py`)
+
+The same tracker on the stem and on renders of the real firmware in the emulator:
+
+| | Buzz (12–18 ms) |
+|---|---:|
+| Song (synth stem) | 22 % |
+| `PETTRA ARP.wav` (1/8 with a 3-hit figure now and then) | 9 % |
+| `PETTRA PINGPONG BALL B.wav` (x0.67 down to 40 ms, then a jump) | 8 % |
+| `PETTRA BALL.wav` (the arp mode Ball, v18.4) | 29 % |
+
+The earlier versions stopped at 40 ms and never buzzed; that is what was missing by ear ("even faster, the gap even smaller"). The arp mode Ball (firmware v18.4, `mastertune-1.2.1/presets/README.md`) goes down to the 15 ms buzz. The histogram distance (Jensen–Shannon) is no good measure here: a render sits on exact rungs, the song spreads.
+
+## Other methods (web research, 2026-09-28)
+
+- **Separation:** Demucs v4 (waveform and spectrogram U-Nets joined by a transformer) is the best, but its weights are on HuggingFace, which this container can't reach; `demucs-onnx` on PyPI needs only onnxruntime once the weights are copied in by hand. Open-Unmix needs PyTorch (weights on zenodo). Classical: NMF with pitched templates (`libnmfd`), KAM.
+- **Transcription:** Onsets and Frames (piano, TensorFlow; its rule "a note starts only at an onset" is worth reusing), MT3 (JAX), YourMT3 (PyTorch): not here.
+- **Onsets:** madmom's CNN and RNN onset detectors (runs here; 100 frames per second blurs the shortest bounces), its complex-domain flux.
+- **Pitch:** CREPE (monophonic; ONNX weights exist on GitHub as `onnxcrepe`), PESTO (PyTorch); both on a separated stem.
+- **Also:** synctoolbox's pitch-onset features (onset and loudness per MIDI pitch), mid/side masks (kick and bass cancel in L−R).

@@ -21,6 +21,7 @@ from unicorn.arm_const import UC_ARM_REG_R0, UC_ARM_REG_R3, UC_ARM_REG_SP  # noq
 SR = 44100
 STEP_8TH = SR * 60 // 120 // 2  # 11025 samples at 120 BPM
 MIN_GAP = 706  # kRollMinGapSamples
+BALL_MIN_GAP = 661  # kBallMinGapSamples (15 ms)
 
 CASES = {
     # name: arp attributes, sound params, bars to record
@@ -38,6 +39,13 @@ CASES = {
                               ratchetBounceFade=2), {}, 2),
     "roll+4_len4_unsynced": (dict(syncLevel=0, ratchetNotes=255, ratchetBounce=4, ratchetBounceLength=4,
                                   ratchetBounceFade=0), {}, 4),
+    # Ball (v18.4): the roll into the middle of the ratchet and back out; negative: meeting at both ends
+    "ball+3_len2_rise": (dict(syncLevel=5, ratchetNotes=254, ratchetBounce=3, ratchetBounceLength=2,
+                              ratchetBounceFade=2), {}, 2),
+    "ball+7_len4_rise": (dict(syncLevel=5, ratchetNotes=254, ratchetBounce=7, ratchetBounceLength=4,
+                              ratchetBounceFade=2), {}, 4),
+    "ball-6_len2_fade": (dict(syncLevel=5, ratchetNotes=254, ratchetBounce=-6, ratchetBounceLength=2,
+                              ratchetBounceFade=1), {}, 2),
 }
 
 
@@ -86,20 +94,31 @@ def run_case(elf, name, out_dir):
     return hits
 
 
-def expected_roll(span, ratio, mirrored, even_gap=None):
+def expected_roll(span, ratio, mirrored, even_gap=None, min_gap=MIN_GAP):
     if even_gap is not None:
         n = int(span // even_gap)
         return [i * even_gap for i in range(n)], [even_gap] * n
     gap, remaining, k = span * (1 - ratio), span, 0
-    while gap >= MIN_GAP:
+    while gap >= min_gap:
         gap *= ratio
         remaining *= ratio
         k += 1
-    n = k + int(remaining // MIN_GAP)
-    acc = [span * (1 - ratio ** j) if j <= k else span * (1 - ratio ** k) + (j - k) * MIN_GAP for j in range(n)]
+    n = k + int(remaining // min_gap)
+    acc = [span * (1 - ratio ** j) if j <= k else span * (1 - ratio ** k) + (j - k) * min_gap for j in range(n)]
     if mirrored:
         return [0.0] + [span - acc[n - i] for i in range(1, n)]
     return acc
+
+
+def expected_ball(span, ratio, mirrored):
+    """The roll over each half: into the middle, a hit in it, the same backwards; mirrored: out of the start, into
+    the end (ArpeggiatorBase::getRatchetNoteStart)"""
+    half = span / 2
+    acc = expected_roll(half, ratio, False, min_gap=BALL_MIN_GAP)
+    h = len(acc)
+    if not mirrored:
+        return acc + [half] + [span - acc[2 * h - i] for i in range(h + 1, 2 * h)]
+    return [0.0] + [half - acc[h - i] for i in range(1, h)] + [half + acc[i - h] for i in range(h, 2 * h)]
 
 
 def expected_finite(n, amount, span):
@@ -129,7 +148,9 @@ def main():
         print("  " + " ".join(line))
         if step:
             span = step * arp["ratchetBounceLength"]
-            if arp["ratchetNotes"] == 255:
+            if arp["ratchetNotes"] == 254:
+                exp = expected_ball(span, 1 - 0.05 * abs(arp["ratchetBounce"]), arp["ratchetBounce"] < 0)
+            elif arp["ratchetNotes"] == 255:
                 amount = arp["ratchetBounce"]
                 exp = expected_roll(span, 1 - 0.05 * abs(amount), amount < 0,
                                     even_gap=max(step / 8, MIN_GAP) if amount == 0 else None)
