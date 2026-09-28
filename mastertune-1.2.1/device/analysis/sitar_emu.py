@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""«New Sitar Grii 10» im Emulator: der Song von der Karte (geraet/karte) mit einer Grundstimmung, gespielt und gemessen.
+"""The song "New Sitar Grii 10" in the emulator: the song from the card (device/card) at a given tuning, played and measured.
 
-Nutzt die Emulator-Umgebung von tests/song (song_emu.py, fat32.py) aus dem Entwicklungs-Branch:
-- Kartenabbild: SONGS/DEFAULT.XML = der Song, alle Samples aus karte/SAMPLES, CommunityFeatures.XML mit masterTune.
-  Die drei fehlenden Samples des Kits Hihat (SAMPLES/PsyPack/hihat*.wav, im CSV ohne Angaben) werden ersetzt:
-  Länge aus endSamplePos im Song, Format wie die übrigen 11 Samples des Kits (Stereo, 24 Bit, 44,1 kHz),
-  Inhalt abklingendes Rauschen.
-- --all-kits: die Clips von 3L3Ctr0, 014 CR-78 und KIT1 spielen zusätzlich (isPlaying="1"), gespeichert sind nur
-  Hihat, Guiro, 170 Sitar 2 und Oboe aktiv.
-- Messung wie run.sh (--init-sounds, --seed 1): 1 Takt Vorlauf, dann --bars Takte (140 BPM), measure() mit
-  profile_by_function(). Pro Spur zusätzlich die Renderzeit, die die Firmware selbst misst (profiler::timingOutputs an,
-  profiler::outputTicks[], OS-Timer 0 = emulierte Zeit), wie der Profiler am Gerät.
+Uses the emulator environment of tests/song (song_emu.py, fat32.py) from the development branch:
+- Card image: SONGS/DEFAULT.XML = the song, all samples from card/SAMPLES, CommunityFeatures.XML with masterTune.
+  The three missing samples of the kit Hihat (SAMPLES/PsyPack/hihat*.wav, without details in the CSV) are replaced:
+  length from endSamplePos in the song, format as the other 11 samples of the kit (stereo, 24 bit, 44.1 kHz),
+  content decaying noise.
+- --all-kits: the clips of 3L3Ctr0, 014 CR-78 and KIT1 play too (isPlaying="1"); as saved, only
+  Hihat, Guiro, 170 Sitar 2 and Oboe are active.
+- Measurement as run.sh (--init-sounds, --seed 1): 1 bar of lead-in, then --bars bars (140 BPM), measure() with
+  profile_by_function(). Per track also the render time the firmware measures itself (profiler::timingOutputs on,
+  profiler::outputTicks[], OS timer 0 = emulated time), like the profiler on the device.
 
---tasks S: statt fester Fenster läuft der Task-Manager der Firmware (song_emu.run_task_manager(), der DMA in
-  Echtzeit), wie in tests/sdload (Szenario play, Run.run_tasks()): die Firmware wählt ihre Blockgrössen selbst,
-  Direness und Culling wie auf dem Gerät, der CPU-Monitor (cpu_stats) an. Erst --warmup-s Vorlauf, dann S Sekunden
-  gemessen, danach --lines-s Sekunden die SDRAM-Zeilen pro Aufruf (Run.lines()) für die Geräteschätzung: Befehle bei
-  400 MHz plus 60 ns (24 Befehle) pro SDRAM-Zeile. --sd-latency CMD_US,SECTOR_US: die Karte braucht Zeit
-  (song_emu.SdModel, die Wartezeiten geben an den Task-Manager ab). --ipc X: die CPU mit X Befehlen pro Takt
-  (song_emu.set_instructions_per_cycle(), wie tests/sdload s4ipc), dann ohne Zeilenzählung.
+--tasks S: instead of fixed windows the firmware's task manager runs (song_emu.run_task_manager(), the DMA in
+  real time), as in tests/sdload (scenario play, Run.run_tasks()): the firmware chooses its block sizes itself,
+  direness and culling as on the device, the CPU monitor (cpu_stats) on. First --warmup-s of lead-in, then S seconds
+  measured, then --lines-s seconds of SDRAM rows per call (Run.lines()) for the device estimate: instructions at
+  400 MHz plus 60 ns (24 instructions) per SDRAM row. --sd-latency CMD_US,SECTOR_US: the card takes time
+  (song_emu.SdModel, the waits yield to the task manager). --ipc X: the CPU at X instructions per cycle
+  (song_emu.set_instructions_per_cycle(), like tests/sdload s4ipc), then without row counting.
 
-Usage: sitar_emu.py <deluge.elf> <karte> <out> --song-dir <tests/song> --build <dir mit blockcount.so>
+Usage: sitar_emu.py <deluge.elf> <card> <out> --song-dir <tests/song> --build <dir with blockcount.so>
                     [--tenths 4320] [--all-kits] [--culling] [--bars 4] [--window 128]
                     [--tasks S [--warmup-s S] [--lines-s S] [--sd-latency CMD_US,SECTOR_US] [--ipc X]]
 """
@@ -47,13 +47,13 @@ def wav24_stereo(frames):
             + struct.pack("<IHHIIHH", 16, 1, 2, 44100, 44100 * 6, 6, 24) + b"data" + struct.pack("<I", len(pcm)) + pcm)
 
 
-def card_files(karte, tenths, all_kits):
+def card_files(card, tenths, all_kits):
     files = {}
-    for dirpath, _, names in os.walk(os.path.join(karte, "SAMPLES")):
+    for dirpath, _, names in os.walk(os.path.join(card, "SAMPLES")):
         for name in names:
             full = os.path.join(dirpath, name)
-            files[os.path.relpath(full, karte).replace(os.sep, "/")] = open(full, "rb").read()
-    xml = open(os.path.join(karte, "SONGS", "New Sitar Grii 10.XML"), encoding="utf-8").read()
+            files[os.path.relpath(full, card).replace(os.sep, "/")] = open(full, "rb").read()
+    xml = open(os.path.join(card, "SONGS", "New Sitar Grii 10.XML"), encoding="utf-8").read()
     rng = np.random.default_rng(1)
     replaced = {}
     for path in re.findall(r'fileName="(SAMPLES/PsyPack/hihat[a-z]*\.wav)"', xml):
@@ -97,7 +97,7 @@ def gdb_offsets(tools, elf, expressions):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("elf")
-    ap.add_argument("karte")
+    ap.add_argument("card")
     ap.add_argument("out")
     ap.add_argument("--song-dir", required=True)
     ap.add_argument("--build", required=True)
@@ -127,7 +127,7 @@ def main():
 
     if args.ipc != 1:
         E.set_instructions_per_cycle(args.ipc)
-    files, replaced, song_names, playing = card_files(args.karte, args.tenths, args.all_kits)
+    files, replaced, song_names, playing = card_files(args.card, args.tenths, args.all_kits)
     log(f"card: {len(files)} files, replaced {replaced}; clips playing: {', '.join(playing)}")
     image = os.path.join(args.out, "sd.img")
     fat32.build(image, files)

@@ -7,7 +7,7 @@ name: DelugeBaseline for Windows
 # only builds and tests, and deluge-baseline gets the released file.
 on:
   push:
-    branches: [geraet-ergebnisse]
+    branches: [device-results]
     paths:
       - mastertune-1.2.1/tools/deluge_baseline.py
       - mastertune-1.2.1/tools/baseline_check.py

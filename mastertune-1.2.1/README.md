@@ -1,8 +1,8 @@
-# Deluge 1.2.1 mit Master Tune
+# Deluge 1.2.1 with Master Tune
 
-## In short (English)
+## In short
 
-**mastertune** is my fork of the official Deluge community firmware **1.2.1**: lighter on the CPU, with a CPU monitor, the Deluge as a USB audio interface, a master tune and a few tools around it. Latest: **v18.3**, [`deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin`](https://github.com/Giansn/deluge/raw/claude/wizardly-brahmagupta-nnrk07/mastertune-1.2.1/deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin). Install it like any Deluge firmware: the .bin in the SD card's root folder (only one .bin there), then switch the Deluge on while holding SHIFT. Every version, the details and the measurements are further down, in German.
+**mastertune** is my fork of the official Deluge community firmware **1.2.1**: lighter on the CPU, with a CPU monitor, the Deluge as a USB audio interface, a master tune and a few tools around it. Latest: **v18.3**, [`deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin`](https://github.com/Giansn/deluge/raw/claude/wizardly-brahmagupta-nnrk07/mastertune-1.2.1/deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin). Install it like any Deluge firmware: the .bin in the SD card's root folder (only one .bin there), then switch the Deluge on while holding SHIFT. Every version, the details and the measurements are further down.
 
 **Written with Claude (AI).** This is a personal fork, not a contribution to the official firmware: please don't report its bugs to the community developers, report them in this repository's [issues](https://github.com/Giansn/deluge/issues). Every change is tested in an emulator that runs the firmware's real ARM code (below), but **v18.x has not been played on a real Deluge yet.** Keep a copy of your card.
 
@@ -18,7 +18,7 @@
 <sub>The OLED of the real v18.3 firmware, run in the emulator (`tests/screenshots`).</sub>
 
 **Lighter on the CPU**
-- About **half the CPU load** in heavy songs: a scheduling bug from 1.2.1 fixed. In the emulator a test song went from 93% to 41% CPU, and a streaming test cut no voices any more (25 before).
+- **About 20–25% less CPU work per sample than stock 1.2.1**, measured the same way for both in the emulator on three songs. At moderate load the audio routine's time can roughly halve, because a scheduling bug from 1.2.1 is fixed; near full load that advantage disappears. In a full-load test song 32 voices stay on average instead of 20 before any are cut. Method, numbers and caveats: [`tests/vs121/README.md`](tests/vs121/README.md).
 - Silent tracks skipped, L2 cache for code and data, smarter sample streaming, a RAM saver for kits.
 
 **CPU monitor**
@@ -56,974 +56,974 @@ The newest version of each tool is always in its release: [deluge-rec](https://g
 
 **Source:** `patches/0001`–`0116` against `release_1_2_1`, plus `l2test/0001`–`0003` for the L2 build.
 
-## Auf Deutsch
+## All versions
 
-Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern, v12 einen Frequenz-Drone mit bis zu 16 Tönen, v13 mehr Leistung, einen Ping-Pong-Arp, flimmerfreies Dimmen der Pads, genaueres MIDI und einen überarbeiteten Drone, v14 ein Reverb ohne Wabbeln, ein Delay ohne Tonhöhensprung und einen Countdown beim Song-Wechsel, v15 einen lebendigen Drone (Life, FM, Pulse), einen CPU-Monitor in einer Zeile und drei Korrekturen aus der Community, v16 Drone-Spuren für Song- und Arranger-View und einen Profiler, v17 halbe Last, eine Song-Übersicht mit aufklappbaren Versionen, ein Kürzel für den CPU-Monitor und den L2-Cache in der Hauptdatei, v18 Filter ohne Rascheln und mit sauberen Übergängen, Lautstärkeregler in dB und ein lesbares OLED, v18.2 Filter, EQ und Lautstärke ohne Reste nach einer Stille, v18.3 Drive mit Überabtastung wie in 1.2.1 und Einstellungen, die beim Speichern erhalten bleiben.
+This is the official community firmware **1.2.1** (tag `release_1_2_1`, commit `c23bc2fe`) with an adjustable master tuning, in several stages. v5 adds the arpeggiator from 1.3, v6 a second bounce version, v7 access to the SD card over USB, v8 the Deluge as a USB audio input on the computer, v9 smarter sample streaming and a RAM saver for kits, v10 a better reverb, v11 a better delay and no more crackle when saving, v12 a frequency drone with up to 16 tones, v13 more performance, a ping-pong arp, flicker-free pad dimming, more precise MIDI and a reworked drone, v14 a reverb without wobble, a delay without pitch jumps and a countdown on song change, v15 a living drone (Life, FM, Pulse), a CPU monitor in one line and three fixes from the community, v16 drone tracks for song and arranger view and a profiler, v17 half the load, a song browser with expandable versions, a shortcut for the CPU monitor and the L2 cache in the main file, v18 filters without rustle and with clean transitions, volume controls in dB and a readable OLED, v18.2 filters, EQ and volume without leftovers after a silence, v18.3 Drive with oversampling as in 1.2.1 and settings that are kept when saving.
 
-| Datei | Version (Settings → Firmware version) | Inhalt |
+| File | Version (Settings → Firmware version) | Contents |
 |---|---|---|
 | `deluge-1.2.1-mastertune-49e71650.bin` | `1.2.1-mastertune-49e71650` (v2) | Master Tune |
-| `deluge-1.2.1-mastertune-v3-09dcce01.bin` | `1.2.1-mastertune-v3-09dcce01` | v2 + Leistungspaket A + Sidechain-Fix |
-| `deluge-1.2.1-mastertune-v4-6cb344e2.bin` | `1.2.1-mastertune-v4-6cb344e2` | v3 + Leistungspaket B |
-| `deluge-1.2.1-mastertune-v5-5daddd9f.bin` | `1.2.1-mastertune-v5-5daddd9f` | v4 + Arpeggiator aus 1.3, Latch, Ratchet Bounce |
-| `deluge-1.2.1-mastertune-v6-1e1af07a.bin` | `1.2.1-mastertune-v6-1e1af07a` | v5 + zweite Bounce-Version: feste Ratchet-Anzahl, Bounce ohne Leiserwerden |
-| `deluge-1.2.1-mastertune-v7-ca0b5bd7.bin` | `1.2.1-mastertune-v7-ca0b5bd7` | v6 + SD-Karte über USB für DEx und deluge-editor |
-| `deluge-1.2.1-mastertune-v8-76c5a9b8.bin` | `1.2.1-mastertune-v8-76c5a9b8` | v7 + USB-Audio: Ausgang des Deluge als Aufnahme-Eingang am Computer |
-| `deluge-1.2.1-mastertune-v9-c0212731.bin` | `1.2.1-mastertune-v9-c0212731` | v8 + klügeres Sample-Streaming, Kit RAM saver |
-| `deluge-1.2.1-mastertune-v10-7f9ad5c1.bin` | `1.2.1-mastertune-v10-7f9ad5c1` | v9 + Reverb: neues Modell Digital, Mutable und Freeverb repariert, HPF und LPF |
-| `deluge-1.2.1-mastertune-v11-dc37f26a.bin` | `1.2.1-mastertune-v11-dc37f26a` | v10 + Delay: saubere Wiederholungen, kein Knacken bei Zeitänderungen, LPF und HPF im Feedback; kein Knacksen beim Speichern |
-| `deluge-1.2.1-mastertune-v12-f89b478c.bin` | `1.2.1-mastertune-v12-f89b478c` | v11 + Frequenz-Drone: 16 Töne, binaural, monaural, isochron, Tempo-Sync, Sidechain, eigene Ansicht |
-| `deluge-1.2.1-mastertune-v13-9b861a5c.bin` | `1.2.1-mastertune-v13-9b861a5c` | v12-perf + Drone-Feinschliff, Ping-Pong-Arp, flimmerfreies Dimmen, schnelleres Speichern, genaueres MIDI, CPU-Monitor in Worten |
-| `deluge-1.2.1-mastertune-v14-c1d1c8bb.bin` | `1.2.1-mastertune-v14-c1d1c8bb` | v13 + Reverb ohne Wabbeln (Modulation, Pre-delay), Delay ohne Tonhöhensprung, Countdown beim Song-Wechsel, zwei Korrekturen für die Karte |
-| `deluge-1.2.1-mastertune-v15-b5f5c900.bin` | `1.2.1-mastertune-v15-b5f5c900` | v14 + lebendiger Drone (Life, FM, Pulse), CPU-Monitor in einer Zeile, Section-Start per CC, USB-MIDI ohne Paketverlust, Clock-Ausgänge unter externer Clock |
-| `deluge-1.2.1-mastertune-v16-c610417f.bin` | `1.2.1-mastertune-v16-c610417f` | v15 + Drone-Spuren (Drones als Kit-Spuren in Song- und Arranger-View, Hz-Spur pro Reihe), Profiler, USB audio bleibt nach dem Neustart an |
-| `deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin` | `1.2.1-mastertune-v17-l2d-b3385d83` | v16 + halbe Last (Aufgabenplanung, Mindestfenster, stille Spuren), Song-Übersicht, CPU-Monitor-Kürzel, Drone-Ansicht ohne Hänger, leiserer HPF-Pfeifton; **mit L2-Cache für Code und Daten** |
-| `deluge-1.2.1-mastertune-v17-2cb5e31b.bin` | `1.2.1-mastertune-v17-2cb5e31b` | dasselbe ohne L2-Cache, zum Zurückwechseln |
-| `deluge-1.2.1-mastertune-v18-l2d-6fa0875b.bin` | `1.2.1-mastertune-v18-l2d` (ab v18 ohne Hash) | v17 + Filter ohne Rascheln, Übergänge ohne Stufen und Klicks, Lautstärke in 0,5-dB-Schritten, EQ mit echten Shelves, Output limiter, Filter crossing guard, OLED-Helligkeit, Songname für DelugeRec; **mit L2-Cache für Code und Daten** |
-| `deluge-1.2.1-mastertune-v18-124aeaa2.bin` | `1.2.1-mastertune-v18` | dasselbe ohne L2-Cache, zum Zurückwechseln |
-| `deluge-1.2.1-mastertune-v18.2-l2d-c9c65066.bin` | `1.2.1-mastertune-v18.2-l2d` | v18 + Filter, EQ und Lautstärke nach einer Stille korrigiert; **mit L2-Cache für Code und Daten**, nur in dieser Variante |
-| `deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin` | `1.2.1-mastertune-v18.3-l2d` | v18.2 + Drive überabgetastet wie 1.2.1 (keine abgeschnittenen Stimmen in Drive-lastigen Songs), unbekannte Einstellungen und das Sync-Level des Reverb-Sidechains bleiben erhalten; **mit L2-Cache für Code und Daten**, nur in dieser Variante |
+| `deluge-1.2.1-mastertune-v3-09dcce01.bin` | `1.2.1-mastertune-v3-09dcce01` | v2 + performance package A + sidechain fix |
+| `deluge-1.2.1-mastertune-v4-6cb344e2.bin` | `1.2.1-mastertune-v4-6cb344e2` | v3 + performance package B |
+| `deluge-1.2.1-mastertune-v5-5daddd9f.bin` | `1.2.1-mastertune-v5-5daddd9f` | v4 + arpeggiator from 1.3, latch, ratchet bounce |
+| `deluge-1.2.1-mastertune-v6-1e1af07a.bin` | `1.2.1-mastertune-v6-1e1af07a` | v5 + second bounce version: fixed ratchet count, bounce without getting quieter |
+| `deluge-1.2.1-mastertune-v7-ca0b5bd7.bin` | `1.2.1-mastertune-v7-ca0b5bd7` | v6 + SD card over USB for DEx and deluge-editor |
+| `deluge-1.2.1-mastertune-v8-76c5a9b8.bin` | `1.2.1-mastertune-v8-76c5a9b8` | v7 + USB audio: the Deluge's output as a recording input on the computer |
+| `deluge-1.2.1-mastertune-v9-c0212731.bin` | `1.2.1-mastertune-v9-c0212731` | v8 + smarter sample streaming, Kit RAM saver |
+| `deluge-1.2.1-mastertune-v10-7f9ad5c1.bin` | `1.2.1-mastertune-v10-7f9ad5c1` | v9 + reverb: new Digital model, Mutable and Freeverb repaired, HPF and LPF |
+| `deluge-1.2.1-mastertune-v11-dc37f26a.bin` | `1.2.1-mastertune-v11-dc37f26a` | v10 + delay: clean repeats, no clicks on time changes, LPF and HPF in the feedback; no crackle when saving |
+| `deluge-1.2.1-mastertune-v12-f89b478c.bin` | `1.2.1-mastertune-v12-f89b478c` | v11 + frequency drone: 16 tones, binaural, monaural, isochronic, tempo sync, sidechain, its own view |
+| `deluge-1.2.1-mastertune-v13-9b861a5c.bin` | `1.2.1-mastertune-v13-9b861a5c` | v12-perf + drone polish, ping-pong arp, flicker-free dimming, faster saving, more precise MIDI, CPU monitor in words |
+| `deluge-1.2.1-mastertune-v14-c1d1c8bb.bin` | `1.2.1-mastertune-v14-c1d1c8bb` | v13 + reverb without wobble (modulation, pre-delay), delay without pitch jumps, countdown on song change, two fixes for the card |
+| `deluge-1.2.1-mastertune-v15-b5f5c900.bin` | `1.2.1-mastertune-v15-b5f5c900` | v14 + living drone (Life, FM, Pulse), CPU monitor in one line, section launch by CC, USB MIDI without packet loss, clock outputs under external clock |
+| `deluge-1.2.1-mastertune-v16-c610417f.bin` | `1.2.1-mastertune-v16-c610417f` | v15 + drone tracks (drones as kit tracks in song and arranger view, Hz lane per row), profiler, USB audio stays on after a restart |
+| `deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin` | `1.2.1-mastertune-v17-l2d-b3385d83` | v16 + half the load (scheduling, minimum window, silent tracks), song browser, CPU monitor shortcut, drone view without hangs, quieter HPF whistle; **with L2 cache for code and data** |
+| `deluge-1.2.1-mastertune-v17-2cb5e31b.bin` | `1.2.1-mastertune-v17-2cb5e31b` | the same without L2 cache, for switching back |
+| `deluge-1.2.1-mastertune-v18-l2d-6fa0875b.bin` | `1.2.1-mastertune-v18-l2d` (from v18 on without hash) | v17 + filters without rustle, transitions without steps and clicks, volume in 0.5 dB steps, EQ with real shelves, Output limiter, Filter crossing guard, OLED brightness, song name for DelugeRec; **with L2 cache for code and data** |
+| `deluge-1.2.1-mastertune-v18-124aeaa2.bin` | `1.2.1-mastertune-v18` | the same without L2 cache, for switching back |
+| `deluge-1.2.1-mastertune-v18.2-l2d-c9c65066.bin` | `1.2.1-mastertune-v18.2-l2d` | v18 + filters, EQ and volume after a silence fixed; **with L2 cache for code and data**, only in this variant |
+| `deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin` | `1.2.1-mastertune-v18.3-l2d` | v18.2 + Drive oversampled like 1.2.1 (no cut voices in Drive-heavy songs), unknown settings and the reverb sidechain's sync level are kept; **with L2 cache for code and data**, only in this variant |
 
-SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7`, v14 `cb17bbb3…8e23e6e5`, v15 `cdce07f3…da7ca652`, v16 `7eed1a77…71897f9f`, v17-l2d `aad4d080…5ec32c4b`, v17 ohne L2 `ae6aedd4…be88ae64`, v18-l2d `03f55664…75098a8c`, v18 ohne L2 `ea2d606a…220d434f`, v18.2-l2d `7f45090c…0f8c29ef`, v18.3-l2d `f41f5639…8d8af97a` (vollständig: `sha256sum *.bin`).
-Nachgeprüft am 26.09.2026: Jede Version v2–v12 wurde aus ihrem Commit in einer eigenen Arbeitskopie komplett neu gebaut, mit 441–448 neu übersetzten Dateien. Jede SHA-256 stimmt mit der ausgelieferten Datei überein.
-Quellcode: `patches/0001` bis `0116` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 sind die Leistungsversion v12-perf, gleich wie `perf/0001`–`0003`), v14 = 0001–0035, v15 = 0001–0041, v16 = 0001–0055, v17 ohne L2 = 0001–0074, die Hauptdatei v17-l2d dazu `l2test/0001`–`0003`, v18 ohne L2 = 0001–0112, die Hauptdatei v18-l2d ebenso dazu `l2test/0001`–`0003`, v18.2-l2d = 0001–0113 und `l2test/0001`–`0003`, v18.3-l2d = 0001–0116 und `l2test/0001`–`0003`.
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7`, v14 `cb17bbb3…8e23e6e5`, v15 `cdce07f3…da7ca652`, v16 `7eed1a77…71897f9f`, v17-l2d `aad4d080…5ec32c4b`, v17 without L2 `ae6aedd4…be88ae64`, v18-l2d `03f55664…75098a8c`, v18 without L2 `ea2d606a…220d434f`, v18.2-l2d `7f45090c…0f8c29ef`, v18.3-l2d `f41f5639…8d8af97a` (in full: `sha256sum *.bin`).
+Rechecked on 2026-09-26: every version v2–v12 was rebuilt from scratch from its commit in a separate working copy, with 441–448 recompiled files. Every SHA-256 matches the released file.
+Source code: `patches/0001` to `0116` against `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 are the performance version v12-perf, the same as `perf/0001`–`0003`), v14 = 0001–0035, v15 = 0001–0041, v16 = 0001–0055, v17 without L2 = 0001–0074, the main file v17-l2d adds `l2test/0001`–`0003`, v18 without L2 = 0001–0112, the main file v18-l2d likewise adds `l2test/0001`–`0003`, v18.2-l2d = 0001–0113 and `l2test/0001`–`0003`, v18.3-l2d = 0001–0116 and `l2test/0001`–`0003`.
 
-## v3 und v4: Unterschiede
+## v3 and v4: Differences
 
 | | v3 | v4 |
 |---|---|---|
-| Sinc-Interpolation mit NEON-Pufferverschiebung: jede umgestimmte, transponierte oder zeitgestreckte Sample-Stimme ohne Cache-Treffer ca. 40 % billiger | ja | ja |
-| Menü: kürzere Wartezeiten der UI-Aufgaben, keine verschluckten Encoder-Rasten im Sound-Editor (bis 5 pro Abfrage, wie bisher mit SHIFT) | ja | ja |
-| Sidechain-Fix: kein Knacken mehr beim Ducking, auch der Reverb-Rücklauf wird weich nachgeführt | ja | ja |
-| Culling wie aktuelle Community-Firmware: seltener, weniger Stimmen, die Hälfte ausgeblendet statt abgeschnitten | nein | ja |
-| Stille Kits und Audio-Spuren ohne zeitabhängige Effekte überspringen ihre Effektkette | nein | ja |
-| Lautstärkestufe schreibt direkt in den Mix (ein Durchgang weniger), kein doppeltes Nullsetzen | nein | ja |
-| Klang im Normalbetrieb | bitgleich zu v2, ausser dem Sidechain-Fix (knackfrei statt Sprung) | wie v3; unter Überlast andere, weichere Culling-Reaktion |
+| Sinc interpolation with NEON buffer shift: every retuned, transposed or time-stretched sample voice without a cache hit about 40% cheaper | yes | yes |
+| Menu: shorter wait times for UI tasks, no swallowed encoder detents in the sound editor (up to 5 per poll, as before with SHIFT) | yes | yes |
+| Sidechain fix: no more click when ducking, the reverb return also follows smoothly | yes | yes |
+| Culling like the current community firmware: less often, fewer voices, half of them faded out instead of cut | no | yes |
+| Silent kits and audio tracks without time-dependent effects skip their effects chain | no | yes |
+| The volume stage writes directly into the mix (one pass fewer), no double zeroing | no | yes |
+| Sound in normal operation | bit-identical to v2, except for the sidechain fix (click-free instead of a jump) | like v3; under overload a different, softer culling response |
 
-**Leistungspaket A (v3):**
-- **NEON-Pufferverschiebung:** Die Verschiebung des 16er-Interpolationspuffers geschieht mit NEON-Befehlen statt Wert für Wert. Das war etwa die Hälfte der Sinc-Kosten.
-- **Geprüft:** Auf echtem Cortex-A9-Maschinencode im Emulator ergibt sie für alle Verschiebeweiten dieselben Puffer (`tests/run_neon_shift_test.py`).
-- **Verworfen:** Zwei zusätzliche Compiler-Flags (`-funswitch-loops -fsplit-loops`) änderten den Fliesskomma-Code in 81 Funktionen, darunter Audio. Damit war Bitgleichheit nicht beweisbar, deshalb sind sie nicht enthalten.
+**Performance package A (v3):**
+- **NEON buffer shift:** The 16-entry interpolation buffer is shifted with NEON instructions instead of value by value. That was about half of the sinc cost.
+- **Tested:** On real Cortex-A9 machine code in the emulator it gives the same buffers for all shift widths (`tests/run_neon_shift_test.py`).
+- **Rejected:** Two additional compiler flags (`-funswitch-loops -fsplit-loops`) changed the floating-point code in 81 functions, including audio. That made bit-identity unprovable, so they are not included.
 
-**Sidechain-Fix (v3, v4):**
-- **Fehler:** Die Lautstärkerampe pro Puffer startete beim neuen Wert und lief um die ganze Änderung darüber hinaus. Bei einem Ducking von mehr als 6 dB innerhalb eines Puffers kippte die Verstärkung sogar ins Negative, also mit umgekehrter Polarität.
-- **Jetzt:** Die Rampe läuft vom alten zum neuen Wert. Der Fehler steckt auch in der aktuellen Community-Firmware.
+**Sidechain fix (v3, v4):**
+- **Bug:** The volume ramp per buffer started at the new value and ran past it by the whole change. With ducking of more than 6 dB within one buffer, the gain even flipped negative, i.e. to inverted polarity.
+- **Now:** The ramp runs from the old to the new value. The bug is also in the current community firmware.
 
-**Leistungspaket B (v4):**
-- **Gewinn:** Er ist kleiner als bei A. Geschätzt spart es 0,2–0,6 % CPU pro stiller Kit- oder Audio-Spur und rund 0,05 % pro klingendem Sound durch den gesparten Durchgang.
-- **Culling:** Der Hauptnutzen ist das neue Culling: Unter Last werden weniger Noten abgeschnitten, und dafür steigt das Knackrisiko bei echter Dauerüberlast leicht.
-- **Übersprungene Effektkette:** Sie greift nur, wenn Mod-FX, Delay, Stutter, Sample-Rate-Reduktion, Sättigung und Kompressor aus sind, keine Aufnahme läuft und die Kette seit 4096 Samples exakt null ausgibt. Das Ergebnis ist dann wieder Stille.
+**Performance package B (v4):**
+- **Gain:** It is smaller than with A. By estimate it saves 0.2–0.6% CPU per silent kit or audio track and around 0.05% per playing sound through the saved pass.
+- **Culling:** The main benefit is the new culling: under load fewer notes are cut, and in return the risk of clicks rises slightly under real sustained overload.
+- **Skipped effects chain:** It only applies when mod FX, delay, stutter, sample rate reduction, saturation and compressor are off, no recording is running and the chain has output exactly zero for 4096 samples. The result is then silence again.
 
-## v5: Arpeggiator aus 1.3, dazu Latch und Ratchet Bounce
+## v5: Arpeggiator from 1.3, plus Latch and Ratchet Bounce
 
-v5 enthält alles aus v4 und zusätzlich den kompletten Arpeggiator der Community-Firmware 1.3. Die Menüs bleiben im gewohnten 1.2.1-Stil (eine Liste, kein horizontales Menü). Neue Punkte stehen dort, wo sie thematisch hingehören.
+v5 contains everything from v4 plus the complete arpeggiator of community firmware 1.3. The menus stay in the familiar 1.2.1 style (one list, no horizontal menu). New items sit where they belong by topic.
 
-| Funktion | Wo | Was sie tut |
+| Feature | Where | What it does |
 |---|---|---|
-| **Kit-Arpeggiator** | Kit mit gedrücktem Affect Entire → Menü → Kit arpeggiator | Spielt die Reihen eines Kits wie die Töne eines Akkords (Up, Down, Random, Walk, Pattern …). Pro Reihe abschaltbar mit «Include in kit arp». |
-| **Arp für MIDI- und Gate-Reihen** | Reihe auswählen → Menü | Bisher gab es dort nur eine Warn-LED. Jetzt: eigener Arp und Randomizer, Shortcut-Spalte 11 wie bei MIDI-Spuren. |
-| **Preset** mit neuem **Walk** | Arpeggiator → Preset | Jetzt auch in der Liste, nicht nur auf dem Pad. |
-| **Latch** (neu, nicht in 1.3) | Arpeggiator → Latch | Der Arp spielt nach dem Loslassen weiter. Der nächste Anschlag nach dem Loslassen aller Tasten ersetzt die Noten, ohne dass der Arp aus dem Takt fällt. Ausschalten stoppt die gehaltenen Noten. |
-| **Step Repeat** | Arpeggiator → Step repeat | Jeder Schritt wird 1–8 Mal wiederholt. |
-| **Notenmodi** Walk 1–3, Pattern | Arpeggiator → Note mode | Walk: zufällig einen Schritt vor oder zurück. Pattern: zufällige, aber sich wiederholende Reihenfolge (neu würfeln durch erneutes Wählen). |
-| **Chord Simulator** | Kit-Reihe → Arpeggiator | Eine Drum-Reihe spielt einen Akkord (5th, sus2, Moll, Dur, sus4, m7, 7, maj7). |
-| **Ratchet Bounce** (neu, nicht in 1.3) | Arpeggiator → Ratchet bounce, −10 … +10 | Die Schläge eines Ratchets wie ein springender Ball: positive Werte werden schneller und leiser, negative langsamer und lauter, 0 = gleichmässig wie bisher. Beispiel +6 bei 8 Schlägen: Einsätze bei 0/32/54/70/81/88/94/97 % des Schritts, Lautstärke 100 → 29 %. |
-| **Randomizer** | eigenes Menü direkt nach Arpeggiator | Lock (wiederholbarer Zufall über 16 Schritte), Gate-, Oktav- und Velocity-Spread, Akkord-Polyphonie und -Wahrscheinlichkeit, Wahrscheinlichkeiten für Note, Swap, Bass, Glide und Reverse. |
-| **Reverse-Wahrscheinlichkeit** | Randomizer | Einzelne Arp-Noten spielen ihr Sample rückwärts. Anders als in 1.3 gilt das pro Stimme, gleichzeitig klingende Noten drehen sich also nicht gegenseitig um. |
-| **Automation** | Automation-Ansicht, Select-Encoder | Alle neuen Arp-Parameter von Synths und Kit-Reihen, beim Kit (Affect Entire) auch die des Kit-Arps. |
+| **Kit arpeggiator** | Kit with Affect Entire pressed → menu → Kit arpeggiator | Plays a kit's rows like the notes of a chord (Up, Down, Random, Walk, Pattern …). Can be switched off per row with "Include in kit arp". |
+| **Arp for MIDI and gate rows** | Select the row → menu | Until now there was only a warning LED there. Now: its own arp and randomizer, shortcut column 11 as on MIDI tracks. |
+| **Preset** with new **Walk** | Arpeggiator → Preset | Now also in the list, not only on the pad. |
+| **Latch** (new, not in 1.3) | Arpeggiator → Latch | The arp keeps playing after you let go. The next note played after releasing all keys replaces the notes without the arp falling out of time. Switching it off stops the held notes. |
+| **Step Repeat** | Arpeggiator → Step repeat | Each step is repeated 1–8 times. |
+| **Note modes** Walk 1–3, Pattern | Arpeggiator → Note mode | Walk: randomly one step forward or back. Pattern: a random but repeating order (re-roll by selecting it again). |
+| **Chord Simulator** | Kit row → Arpeggiator | A drum row plays a chord (5th, sus2, minor, major, sus4, m7, 7, maj7). |
+| **Ratchet Bounce** (new, not in 1.3) | Arpeggiator → Ratchet bounce, −10 … +10 | The hits of a ratchet like a bouncing ball: positive values get faster and quieter, negative ones slower and louder, 0 = even as before. Example +6 with 8 hits: onsets at 0/32/54/70/81/88/94/97% of the step, volume 100 → 29%. |
+| **Randomizer** | its own menu right after Arpeggiator | Lock (repeatable randomness over 16 steps), gate, octave and velocity spread, chord polyphony and probability, probabilities for note, swap, bass, glide and reverse. |
+| **Reverse probability** | Randomizer | Single arp notes play their sample backwards. Unlike in 1.3 this applies per voice, so notes sounding at the same time do not reverse each other. |
+| **Automation** | Automation view, Select encoder | All new arp parameters of synths and kit rows, for the kit (Affect Entire) also those of the kit arp. |
 
-**Dateien:**
-- **1.2.1-Songs und -Presets** laden unverändert, auch MIDI- und CV-Spuren mit Arp-Einstellungen.
-- **Stock-1.2.1** lädt v5-Dateien. Neue Einträge (Kit-Arp, Randomizer, Latch, Bounce) übergeht sie und verliert sie beim nächsten Speichern. Walk- und Pattern-Modi werden dort zu Up.
-- **Interne Parameternummern** entsprechen jetzt denen von 1.3. Betroffen ist nur, welcher Parameter in der Automation-Ansicht beim ersten Öffnen eines alten Songs vorausgewählt ist. Werte, Automationen, Mod-Knob- und MIDI-Learn-Zuweisungen werden über Namen gespeichert und sind nicht betroffen.
+**Files:**
+- **1.2.1 songs and presets** load unchanged, including MIDI and CV tracks with arp settings.
+- **Stock 1.2.1** loads v5 files. It skips new entries (kit arp, randomizer, latch, bounce) and loses them at the next save. Walk and Pattern modes become Up there.
+- **Internal parameter numbers** now match those of 1.3. This only affects which parameter is preselected in automation view when an old song is first opened. Values, automations, mod knob and MIDI learn assignments are saved by name and are not affected.
 
-**Nicht übernommen:**
-- **Pad-Shortcuts aus 1.3 in Spalte 15** (Velocity-Spread, Lock, Note Probability): Diese Pads dienen in 1.2.1 dem Patchen.
-- **MIDI-Follow-CCs für Arp-Parameter:** 1.2.1 ordnet MIDI Follow nach dem Pad-Raster, eine Übernahme hätte bestehende Belegungen verschoben.
+**Not adopted:**
+- **Pad shortcuts from 1.3 in column 15** (velocity spread, Lock, Note Probability): in 1.2.1 these pads are used for patching.
+- **MIDI Follow CCs for arp parameters:** 1.2.1 maps MIDI Follow by the pad grid; adopting them would have shifted existing assignments.
 
-**Geprüft:**
-- **Build:** ohne Fehler und Warnungen im Arp-Code.
-- **Zwei getrennte Code-Reviews** (Engine und Menüs):
-  - Zwei echte Fehler gefunden und behoben: Bei ungesynctem Arp mit starkem Bounce verzögerte ein zu später letzter Ratchet-Schlag den nächsten Schritt. Und ein Synth ohne Clip konnte bei einer Note abstürzen (derselbe Fehler steckt in 1.3).
-  - Eine Gegenprüfung der Korrekturen.
-- **Auf dem Gerät nicht getestet.**
+**Tested:**
+- **Build:** no errors or warnings in the arp code.
+- **Two separate code reviews** (engine and menus):
+  - Two real bugs found and fixed: with an unsynced arp and strong bounce, a last ratchet hit that came too late delayed the next step. And a synth without a clip could crash on a note (the same bug is in 1.3).
+  - One cross-check of the fixes.
+- **Not tested on the device.**
 
-## v6: zweite Bounce-Version
+## v6: Second bounce version
 
-v6 enthält v5 unverändert und zwei neue Einstellungen im Arpeggiator-Menü direkt beim Ratchet Bounce. Mit den Grundeinstellungen (Auto, Fade an) verhält sich v6 genau wie v5, auch beim Laden von Songs.
+v6 contains v5 unchanged and two new settings in the arpeggiator menu, right next to Ratchet Bounce. With the defaults (Auto, fade on) v6 behaves exactly like v5, also when loading songs.
 
-| Einstellung | Werte | Was sie tut |
+| Setting | Values | What it does |
 |---|---|---|
-| **Ratchet notes** | Auto, 2 … 8 | **Auto** wie in 1.3 und v5: zufällig 2, 4 oder 8 Noten, gewichtet mit «Number of ratchets». **2 … 8:** immer genau so viele. Ob ein Schritt ratchet, entscheidet dann nur noch die Ratchet-Wahrscheinlichkeit. Bei Sync 1/128 und 1/256 höchstens 2, bei 1/64 höchstens 4: Sonst wären die Abstände kaum länger als ein Audio-Block (2,9 ms). |
-| **Bounce fade** | an, aus | **An** wie v5: Mit kürzer werdenden Abständen werden die Schläge leiser, wie bei einem Ball. **Aus:** Alle Schläge behalten ihre Velocity. |
+| **Ratchet notes** | Auto, 2 … 8 | **Auto** as in 1.3 and v5: randomly 2, 4 or 8 notes, weighted by "Number of ratchets". **2 … 8:** always exactly that many. Whether a step ratchets is then decided only by the ratchet probability. At sync 1/128 and 1/256 at most 2, at 1/64 at most 4: otherwise the gaps would be hardly longer than an audio block (2.9 ms). |
+| **Bounce fade** | on, off | **On** as in v5: as the gaps get shorter, the hits get quieter, like a ball. **Off:** all hits keep their velocity. |
 
-Gleichmässige Ratchets teilen den Schritt jetzt durch die Notenzahl. Für 2, 4 und 8 ergibt das exakt dieselben Zeitpunkte wie vorher.
+Even ratchets now divide the step by the number of notes. For 2, 4 and 8 this gives exactly the same times as before.
 
-**Geprüft:** Build ohne Warnungen, zwei Builds mit identischer SHA-256, eine Code-Prüfung. Sie hat bestätigt, dass die Grundeinstellungen exakt wie v5 laufen, und keine Fehler in den neuen Pfaden gefunden. **Auf dem Gerät nicht getestet.**
+**Tested:** build without warnings, two builds with identical SHA-256, one code review. It confirmed that the defaults run exactly like v5 and found no bugs in the new paths. **Not tested on the device.**
 
-**Die Figur aus «You Are The Seeds» nachbauen** (siehe `references/pettra-arp/ANALYSE.md`):
+**Rebuilding the figure from "You Are The Seeds"** (see `references/pettra-arp/ANALYSIS.md`):
 
-| Einstellung | Wert |
+| Setting | Value |
 |---|---|
 | Tempo | 138 |
 | Arp Sync | 1/8 |
 | Ratchet notes | 3 |
 | Ratchet bounce | +6 |
-| Bounce fade | aus |
-| Ratchet probability | in der Automation-Ansicht nur auf der Achtel vor dem Schlag, an dem die Figur kommen soll, sonst 0 |
+| Bounce fade | off |
+| Ratchet probability | in automation view only on the eighth before the beat where the figure should come, otherwise 0 |
 
-Das ergibt Einsätze bei 0, 99 und 169 ms nach Beginn der Achtel, also Abstände von 99, 70 und 49 ms. Gemessen wurden im Stück 99, 64 und 46 ms bei 0:57 und 102, 75 und 46 ms bei 6:39.
+That gives onsets at 0, 99 and 169 ms after the start of the eighth, i.e. gaps of 99, 70 and 49 ms. Measured in the track: 99, 64 and 46 ms at 0:57 and 102, 75 and 46 ms at 6:39.
 
-## v7: SD-Karte über USB
+## v7: SD card over USB
 
-v7 enthält v6 unverändert und dazu den Dateizugriff über USB-MIDI aus Community-Firmware 1.3 (SysEx-Protokoll «smSysex»). Die Karte bleibt dabei im Deluge. Damit laufen am Computer:
+v7 contains v6 unchanged plus file access over USB MIDI from community firmware 1.3 (SysEx protocol "smSysex"). The card stays in the Deluge. With it, these run on the computer:
 
-| App | Was geht |
+| App | What works |
 |---|---|
-| [DEx](https://dex.silicak.es) | Datei-Browser: Ordner ansehen, Dateien hoch- und herunterladen, umbenennen, kopieren, verschieben, löschen, Ordner anlegen. Dazu wie bisher Display-Spiegelung und Screenshots. |
-| [deluge-editor](https://cyface.github.io/deluge-editor/) | Synth- und Kit-Presets direkt von der Karte öffnen und wieder dorthin speichern. |
+| [DEx](https://dex.silicak.es) | File browser: view folders, upload and download files, rename, copy, move, delete, create folders. Plus, as before, display mirroring and screenshots. |
+| [deluge-editor](https://cyface.github.io/deluge-editor/) | Open synth and kit presets directly from the card and save them back there. |
 
-**Bedienung:** Deluge per USB an den Computer, die Seite in Chrome, Edge oder Opera öffnen und den MIDI-Zugriff erlauben. Die Apps erkennen den Dateizugriff selbst.
+**How to use:** Connect the Deluge to the computer by USB, open the page in Chrome, Edge or Opera and allow MIDI access. The apps detect the file access by themselves.
 
-**Angepasst an 1.2.1** (sonst wie 1.3):
-- Nur über USB. Anfragen über die DIN-Buchsen ignoriert v7, weil 1.2.1 dort keinen Überlaufschutz hat.
-- Der USB-MIDI-Sendepuffer ist viermal so gross wie in 1.2.1 (12 statt 3 KB). Eine Antwort geht nur als Ganzes hinaus, sobald sie Platz hat. So passt auch eine volle Ordnerseite mit langen Namen hinein, und deluge-editor sieht jeden Ordner vollständig. In 1.2.1 hätte ein voller Puffer die älteste noch nicht gesendete Nachricht überschrieben.
-- Dateinamen mit Zeichen ausserhalb von ASCII (z. B. Umlaute) verschickt v7 maskiert. So bleibt die Liste lesbar, statt die ganze Antwort zu verderben.
+**Adapted to 1.2.1** (otherwise as in 1.3):
+- Only over USB. v7 ignores requests over the DIN sockets because 1.2.1 has no overflow protection there.
+- The USB MIDI send buffer is four times as large as in 1.2.1 (12 instead of 3 KB). A reply only goes out as a whole, as soon as there is room for it. That way even a full folder page with long names fits, and deluge-editor sees every folder completely. In 1.2.1 a full buffer would have overwritten the oldest message not yet sent.
+- v7 sends file names with characters outside ASCII (e.g. umlauts) escaped. That keeps the list readable instead of spoiling the whole reply.
 
-**Grenzen:**
-- **deluge-editor meldet in Rot «needs community 1.3.0 or later»,** weil der Deluge ehrlich 1.2.1 meldet. Die Meldung stimmt hier nicht: Öffnen und Speichern funktionieren trotzdem.
-- **deluge-editor blendet Regler aus, die es erst ab 1.3 kennt.** Darunter sind auch die Arp-Neuerungen aus v5/v6 (Spread, Chord, Walk, Kit-Arp …). Die stellst du am Deluge ein. Beim Speichern bleiben sie in der Datei erhalten.
-- **«Live Edit» im deluge-editor geht nicht.** Es braucht zusätzliche Befehle aus einem Firmware-Fork, die auch 1.3 nicht hat.
-- **Namen mit Umlauten:** Die Apps zeigen sie falsch an und können solche Dateien meist nicht öffnen. Am besten nur Namen aus A–Z, 0–9 und _ verwenden.
-- **Während der Wiedergabe** keine Samples löschen oder überschreiben, die der Song gerade braucht. Grosse Übertragungen gehen über MIDI langsam; für ganze Sample-Sammlungen ist ein Kartenleser schneller.
-- **MIDI zum Computer während Übertragungen:** Noten und Clock über USB teilen sich den Sendepuffer mit den Antworten und können deshalb verzögert ankommen. Beim Spielen mit einer DAW über USB keine Dateien übertragen. DIN-MIDI ist nicht betroffen.
+**Limitations:**
+- **deluge-editor shows "needs community 1.3.0 or later" in red,** because the Deluge honestly reports 1.2.1. The message is wrong here: opening and saving work anyway.
+- **deluge-editor hides controls it only knows from 1.3 on.** These include the arp additions from v5/v6 (spread, chord, Walk, kit arp …). You set those on the Deluge. They are kept in the file when saving.
+- **"Live Edit" in deluge-editor does not work.** It needs additional commands from a firmware fork that 1.3 does not have either.
+- **Names with umlauts:** The apps show them wrongly and usually cannot open such files. Best use only names made of A–Z, 0–9 and _.
+- **During playback** do not delete or overwrite samples the song currently needs. Large transfers are slow over MIDI; for whole sample collections a card reader is faster.
+- **MIDI to the computer during transfers:** Notes and clock over USB share the send buffer with the replies and can therefore arrive late. Do not transfer files while playing with a DAW over USB. DIN MIDI is not affected.
 
-**Geprüft:** Host-Test (der Firmware-Code auf dem PC mit AddressSanitizer, auf einer FAT32-RAM-Disk, 40 Prüfpunkte im Ablauf von DEx und deluge-editor), Build ohne Warnungen, zwei Builds mit identischer SHA-256, eine Code-Prüfung. Sie fand drei Fehler, alle behoben: verkürzte Ordnerlisten in deluge-editor, zu knapp bemessenes Warten auf Platz im Sendepuffer, fehlende Absicherung beim Schreiben ohne Puffer. **Auf dem Gerät nicht getestet.**
+**Tested:** host test (the firmware code on the PC with AddressSanitizer, on a FAT32 RAM disk, 40 checks in the flow of DEx and deluge-editor), build without warnings, two builds with identical SHA-256, one code review. It found three bugs, all fixed: truncated folder lists in deluge-editor, too short a wait for room in the send buffer, a missing safeguard when writing without a buffer. **Not tested on the device.**
 
-## v8: USB-Audio, Stufe 1 (Deluge → Computer)
+## v8: USB audio, stage 1 (Deluge → computer)
 
-v8 enthält v7 unverändert. Neu kann der Deluge sein Ausgangssignal über USB an den Computer schicken. Er erscheint dort als Audio-Eingang (Stereo, 24 Bit, 44,1 kHz) neben dem gewohnten MIDI. Am Computer kommt genau das an, was an den Ausgängen des Deluge anliegt: dasselbe Signal, das der Deluge beim Resampling aufnimmt, mit Master-Lautstärke und Eingangs-Monitoring.
+v8 contains v7 unchanged. New: the Deluge can send its output signal to the computer over USB. It shows up there as an audio input (stereo, 24 bit, 44.1 kHz) next to the usual MIDI. The computer receives exactly what is at the Deluge's outputs: the same signal the Deluge records when resampling, with master volume and input monitoring.
 
-**Einschalten:** Settings → Community features → **USB audio** (7-Segment: `UAUD`) auf an, **das Menü mit Back verlassen** und den Deluge neu starten (bis v15 speichert der Deluge die Einstellung erst beim Verlassen des Menüs, ab v16 sofort). Die Einstellung wirkt nur beim Start und nur, wenn der Deluge als USB-Gerät am Computer hängt, nicht als USB-Host. Ist sie aus (Grundeinstellung), verhält sich der Deluge exakt wie v7.
+**Switching it on:** Settings → Community features → **USB audio** (7-segment: `UAUD`) to on, **leave the menu with Back** and restart the Deluge (up to v15 the Deluge saves the setting only when you leave the menu, from v16 on immediately). The setting only takes effect at startup and only when the Deluge is connected to the computer as a USB device, not as a USB host. When it is off (default), the Deluge behaves exactly like v7.
 
-**Am Computer** (ohne Treiber, USB Audio Class 1.0):
-- macOS: Audio-MIDI-Setup zeigt «Deluge» mit 2 Eingängen.
-- Windows: Einstellungen → System → Sound → Eingabe: «Deluge».
-- Linux: `arecord -l` zeigt «Deluge».
-- In der DAW «Deluge» als Eingang wählen und das Projekt auf 44,1 kHz stellen.
+**On the computer** (no driver, USB Audio Class 1.0):
+- macOS: Audio MIDI Setup shows "Deluge" with 2 inputs.
+- Windows: Settings → System → Sound → Input: "Deluge".
+- Linux: `arecord -l` shows "Deluge".
+- In the DAW, choose "Deluge" as the input and set the project to 44.1 kHz.
 
-**Technik:**
-- Der Deluge gibt den Takt vor (asynchroner Endpunkt): Jedes USB-Paket enthält 44 oder 45 Frames, je nach Füllstand seines Puffers. Weicht sein Quarz vom Takt des Computers ab, gleicht er das mit einem Frame mehr oder weniger aus, ohne Rückkanal und ohne Umrechnung. Die Samples kommen bitgenau an.
-- Latenz: etwa 6 ms Puffer plus 1–2 ms USB.
-- Liest der Computer eine Weile nicht, verwirft der Deluge den veralteten Puffer und beginnt nach 6 ms Stille neu. Stockt die Audio-Engine, kommt eine kurze Stille statt Knacksern.
-- Der Datenstrom läuft im USB-Interrupt über einen eigenen FIFO-Port. MIDI bleibt davon unberührt.
+**Technical details:**
+- The Deluge sets the clock (asynchronous endpoint): each USB packet contains 44 or 45 frames, depending on how full its buffer is. If its crystal drifts from the computer's clock, it compensates with one frame more or less, without a feedback channel and without resampling. The samples arrive bit-exact.
+- Latency: about 6 ms buffer plus 1–2 ms USB.
+- If the computer does not read for a while, the Deluge discards the stale buffer and starts again after 6 ms of silence. If the audio engine stalls, a short silence comes instead of crackles.
+- The data stream runs in the USB interrupt over its own FIFO port. MIDI is not affected by it.
 
-**Grenzen:**
-- **Nicht auf dem Gerät getestet.** Es ist die erste Version auf dieser Hardware, ich brauche deine Rückmeldung.
-- Nur 44,1 kHz. Läuft die DAW mit einer anderen Rate, rechnet das Betriebssystem um. Im exklusiven Modus oder mit ASIO muss das Projekt auf 44,1 kHz stehen.
-- Mit USB audio an sieht der Computer den Deluge als neues Gerät. Die MIDI-Ports in der DAW müssen eventuell neu zugewiesen werden.
-- Die Lautstärke regelt der Deluge. Der Computer hat dafür keinen Regler.
-- Wird der Deluge mit USB audio nicht erkannt oder hängt er: USB-Kabel abziehen, starten, Einstellung ausschalten.
-- **«USB audio gap»** (7-Segment: `UGAP`): Der Computer hat ein leeres Paket bekommen, also eine Lücke von 1 ms in der Aufnahme. Das kann bei sehr hoher Last vorkommen, weil der Deluge beim Berechnen jeder Spur alle Interrupts sperrt (so auch in der aktuellen Community-Firmware). Die Meldung erscheint höchstens alle 10 Sekunden. Bitte melden, wann sie kommt.
-- Stufe 2 (Computer → Deluge) folgt, sobald Stufe 1 auf dem Gerät läuft.
+**Limitations:**
+- **Not tested on the device.** It is the first version on this hardware; I need your feedback.
+- Only 44.1 kHz. If the DAW runs at a different rate, the operating system resamples. In exclusive mode or with ASIO the project must be set to 44.1 kHz.
+- With USB audio on, the computer sees the Deluge as a new device. The MIDI ports in the DAW may have to be reassigned.
+- The Deluge controls the volume. The computer has no control for it.
+- If the Deluge is not recognized with USB audio or hangs: unplug the USB cable, start it, switch the setting off.
+- **"USB audio gap"** (7-segment: `UGAP`): The computer got an empty packet, i.e. a 1 ms gap in the recording. This can happen under very high load because the Deluge disables all interrupts while computing each track (the current community firmware does too). The message appears at most every 10 seconds. Please report when it comes.
+- Stage 2 (computer → Deluge) follows as soon as stage 1 runs on the device.
 
-**Geprüft:** Deskriptoren gegen die Regeln von USB 2.0, USB Audio 1.0 und USB MIDI (64 Prüfpunkte). Puffer und Paketsteuerung in einer Simulation über 10 Minuten mit Taktabweichungen bis 1400 ppm, einem Computer, der 200 ms nicht liest, und 20 ms Stillstand der Engine (39 Prüfpunkte, mit Sanitizern). Build ohne Warnungen, zwei Builds mit identischer SHA-256, eine Code-Prüfung. Sie fand zwei Fehler, beide behoben: MIDI-Empfang über USB wäre während des Streamings ausgefallen, und nach langem Sperren der Interrupts wäre nur eine Hälfte des Doppelpuffers nachgefüllt worden.
+**Tested:** descriptors against the rules of USB 2.0, USB Audio 1.0 and USB MIDI (64 checks). Buffer and packet control in a simulation over 10 minutes with clock deviations up to 1400 ppm, a computer that does not read for 200 ms, and a 20 ms engine stall (39 checks, with sanitizers). Build without warnings, two builds with identical SHA-256, one code review. It found two bugs, both fixed: MIDI receive over USB would have failed during streaming, and after interrupts had been disabled for a long time only one half of the double buffer would have been refilled.
 
-## v9: klügeres Sample-Streaming und RAM-Sparer für Kits
+## v9: Smarter sample streaming and a RAM saver for kits
 
-v9 enthält v8 unverändert und verbessert, wie der Deluge Samples von der SD-Karte lädt. Die Karte wird dadurch nicht schneller, aber ihre Leistung geht dorthin, wo sie gebraucht wird, und ungenutzte Kit-Reihen belegen keinen festen RAM mehr.
+v9 contains v8 unchanged and improves how the Deluge loads samples from the SD card. The card does not get faster, but its throughput goes where it is needed, and unused kit rows no longer hold fixed RAM.
 
-1. **Laden nach Dringlichkeit (Fehler aus 1.2.1 behoben).** Die Warteschlange für Ladeaufträge sortierte seit jeher nach Speicheradresse statt nach Priorität. Jetzt kommt zuerst, was eine spielende Stimme als Nächstes braucht, danach die Starts von Samples, die vielleicht nie spielen. **Wirkung:** weniger abbrechende Stimmen und weniger «card too slow» unter Last, etwa beim Kit-Wechsel während des Spielens.
-2. **Doppelte Reserve beim Streaming.** Eine spielende Stimme hält drei statt zwei Cluster voraus. Der nächste Block hat damit zwei statt eine Clusterdauer Zeit, bei 32-KB-Clustern etwa 250–370 statt 120–190 ms (Stereo). Kostet 32 KB pro gerade streamende Stimme.
-3. **Kurze Samples ganz im RAM (Fehler aus 1.2.1 behoben).** Samples bis vier Cluster (bis 128 KB bei 32-KB-Clustern) sollten ganz im Speicher bleiben. Ein Rechenfehler hielt stattdessen die ersten zwei Cluster doppelt, der Rest konnte verdrängt und neu geladen werden.
-4. **Kit RAM saver** (Settings → Community features → **Kit RAM saver**, 7-Segment `KRAM`, standardmässig an): Kit-Reihen ohne Noten in allen Clips des Songs geben den festgehaltenen Start ihrer Samples frei, meist 64 KB pro Sample. Bei einem Kit mit 50 Samples, von denen der Song 5 nutzt, sind das rund 3 MB. Die Samples bleiben im Kit und im Cache, bis der RAM anderweitig gebraucht wird. Bekommt eine Reihe Noten, holt der Deluge ihren Start innerhalb einer Sekunde zurück. Ausgenommen sind Kits mit Kit-Arpeggiator oder MIDI-Learn fürs ganze Kit sowie Reihen mit eigenem MIDI-Learn, weil sie auch ohne Noten spielen können.
-5. **Kein verlorener Schlag.** Ist der Start eines Samples beim Anschlag nicht im RAM, wartet die Stimme, bis er geladen ist (meist wenige Millisekunden, höchstens 100 ms), und spielt dann von Anfang an. In 1.2.1 fiel der Schlag in so einem Fall aus.
+1. **Loading by urgency (bug from 1.2.1 fixed).** The queue for load jobs had always sorted by memory address instead of priority. Now what a playing voice needs next comes first, then the starts of samples that may never play. **Effect:** fewer voices breaking off and fewer "card too slow" under load, for example when changing kits while playing.
+2. **Double reserve when streaming.** A playing voice keeps three clusters ahead instead of two. The next block then has two cluster durations of time instead of one, with 32 KB clusters about 250–370 instead of 120–190 ms (stereo). Costs 32 KB per voice currently streaming.
+3. **Short samples fully in RAM (bug from 1.2.1 fixed).** Samples of up to four clusters (up to 128 KB with 32 KB clusters) were meant to stay fully in memory. A calculation error instead held the first two clusters twice, and the rest could be evicted and reloaded.
+4. **Kit RAM saver** (Settings → Community features → **Kit RAM saver**, 7-segment `KRAM`, on by default): Kit rows without notes in all of the song's clips release the held start of their samples, usually 64 KB per sample. For a kit with 50 samples of which the song uses 5, that is around 3 MB. The samples stay in the kit and in the cache until the RAM is needed elsewhere. When a row gets notes, the Deluge fetches its start back within one second. Excluded are kits with the kit arpeggiator or MIDI learn for the whole kit, and rows with their own MIDI learn, because they can play without notes too.
+5. **No lost hits.** If a sample's start is not in RAM when the note is struck, the voice waits until it is loaded (usually a few milliseconds, at most 100 ms) and then plays from the beginning. In 1.2.1 the hit was dropped in such a case.
 
-**Grenzen:** Nicht auf dem Gerät getestet. Beim Vorhören oder MIDI-Spielen einer bisher ungenutzten Reihe kann der allererste Schlag wenige Millisekunden später kommen, falls ihr Start inzwischen aus dem RAM verdrängt wurde. Sequenzierte Noten sind nicht betroffen, weil Reihen mit Noten ihre Starts behalten. Wer das nicht will, schaltet den Kit RAM saver aus.
+**Limitations:** Not tested on the device. When auditioning or playing a previously unused row over MIDI, the very first hit can come a few milliseconds late if its start has meanwhile been evicted from RAM. Sequenced notes are not affected, because rows with notes keep their starts. If you don't want that, switch the Kit RAM saver off.
 
-**Geprüft:** die Warteschlange mit dem echten Firmware-Code auf dem PC (Reihenfolge, gleiche Prioritäten, Erkennung der niedrigsten Priorität), Build ohne Warnungen, zwei Builds mit identischer SHA-256, eine Code-Prüfung. Sie fand drei Fehler, alle behoben: Ein wartender Schlag konnte durch die automatische Release-Logik stumm bleiben, der Kit RAM saver konnte beim Laden eines Presets in eine Kit-Reihe in freigegebenen Speicher schreiben, und beim Erhöhen von Unison während des Wartens übernahm die neue Stimme einen falschen Zustand. Ausserdem laden ein später Einstieg in ein Sample (Stummschaltung mitten in der Note aufgehoben) und der Wechsel vom Cache zurück zur Karte jetzt mit der Priorität ihrer Stimme statt mit der niedrigsten.
+**Tested:** the queue with the real firmware code on the PC (order, equal priorities, detection of the lowest priority), build without warnings, two builds with identical SHA-256, one code review. It found three bugs, all fixed: a waiting hit could stay silent because of the automatic release logic, the Kit RAM saver could write to freed memory when a preset was loaded into a kit row, and when unison was increased during the wait, the new voice took on a wrong state. In addition, a late entry into a sample (mute lifted in the middle of the note) and the switch from the cache back to the card now load with their voice's priority instead of the lowest.
 
-## v10: Reverb in besserer Qualität
+## v10: Better-quality reverb
 
-v10 enthält v9 unverändert und überarbeitet das Song-Reverb: ein neues Modell, zwei reparierte Modelle und funktionierende Filter. Alle Einstellungen liegen wie bisher im Reverb-Menü (Song und Sound).
+v10 contains v9 unchanged and reworks the song reverb: a new model, two repaired models and working filters. All settings are in the reverb menu as before (song and sound).
 
-1. **Neues Modell «Digital»** (Model → Digital, 7-Segment `DIGI`): die Plate von Jon Dattorro (1997), aufgebaut wie das Lexicon 224. Dichter, glatter Nachhall ohne metallisches Klingeln, weil die Modulation im Tank die Resonanzen ständig verschiebt. Stereo aus 14 Abgriffen, links und rechts unkorreliert.
-   - **Time** (Room size): 0 ≈ 0,6 s, 30 (Standard) ≈ 4,5 s, 45 ≈ 18 s, 50 fast endlos. **Width:** Stereobreite, 0 = mono. **Damping**, **HPF** und **LPF** wie bei Mutable.
-   - Gleich laut wie Mutable (Abweichung höchstens 0,5 dB), ein Wechsel des Modells springt also nicht in der Lautstärke.
-   - Die aktuelle Community-Firmware hat ein Modell mit diesem Namen, aber mit Fehlern: Die modulierten Allpässe im Tank sind dort keine Allpässe (kürzerer, dünnerer Nachhall), beide Tank-Hälften teilen sich ein Dämpfungsfilter, und die Plate ist 2,2-mal zu klein skaliert. Diese Version folgt dem Paper.
-2. **Mutable: Modulation wie im Original.** Durch einen Portierungsfehler liefen die beiden LFOs 16-mal langsamer als bei Mutable Instruments, der Nachhall stand deshalb fast still. Jetzt laufen sie wie in den Modulen Rings, Elements und Clouds (etwa 0,45 und 0,28 Hz), und das «Smearing» im ersten Diffusor ist wieder drin. Songs mit Mutable klingen dadurch etwas lebendiger, Lautstärke und Länge bleiben gleich.
-3. **Damping läuft richtig herum (Mutable).** In 1.2.1 lief Damping beim Mutable-Modell verkehrt: 0 und 50 waren hell, 1 am dunkelsten, mit einem Sprung zwischen 0 und 1. Jetzt wie bei Freeverb: 0 hell, 50 dunkel, stufenlos. **Bestehende Songs klingen gleich**, nur die angezeigte Zahl ist jetzt 50 minus die alte (Standard 36 → 14). In der Datei steht der Wert weiter wie in 1.2.1, Songs bleiben also zwischen den Versionen austauschbar.
-4. **HPF repariert.** Wegen eines Rechenfehlers reichte er nur bis 85 Hz statt bis 540 Hz, und 1.2.1 übernahm ihn beim Laden eines Songs gar nicht. Jetzt: 0 = 20 Hz, 25 = 190 Hz, 50 = 540 Hz, gespeichert und geladen mit dem Song. Ein in alten Songs gespeicherter Wert wird mit der Frequenz geladen, die er damals tatsächlich hatte (alt 50 → neu 12).
-5. **Neu: LPF** (Mutable und Digital) zum Abdunkeln des ganzen Halls: 0 = 500 Hz, 25 = 3,2 kHz, 49 = 18,6 kHz, **50 = aus** (Standard). Das Damping dagegen dunkelt den Nachhall mit der Zeit immer stärker ab.
-6. **Freeverb:** Bei Width unter dem Maximum war der rechte Kanal lauter, bei Width 0 um 3,6 dB, jetzt ausgeglichen (≤ 0,1 dB). Und wenn ein langer, lauter Hall den Wertebereich überschritt, klappte der Wert um und knackte laut. Jetzt wird er begrenzt. Sonst rechnet Freeverb bitgleich wie bisher.
+1. **New model "Digital"** (Model → Digital, 7-segment `DIGI`): Jon Dattorro's plate (1997), built like the Lexicon 224. Dense, smooth reverb without metallic ringing, because the modulation in the tank keeps shifting the resonances. Stereo from 14 taps, left and right uncorrelated.
+   - **Time** (Room size): 0 ≈ 0.6 s, 30 (default) ≈ 4.5 s, 45 ≈ 18 s, 50 almost endless. **Width:** stereo width, 0 = mono. **Damping**, **HPF** and **LPF** as with Mutable.
+   - As loud as Mutable (deviation at most 0.5 dB), so changing the model does not jump in volume.
+   - The current community firmware has a model with this name, but with bugs: the modulated allpasses in the tank are not allpasses there (shorter, thinner reverb), both tank halves share one damping filter, and the plate is scaled 2.2 times too small. This version follows the paper.
+2. **Mutable: modulation as in the original.** Because of a porting error, the two LFOs ran 16 times slower than at Mutable Instruments, so the reverb was almost static. Now they run as in the Rings, Elements and Clouds modules (about 0.45 and 0.28 Hz), and the "smearing" in the first diffuser is back. Songs with Mutable sound a bit more alive as a result; volume and length stay the same.
+3. **Damping runs the right way round (Mutable).** In 1.2.1 damping ran backwards on the Mutable model: 0 and 50 were bright, 1 the darkest, with a jump between 0 and 1. Now as with Freeverb: 0 bright, 50 dark, stepless. **Existing songs sound the same**; only the displayed number is now 50 minus the old one (default 36 → 14). In the file the value is still stored as in 1.2.1, so songs stay interchangeable between the versions.
+4. **HPF repaired.** Because of a calculation error it only reached 85 Hz instead of 540 Hz, and 1.2.1 did not apply it at all when loading a song. Now: 0 = 20 Hz, 25 = 190 Hz, 50 = 540 Hz, saved and loaded with the song. A value saved in old songs is loaded with the frequency it actually had back then (old 50 → new 12).
+5. **New: LPF** (Mutable and Digital) to darken the whole reverb: 0 = 500 Hz, 25 = 3.2 kHz, 49 = 18.6 kHz, **50 = off** (default). Damping, by contrast, darkens the reverb tail more and more over time.
+6. **Freeverb:** With width below the maximum, the right channel was louder, by 3.6 dB at width 0; now balanced (≤ 0.1 dB). And when a long, loud reverb exceeded the value range, the value wrapped around and clicked loudly. Now it is clipped. Otherwise Freeverb computes bit-identically as before.
 
-**Grenzen:**
-- Nicht auf dem Gerät getestet.
-- Digital braucht etwa ein Drittel mehr Rechenzeit als Mutable (gerechnet einmal für den ganzen Song).
-- Ein mit Digital gespeicherter Song spielt in 1.2.1 ohne Reverb, weil 1.2.1 das Modell nicht kennt.
-- HPF und LPF gibt es wie bisher nur für Mutable und Digital, nicht für Freeverb.
-- Songs aus der Community-Firmware 1.3 liest v10 mit deren Damping-Richtung, denn auch die Community hat Damping inzwischen umgedreht (19.9.2026). Ältere 1.3-Songs lassen sich davon nicht unterscheiden und kommen mit umgekehrtem Damping, genau wie in der Community-Firmware selbst. Deine Songs aus 1.2.1 und meinen Versionen betrifft das nicht.
+**Limitations:**
+- Not tested on the device.
+- Digital needs about a third more CPU time than Mutable (computed once for the whole song).
+- A song saved with Digital plays without reverb in 1.2.1, because 1.2.1 does not know the model.
+- As before, HPF and LPF exist only for Mutable and Digital, not for Freeverb.
+- v10 reads songs from community firmware 1.3 with their damping direction, because the community has since reversed damping too (2026-09-19). Older 1.3 songs cannot be told apart from those and come in with reversed damping, exactly as in the community firmware itself. This does not affect your songs from 1.2.1 and my versions.
 
-**Geprüft:** Host-Test mit dem Reverb-Code der Firmware (47 Prüfpunkte, mit UndefinedBehaviorSanitizer): alle Modelle stabil bei maximaler Room Size, Nachhallzeiten und Pegel von Digital gegen Mutable, Stereo-Balance und -Breite, LFO-Raten, Grenzfrequenzen von HPF und LPF, Umrechnung aller alten Damping- und HPF-Werte (identischer Klang). Build ohne Warnungen, zwei Builds mit identischer SHA-256, eine Code-Prüfung. Sie fand zwei Fehler, beide behoben: Die Presets auf der Reverb-Taste (Small, Medium, Large) wären mit der neuen Damping-Richtung beim Mutable-Modell viel dunkler geworden, und Songs aus der Community-Firmware 1.3 wären mit umgekehrtem Damping geladen worden.
+**Tested:** host test with the firmware's reverb code (47 checks, with UndefinedBehaviorSanitizer): all models stable at maximum room size, reverb times and levels of Digital against Mutable, stereo balance and width, LFO rates, cutoff frequencies of HPF and LPF, conversion of all old damping and HPF values (identical sound). Build without warnings, two builds with identical SHA-256, one code review. It found two bugs, both fixed: the presets on the reverb button (Small, Medium, Large) would have become much darker with the new damping direction on the Mutable model, and songs from community firmware 1.3 would have been loaded with reversed damping.
 
-## v11: Delay in besserer Qualität, kein Knacksen beim Speichern
+## v11: Better-quality delay, no crackle when saving
 
-v11 enthält v10, überarbeitet das Delay (Sounds, Kits, Audio-Spuren und Song), behebt das Knacksen beim Speichern und einen Speicherfehler des Reverbs aus v10. Die Messungen stammen aus einem Test mit dem Delay-Code der Firmware auf dem PC.
+v11 contains v10, reworks the delay (sounds, kits, audio tracks and song), and fixes the crackle when saving and a saving bug of the reverb from v10. The measurements come from a test with the firmware's delay code on the PC.
 
-1. **Saubere Wiederholungen nach jeder Zeitänderung (Fehler aus 1.2.1 behoben).** Das Delay des Deluge dreht seinen Puffer schneller oder langsamer, wenn sich die Zeit ändert. Danach sollte es einen neuen Puffer anlegen und wieder verlustfrei laufen. Ist der neue Puffer aber gleich gross wie der alte, lehnte 1.2.1 ihn ab. Das Delay blieb dann für immer im Umrechnungsmodus, schon wenn der Regler kurz bewegt und zurückgedreht wurde.
-   - **Folge in 1.2.1:** Jede Wiederholung verlor 9 dB bei 10 kHz und 24 dB bei 15 kHz, darum wurden die Echos so schnell dumpf.
-   - **Jetzt:** Nach einer Zeitänderung sind die Wiederholungen wieder bitgenau.
-2. **Umrechnung mit kubischem Kern.** Solange die Zeit sich ändert oder moduliert wird (LFO, Hüllkurve, Automation), schreibt und liest das Delay mit einem kubischen Kern (Catmull-Rom), bei jeder Geschwindigkeit. 1.2.1 nahm dafür Dreiecke, die doppelt so breit waren wie nötig.
-   - Eine Wiederholung verliert bei 10 kHz 0,6 dB statt 6,9 dB.
-   - Das Rauschen der Umrechnung sinkt von −59 auf −80 dB.
-   - Sehr lange Delays (ab etwa 4 s) behalten bei 5 kHz −3,1 dB statt −6,9 dB.
-   - Geschwindigkeit und Feedback gleiten innerhalb eines Audio-Blocks, statt alle 2,9 ms zu springen. Das Summen bei 344 Hz sinkt von −78 auf −103 dB.
-3. **Kein Knacken beim Ändern der Zeit.**
-   - Ein Teil der Schreibwege lag in 1.2.1 ein Sample daneben, beim Wechsel zwischen ihnen sprang die Zeit. Jetzt schreiben alle an dieselbe Stelle. Das Delay ist dadurch 1 Sample (0,02 ms) länger.
-   - 1.2.1 legte bei jeder noch so kleinen Verlängerung einen neuen, doppelt so grossen Puffer an. Ein LFO auf der Delay-Zeit wechselte dadurch laufend die Puffer, jedes Mal mit einem kleinen Sprung. Jetzt passiert das erst ab 25 % Verlängerung.
-   - Bei einem grossen Sprung der Zeit legt das Delay sofort einen neuen Puffer an. Dieser gleitet jetzt genau wie der alte, den er ersetzt, sonst springt die Zeit, wenn er übernimmt.
+1. **Clean repeats after every time change (bug from 1.2.1 fixed).** The Deluge's delay spins its buffer faster or slower when the time changes. After that it should set up a new buffer and run lossless again. But if the new buffer was the same size as the old one, 1.2.1 rejected it. The delay then stayed in resampling mode for good, even if the knob was just moved briefly and turned back.
+   - **Consequence in 1.2.1:** Every repeat lost 9 dB at 10 kHz and 24 dB at 15 kHz, which is why the echoes got dull so quickly.
+   - **Now:** After a time change the repeats are bit-exact again.
+2. **Resampling with a cubic kernel.** As long as the time changes or is modulated (LFO, envelope, automation), the delay writes and reads with a cubic kernel (Catmull-Rom), at any speed. 1.2.1 used triangles for this that were twice as wide as needed.
+   - A repeat loses 0.6 dB instead of 6.9 dB at 10 kHz.
+   - The resampling noise drops from −59 to −80 dB.
+   - Very long delays (from about 4 s) keep −3.1 dB instead of −6.9 dB at 5 kHz.
+   - Speed and feedback glide within an audio block instead of jumping every 2.9 ms. The buzz at 344 Hz drops from −78 to −103 dB.
+3. **No clicks when changing the time.**
+   - In 1.2.1 some of the write paths were one sample off, and the time jumped when switching between them. Now they all write to the same position. This makes the delay 1 sample (0.02 ms) longer.
+   - 1.2.1 set up a new buffer of twice the size for every lengthening, however small. An LFO on the delay time therefore kept switching buffers, each time with a small jump. Now this only happens from 25% lengthening.
+   - On a big jump in time the delay sets up a new buffer immediately. It now glides exactly like the old one it replaces; otherwise the time jumps when it takes over.
 
-   Grösster Sprung im Test gegenüber einem ruhigen Ton:
-   - 5 % kürzer: 0,1× statt 3,8×
-   - 5 % länger: 0,1× statt 1,9×
-   - 40 % länger: 0,1× statt 1,7×
-   - 70 % länger: 0,1× statt 2,5×
-   - weniger als halb so lang: 0,1× statt 4,1×
-   - über die Grundgeschwindigkeit fahren: 0,1× statt 1,7×
-   - LFO ±3 % auf der Zeit: 0,1× statt 1,7×
-4. **Analog-Modus:** Die Sättigung arbeitet mit weniger Aliasing (−18 statt −14 dB Störanteil bei stark angetriebenem Feedback), wie bereits beim Kompressor.
-5. **Neu: LPF und HPF im Feedback** (Delay-Menü, nach Sync). Jede Wiederholung wird dunkler bzw. dünner als die vorige, wie bei Band- und Eimerketten-Delays.
-   - **LPF:** 0 = 500 Hz, 25 = 3,2 kHz, 49 = 18,6 kHz, 50 = aus (Standard).
-   - **HPF:** 0 = aus (Standard), 1 = 25 Hz, 25 = 190 Hz, 50 = 540 Hz.
-   - Im Digital-Modus begrenzt das Delay erst nach den Filtern. So bleibt der HPF auch bei vollem Feedback innerhalb der Aussteuerung.
-   - Gespeichert werden sie mit dem Sound, Kit oder Song, aber nur, wenn sie eingeschaltet sind.
-6. **Zwei kleine Fehler aus 1.2.1 behoben:** Ein kopierter Sound behält beim Delay-Sync Triole oder Punktierung, und ein neu startendes Delay beginnt ohne Reste im Filter.
-7. **Kein Knacksen mehr beim Speichern (Fehler aus 1.2.1 behoben).** Während der Deluge einen Song oder ein Preset für die Karte zusammenbaut, lief in 1.2.1 nur die Anzeige weiter. Der Aufruf der Audio-Engine war an dieser Stelle auskommentiert. Die Ausgabe wiederholte deshalb ihren letzten Puffer, das gab bei jedem Speichern ein kurzes Furzen oder Knacksen. Jetzt läuft die Audio-Engine auch dabei weiter und lädt die Samples nach, die gerade spielen, genau wie beim Laden eines Songs. Das gilt für Songs, Synth- und Kit-Presets und Einstellungen.
+   Largest jump in the test, relative to a steady tone:
+   - 5% shorter: 0.1× instead of 3.8×
+   - 5% longer: 0.1× instead of 1.9×
+   - 40% longer: 0.1× instead of 1.7×
+   - 70% longer: 0.1× instead of 2.5×
+   - less than half as long: 0.1× instead of 4.1×
+   - sweeping across the base speed: 0.1× instead of 1.7×
+   - LFO ±3% on the time: 0.1× instead of 1.7×
+4. **Analog mode:** The saturation works with less aliasing (−18 instead of −14 dB of spurious content with heavily driven feedback), as already done for the compressor.
+5. **New: LPF and HPF in the feedback** (delay menu, after Sync). Each repeat gets darker or thinner than the previous one, as with tape and bucket-brigade delays.
+   - **LPF:** 0 = 500 Hz, 25 = 3.2 kHz, 49 = 18.6 kHz, 50 = off (default).
+   - **HPF:** 0 = off (default), 1 = 25 Hz, 25 = 190 Hz, 50 = 540 Hz.
+   - In Digital mode the delay only limits after the filters. That way the HPF stays within full scale even at full feedback.
+   - They are saved with the sound, kit or song, but only when they are switched on.
+6. **Two small bugs from 1.2.1 fixed:** A copied sound keeps triplet or dotted in its delay sync, and a newly starting delay begins without leftovers in the filter.
+7. **No more crackle when saving (bug from 1.2.1 fixed).** While the Deluge assembles a song or a preset for the card, in 1.2.1 only the display kept running. The call to the audio engine was commented out at that point. The output therefore repeated its last buffer, which gave a short fart or crackle at every save. Now the audio engine keeps running during this too and loads the samples that are currently playing, just like when loading a song. This applies to songs, synth and kit presets and settings.
 
-8. **Reverb-Damping richtig gespeichert (Fehler aus v10 behoben).** Das dunkelste Damping (50) von Mutable und Digital wurde auf dem Deluge als 0 gespeichert, also als «kein Damping», und kam nach dem Laden hell zurück. Die Firmware wird mit `-funsafe-math-optimizations` gebaut, und damit machte der Compiler aus der Rechnung einen Vergleich, der genau diesen Wert falsch rundete. Auf dem PC trat das nicht auf. Gefunden hat es der Reverb-Test im Cortex-A9-Emulator (siehe «Tests im Emulator»).
+8. **Reverb damping saved correctly (bug from v10 fixed).** The darkest damping (50) of Mutable and Digital was saved on the Deluge as 0, i.e. as "no damping", and came back bright after loading. The firmware is built with `-funsafe-math-optimizations`, and with it the compiler turned the calculation into a comparison that rounded exactly this value wrongly. This did not happen on the PC. The reverb test in the Cortex-A9 emulator found it (see "Tests in the emulator").
 
-**Grenzen:**
-- Nicht auf dem Gerät getestet, auch der Fix fürs Speichern nicht.
-- Delays über 2 s laufen wie bisher im Umrechnungsmodus, weil ihr Puffer nicht grösser werden kann.
-- Wird die Zeit auf einen Schlag stark verändert, gleitet die Tonhöhe der Wiederholungen während eines Durchlaufs, wie bei einem Band, das bremst. Das ist wie in 1.2.1, nur ohne den Sprung beim Pufferwechsel.
-- Das Umrechnen braucht mehr Rechenzeit, aber nur, solange die Zeit sich ändert oder moduliert wird. Bis zur Grundgeschwindigkeit sind es 4 Gewichte pro Sample, darüber mehr (8 bei doppelter Geschwindigkeit), dazu die kubische Leseinterpolation. Im Normalbetrieb ist der Aufwand gleich wie bisher.
-- Das Speichern dauert etwas länger, weil der Deluge dabei Audio rechnet.
+**Limitations:**
+- Not tested on the device, including the fix for saving.
+- Delays over 2 s run in resampling mode as before, because their buffer cannot grow any larger.
+- If the time is changed a lot in one go, the pitch of the repeats glides during one pass, like a tape slowing down. That is as in 1.2.1, only without the jump at the buffer switch.
+- Resampling needs more CPU time, but only while the time changes or is modulated. Up to the base speed it is 4 weights per sample, above that more (8 at double speed), plus the cubic read interpolation. In normal operation the cost is the same as before.
+- Saving takes a little longer, because the Deluge computes audio while doing it.
 
-**Geprüft:**
-- **Host-Test** mit dem Delay-Code der Firmware (24 Prüfpunkte, UndefinedBehaviorSanitizer bricht beim ersten Fehler ab): Wiederholungen nach Zeitänderungen bitgenau, Höhen und Rauschen bei Modulation, Blocktreppen, Sprünge bei sieben Arten von Zeitänderungen, keine neuen Puffer bei langen Delays, Filterkurven, Aussteuerung mit HPF bei vollem Feedback, Filter abschalten ohne Sprung.
-- **Build:** ohne Warnungen, zwei Builds mit identischer SHA-256.
-- **Emulator:** Alle Tests laufen zusätzlich auf dem Maschinencode des Cortex-A9 (siehe «Tests im Emulator»). Dort fiel der Damping-Fehler aus v10 auf.
-- **Code-Prüfungen:** drei, mit einer Gegenprüfung jedes Befunds. Sie fanden sechs Fehler in meinen Änderungen, alle behoben:
-  - Ein neuer Puffer knackte beim Übernehmen.
-  - Der HPF übersteuerte bei vollem Feedback bis auf das 1,84-Fache der Begrenzung.
-  - Ein abgeschalteter HPF behielt seinen Zustand. Das gab später einen Klick, 175-mal so steil wie der Ton.
-  - Filterreste blieben nach einem Neustart des Delays stehen.
-  - Unnötige Rechenzeit ging in Bibliotheksaufrufe.
-  - Beim Speichern wären gestreamte Samples ohne Nachladen abgebrochen.
+**Tested:**
+- **Host test** with the firmware's delay code (24 checks, UndefinedBehaviorSanitizer aborts at the first error): repeats bit-exact after time changes, highs and noise under modulation, block staircases, jumps for seven kinds of time change, no new buffers for long delays, filter curves, headroom with HPF at full feedback, switching filters off without a jump.
+- **Build:** without warnings, two builds with identical SHA-256.
+- **Emulator:** All tests also run on the Cortex-A9 machine code (see "Tests in the emulator"). That is where the damping bug from v10 showed up.
+- **Code reviews:** three, with a cross-check of every finding. They found six bugs in my changes, all fixed:
+  - A new buffer clicked when taking over.
+  - At full feedback the HPF overshot up to 1.84 times the limit.
+  - A switched-off HPF kept its state. That later gave a click 175 times as steep as the tone.
+  - Filter leftovers remained after a restart of the delay.
+  - Unnecessary CPU time went into library calls.
+  - When saving, streamed samples would have broken off without reloading.
 
-## v12: Frequenz-Drone
+## v12: Frequency drone
 
-Ausführliches Handbuch mit Schnellstart, allen Bedienelementen, Menü, Rezepten und technischen Daten: **`docs/Drone-Handbuch.pdf`** (Quelle: `docs/drone-handbuch.html`).
+Detailed manual with quick start, all controls, menu, recipes and technical data: **`docs/Drone-manual.pdf`** (source: `docs/drone-manual.html`).
 
-v12 enthält v11 und bringt einen Drone: bis zu 16 Dauertöne, eingestellt in Hz oder als Note, unter die Musik gemischt. Jeder Ton kann schweben wie in Brainwave-Apps, im Tempo des Songs pulsieren und mit der Sidechain ducken.
+v12 contains v11 and adds a drone: up to 16 sustained tones, set in Hz or as a note, mixed under the music. Each tone can beat like in brainwave apps, pulse in the song's tempo and duck with the sidechain.
 
-**Öffnen:** Im Song-View die Taste **Scale** drücken, oder im Song-Menü des Song-Views (Select drücken) den Punkt **Drone** wählen. Zurück in den Song-View geht es mit **Back**, **Song** oder **Scale**. Im Arranger fehlt der Menüpunkt, weil der Rückweg in den Song-View führt.
+**Opening:** In song view press the **Scale** button, or choose **Drone** in the song menu of song view (press Select). **Back**, **Song** or **Scale** take you back to song view. In the arranger the menu item is missing, because the way back leads to song view.
 
-**Die Drone-Ansicht** ist aufgebaut wie der Song-View, mit einem Ton pro Zeile statt einem Clip:
+**The drone view** is laid out like song view, with one tone per row instead of a clip:
 
-| Element | Funktion |
+| Element | Function |
 |---|---|
-| Zeilen | Ton 1 unten, wie Clip 1 im Song-View. Der Y-Encoder scrollt zu den Tönen 9–16. |
-| Mute-Spalte | Ton an und aus (grün = an), seine Einstellungen bleiben dabei erhalten |
-| Audition-Spalte | Ton wählen (weiss = gewählt) |
-| Pads einer Zeile | Pegel als Balken. Ein Pad antippen setzt den Pegel, in 16 Stufen. |
-| Farbe | Modus: orange = Ton, blau = binaural, türkis = monaural, violett = isochron. Beats bis 12 Hz pulsieren sichtbar. |
-| Oberer Goldknopf | Tonhöhe. In Hz: 1 Hz pro Raste, schnell gedreht 10 Hz, mit Shift 0,01 Hz. Als Note: Halbtöne, mit Shift Cent. |
-| Oberen Goldknopf drücken | zwischen Hz und Note wechseln, die Tonhöhe bleibt |
-| Unterer Goldknopf | Beat: 0,1 Hz pro Raste, mit Shift 0,01 Hz. Mit Tempo-Sync der Notenwert. |
-| Unteren Goldknopf drücken | Tempo-Sync an und aus |
-| Select drehen | Modus des gewählten Tons |
-| Select drücken | Menü des Tons: Modus, Tonhöhe als Hz oder Note, Frequenz, Note, Cent, Beat, Sync, Klangfarbe, Pegel, Pan. Dazu die Lautstärke des ganzen Drones und die Sidechain. |
-| X-Encoder | Pegel fein, mit Shift Pan |
-| Play, Record, Tempo, Speichern, Laden | wie gewohnt |
+| Rows | Tone 1 at the bottom, like clip 1 in song view. The Y encoder scrolls to tones 9–16. |
+| Mute column | Tone on and off (green = on); its settings are kept |
+| Audition column | Select a tone (white = selected) |
+| Pads of a row | Level as a bar. Tapping a pad sets the level, in 16 steps. |
+| Color | Mode: orange = tone, blue = binaural, turquoise = monaural, violet = isochronic. Beats up to 12 Hz pulse visibly. |
+| Upper gold knob | Pitch. In Hz: 1 Hz per detent, 10 Hz when turned fast, 0.01 Hz with Shift. As a note: semitones, cents with Shift. |
+| Press upper gold knob | switch between Hz and note; the pitch stays |
+| Lower gold knob | Beat: 0.1 Hz per detent, 0.01 Hz with Shift. With tempo sync, the note value. |
+| Press lower gold knob | Tempo sync on and off |
+| Turn Select | Mode of the selected tone |
+| Press Select | The tone's menu: mode, pitch as Hz or note, frequency, note, cent, beat, sync, timbre, level, pan. Plus the volume of the whole drone and the sidechain. |
+| X encoder | Level, fine; pan with Shift |
+| Play, Record, Tempo, Save, Load | as usual |
 
-Das OLED zeigt Ton, Modus, Tonhöhe und den Beat mit seinem Bereich (Delta, Theta, Alpha, Beta, Gamma). Die 7-Segment-Anzeige zeigt die Frequenz mit so vielen Nachkommastellen, wie Platz haben (55.25, 440.0, 1200), oder die Note. Beat, Notenwert (16 für 1/16), Pegel und Pan erscheinen dort beim Drehen kurz.
+The OLED shows the tone, mode, pitch and the beat with its band (Delta, Theta, Alpha, Beta, Gamma). The 7-segment display shows the frequency with as many decimals as fit (55.25, 440.0, 1200), or the note. Beat, note value (16 for 1/16), level and pan appear there briefly while turning.
 
-**Modi:**
-- **Ton:** ein ruhiger Dauerton.
-- **Binaural:** Das linke Ohr hört die Frequenz minus den halben Beat, das rechte plus den halben Beat. Die Schwebung entsteht im Kopf, dafür braucht es Kopfhörer.
-- **Monaural:** Beide Töne klingen in beiden Ohren, die Schwebung ist im Klang selbst hörbar.
-- **Isochron:** Der Ton pulsiert im Beat an und aus, mit weichen Flanken von 6 ms.
+**Modes:**
+- **Tone:** a steady sustained tone.
+- **Binaural:** The left ear hears the frequency minus half the beat, the right ear plus half the beat. The beating arises in the head; this needs headphones.
+- **Monaural:** Both tones sound in both ears; the beating is audible in the sound itself.
+- **Isochronic:** The tone pulses on and off at the beat, with soft 6 ms edges.
 
-**Klangfarben:** Sine (rein), Soft (Obertöne 2–5, weich), Organ (Oktaven wie Zugriegel), Rich (Obertöne 2–8, sägezahnartig). Sie sind bandbegrenzt: Obertöne über 18 kHz fallen weg, damit nichts spiegelt.
+**Timbres:** Sine (pure), Soft (harmonics 2–5, soft), Organ (octaves like drawbars), Rich (harmonics 2–8, sawtooth-like). They are band-limited: harmonics above 18 kHz are dropped so nothing aliases.
 
-**Tempo-Sync:** Der Beat folgt dem Songtempo, mit Notenwerten von 1/1 bis 1/64. Bei 120 BPM ergibt 1/16 einen Beat von 8 Hz (Alpha). Während der Song läuft, rastet der Puls auf dem Raster ein, im Test auf 1,2 ms genau. Das gilt auch mit externer MIDI-Clock (der Drone folgt ihr zwischen den Clock-Ticks) und mit Sync-Scaling, weil Tempo und Position wie beim Metronom gezählt werden.
+**Tempo sync:** The beat follows the song tempo, with note values from 1/1 to 1/64. At 120 BPM, 1/16 gives a beat of 8 Hz (Alpha). While the song is playing, the pulse locks to the grid, to within 1.2 ms in the test. This also holds with external MIDI clock (the drone follows it between the clock ticks) and with sync scaling, because tempo and position are counted as for the metronome.
 
-**Tonhöhe als Note:** Jeder Ton lässt sich als Note mit Cent einstellen. Er folgt dann dem Master Tune (Settings → Tuning), wie alles andere im Deluge. Ist der Master Tune auf ein externes Gerät eingestellt, zum Beispiel eine volca keys, passt der Drone dazu.
+**Pitch as a note:** Every tone can be set as a note with cents. It then follows the Master Tune (Settings → Tuning), like everything else in the Deluge. If the Master Tune is set to match an external instrument, for example a volca keys, the drone fits it.
 
-**Pegel:**
-- Ein Ton auf Pegel 50 liegt bei −12 dBFS. Die Drone-Lautstärke 50 entspricht 0 dB, die Stufen sind je 1 dB.
-- Der Drone folgt der Song-Lautstärke wie das Metronom. Er kommt nach den Song-Effekten dazu, also ohne Song-Reverb und -Delay.
-- In Stem-Exporten fehlt er, über USB-Audio ist er zu hören.
-- Viele laute Töne zusammen können übersteuern.
+**Level:**
+- A tone at level 50 sits at −12 dBFS. Drone volume 50 corresponds to 0 dB; each step is 1 dB.
+- The drone follows the song volume like the metronome. It is added after the song effects, so without song reverb and delay.
+- It is missing from stem exports; it can be heard over USB audio.
+- Many loud tones together can clip.
 
-**Sidechain:** Der Drone duckt sich unter die Sidechain-Auslöser des Songs, etwa eine Kick mit «Send to sidechain». Stärke, Form, Attack, Release und Sync stehen im Sidechain-Menü des Drones. Der Pegel gleitet von Sample zu Sample, wie beim Sidechain-Fix aus v3, darum knackt nichts.
+**Sidechain:** The drone ducks under the song's sidechain triggers, such as a kick with "Send to sidechain". Strength, shape, attack, release and sync are in the drone's sidechain menu. The level glides from sample to sample, as with the sidechain fix from v3, so nothing clicks.
 
-**Gespeichert** wird der Drone mit dem Song (Tag `<drone>`), aber nur, wenn er eingerichtet ist. Ältere Firmware überspringt den Tag. Beim Laden eines anderen Songs oder bei Clear Song blendet der Drone in etwa 60 ms aus, der Drone des neuen Songs setzt aus der Stille ein. Nach einem Stem-Export setzt er ebenfalls aus der Stille wieder ein.
+The drone is **saved** with the song (tag `<drone>`), but only if it has been set up. Older firmware skips the tag. When another song is loaded or on Clear Song, the drone fades out in about 60 ms, and the new song's drone starts from silence. After a stem export it also starts again from silence.
 
-**Grenzen:**
-- Nicht auf dem Gerät getestet.
-- Rechenzeit auf dem Cortex-A9, im Emulator gezählt: ein Sinuston 0,35 % CPU, ein binauraler Ton 0,5 %, 16 binaurale Töne mit Obertönen 6,9 %.
-- Die Wellentabellen belegen 27 KB internes RAM.
-- Der Drone sendet kein MIDI.
-- Seine Einstellungen gehören nicht zum Undo. Ein per MIDI gelerntes Undo wirkt in der Drone-Ansicht nicht.
+**Limitations:**
+- Not tested on the device.
+- CPU time on the Cortex-A9, counted in the emulator: one sine tone 0.35% CPU, one binaural tone 0.5%, 16 binaural tones with harmonics 6.9%.
+- The wavetables take 27 KB of internal RAM.
+- The drone sends no MIDI.
+- Its settings are not part of undo. An undo learned over MIDI has no effect in the drone view.
 
-**Geprüft:**
-- **Host-Test** mit dem Drone-Code der Firmware (39 Prüfpunkte), auf dem PC mit UndefinedBehaviorSanitizer und auf dem Cortex-A9 im Emulator:
-  - Reinheit (Sinus −108 dB)
-  - Frequenzen auf 0,001 Hz genau, Note und Master Tune
-  - Binaural, monaural und isochron
-  - Knackfreiheit bei allen Änderungen
-  - Sidechain-Rampe, Bandbegrenzung, Tempo-Lock und Pegel
-  - Ausblenden zwischen zwei Songs ohne Sprung, Neustart aus der Stille
-- **Build:** ohne Compiler-Warnungen (eine Stack-Warnung beim Aufbau der Wellentabellen ist behoben). Zwei komplette Neubauten aus dem Commit, in einer eigenen Arbeitskopie mit allen 448 Dateien neu übersetzt, ergeben dieselbe SHA-256 wie die ausgelieferte Datei.
-- **Code-Prüfung:** zwei Prüfer (Bedienung und Menüs; Speichern und Audio), acht Befunde, jeder einmal gegengeprüft:
-  - Sechs bestätigt und behoben:
-    - möglicher Absturz bei Undo per MIDI in der Drone-Ansicht
-    - Knacks beim Laden eines Songs im Stillstand
-    - Beat-Sync mit Sync-Scaling rastete nicht ein
-    - falscher Rückweg aus dem Arranger
-    - Back-LED blinkte nach dem Menü weiter
-    - Beat und Pan fehlten auf der 7-Segment-Anzeige
-  - Einer ist nicht hörbar (externe Clock), wurde aber trotzdem verbessert.
-  - Einer ist widerlegt (MIDI Follow verhält sich wie im Song-View).
+**Tested:**
+- **Host test** with the firmware's drone code (39 checks), on the PC with UndefinedBehaviorSanitizer and on the Cortex-A9 in the emulator:
+  - Purity (sine −108 dB)
+  - Frequencies accurate to 0.001 Hz, note and Master Tune
+  - Binaural, monaural and isochronic
+  - No clicks on any change
+  - Sidechain ramp, band limiting, tempo lock and level
+  - Fade-out between two songs without a jump, restart from silence
+- **Build:** without compiler warnings (a stack warning when building the wavetables is fixed). Two complete rebuilds from the commit, in a separate working copy with all 448 files recompiled, give the same SHA-256 as the released file.
+- **Code review:** two reviewers (controls and menus; saving and audio), eight findings, each cross-checked once:
+  - Six confirmed and fixed:
+    - possible crash on undo over MIDI in the drone view
+    - click when loading a song while stopped
+    - beat sync with sync scaling did not lock
+    - wrong way back from the arranger
+    - Back LED kept blinking after the menu
+    - beat and pan were missing on the 7-segment display
+  - One is not audible (external clock) but was improved anyway.
+  - One was refuted (MIDI Follow behaves as in song view).
 
-## Leistungs-, Mess- und Testversionen
+## Performance, measurement and test versions
 
 - **`perf/`:** v12-perf, `deluge-1.2.1-mastertune-v12-perf-ef5caee8.bin`, SHA-256 `d08b09bc…19ce4060c`.
-  - v12 mit bitgleich schnelleren Filtern und Oszillatoren: im Volllast-Test −20 % Rechenlast.
-  - Mit Culling wie auf dem Gerät klingen 38 % mehr Stimmen.
-  - Enthält den CPU-Monitor. Details, Beweise und Vergleich auf dem Gerät: `perf/README.md`.
-- **`diag/`:** die Messversion v12-diag, v12 plus CPU-Monitor.
-  - Zeigt CPU-Last, Stimmen, Qualitätsabsenkung und SD-Zeiten auf dem OLED und per USB-MIDI.
-  - Dazu `tools/cpu_monitor.html` und ein Test-Song. Details: `diag/README.md`.
-- **`l2test/`:** die Testversion von v17 mit L2-Cache nur für Code (l2i). Die Version mit L2 auch für Daten ist ab v17 die Hauptdatei. Mit v14 zeigte die erste Messung am Gerät: keine abgeschnittenen Stimmen mehr.
-  - Zum Messen mit dem CPU-Monitor am Gerät, noch nicht für Auftritte.
-  - Anleitung, Risiken und Prüfungen: `l2test/README.md`.
-- **`prof/`:** die Profiler-Messversion v15-prof, einmal ohne L2 und einmal mit L2 für Code.
-  - Settings → CPU monitor → Profile schickt 1000-mal pro Sekunde an den Computer, wo die CPU gerade arbeitet, dazu die genaue Rechenzeit jeder Spur.
-  - `tools/profiler.html` (Chrome/Edge) oder `tools/deluge_profiler.py` zeigen die Zeit pro Spur, Task und Funktion.
-  - Anleitung und Prüfungen: `prof/README.md`.
-  - Ab v16 hat jede Version den Profiler, auch die L2-Testversionen. Die passende `.symbols.json` liegt neben der Firmware.
-- **`research/OPTIMIERUNG.md`:** alle Messungen und Erkenntnisse zur Optimierung.
+  - v12 with faster, bit-identical filters and oscillators: −20% CPU load in the full-load test.
+  - With culling as on the device, 38% more voices sound.
+  - Contains the CPU monitor. Details, proofs and comparison on the device: `perf/README.md`.
+- **`diag/`:** the measurement version v12-diag, v12 plus CPU monitor.
+  - Shows CPU load, voices, quality reduction and SD timings on the OLED and over USB MIDI.
+  - Plus `tools/cpu_monitor.html` and a test song. Details: `diag/README.md`.
+- **`l2test/`:** the test version of v17 with L2 cache for code only (l2i). The version with L2 for data too is the main file from v17 on. With v14 the first measurement on the device showed: no more cut voices.
+  - For measuring with the CPU monitor on the device, not yet for gigs.
+  - Instructions, risks and checks: `l2test/README.md`.
+- **`prof/`:** the profiler measurement version v15-prof, once without L2 and once with L2 for code.
+  - Settings → CPU monitor → Profile sends to the computer, 1000 times per second, where the CPU is currently working, plus the exact CPU time of each track.
+  - `tools/profiler.html` (Chrome/Edge) or `tools/deluge_profiler.py` show the time per track, task and function.
+  - Instructions and checks: `prof/README.md`.
+  - From v16 on every version has the profiler, including the L2 test versions. The matching `.symbols.json` is next to the firmware.
+- **`research/OPTIMIZATION.md`:** all measurements and findings on optimization.
 
-## v13: mehr Leistung, Ping-Pong-Arp, flimmerfreies Dimmen, genaueres MIDI, Drone-Feinschliff
+## v13: More performance, ping-pong arp, flicker-free dimming, more precise MIDI, drone polish
 
-v13 enthält v12 und die Leistungsversion v12-perf, dazu die folgenden Neuerungen. **Auf dem Gerät ist nichts davon getestet**; geprüft ist alles im Emulator mit dem Maschinencode der Firmware und von unabhängigen Gegenprüfern.
+v13 contains v12 and the performance version v12-perf, plus the following additions. **None of it is tested on the device**; everything is tested in the emulator with the firmware's machine code and by independent reviewers.
 
-**Drone** (Handbuch `docs/Drone-Handbuch.pdf`, auf v16 nachgeführt):
-- **Select drehen stellt die Tonhöhe** in spürbaren Rasten: 1 Hz pro Klick, mit Shift 0,1 Hz; als Note ein Halbton, mit Shift ein Cent. Die Goldknöpfe bleiben für schnelles Stimmen.
-- **SYNTH / KIT / MIDI / CV wählen den Modus** des gewählten Tons: Ton / Binaural / Monaural / Isochron. Die LED der Taste zeigt den aktuellen Modus.
-- Die Pads leuchten ruhig, nichts pulsiert mehr.
-- Isochrone Pulse haben **Attack und Release** (0–50, angezeigt 0–100 %, je 2 % der halben Zykluslänge, nie kürzer als 1 ms).
-- **Triolen** beim Tempo-Sync: 1/1T bis 1/64T.
-- **Goldknöpfe nach Mod-Sektion:** Cutoff/Resonance = Tonhöhe/Beat, Attack/Release = Puls des gewählten Tons, Sidechain/Reverb = Ducking und Reverb-Send des ganzen Drones. Die LED-Ringe zeigen die Werte.
-- **Sidechain linear:** Stärke 30 duckt um 8 dB statt 16 dB.
-- **Reverb-Send:** Der Drone kann ins Song-Reverb senden (0–50).
+**Drone** (manual `docs/Drone-manual.pdf`, updated to v16):
+- **Turning Select sets the pitch** in noticeable detents: 1 Hz per click, 0.1 Hz with Shift; as a note one semitone, one cent with Shift. The gold knobs remain for fast tuning.
+- **SYNTH / KIT / MIDI / CV choose the mode** of the selected tone: Tone / Binaural / Monaural / Isochronic. The button's LED shows the current mode.
+- The pads light steadily; nothing pulses any more.
+- Isochronic pulses have **attack and release** (0–50, shown as 0–100%, each step 2% of half the cycle length, never shorter than 1 ms).
+- **Triplets** with tempo sync: 1/1T to 1/64T.
+- **Gold knobs by mod section:** Cutoff/Resonance = pitch/beat, Attack/Release = pulse of the selected tone, Sidechain/Reverb = ducking and reverb send of the whole drone. The LED rings show the values.
+- **Sidechain linear:** strength 30 ducks by 8 dB instead of 16 dB.
+- **Reverb send:** The drone can send to the song reverb (0–50).
 
-**Arpeggiator: Ping-Pong-Bounce** (Presets zum Anpassen in `presets/`):
-- **Ratchet notes → Roll:** Die Schläge werden immer schneller wie ein Ping-Pong-Ball zwischen zwei Platten, die sich schliessen. Schlag j liegt bei S·(1 − rʲ) der Ratchet-Länge S, mit r = 0,95 bei Bounce +1 bis 0,5 bei +10. Unter 16 ms Abstand geht es als Wirbel weiter, bis zum nächsten Schlag im Raster. Negativer Bounce spielt dasselbe rückwärts.
-- **Bounce length 1–16:** Ein Ratchet dauert mehrere Arp-Schritte. Die Note bleibt stehen, danach geht der Arp mit der nächsten Note weiter. Rhythmus und Sequenzlänge bleiben im Takt.
-- **Bounce velocity** (früher «Bounce fade»): Even, Fade (wie bisher) oder Rise (lauter, je schneller).
-- Mit Bounce length 1 und ohne Roll spielt alles exakt wie in v12.
+**Arpeggiator: ping-pong bounce** (presets to adapt in `presets/`):
+- **Ratchet notes → Roll:** The hits get faster and faster, like a ping-pong ball between two plates that close in. Hit j falls at S·(1 − rʲ) of the ratchet length S, with r = 0.95 at bounce +1 down to 0.5 at +10. Below 16 ms spacing it continues as a roll, up to the next hit on the grid. Negative bounce plays the same backwards.
+- **Bounce length 1–16:** One ratchet lasts several arp steps. The note holds, then the arp continues with the next note. Rhythm and sequence length stay in time.
+- **Bounce velocity** (formerly "Bounce fade"): Even, Fade (as before) or Rise (louder the faster).
+- With Bounce length 1 and without Roll, everything plays exactly as in v12.
 
-**Pads flimmerfrei gedimmt** (Settings → Community Features → Flicker-free dimming, standardmässig On):
-- **Warum es flimmerte:** 1.2.1 dimmt die Pads über den LED-Controller (PIC) mit Dunkelpausen. Unter 40 % werden die Pausen so lang, dass der ganze Bildaufbau langsamer wird, bei 0 % 6,8-mal.
-- **Neu:** Der PIC frischt immer im vollen Tempo auf und dimmt nur bis 43,5 %. Den Rest dimmt die Firmware über die Farbwerte der Pads, der Sidebar und der Goldknopf-LEDs. Jede Stufe gibt gleich viel Licht wie vorher (im Emulator auf ±1 % geprüft).
-- **Kompromiss:** Die Tasten-LEDs, die 7-Segment-Anzeige und Pads, die der PIC selbst blinken lässt (schneller Play-Cursor, blinkende Shortcuts in Menüs), dimmen nur bis 43,5 %. Sie sind bei ganz tiefer Helligkeit also heller als bisher.
-- **Off** sendet Byte für Byte dasselbe wie 1.2.1, zum Vergleichen.
+**Pads dimmed without flicker** (Settings → Community Features → Flicker-free dimming, On by default):
+- **Why it flickered:** 1.2.1 dims the pads through the LED controller (PIC) with dark pauses. Below 40% the pauses get so long that the whole refresh slows down, 6.8 times at 0%.
+- **New:** The PIC always refreshes at full speed and only dims down to 43.5%. The firmware dims the rest through the color values of the pads, the sidebar and the gold knob LEDs. Every level gives the same amount of light as before (checked in the emulator to ±1%).
+- **Trade-off:** The button LEDs, the 7-segment display and pads that the PIC blinks by itself (fast play cursor, blinking shortcuts in menus) only dim down to 43.5%. So at very low brightness they are brighter than before.
+- **Off** sends byte for byte the same as 1.2.1, for comparison.
 
-**CPU-Monitor in Worten** (Settings → CPU monitor: Off, On, Alerts):
-- Klein oben links, ohne Balken: «CPU 43%  24 voices», also Rechenlast und klingende Stimmen.
-- Darunter, nur wenn es passiert:
-  - «quality lowered»: Der Deluge rechnet einfacher, um mitzukommen.
-  - «voices cut!»: Er schneidet Stimmen ab. Die Meldung blinkt und steht noch 2 s über den letzten Schnitt hinaus.
-- **Alerts:** nur diese Warnungen, sonst nichts.
-- Die SysEx-Werte für `tools/cpu_monitor.html` bleiben gleich (Modus On).
+**CPU monitor in words** (Settings → CPU monitor: Off, On, Alerts):
+- Small, top left, without bars: "CPU 43%  24 voices", i.e. CPU load and sounding voices.
+- Below it, only when it happens:
+  - "quality lowered": The Deluge computes more simply to keep up.
+  - "voices cut!": It cuts voices. The message blinks and stays for 2 s after the last cut.
+- **Alerts:** only these warnings, nothing else.
+- The SysEx values for `tools/cpu_monitor.html` stay the same (mode On).
 
-**Schneller speichern:** Speichern während des Abspielens dauert im Emulator 22 statt 344 ms (Song mit 3 Synths) bzw. 66 statt 716 ms (5 Synths), weiterhin ohne Knacksen.
+**Faster saving:** Saving during playback takes 22 instead of 344 ms in the emulator (song with 3 synths) or 66 instead of 716 ms (5 synths), still without crackle.
 
-**Kein Lade-Fenster mehr beim Durchblättern:** Beim Laden und Speichern läuft eine kleine Animation oben rechts im OLED (aus der Community-Firmware 1.3). Der Presetname bleibt sichtbar.
+**No more loading window when browsing:** When loading and saving, a small animation runs in the top right of the OLED (from community firmware 1.3). The preset name stays visible.
 
-**MIDI- und Gate-Ausgänge genauer:**
-- Ereignisse spät im Audio-Block gingen einen ganzen Block (2,9 ms) zu früh hinaus, vor allem beim Speichern.
-- Ein Fehler aus 1.2.1: Der Zähler des MIDI/Gate-Timers wurde vor dem Start nie auf 0 gesetzt. Ein Lauf konnte darum bis 38 Samples zu früh oder, nach einem Überlauf, rund 127 ms zu spät kommen.
-- Jetzt liegt jeder Timer-Lauf auf ±1,4 Samples genau.
+**MIDI and gate outputs more precise:**
+- Events late in the audio block went out a whole block (2.9 ms) too early, especially when saving.
+- A bug from 1.2.1: the counter of the MIDI/gate timer was never set to 0 before the start. A run could therefore come up to 38 samples too early or, after an overflow, around 127 ms too late.
+- Now every timer run is accurate to ±1.4 samples.
 
-**Leistung:** v12-perf (Filter und Oszillatoren) plus schnellere Spur-Effekte (NEON für Lautstärke, Pan und Reverb-Send, eigene Schleifen für Phaser, Chorus, Flanger, EQ und SRR), alles bitgleich. Im Volllast-Test: Bedarf 89 % statt 118 % (v12); mit Culling wie auf dem Gerät klingen im Mittel 32 statt 21 Stimmen.
+**Performance:** v12-perf (filters and oscillators) plus faster track effects (NEON for volume, pan and reverb send, dedicated loops for phaser, chorus, flanger, EQ and SRR), all bit-identical. In the full-load test: demand 89% instead of 118% (v12); with culling as on the device, on average 32 instead of 21 voices sound.
 
-**Fehler aus 1.2.1 behoben:** LFOs, Mod-FX und Arp starteten nach dem Laden an einer zufälligen Stelle (nicht initialisierter Speicher). Jetzt beginnen sie immer gleich.
+**Bug from 1.2.1 fixed:** LFOs, mod FX and arp started at a random point after loading (uninitialized memory). Now they always start the same way.
 
-**Geprüft:**
-- **Gegenprüfer:** Jede grössere Neuerung wurde von einem unabhängigen Gegenprüfer mit eigenen Angriffsfällen geprüft. Alle Befunde sind behoben und nachgetestet:
-  - Drone: doppelte Song-Lautstärke im Reverb-Send, Grenzfälle bei extremen Beats, 7-Segment-Anzeige, Automation überschrieb die Knopf-LEDs
-  - MIDI: Zählerrest des Timers
-  - Ping-Pong-Arp: hängende Note ohne Sync bei Latch-Wechsel, stille Spannen bei ausgelassener Note, Doppelschläge mit Swing, Sequenzlänge
-  - Pads: ungedimmte Blinkfarben (dokumentiert), kurzer Hell-Blitz beim Umschalten (behoben)
-- **Arp im Emulator mit der echten Firmware:**
-  - jeder Anschlag gegen die Formel, in 7 Fällen (≤ 3 ms Abweichung durch die Audio-Blöcke)
-  - 11 Grenzfälle mit Note-ons und Note-offs (`tests/arp`)
-- **Pads:** was an den PIC geht, auf allen 26 Helligkeitsstufen, On und Off (`tests/pads`).
-- **Song:** Der Volllast-Song klingt bit-gleich, soweit nichts Hörbares geändert wurde.
-- **Build:** ohne neue Warnungen. Zwei komplette Neubauten ergeben dieselbe SHA-256 (je 465 neu übersetzte Dateien, `9ff41174…7c4c50e7`). Die Patches ergeben mit `git am` auf `release_1_2_1` genau diesen Stand.
+**Tested:**
+- **Reviewers:** Every larger addition was checked by an independent reviewer with their own adversarial cases. All findings are fixed and retested:
+  - Drone: double song volume in the reverb send, edge cases with extreme beats, 7-segment display, automation overwrote the knob LEDs
+  - MIDI: leftover timer count
+  - Ping-pong arp: hanging note without sync on a latch change, silent spans on a skipped note, double hits with swing, sequence length
+  - Pads: undimmed blink colors (documented), short bright flash when switching (fixed)
+- **Arp in the emulator with the real firmware:**
+  - every hit against the formula, in 7 cases (≤ 3 ms deviation due to the audio blocks)
+  - 11 edge cases with note-ons and note-offs (`tests/arp`)
+- **Pads:** what goes to the PIC, at all 26 brightness levels, On and Off (`tests/pads`).
+- **Song:** The full-load song sounds bit-identical, as far as nothing audible was changed.
+- **Build:** no new warnings. Two complete rebuilds give the same SHA-256 (465 recompiled files each, `9ff41174…7c4c50e7`). The patches applied with `git am` on `release_1_2_1` give exactly this state.
 
-## v14: Reverb ohne Wabbeln, Delay ohne Tonhöhensprung, Countdown beim Song-Wechsel
+## v14: Reverb without wobble, delay without pitch jumps, countdown on song change
 
-v14 enthält v13 und bringt drei Neuerungen und zwei Korrekturen beim Lesen und Schreiben der Karte. **Auf dem Gerät ist nichts davon getestet.** Geprüft ist alles im Emulator mit dem Maschinencode der Firmware, auf dem PC mit dem Code von Reverb und Delay und von unabhängigen Gegenprüfern.
+v14 contains v13 and adds three new features and two fixes for reading and writing the card. **None of it is tested on the device.** Everything is tested in the emulator with the firmware's machine code, on the PC with the reverb and delay code, and by independent reviewers.
 
-**Reverb: steht still, klarer Einsatz** (Menü Reverb, im Song und in jedem Sound, nach LPF):
-- **Warum es wabbelte:** Die Modelle Mutable und Digital lesen ihre Verzögerungen an langsam wandernden Stellen. Das soll metallisches Klingeln verhindern. Bei einem gehaltenen Ton schwankt der Hall dadurch um etwa 16 dB in der Lautstärke und um 5 Cent (Mutable) bzw. 19 Cent (Digital) in der Tonhöhe. Das ist das Wabbeln und ein guter Teil des Verwaschenen.
-  - Seit v10 lief diese Bewegung beim Mutable-Modell im Tempo des Originals, 16-mal schneller als in 1.2.1.
-- **Modulation 0–50, neu Standard 0:**
-  - Bei 0 steht der Hall still: Ein gehaltener Ton bleibt darin auf 0,2 dB genau. Die Resonanzen ragen beim Mutable-Modell etwa 3 dB mehr heraus als mit voller Bewegung, beim Digital-Modell nicht.
-  - 50 klingt wie v10 bis v13.
-  - Für Freeverb nicht vorhanden, Freeverb moduliert nicht.
-- **Pre-delay 0–100 ms, Standard 0 (alle Modelle):** Der Hall setzt später ein, der trockene Klang steht zuerst für sich. 10–30 ms machen den Hall deutlich klarer, ohne dass er abgesetzt wirkt.
-- **Tipps gegen Verwaschenes:** HPF auf etwa 25 (190 Hz) nimmt den Bass aus dem Hall. Etwas mehr Damping macht die Fahne dunkler. Ohne Modulation klingen beim Mutable-Modell die Höhen etwas länger nach; wem das zu hell ist, nimmt Damping ein paar Schritte höher.
-- Songs ohne diese Einstellungen laden mit Modulation 0 und ohne Pre-delay, also stiller als bisher. Wer den alten Klang will, stellt Modulation auf 50.
+**Reverb: stands still, clear onset** (Reverb menu, in the song and in every sound, after LPF):
+- **Why it wobbled:** The Mutable and Digital models read their delays at slowly moving positions. This is meant to prevent metallic ringing. With a held tone, the reverb therefore fluctuates by about 16 dB in volume and by 5 cents (Mutable) or 19 cents (Digital) in pitch. That is the wobble and a good part of the muddiness.
+  - Since v10 this movement ran at the original's speed on the Mutable model, 16 times faster than in 1.2.1.
+- **Modulation 0–50, new default 0:**
+  - At 0 the reverb stands still: a held tone stays accurate to 0.2 dB in it. On the Mutable model the resonances stick out about 3 dB more than with full movement; on the Digital model they don't.
+  - 50 sounds like v10 to v13.
+  - Not available for Freeverb; Freeverb does not modulate.
+- **Pre-delay 0–100 ms, default 0 (all models):** The reverb starts later; the dry sound stands on its own first. 10–30 ms make the reverb much clearer without it sounding detached.
+- **Tips against muddiness:** HPF at about 25 (190 Hz) takes the bass out of the reverb. A bit more damping makes the tail darker. Without modulation, the highs ring a bit longer on the Mutable model; if that is too bright for you, raise damping a few steps.
+- Songs without these settings load with modulation 0 and without pre-delay, so they sound stiller than before. If you want the old sound, set modulation to 50.
 
-**Delay: Zeitänderung ohne Tonhöhensprung** (Menü Delay, nach Type):
-- **Time change: Fade (neu, Standard) oder Tape.**
-  - Bisher bog eine neue Delay-Zeit die Echos in der Tonhöhe, denn was schon im Puffer lag, spielte schneller oder langsamer ab. Bei 25 % kürzerer Zeit waren das +386 Cent, und das Feedback trug es weiter.
-  - Mit **Fade** startet die neue Zeit in einem frischen Puffer. Der Eingang blendet in 23 ms hinüber, der alte Puffer spielt seine Echos mit alter Zeit und Tonhöhe aus. Die Tonhöhe bleibt auf 0,01 Cent genau.
-  - **Tape** klingt wie bisher, mit Tonhöhengleiten.
-- **Alte Songs:** Delays mit moduliertem oder automatisiertem Delay-Rate laden als Tape, damit sie klingen wie bisher. Alle anderen laden als Fade.
-- **Mitbehoben:**
-  - kein Klick mehr beim ersten Echo nach einer Pause
-  - das Ende der Echos blendet aus statt abzureissen
-  - Delays bis 4 s ohne Aliasing (Puffer bis 4 statt 2 s)
-  - Fehler aus 1.2.1: Unter 3 % Feedback warf der Delay seinen Puffer bei jeder Runde weg.
-- **Rechenlast:** +0,8 % pro Delay im Ruhezustand, +1,1 % während eines Wechsels.
+**Delay: time change without pitch jump** (Delay menu, after Type):
+- **Time change: Fade (new, default) or Tape.**
+  - Until now a new delay time bent the echoes in pitch, because what was already in the buffer played back faster or slower. With a 25% shorter time that was +386 cents, and the feedback carried it on.
+  - With **Fade** the new time starts in a fresh buffer. The input crossfades over in 23 ms; the old buffer plays out its echoes with the old time and pitch. The pitch stays accurate to 0.01 cents.
+  - **Tape** sounds as before, with pitch gliding.
+- **Old songs:** Delays with a modulated or automated delay rate load as Tape, so they sound as before. All others load as Fade.
+- **Also fixed:**
+  - no more click on the first echo after a pause
+  - the end of the echoes fades out instead of cutting off
+  - delays up to 4 s without aliasing (buffer up to 4 instead of 2 s)
+  - bug from 1.2.1: below 3% feedback the delay threw its buffer away on every round.
+- **CPU load:** +0.8% per delay at rest, +1.1% during a change.
 
-**Song-Wechsel mit Countdown** (Song laden, während einer spielt):
-- **Countdown:** Solange Wiederholungen bleiben, zählt er die Loops, in der letzten Loop die Takte, im letzten Takt die Beats 4-3-2-1. Er stimmt auch mit Swing und externer MIDI-Clock.
-  - **OLED:** dauerhaft in der Titelzeile, z. B. «Bars remaining 3». Die Songliste mit dem nächsten Song bleibt sichtbar.
-  - **7-Segment:** die Zahl, blinkend solange Loops gezählt werden. Beats tragen einen Punkt, damit man sie von Takten unterscheidet.
-- **Regler bis zum Wechsel:** Ab LOAD steuern Goldknöpfe und Mod-Tasten die Master-FX des laufenden Songs, auch wenn Affect Entire aus ist. Der neue Song behält seine eigenen Werte. Beim Wechsel zeigt nichts mehr auf den alten Song.
+**Song change with countdown** (load a song while one is playing):
+- **Countdown:** As long as repeats remain, it counts the loops, in the last loop the bars, in the last bar the beats 4-3-2-1. It is also correct with swing and external MIDI clock.
+  - **OLED:** permanently in the title line, e.g. "Bars remaining 3". The song list with the next song stays visible.
+  - **7-segment:** the number, blinking while loops are counted. Beats carry a dot so you can tell them from bars.
+- **Controls until the change:** From LOAD on, the gold knobs and mod buttons control the master FX of the playing song, even if Affect Entire is off. The new song keeps its own values. At the change nothing points to the old song any more.
 
-**Karte: zwei seltene Fehler behoben** (gefunden vom Gegenprüfer der L2-Testversionen):
-- **Cache-Pflege aus 1.2.1:** Rund um jede Übertragung von und zur Karte konnte ein gleichzeitiger Schreibzugriff direkt neben dem Puffer verloren gehen. Jetzt so, wie Linux es seit 2014 macht.
-- **SD-Karte über USB (seit v7):** Die Puffer teilten Cache-Zeilen mit der Speicherverwaltung. Beim Kopieren konnten so in seltenen Fällen falsche Bytes in die Datei geraten. Jetzt haben sie eigene Cache-Zeilen.
+**Card: two rare bugs fixed** (found by the reviewer of the L2 test versions):
+- **Cache maintenance from 1.2.1:** Around every transfer from and to the card, a simultaneous write right next to the buffer could get lost. Now done the way Linux has done it since 2014.
+- **SD card over USB (since v7):** The buffers shared cache lines with the memory management. When copying, wrong bytes could therefore end up in the file in rare cases. Now they have their own cache lines.
 
-**Geprüft:**
-- **Reverb** (`tests/reverb`, Code der Firmware auf dem PC):
-  - 47 Prüfungen aus v10 bei voller Modulation, alle bestanden.
-  - 14 neue Prüfungen: Ein gehaltener Ton bleibt bei Modulation 0 auf 0,17 dB (Mutable) bzw. 0,36 dB (Digital) genau, bei 50 schwankt er um 5,6 dB bzw. 19,5 dB. Pre-delay verschiebt den Hall Bit für Bit genau, und beim Einschalten kommt kein alter Klang heraus.
-- **Song im Emulator:**
-  - Mit Modulation 50 klingt der Volllast-Song beim Mutable-Modell Bit für Bit wie v13.
-  - Beim Digital-Modell weichen 176 von 705 792 Samples um 1 LSB ab, eine Rundungsfrage.
-- **Delay** (`tests/delay`): Tonhöhe, Artefakte, erstes Echo und Echo-Ende auf dem PC. Im Emulator zusätzlich die Wahl Fade/Tape für alte Songs.
-- **Song-Wechsel** (`tests/songchange`, Emulator, auf dem fertigen v14-Build): Countdown in rund 5000 Audio-Fenstern, höchstens 15 ms später als die Takt- und Beatgrenzen. Dazu kommen Swing, externe Clock mit 123 BPM, Stopp während des Wartens, die Regler auf dem laufenden Song und der Punkt für Beats, zusammen 131 Prüfungen. Ein Gegenprüfer fand zwei kleine Punkte, beide sind behoben (Punkt für Beats, hängendes Popup).
-- **SD-Karte über USB** (`tests/smsysex`): Host-Test mit AddressSanitizer auf einer FAT32-RAM-Disk, alle Prüfungen bestanden.
-- **Build:** ohne neue Warnungen. Zwei komplette Neubauten ergeben dieselbe SHA-256 (je 465 neu übersetzte Dateien, `cb17bbb3…8e23e6e5`). Die Patches ergeben mit `git am` auf `release_1_2_1` genau diesen Stand.
+**Tested:**
+- **Reverb** (`tests/reverb`, the firmware's code on the PC):
+  - 47 checks from v10 at full modulation, all passed.
+  - 14 new checks: at modulation 0 a held tone stays accurate to 0.17 dB (Mutable) or 0.36 dB (Digital); at 50 it fluctuates by 5.6 dB or 19.5 dB. Pre-delay shifts the reverb exactly, bit for bit, and no old sound comes out when switching it on.
+- **Song in the emulator:**
+  - With modulation 50 the full-load song on the Mutable model sounds bit for bit like v13.
+  - On the Digital model 176 of 705,792 samples differ by 1 LSB, a matter of rounding.
+- **Delay** (`tests/delay`): pitch, artifacts, first echo and echo end on the PC. In the emulator also the Fade/Tape choice for old songs.
+- **Song change** (`tests/songchange`, emulator, on the finished v14 build): countdown in around 5000 audio windows, at most 15 ms later than the bar and beat boundaries. Plus swing, external clock at 123 BPM, stop while waiting, the controls on the playing song and the dot for beats, 131 checks in total. A reviewer found two small points; both are fixed (dot for beats, hanging popup).
+- **SD card over USB** (`tests/smsysex`): host test with AddressSanitizer on a FAT32 RAM disk, all checks passed.
+- **Build:** no new warnings. Two complete rebuilds give the same SHA-256 (465 recompiled files each, `cb17bbb3…8e23e6e5`). The patches applied with `git am` on `release_1_2_1` give exactly this state.
 
-## v15: lebendige Drone, CPU-Monitor in einer Zeile, drei Korrekturen aus der Community
+## v15: Living drone, CPU monitor in one line, three fixes from the community
 
-v15 enthält v14. **Auf dem Gerät ist nichts davon getestet.** Geprüft ist alles im Emulator mit dem Maschinencode der Firmware, auf dem PC mit dem Code der Drone und von einem unabhängigen Gegenprüfer. Mit L2-Cache gibt es v15 als Testversionen in `l2test/`.
+v15 contains v14. **None of it is tested on the device.** Everything is tested in the emulator with the firmware's machine code, on the PC with the drone code, and by an independent reviewer. With L2 cache, v15 is available as test versions in `l2test/`.
 
-**Drone: lebt wie ein gespieltes Instrument** (für den ganzen Drone, im Menü des Drones und auf den Goldknöpfen):
-- **Life 0–50:** Jeder Ton wandert auf eigenen, langsamen Zufallsbahnen, die sich nie wiederholen.
-  - Tonhöhe ±6 Cent, Lautstärke ±3 dB («Atem»), Helligkeit und Stereo-Position («Schimmer»), alles wachsend mit Life.
-  - Beide Seiten eines schwebenden Tons wandern gemeinsam, der Beat bleibt genau wie eingestellt.
-- **Rate 0–50:** wie schnell. 25 ist die Grundeinstellung; je 12,5 Schritte doppelt oder halb so schnell.
-- **FM 0–50:** Ein Modulator knapp neben dem Ton (0,3 Hz daneben) färbt ihn, die Tiefe blüht auf und klingt ab.
-  - **FM form:** Sine (weich) oder Saw (heller, blecherner). Der Wechsel blendet über.
-  - Für hohe Töne wird die Tiefe begrenzt, damit nichts hörbar spiegelt.
-- **Neue Klangfarbe Pulse:** ein bandbegrenzter Puls. **Pulse width 5–50 %** (Standard 30), mit Life wandert die Breite.
-- **Bedienung:** In der Drone-Ansicht die Mod-Taste **Delay** wählen: oberer Goldknopf Life, unterer Rate. Mod-Taste **ModFX**: oben FM (drücken: Sine oder Saw), unten Pulse width. Popups und LED-Ringe wie bei den anderen Sektionen.
-- **Bei Life 0 und FM 0 ohne Pulse klingt der Drone Bit für Bit wie in v14.** Änderungen von Life und FM gleiten, ein Wechsel zu oder von Pulse geht wie bisher durch Stille.
-- **Song-Datei:** neue Attribute am Drone. Ältere Songs laden mit Life und FM 0. Ältere Firmware ignoriert die Attribute, ein Pulse-Ton wird dort Rich.
-- **Rechenlast pro binauralem Ton:**
-  - ohne Leben 0,6 % CPU
-  - Life 0,7–1,0 %
-  - FM 1,3 %
-  - Pulse 1,0 %
-  - alles zusammen 2,1 %
-  - 16 Töne mit allem: gut 30 %
-  - Der Drone wird nicht wie Synth-Stimmen gekürzt. Viele lebendige Töne in einem vollen Song also mit Blick auf den CPU-Monitor.
+**Drone: alive like a played instrument** (for the whole drone, in the drone's menu and on the gold knobs):
+- **Life 0–50:** Each tone wanders along its own slow random paths that never repeat.
+  - Pitch ±6 cents, volume ±3 dB ("breath"), brightness and stereo position ("shimmer"), all growing with Life.
+  - Both sides of a beating tone wander together; the beat stays exactly as set.
+- **Rate 0–50:** how fast. 25 is the default; every 12.5 steps twice or half as fast.
+- **FM 0–50:** A modulator just next to the tone (0.3 Hz off) colors it; the depth blooms and decays.
+  - **FM form:** Sine (soft) or Saw (brighter, tinnier). The switch crossfades.
+  - For high tones the depth is limited so nothing audibly aliases.
+- **New timbre Pulse:** a band-limited pulse. **Pulse width 5–50%** (default 30); with Life the width wanders.
+- **Controls:** In the drone view select the **Delay** mod button: upper gold knob Life, lower Rate. Mod button **ModFX**: upper FM (press: Sine or Saw), lower Pulse width. Popups and LED rings as for the other sections.
+- **At Life 0 and FM 0 without Pulse the drone sounds bit for bit as in v14.** Changes of Life and FM glide; a switch to or from Pulse goes through silence as before.
+- **Song file:** new attributes on the drone. Older songs load with Life and FM at 0. Older firmware ignores the attributes; a Pulse tone becomes Rich there.
+- **CPU load per binaural tone:**
+  - without Life 0.6% CPU
+  - Life 0.7–1.0%
+  - FM 1.3%
+  - Pulse 1.0%
+  - everything together 2.1%
+  - 16 tones with everything: a good 30%
+  - The drone is not culled like synth voices. So use many living tones in a full song with an eye on the CPU monitor.
 
-**CPU-Monitor: eine Zeile, halbe Höhe** (Settings → CPU monitor):
-- Oben links nur noch z. B. «CPU 97% 13V QL VC».
-  - **V:** klingende Stimmen
-  - **QL** (quality lowered): Der Deluge rechnet einfacher, um mitzukommen.
-  - **VC** (voices cut): Er schneidet Stimmen ab. VC blinkt und steht noch 2 s über den letzten Schnitt hinaus.
-- **QL und VC erscheinen nur, solange es passiert.** Modus **Alerts** zeigt nur sie.
+**CPU monitor: one line, half the height** (Settings → CPU monitor):
+- Top left, only e.g. "CPU 97% 13V QL VC".
+  - **V:** sounding voices
+  - **QL** (quality lowered): The Deluge computes more simply to keep up.
+  - **VC** (voices cut): It cuts voices. VC blinks and stays for 2 s after the last cut.
+- **QL and VC only appear while it is happening.** Mode **Alerts** shows only them.
 
-**Drei Korrekturen aus der Community-Firmware:**
-- **Section-Start per CC:** Ein Section-Start, der auf einen CC gelernt ist, ging beim Laden des Songs verloren (Noten blieben). Jetzt bleibt er.
-- **USB-MIDI vom Computer:** Kam MIDI schneller als einmal pro Millisekunde (dichte Automationen aus der DAW, SysEx, der Kartenzugriff über USB aus v7), gingen Pakete verloren. Jetzt wartet der Computer, bis der Deluge bereit ist.
-- **Clock-Ausgänge unter externer MIDI-Clock:** Folgte der Deluge einer externen Clock, stoppten Gate-Clock und MIDI-Clock-Ausgang nach einem kurzen Stoss. Jetzt laufen beide im Takt der eingehenden Clock weiter. Mit der eigenen Clock bleibt alles wie bisher.
+**Three fixes from the community firmware:**
+- **Section launch by CC:** A section launch learned to a CC was lost when the song was loaded (notes were kept). Now it is kept.
+- **USB MIDI from the computer:** If MIDI came faster than once per millisecond (dense automation from the DAW, SysEx, the card access over USB from v7), packets were lost. Now the computer waits until the Deluge is ready.
+- **Clock outputs under external MIDI clock:** When the Deluge followed an external clock, the gate clock and MIDI clock output stopped after a short burst. Now both keep running in time with the incoming clock. With the internal clock everything stays as before.
 
-**Geprüft:**
-- **Drone** (`tests/drone`, Code der Firmware auf dem PC, mit UndefinedBehaviorSanitizer): 116 Prüfungen, alle bestanden.
-  - Life und FM aus: Bit für Bit v14.
-  - Drift 6 Cent, Atem 3 dB, jede Bahn eigenständig.
-  - FM-Seitenbänder, Spiegelung bei hohen Tönen, Pulsbreite.
-  - Keine Klicks bei Änderungen, Song-Datei hin und zurück.
-- **Gegenprüfer** (Code, Messungen auf PC und im Emulator): vier Befunde, alle behoben.
-  - Ein Ton genau an der 18-kHz-Grenze seiner Obertöne (z. B. Rich auf 2250 Hz, Pulse auf 1500 Hz) wechselte beim Wandern die Obertontabelle, etwa zehnmal in 30 s, jedes Mal ein leiser Tick. Jetzt bleibt die Tabelle. Ein neuer Test prüft das: vorher 97–169 von 322 Abschnitten betroffen, jetzt keiner.
-  - Ein Nachklang im Gleichspannungsfilter nach einem Moduswechsel mit FM.
-  - Der LED-Ring von Rate zeigt die Mitte als Grundeinstellung.
-  - Die Anzeige beim Umschalten der FM-Form wird aufgefrischt.
-- **Song im Emulator:** Der Volllast-Song klingt Bit für Bit wie v14, mit Mutable und mit Digital.
-- **Clock** (`tests/clock`, Emulator): externe MIDI-Clock mit 123 BPM über 4 Takte.
-  - v14: 0 Ticks an beiden Ausgängen.
-  - v15: MIDI-Clock 96 pro Takt, so viele wie hereinkommen; die Gate-Clock gleichmässig in jedem Takt.
-  - Mit der eigenen Clock gleich wie v14.
-- **Section-Start** (`tests/sections`, Emulator): Note, CC und MPE-Zone bleiben nach dem Laden erhalten. v14 verlor den CC.
-- **USB-MIDI:** wie in der Community-Firmware übernommen, im Code geprüft. Den USB-Controller bildet der Emulator nicht ab.
-- **CPU-Monitor** (`tests/cpu_stats`): Zeile mit und ohne QL/VC, Decoder von `tools/cpu_monitor.html` unverändert.
-- **Song-Wechsel** (`tests/songchange`): Countdown und Regler wie in v14.
-- **Build:** ohne neue Warnungen. Zwei komplette Neubauten ergeben dieselbe SHA-256 (je 466 neu übersetzte Dateien, `cdce07f3…da7ca652`). Die Patches ergeben mit `git am` auf `release_1_2_1` genau diesen Stand.
+**Tested:**
+- **Drone** (`tests/drone`, the firmware's code on the PC, with UndefinedBehaviorSanitizer): 116 checks, all passed.
+  - Life and FM off: bit for bit v14.
+  - Drift 6 cents, breath 3 dB, each path independent.
+  - FM sidebands, aliasing at high tones, pulse width.
+  - No clicks on changes, song file round trip.
+- **Reviewer** (code, measurements on the PC and in the emulator): four findings, all fixed.
+  - A tone right at the 18 kHz limit of its harmonics (e.g. Rich at 2250 Hz, Pulse at 1500 Hz) switched harmonic tables while wandering, about ten times in 30 s, each time with a quiet tick. Now the table stays. A new test checks this: before, 97–169 of 322 sections were affected, now none.
+  - A residual sound in the DC filter after a mode change with FM.
+  - The Rate LED ring shows the middle as the default.
+  - The display is refreshed when switching the FM form.
+- **Song in the emulator:** The full-load song sounds bit for bit like v14, with Mutable and with Digital.
+- **Clock** (`tests/clock`, emulator): external MIDI clock at 123 BPM over 4 bars.
+  - v14: 0 ticks at both outputs.
+  - v15: MIDI clock 96 per bar, as many as come in; the gate clock evenly in every bar.
+  - With the internal clock the same as v14.
+- **Section launch** (`tests/sections`, emulator): note, CC and MPE zone are kept after loading. v14 lost the CC.
+- **USB MIDI:** adopted as in the community firmware, checked in the code. The emulator does not model the USB controller.
+- **CPU monitor** (`tests/cpu_stats`): line with and without QL/VC, decoder of `tools/cpu_monitor.html` unchanged.
+- **Song change** (`tests/songchange`): countdown and controls as in v14.
+- **Build:** no new warnings. Two complete rebuilds give the same SHA-256 (466 recompiled files each, `cdce07f3…da7ca652`). The patches applied with `git am` on `release_1_2_1` give exactly this state.
 
-## v16: Drone-Spuren, Profiler, USB audio bleibt an
+## v16: Drone tracks, profiler, USB audio stays on
 
-v16 enthält v15. **Auf dem Gerät ist nichts davon getestet.** Geprüft ist alles im Emulator mit dem Maschinencode der Firmware, auf dem PC mit dem Code der Drone und von einem unabhängigen Gegenprüfer. Mit L2-Cache gibt es v16 als Testversionen in `l2test/`.
+v16 contains v15. **None of it is tested on the device.** Everything is tested in the emulator with the firmware's machine code, on the PC with the drone code, and by an independent reviewer. With L2 cache, v16 is available as test versions in `l2test/`.
 
-**Drone-Spuren: Drones in Song- und Arranger-View platzieren und überlagern:**
-- **Was es ist:** eine Kit-Spur, deren Reihen Drone-Töne sind. Ihre Clips starten in der Song-View und liegen im Arranger wie die jedes Kits. So lassen sich Drones gezielt setzen und überlagern, jede Spur mit den Effekten, der Lautstärke und der Sidechain ihres Kits.
-- **Die Noten sind das Gate:** Solange eine Note dauert, klingt der Ton der Reihe. Er blendet weich ein und aus wie beim Song-Drone. Eine Note über den ganzen Clip hält über die Loop-Grenze. Mit dem Arpeggiator der Reihe pulsiert der Ton im Rhythmus.
-- **Drone-Spur erstellen:** In der Drone-Ansicht **Shift + Kit**.
-  - Das ergibt ein neues Kit (DRONE1, DRONE2, …) mit 16 Drone-Reihen, den Tönen des Song-Drones.
-  - Die eingeschalteten Töne bekommen eine Note über den ganzen Clip.
-  - Der Clip steht unten in der Song-View, noch nicht gestartet. Gestartet klingt er wie der Drone, gleich laut. Der Song-Drone selbst bleibt, wie er ist.
-- **Eine Kit-Reihe zur Drone-Reihe machen:** In der Clip-View eines Kits das Audition-Pad der Reihe halten (oder eine neue Reihe anlegen), dann **Shift + Kit**. Die Reihe klingt dann mit 200 Hz. Kit allein öffnet wie bisher den Sample-Browser.
-- **Tonhöhe spielen:** In der Clip-View eine Drone-Reihe wählen, mit ihrem Audition-Pad (Affect Entire aus).
-  - **Select drehen:** 1 Hz pro Raste, mit Shift 0,1 Hz.
-  - **Oberer Goldknopf:** 1 Hz, schnell gedreht 10 Hz, mit Shift 0,01 Hz. Bei einem Ton als Note: Halbtöne, mit Shift Cent.
-  - **Unterer Goldknopf:** Pegel der Reihe.
-  - **Select drücken:** das Ton-Menü der Reihe (Modus, Tonhöhe, Beat, Sync, Puls, Klangfarbe, Pegel, Pan, Arpeggiator).
-  - Das OLED zeigt Modus und Hz als Namen der Reihe, die 7-Segment-Anzeige die Hz.
-  - Das Pad einer Reihe, die gerade aus dem Sequenzer klingt, wählt sie nur aus. Sie klingt weiter.
-- **Hz-Wechsel aufnehmen:** **PLAY**, dann **REC**, dann Select oder den oberen Goldknopf drehen.
-  - Jeder Wechsel landet als Knoten in der Hz-Spur der Reihe und spielt im nächsten Loop wieder ab. Zwischen den Knoten gleitet der Ton in etwa 15 ms.
-  - Das geht auch in den Arranger, wie jede Aufnahme.
-  - Ohne REC ändert sich der Grundton der Reihe, die aufgenommene Spur verschiebt sich mit.
-  - Unter REC nimmt Shift + Select die feinen 0,1-Hz-Schritte auf. Shift + oberer Goldknopf löscht die Hz-Spur wie jede Automation, die Reihe kehrt dann sofort zu ihrem Grundton zurück.
-- **Die Hz-Spur bleibt:** Noten aufnehmen, verschieben oder euklidisch verteilen lassen sie unverändert. Die Noten sind nur das Gate.
-- **MIDI:** Pitch-Bend auf einer Drone-Reihe wirkt im Bend-Bereich der Reihe (Standard 2 Halbtöne) und wird unter REC ebenfalls aufgenommen.
-- **Rechenzeit:** pro klingender Reihe 0,3–0,45 % CPU, 16 Reihen 5–7 %. Reihen mit geschlossenem Gate kosten nichts.
-- **Song-Datei:** neue Reihen `<droneTone …>` mit den Attributen der Drone-Töne. Die Hz-Spur liegt in den Noten-Daten der Reihe.
-  - Ältere Firmware überspringt Drone-Reihen, alle anderen Reihen bleiben richtig, denn v16 speichert die Drone-Reihen zuletzt.
-  - Ein v16-Song mit Drone-Spuren sollte trotzdem nicht in älterer Firmware gespeichert werden: Dort gehen die Drone-Reihen verloren.
+**Drone tracks: place and layer drones in song and arranger view:**
+- **What it is:** a kit track whose rows are drone tones. Its clips launch in song view and sit in the arranger like those of any kit. That way drones can be placed and layered deliberately, each track with the effects, volume and sidechain of its kit.
+- **The notes are the gate:** As long as a note lasts, the row's tone sounds. It fades in and out softly as with the song drone. A note across the whole clip holds across the loop boundary. With the row's arpeggiator the tone pulses in rhythm.
+- **Creating a drone track:** In the drone view, **Shift + Kit**.
+  - This creates a new kit (DRONE1, DRONE2, …) with 16 drone rows, the tones of the song drone.
+  - The tones that are switched on get a note across the whole clip.
+  - The clip sits at the bottom of song view, not yet launched. Once launched it sounds like the drone, equally loud. The song drone itself stays as it is.
+- **Turning a kit row into a drone row:** In a kit's clip view hold the row's audition pad (or create a new row), then **Shift + Kit**. The row then sounds at 200 Hz. Kit alone opens the sample browser as before.
+- **Playing the pitch:** In clip view select a drone row with its audition pad (Affect Entire off).
+  - **Turn Select:** 1 Hz per detent, 0.1 Hz with Shift.
+  - **Upper gold knob:** 1 Hz, 10 Hz when turned fast, 0.01 Hz with Shift. For a tone set as a note: semitones, cents with Shift.
+  - **Lower gold knob:** the row's level.
+  - **Press Select:** the row's tone menu (mode, pitch, beat, sync, pulse, timbre, level, pan, arpeggiator).
+  - The OLED shows the mode and Hz as the row's name, the 7-segment display the Hz.
+  - The pad of a row that is currently sounding from the sequencer only selects it. It keeps sounding.
+- **Recording Hz changes:** **PLAY**, then **REC**, then turn Select or the upper gold knob.
+  - Each change lands as a node in the row's Hz lane and plays back in the next loop. Between the nodes the tone glides in about 15 ms.
+  - This also works into the arranger, like any recording.
+  - Without REC the row's base pitch changes, and the recorded lane shifts along with it.
+  - With REC on, Shift + Select records the fine 0.1 Hz steps. Shift + upper gold knob deletes the Hz lane like any automation; the row then returns to its base pitch immediately.
+- **The Hz lane stays:** Recording, moving or Euclidean-distributing notes leaves it unchanged. The notes are only the gate.
+- **MIDI:** Pitch bend on a drone row acts within the row's bend range (default 2 semitones) and is also recorded with REC on.
+- **CPU time:** 0.3–0.45% CPU per sounding row, 16 rows 5–7%. Rows with a closed gate cost nothing.
+- **Song file:** new rows `<droneTone …>` with the attributes of the drone tones. The Hz lane is in the row's note data.
+  - Older firmware skips drone rows; all other rows stay correct, because v16 saves the drone rows last.
+  - A v16 song with drone tracks should still not be saved in older firmware: the drone rows get lost there.
 
-**Profiler** (Settings → CPU monitor → **Profile**): wie in der Messversion `prof/`, siehe dort. Er zeigt am Computer die Rechenzeit pro Spur, Task und Funktion (`tools/profiler.html`). Die Symbol-Datei zu v16 liegt neben der Firmware.
+**Profiler** (Settings → CPU monitor → **Profile**): as in the measurement version `prof/`, see there. It shows the CPU time per track, task and function on the computer (`tools/profiler.html`). The symbol file for v16 is next to the firmware.
 
-**USB audio bleibt nach dem Neustart an:** Bisher speicherte das Settings-Menü seine Werte erst beim Verlassen. USB audio verlangt beim Einschalten einen Neustart, und wer direkt aus dem Menü neu startete, fand es danach wieder aus. v16 speichert diese Einstellung sofort. Mit älteren Versionen: vor dem Neustart das Menü mit Back verlassen.
+**USB audio stays on after a restart:** Until now the Settings menu saved its values only when you left it. USB audio requires a restart when switched on, and anyone who restarted directly from the menu found it off again afterwards. v16 saves this setting immediately. With older versions: leave the menu with Back before restarting.
 
-**Geprüft:**
-- **Drone** (`tests/drone`, PC): 150 Prüfungen. Der Song-Drone klingt Bit für Bit wie in v15.
-- **Emulator** (`tests/song`, DRONE=1, 60 Prüfungen):
-  - eine Drone-Reihe klingt mit ihren Hz und folgt der Hz-Spur (300,009 Hz)
-  - ihr Pegel liegt 0,00 dB neben einem gleich eingestellten Ton des Song-Drones
-  - Speichern und Laden ergeben dieselben Samples
-  - REC nimmt Hz-Wechsel auf (250, 260, 220 Hz) und spielt sie ab
-  - eine Kit-Reihe wird zur Drone-Reihe
-  - Speichern während der Wiedergabe: kein Einbruch (vorher bis 25 dB, jetzt 0,003 dB)
-  - Noten aufnehmen, verschieben und euklidisch verteilen lassen die Hz-Spur unverändert
-  - Shift beim Aufnehmen, MIDI-Pitch-Bend, das Pad während einer Note
-- **Song-Wechsel** (`tests/songchange`): 131 Prüfungen. Der Gegenprüfer spielte ihn zusätzlich mit einer laufenden Drone-Spur durch, ohne Absturz.
-- **Der Volllast-Song** klingt Bit für Bit wie v15. Songs ohne Drone-Spuren speichern dasselbe XML wie v15.
-- **Gegenprüfer:** sieben Befunde, alle behoben, jeder mit einem Test.
-  - Der wichtigste war ein Datenverlust: Eine live aufgenommene Note setzte die Hz-Spur ab dieser Stelle zurück.
-  - Dazu kommt die Pad-Auswahl während einer Note: Die Reihe verstummte bis zur nächsten Note.
-- **USB audio** (`tests/settings`, Emulator): eingeschaltet, ohne das Menü zu verlassen, dann neu gestartet. Die Karte hält den Wert, das Menü zeigt nach dem Neustart an. 2 von 2 Prüfungen, mit v15 0 von 2.
-- **Profiler:** wie in `prof/README.md`, mit v16 erneut im Emulator: 21 Prüfungen bestanden.
-- **Build:** ohne neue Warnungen. Je zwei komplette Neubauten ergeben dieselbe SHA-256, auch bei den beiden L2-Versionen. Alle Prüfungen oben liefen auf genau diesen Builds, dazu Clock, Sections und L2 wie in v15 (`tests/clock`, `tests/sections`, `tests/l2`). Der Volllast-Song klingt auch mit L2 Bit für Bit wie v15.
+**Tested:**
+- **Drone** (`tests/drone`, PC): 150 checks. The song drone sounds bit for bit as in v15.
+- **Emulator** (`tests/song`, DRONE=1, 60 checks):
+  - a drone row sounds at its Hz and follows the Hz lane (300.009 Hz)
+  - its level is 0.00 dB off an identically set tone of the song drone
+  - saving and loading give the same samples
+  - REC records Hz changes (250, 260, 220 Hz) and plays them back
+  - a kit row becomes a drone row
+  - saving during playback: no dip (before up to 25 dB, now 0.003 dB)
+  - recording, moving and Euclidean-distributing notes leave the Hz lane unchanged
+  - Shift while recording, MIDI pitch bend, the pad during a note
+- **Song change** (`tests/songchange`): 131 checks. The reviewer also ran it with a playing drone track, without a crash.
+- **The full-load song** sounds bit for bit like v15. Songs without drone tracks save the same XML as v15.
+- **Reviewer:** seven findings, all fixed, each with a test.
+  - The most important was a data loss: a note recorded live reset the Hz lane from that point on.
+  - Another was pad selection during a note: the row went silent until the next note.
+- **USB audio** (`tests/settings`, emulator): switched on without leaving the menu, then restarted. The card holds the value; the menu shows on after the restart. 2 of 2 checks, with v15 0 of 2.
+- **Profiler:** as in `prof/README.md`, again in the emulator with v16: 21 checks passed.
+- **Build:** no new warnings. Two complete rebuilds each give the same SHA-256, also for the two L2 versions. All checks above ran on exactly these builds, plus clock, sections and L2 as in v15 (`tests/clock`, `tests/sections`, `tests/l2`). The full-load song also sounds bit for bit like v15 with L2.
 
-## v17: halbe Last, Song-Übersicht, Drone-Ansicht ohne Hänger, CPU-Monitor-Kürzel, leiserer HPF-Pfeifton
+## v17: Half the load, song browser, drone view without hangs, CPU monitor shortcut, quieter HPF whistle
 
-v17 enthält v16. **Die Hauptdatei hat den L2-Cache für Code und Daten** (bisher `l2test/…-l2d`). Mit v16-l2d war «New Sitar Grii 10» am Gerät hörbar besser, und es gab keinen Absturz. Stürzt v17-l2d ab oder verhält es sich seltsam, liegt daneben dieselbe Version ohne L2. **v17 selbst ist auf dem Gerät noch nicht getestet.** Geprüft ist alles im Emulator mit dem Maschinencode der Firmware.
+v17 contains v16. **The main file has the L2 cache for code and data** (previously `l2test/…-l2d`). With v16-l2d, "New Sitar Grii 10" was audibly better on the device, and there was no crash. If v17-l2d crashes or behaves strangely, the same version without L2 is right next to it. **v17 itself has not been tested on the device yet.** Everything is tested in the emulator with the firmware's machine code.
 
-**Weniger Last** (Patches 0056–0064, 0072, 0073):
-- **Aufgabenplanung korrigiert:**
-  - Seit 1.2.1 ergibt ein Rechenfehler (`16 / 44100` als ganze Zahl) das Intervall 0. Die Audio-Routine lief darum etwa alle 12 µs, mit 4–12 Samples pro Durchgang.
-  - Jeder Durchgang geht alle Spuren durch und richtet ihre Effekte ein. Das kostet bei kleinen Blöcken ein Vielfaches.
-- **Mindestfenster:**
-  - Bis 65 % Last rechnet die Audio-Routine in Blöcken von 60 Samples, sonst wie bisher. Qualität gesenkt oder Kartenzugriffe schalten das Mindestfenster ab.
-  - Sie beginnt so früh, dass der Puffer seine Reserve behält.
-- **Keine unnötig abgeschnittenen Stimmen beim Streamen:** Culling und Qualitätssenkung richten sich nach der Rechenzeit der Audio-Routine selbst, nicht mehr nach der Dauer des Lade-Tasks samt Wartezeit auf die Karte.
-- **Stille Spuren:** Kits und Audiospuren, die nichts ausgeben, prüfen das, bevor sie ihre Effektkette einrichten. Das sind 210 statt 550 Befehle pro Spur, Bit für Bit gleich.
-- **CPU-Monitor:** Durchgänge, die nichts rechnen, zählen nicht als belegt. Die Anzeige zeigt so die echte Last.
+**Less load** (patches 0056–0064, 0072, 0073):
+- **Scheduling fixed:**
+  - Since 1.2.1 a calculation error (`16 / 44100` as an integer) gives the interval 0. The audio routine therefore ran about every 12 µs, with 4–12 samples per pass.
+  - Every pass goes through all tracks and sets up their effects. With small blocks this costs many times as much.
+- **Minimum window:**
+  - Up to 65% load the audio routine computes in blocks of 60 samples, otherwise as before. Lowered quality or card accesses switch the minimum window off.
+  - It starts early enough for the buffer to keep its reserve.
+- **No needlessly cut voices when streaming:** Culling and quality reduction are based on the CPU time of the audio routine itself, no longer on the duration of the loading task including the wait for the card.
+- **Silent tracks:** Kits and audio tracks that output nothing check this before setting up their effects chain. That is 210 instead of 550 instructions per track, bit for bit the same.
+- **CPU monitor:** Passes that compute nothing do not count as busy. So the display shows the real load.
 
 | Emulator | v16 | v17 |
 |---|---|---|
-| «New Sitar Grii 10» beim Spielen, CPU-Anzeige | 93 % | 41 % |
-| dasselbe, Schätzung fürs Gerät mit Speicherzeiten | 117 % | 47 % |
-| dasselbe, die fünf Kits | 38 % der Zeit | 14 % |
-| grosser Song im Leerlauf (`tests/sdload`) | 90 % | 12 % |
-| typisches Streaming, CPU-Anzeige | 93 % | 38 % |
-| abgeschnittene Stimmen beim Streamen | 25 | 0 |
+| "New Sitar Grii 10" while playing, CPU display | 93% | 41% |
+| the same, estimate for the device with memory timings | 117% | 47% |
+| the same, the five kits | 38% of the time | 14% |
+| large song idling (`tests/sdload`) | 90% | 12% |
+| typical streaming, CPU display | 93% | 38% |
+| cut voices when streaming | 25 | 0 |
 
-- **Warum die Kits so teuer waren:** wegen der winzigen Rechenblöcke, nicht wegen 432 Hz. Bei 432 Hz kostet «New Sitar Grii 10» im Emulator 0,2 % mehr als bei 440 Hz, weil seine Samples ohnehin transponiert klingen.
-- **Der Preis:** Live gespielte Noten beginnen bei leichter Last mit dem nächsten Block, im Mittel etwa 0,5 ms später. Die Reserve gegen Aussetzer ist kleiner: im Emulator mindestens 63 Samples (1,4 ms), in keinem Test ein Aussetzer.
-- **Externe Clock:** Ein Clock-Byte, das spät gelesen wird, tickt jetzt sofort, statt bis 2,9 ms zu spät. Das war ein Fehler in 1.2.1, den v17 sonst häufiger ausgelöst hätte.
+- **Why the kits were so expensive:** because of the tiny processing blocks, not because of 432 Hz. At 432 Hz "New Sitar Grii 10" costs 0.2% more in the emulator than at 440 Hz, because its samples play transposed anyway.
+- **The price:** Under light load, notes played live start with the next block, on average about 0.5 ms later. The reserve against dropouts is smaller: in the emulator at least 63 samples (1.4 ms), with no dropout in any test.
+- **External clock:** A clock byte that is read late now ticks immediately instead of up to 2.9 ms late. This was a bug in 1.2.1 that v17 would otherwise have triggered more often.
 
-**Song-Übersicht** (Patches 0065–0068):
-- **Gruppen:** Songs mit gleichem erstem Wort sind Versionen desselben Songs. `TRACK`, `TRACK 2`, `TRACK 3`, `track 4` und `TRACK 10` erscheinen als eine Zeile «TRACK» mit Pfeil, auf der 7-Segment-Anzeige `TRACK--`. `TRACKS` bleibt ein eigener Song.
-- **Aufklappen:** Ein Klick (Select oder LOAD) klappt die Gruppe auf, die Versionen stehen eingerückt darunter. Drehen geht durch sie, ein Klick lädt, auch während der Wiedergabe mit Countdown.
-- **Zuklappen:** mit BACK oder indem du aus der Gruppe hinausdrehst. Öffnest du den Browser mit «TRACK 3» geladen, ist seine Gruppe schon offen.
-- **Tippen und Löschen:** Ein getippter Name lädt direkt. Löschen (SHIFT + SAVE) auf einer zugeklappten Zeile ist gesperrt («Open the group first»).
-- **Unverändert:** Speichern und die übrigen Browser.
-- **Blättern:** Der Ordner wird seltener neu gelesen, 6–14 statt 68–180 Mal. Beim Blättern während der Wiedergabe bleibt die Audio-Routine höchstens 0,39 ms aus, wie bei v16.
+**Song browser** (patches 0065–0068):
+- **Groups:** Songs with the same first word are versions of the same song. `TRACK`, `TRACK 2`, `TRACK 3`, `track 4` and `TRACK 10` appear as one line "TRACK" with an arrow, on the 7-segment display `TRACK--`. `TRACKS` stays a separate song.
+- **Expanding:** A click (Select or LOAD) expands the group; the versions are indented below it. Turning goes through them, a click loads, also during playback with the countdown.
+- **Collapsing:** with BACK or by turning out of the group. If you open the browser with "TRACK 3" loaded, its group is already open.
+- **Typing and deleting:** A typed name loads directly. Deleting (SHIFT + SAVE) on a collapsed line is blocked ("Open the group first").
+- **Unchanged:** saving and the other browsers.
+- **Browsing:** The folder is re-read less often, 6–14 instead of 68–180 times. When browsing during playback, the audio routine pauses for at most 0.39 ms, as with v16.
 
-**CPU-Monitor per Kürzel** (Patches 0069–0070):
-- **Schalten:** **LEARN halten und den TEMPO-Knopf drücken.** Das schaltet zwischen Aus und dem zuletzt benutzten Modus (On oder Alerts). Es wirkt in jeder Ansicht, auch beim Spielen. Die Anzeige meldet es kurz, auf 7-Segment `C-ON` / `COFF` / `C-AL`.
-- **Speichern:** Der Modus wird sofort auf der Karte gespeichert (`CommunityFeatures.XML`) und gilt nach dem Neustart wieder. Profile wählt man im Menü, nach dem Neustart gilt es als On.
-- **Start-Song:** Der Start-Song («Last saved») bleibt unberührt.
+**CPU monitor by shortcut** (patches 0069–0070):
+- **Switching:** **Hold LEARN and press the TEMPO knob.** This switches between off and the last used mode (On or Alerts). It works in every view, also while playing. The display confirms it briefly, on the 7-segment `C-ON` / `COFF` / `C-AL`.
+- **Saving:** The mode is saved to the card immediately (`CommunityFeatures.XML`) and applies again after a restart. Profile is chosen in the menu; after a restart it counts as On.
+- **Startup song:** The startup song ("Last saved") is left untouched.
 
-**Aufnehmen am Computer** (`tools/deluge_rec.py`, neu):
-- **Was es ist:** ein kleiner Recorder für den USB-Audio-Ausgang des Deluge (ab v8, Settings → Community features → USB audio), im Look des Deluge.
-- **Aufnahme:** Er nimmt den Eingang «Deluge» bitgenau als 24-Bit-WAV auf (`USB00001.WAV` …). Unter Windows läuft das über WASAPI exklusiv, das Display zeigt, ob wirklich 24 Bit ankommen.
-- **Bedienung:** REC, ARM (startet, sobald das Signal eine Schwelle übersteigt, mit 0,3 s Vorlauf), STOP und Ordner öffnen. Die Pads zeigen den Pegel.
-- **Nur lesen:** Er sendet nichts an den Deluge.
-- **Installieren und starten:** `pip install sounddevice numpy`, dann `python tools/deluge_rec.py` (ohne Deluge: `--demo`).
+**Recording on the computer** (`tools/deluge_rec.py`, new):
+- **What it is:** a small recorder for the Deluge's USB audio output (from v8, Settings → Community features → USB audio), in the Deluge's look.
+- **Recording:** It records the "Deluge" input bit-exact as a 24-bit WAV (`USB00001.WAV` …). On Windows this runs over WASAPI exclusive; the display shows whether 24 bits really arrive.
+- **Controls:** REC, ARM (starts as soon as the signal exceeds a threshold, with 0.3 s pre-roll), STOP and open folder. The pads show the level.
+- **Read-only:** It sends nothing to the Deluge.
+- **Installing and starting:** `pip install sounddevice numpy`, then `python tools/deluge_rec.py` (without a Deluge: `--demo`).
 
-**Korrekturen:**
-- **Drone-Ansicht hängt (v13–v16, auch L2)** (Patch 0071): Etwa 15 ms nach dem Öffnen der Drone-Ansicht hing der Deluge, und der Ton brach ab. Ihr fehlte eine eigene Zeichenroutine, und der Aufruf landete endlos bei ihr selbst. Für v16-l2d gibt es dazu die Zwischenlösung `hotfix/`, die v17 ersetzt.
-- **HPF-Pfeifton** (Patch 0074):
-  - Mit viel Resonanz schwingt der HP-Ladder von selbst. Seit dem Filter-Umbau der Community (#336, schon in 1.2.1) begrenzt er dabei 12–18 dB höher als die Original-Firmware von Synthstrom.
-  - Im Song-Master gab das einen Pfeifton bis 27 dB über der Musik. Hörbar wurde er, sobald das LPF über ihm aufging.
-  - v17 begrenzt wieder wie die Original-Firmware: im Song, Kit und in der Spur etwa 17 dB leiser, im Synth etwa 12 dB leiser.
-  - Unter etwa 39 % HPF-Resonanz ist der Klang Bit für Bit gleich. Ganz weg ist der Eigenton nicht, er liegt jetzt etwa auf Höhe der Musik.
-  - Auch das LPF im Modus Drive schwingt ab etwa 50 % Resonanz selbst, rund 9–21 kHz. Das ist Verhalten von 1.2.1 und bleibt unverändert.
-- **Zugriff auf Adresse 0** (Patch 0073): Beim Umrechnen gestreckter Samples ohne Cache las und schrieb die Firmware Adresse 0, geschrieben wurde der gelesene Wert. Das ist behoben.
+**Fixes:**
+- **Drone view hangs (v13–v16, also L2)** (patch 0071): About 15 ms after opening the drone view, the Deluge hung and the sound broke off. The view lacked its own drawing routine, and the call ended up at itself endlessly. For v16-l2d there is the interim fix `hotfix/`, which v17 replaces.
+- **HPF whistle** (patch 0074):
+  - With a lot of resonance the HP ladder self-oscillates. Since the community's filter rework (#336, already in 1.2.1), it limits 12–18 dB higher while doing so than the original firmware from Synthstrom.
+  - In the song master this gave a whistle up to 27 dB above the music. It became audible as soon as the LPF opened above it.
+  - v17 limits like the original firmware again: about 17 dB quieter in the song, kit and track, about 12 dB quieter in the synth.
+  - Below about 39% HPF resonance the sound is bit for bit the same. The self-oscillation tone is not completely gone; it now sits at about the level of the music.
+  - The LPF in Drive mode also self-oscillates from about 50% resonance, at around 9–21 kHz. This is 1.2.1 behavior and stays unchanged.
+- **Access to address 0** (patch 0073): When resampling stretched samples without the cache, the firmware read and wrote address 0; what it wrote was the value it had read. This is fixed.
 
-**Geprüft:**
-- **Build:** ohne neue Warnungen. Je zwei komplette Neubauten ergeben dieselbe SHA-256, bei allen drei Varianten. Alle folgenden Prüfungen liefen auf genau diesen Builds, die meisten auf der Hauptdatei v17-l2d.
-- **Klang:** Der Volllast-Song klingt bei allen drei Varianten Bit für Bit wie v16 (`87a7df29…`, `4473b315…`). Stille Spuren sind Bit für Bit wie v16, auch 116 Arpeggiator-Noten im selben Fenster.
-- **Drone** (`tests/song`, DRONE=1): 81 Prüfungen mit und ohne L2, darunter die Drone-Ansicht nach erneutem Öffnen des Songs und nach einem Song-Wechsel. v16 hängt dort, v17 nicht.
-- **Song-Übersicht** (`tests/browser`): 29 Prüfungen, darunter eine Gruppe mit 120 Versionen und Hunderte Songs. Blättern während der Wiedergabe ohne Aussetzer.
-- **CPU-Monitor-Kürzel** (`tests/settings`): 34 Prüfungen in Song-, Clip-, Keyboard- und Drone-Ansicht, gestoppt und spielend, mit Neustart. Die USB-audio-Einstellung besteht weiterhin 2 von 2.
-- **HPF-Pfeifton** (`tests/filters`, auf dem Cortex-A9 im Emulator): 900 Fälle mit Song, Synth und Kit, in allen Modi und Routen, das LPF langsam und schnell gedreht. v16 pfeift bis 14,5 dB über der Musik, v17 höchstens 2,9 dB darunter.
-- **Leistung** (`tests/sdload` und der Song «New Sitar Grii 10»): die Zahlen oben. Keine Aussetzer, auch nicht bei 0,5 Befehlen pro Takt.
-- **Weiterhin bestanden:** Profiler 21 Prüfungen (alle drei Varianten), Song-Wechsel 131, Clock, Sections, L2 (alle drei), CPU-Monitor-Dekoder 503 Meldungen, Drone auf dem PC 150, Retune ohne Zugriff auf Adresse 0.
-- **Gegenprüfer:** je einer für die Leistungsänderungen, die stillen Spuren, die Song-Übersicht, das Kürzel, die Drone-Ansicht und den Filter. Alle ihre Befunde der Stufe «mittel» und höher sind behoben, jeder mit einem Test.
+**Tested:**
+- **Build:** no new warnings. Two complete rebuilds each give the same SHA-256, for all three variants. All the following checks ran on exactly these builds, most of them on the main file v17-l2d.
+- **Sound:** The full-load song sounds bit for bit like v16 in all three variants (`87a7df29…`, `4473b315…`). Silent tracks are bit for bit like v16, including 116 arpeggiator notes in the same window.
+- **Drone** (`tests/song`, DRONE=1): 81 checks with and without L2, including the drone view after reopening the song and after a song change. v16 hangs there, v17 does not.
+- **Song browser** (`tests/browser`): 29 checks, including a group with 120 versions and hundreds of songs. Browsing during playback without dropouts.
+- **CPU monitor shortcut** (`tests/settings`): 34 checks in song, clip, keyboard and drone view, stopped and playing, with a restart. The USB audio setting still passes 2 of 2.
+- **HPF whistle** (`tests/filters`, on the Cortex-A9 in the emulator): 900 cases with song, synth and kit, in all modes and routings, the LPF turned slowly and fast. v16 whistles up to 14.5 dB above the music, v17 at most 2.9 dB below it.
+- **Performance** (`tests/sdload` and the song "New Sitar Grii 10"): the numbers above. No dropouts, not even at 0.5 instructions per clock cycle.
+- **Still passing:** profiler 21 checks (all three variants), song change 131, clock, sections, L2 (all three), CPU monitor decoder 503 messages, drone on the PC 150, retune without access to address 0.
+- **Reviewers:** one each for the performance changes, the silent tracks, the song browser, the shortcut, the drone view and the filter. All their findings of severity "medium" and higher are fixed, each with a test.
 
-## v18.3: Drive wie 1.2.1 überabgetastet, Einstellungen und Sync-Level bleiben erhalten
+## v18.3: Drive oversampled like 1.2.1, settings and sync level are kept
 
-v18.3 enthält v18.2 und korrigiert drei Befunde aus dem Stresstest im Emulator. Wie v18.2 gibt es v18.3 nur als Hauptdatei mit L2-Cache für Code und Daten. **v18.3 ist auf dem Gerät noch nicht getestet**, geprüft ist alles im Emulator mit dem Maschinencode der Firmware.
+v18.3 contains v18.2 and fixes three findings from the stress test in the emulator. Like v18.2, v18.3 exists only as the main file with L2 cache for code and data. **v18.3 has not been tested on the device yet**; everything is tested in the emulator with the firmware's machine code.
 
-- **Drive** (Patch 0116):
-  - **Das Problem:** v18 rechnete das Drive-LPF bei jeder Einstellung 2× überabgetastet. Ein Song mit vielen Drive-Filtern brauchte am Taktanfang die 3,5-fache Echtzeit (1.2.1: 1,7-fach) und verlor fast alle Stimmen, bevor der Last-Schutz eingreifen konnte.
-  - **v18.3** überabtastet wieder dort, wo 1.2.1 es tat: bei hohem Cutoff mit Resonanz, also bei Resonanz 25 ab etwa 5 kHz, bei 20 ab 13 kHz, unter 15 nie. Dort spiegeln Resonanz und Sättigung sonst hörbar. Wo es überabtastet, dann mit den echten Halbband-Filtern von v18 (Spiegel −88 dB).
-  - **Umschalten:** Es bleibt überblendet. Eine kleine Hysterese verhindert, dass ein LFO um die Schwelle ständig hin und her schaltet.
-  - **Der Preis:** Unterhalb der Schwelle schwingt Drive wieder wie in 1.2.1, bei 2 kHz 56 Cent zu tief (v18: 30).
-- **Einstellungen** (Patch 0114): Community-Einstellungen, die eine Firmware nicht kennt, etwa von einer neueren Version, schrieb sie unter falschem Namen zurück («SONGS»): Sie merkte sich den Namen nur als Verweis auf Speicher, der danach freigegeben war. Jetzt behalten sie Namen und Wert. Den Fehler haben auch 1.2.1, v17 und die aktuelle Community-Firmware. Ein Wechsel auf v17 und zurück setzt Limiter, Crossing guard und OLED-Helligkeit darum weiterhin auf den Standard.
-- **Reverb-Sidechain des Songs** (Patch 0115): Sein Sync-Level rutschte seit 1.2.1 bei jedem Speichern und Laden eine Stufe tiefer, weil es roh geschrieben und umgerechnet gelesen wurde. Jetzt wird es so gelesen, wie es geschrieben ist. Bestehende Songs laden mit dem gespeicherten Wert.
+- **Drive** (patch 0116):
+  - **The problem:** v18 computed the Drive LPF 2× oversampled at every setting. A song with many Drive filters needed 3.5 times real time at the start of the bar (1.2.1: 1.7 times) and lost almost all voices before the load protection could step in.
+  - **v18.3** oversamples again where 1.2.1 did: at high cutoff with resonance, i.e. at resonance 25 from about 5 kHz, at 20 from 13 kHz, below 15 never. There, resonance and saturation otherwise alias audibly. Where it oversamples, it does so with the real half-band filters of v18 (images −88 dB).
+  - **Switching:** It stays crossfaded. A small hysteresis prevents an LFO around the threshold from constantly switching back and forth.
+  - **The price:** Below the threshold Drive self-oscillates as in 1.2.1 again, 56 cents flat at 2 kHz (v18: 30).
+- **Settings** (patch 0114): Community settings that a firmware does not know, for example from a newer version, it wrote back under a wrong name ("SONGS"): it kept the name only as a pointer to memory that was freed afterwards. Now they keep their name and value. 1.2.1, v17 and the current community firmware have this bug too. Switching to v17 and back therefore still resets limiter, crossing guard and OLED brightness to the default.
+- **The song's reverb sidechain** (patch 0115): Since 1.2.1 its sync level slipped one step lower at every save and load, because it was written raw and read converted. Now it is read the way it is written. Existing songs load with the saved value.
 
-**Geprüft:**
-- **Build:** 474 Dateien, ohne Warnungen. Zwei komplette Neubauten ergeben dieselbe SHA-256. `patches/0001`–`0116` mit `l2test/0001`–`0003` ergeben genau den Quellbaum von v18.3-l2d. Alle folgenden Prüfungen liefen auf genau diesem Build.
-- **Drive im Stresstest** (`tests/stress/audio`, alle LPF auf Drive, 7 Takte, Culling wie auf dem Gerät; v18.3 und v17 aus demselben Lauf, v18 aus dem ersten Stresstest):
+**Tested:**
+- **Build:** 474 files, no warnings. Two complete rebuilds give the same SHA-256. `patches/0001`–`0116` with `l2test/0001`–`0003` give exactly the source tree of v18.3-l2d. All the following checks ran on exactly this build.
+- **Drive in the stress test** (`tests/stress/audio`, all LPFs on Drive, 7 bars, culling as on the device; v18.3 and v17 from the same run, v18 from the first stress test):
 
   | | v18 | v18.3 | v17 |
   |---|---|---|---|
-  | Stimmen im Mittel | 6 | 15 | 20 |
-  | abgeschnittene Stimmen (sanft / hart) | 259 / 171 | 173 / 77 | 183 / 74 |
-  | Aussetzer im Emulator (Samples) | 3944 | 913 | 550 |
+  | Voices on average | 6 | 15 | 20 |
+  | Cut voices (soft / hard) | 259 / 171 | 173 / 77 | 183 / 74 |
+  | Dropouts in the emulator (samples) | 3944 | 913 | 550 |
 
-- **Drive-Test** (`tests/filters` drive, Cortex-A9-Code): Die Schwelle stimmt an allen 10 251 geprüften Einstellungen mit 1.2.1 überein. Ein Sweep über die Schwelle und zurück schaltet genau zweimal, ein Pendeln um sie herum höchstens einmal, ohne Sprung. Überabgetastet nimmt Drive 3,7 bis 21 dB Spiegeltöne weg, das Halbband-Filter lässt ±0,0004 dB durch und dämpft Spiegel auf −88 dB. Der Bass bleibt innerhalb 0,53 dB. `filter_neutral`: Drive gleitet ohne Zipper, ohne Überabtastung −77 dBc, mit −126 dBc über 2 kHz.
-- **Was beim Speichern bleibt** (`tests/stress/ui/saved_state_emu.py`, ganze Firmware im Emulator): Zwei Einstellungen, die die Firmware nicht kennt, stehen nach dem Speichern mit Namen und Wert in `CommunityFeatures.XML` (v18.2: fehlen, dafür `SONGS`). Speichern, Laden und nochmals Speichern lässt das Sync-Level des Reverb-Sidechains stehen (v18.2: 6 → 5).
-- **Klang:** Der Volllast-Song (ohne Drive) klingt Bit für Bit wie v18 und v18.2 (`47053032…`, `8bdf172e…`), bei 91,5 % CPU und gleich vielen abgeschnittenen Stimmen (111). Stille Spuren: mit und ohne die Abkürzung dieselbe Ausgabe, Sample für Sample.
-- **Weiterhin bestanden** (ganze Firmware im Emulator): Song-Wechsel 131 Prüfungen, Drone 81, L2, Firmware-Version 49, OLED-Helligkeit 26, Crossing guard 7, CPU-Monitor-Kürzel 34, USB audio 2, Lautstärkeknopf, Song-Übersicht 39, Profiler 21, Clock, Sections, Retune. Auf dem Cortex-A9-Code: alle Filter-Tests, EQ und Lautstärke. Auf dem PC: CPU-Monitor-Dekoder 503 Meldungen, Profiler 1175, Drone 150.
-- **Ebenfalls bestanden:** `tests/run_all.sh` (die Tests der früheren Versionen, auf dem PC und dem Cortex-A9-Code) 16 von 16, DelugeRec 47 Tests, Baseline (8 Tests übersprungen: Sie brauchen ein Fenster).
+- **Drive test** (`tests/filters` drive, Cortex-A9 code): The threshold matches 1.2.1 at all 10,251 settings checked. A sweep across the threshold and back switches exactly twice, swinging back and forth around it at most once, without a jump. When oversampled, Drive removes 3.7 to 21 dB of images; the half-band filter passes ±0.0004 dB and attenuates images to −88 dB. The bass stays within 0.53 dB. `filter_neutral`: Drive glides without zipper, without oversampling −77 dBc, with oversampling −126 dBc above 2 kHz.
+- **What is kept when saving** (`tests/stress/ui/saved_state_emu.py`, whole firmware in the emulator): Two settings the firmware does not know are in `CommunityFeatures.XML` with name and value after saving (v18.2: missing, `SONGS` instead). Saving, loading and saving again leaves the reverb sidechain's sync level unchanged (v18.2: 6 → 5).
+- **Sound:** The full-load song (without Drive) sounds bit for bit like v18 and v18.2 (`47053032…`, `8bdf172e…`), at 91.5% CPU and with the same number of cut voices (111). Silent tracks: the same output with and without the shortcut, sample for sample.
+- **Still passing** (whole firmware in the emulator): song change 131 checks, drone 81, L2, firmware version 49, OLED brightness 26, crossing guard 7, CPU monitor shortcut 34, USB audio 2, volume knob, song browser 39, profiler 21, clock, sections, retune. On the Cortex-A9 code: all filter tests, EQ and volume. On the PC: CPU monitor decoder 503 messages, profiler 1175, drone 150.
+- **Also passed:** `tests/run_all.sh` (the tests of the earlier versions, on the PC and the Cortex-A9 code) 16 of 16, DelugeRec 47 tests, Baseline (8 tests skipped: they need a window).
 
-## v18.2: Filter, EQ und Lautstärke nach Stille
+## v18.2: Filters, EQ and volume after silence
 
-v18.2 enthält v18 und behebt einen Fehler, den die Prüfung «stille Spuren» nach dem Release von v18 gefunden hat. **Wer v18 aufgespielt hat, nimmt v18.2.** v18.2 gibt es nur als Hauptdatei mit L2-Cache für Code und Daten. Zum Zurückwechseln ohne L2 bleibt `deluge-1.2.1-mastertune-v18-124aeaa2.bin`, allerdings mit diesem Fehler. **v18.2 ist auf dem Gerät noch nicht getestet**, geprüft ist alles im Emulator mit dem Maschinencode der Firmware.
+v18.2 contains v18 and fixes a bug that the "silent tracks" check found after the release of v18. **If you installed v18, take v18.2.** v18.2 exists only as the main file with L2 cache for code and data. For switching back without L2 there is still `deluge-1.2.1-mastertune-v18-124aeaa2.bin`, though with this bug. **v18.2 has not been tested on the device yet**; everything is tested in the emulator with the firmware's machine code.
 
-**Der Fehler** (Patch 0113 behebt ihn):
-- **Die Abkürzung:** Ein Kit oder eine Audiospur, die nichts mehr spielt und deren Effekte 4096 Samples (93 ms) lang nur Stille ausgegeben haben, überspringt ihre Effekte: seit v12 nach dem Rechnen, seit v17 schon davor.
-- **Was v18 daran änderte:** v18 bewegt Filter, EQ und Lautstärke pro Sample von Block zu Block. Diese Bewegungen standen während der Stille still und liefen beim Wiedereinsatz über die ersten Millisekunden der neuen Töne:
-  - Ein während der Stille umgeschaltetes Filter blendete 7 ms lang vom alten über, ein eingeschaltetes 7 ms lang vom ungefilterten Signal ein. Die Filterkoeffizienten fuhren vom Stand vor der Stille zum neuen.
-  - Ebenso Verstärkung und Ecke des EQ, und eine geänderte Lautstärke auf einem der beiden Wege 5 ms lang vom alten Pegel aus.
-  - Eine eingefrorene Überblendung belegte einen der 24 Plätze, solange die Stille dauerte.
-- **Hörbar** als kurzes Ticken oder hellerer Anschlag, wenn ein Kit oder eine Spur nach einer Pause mit verstellten Filtern, EQ oder Lautstärke wieder einsetzt. Im Test lag das bis nur 3,5 dB unter dem Ton.
-- **v18.2** setzt nach der Stille Filter, EQ und Lautstärke sofort auf ihre aktuellen Einstellungen, auf beiden Wegen gleich. Sonst klingt alles wie v18.
+**The bug** (patch 0113 fixes it):
+- **The shortcut:** A kit or audio track that no longer plays anything and whose effects have output only silence for 4096 samples (93 ms) skips its effects: since v12 after computing, since v17 even before.
+- **What v18 changed about it:** v18 moves filters, EQ and volume per sample from block to block. These movements stood still during the silence and ran over the first milliseconds of the new notes when playing resumed:
+  - A filter switched during the silence crossfaded from the old one for 7 ms; one switched on faded in from the unfiltered signal for 7 ms. The filter coefficients moved from the state before the silence to the new one.
+  - The same for the EQ's gain and corner, and a changed volume on one of the two paths started from the old level for 5 ms.
+  - A frozen crossfade occupied one of the 24 slots for as long as the silence lasted.
+- **Audible** as a short tick or a brighter attack when a kit or track comes back in after a pause with changed filters, EQ or volume. In the test it was as little as 3.5 dB below the tone.
+- **v18.2** sets filters, EQ and volume to their current settings immediately after the silence, the same on both paths. Otherwise everything sounds like v18.
 
-**Geprüft:**
-- **Build:** 474 Dateien, ohne Warnungen. Zwei komplette Neubauten ergeben dieselbe SHA-256. `patches/0001`–`0113` mit `l2test/0001`–`0003` ergeben genau den Quellbaum von v18.2-l2d. Alle folgenden Prüfungen liefen auf genau diesem Build.
-- **Stille Spuren** (`tests/silent`): v18.2-l2d und dieselbe Firmware ohne die Abkürzung geben dieselbe Ausgabe, Sample für Sample (705 654 Samples), und dieselben 116 Arpeggiator-Noten. v18 wich ab Takt 4 um bis −21 dBFS ab. Die Abkürzung greift jetzt öfter: 26 118 statt 25 769 Mal, weil keine eingefrorene Überblendung sie mehr blockiert.
-- **Neue Tests:** `tests/filters` silence_restart: Filterrampe, Überblendung und Einblenden nach einer Stille klingen Bit für Bit wie bei Filtern, die schon vorher so eingestellt waren (v18: −33, −20 und −16 dBFS daneben). `tests/eq` restart: ebenso für den EQ (v18: −9,5 dBFS daneben).
-- **Klang:** Der Volllast-Song klingt Bit für Bit wie v18 (`47053032…`, `8bdf172e…`), bei 91,4 % CPU und gleich vielen abgeschnittenen Stimmen im Gerätemodus (111).
-- **Weiterhin bestanden** (ganze Firmware im Emulator): Song-Wechsel 131 Prüfungen, Drone 81, L2, Firmware-Version 49, OLED-Helligkeit 26, Crossing guard 7, CPU-Monitor-Kürzel 34, USB audio 2, Lautstärkeknopf, Song-Übersicht 39, Profiler 21, Clock, Sections, Retune. Auf dem Cortex-A9-Code: alle Filter-Tests, EQ und Lautstärke. Auf dem PC: CPU-Monitor-Dekoder 503 Meldungen, Profiler 1175, Drone 150.
-- **Nachgetragen:** `tests/run_all.sh` (die Tests der früheren Versionen, auf dem PC und dem Cortex-A9-Code) besteht 16 von 16, DelugeRec 47 Tests, Baseline 27 (8 davon übersprungen: Sie brauchen ein Fenster, das der Cloud-Rechner nicht hat). Für v18.3 folgt daraus nichts.
-- **Stresstest im Emulator** (v18 gegen v17, `tests/stress`): keine Abstürze, Hänger oder Speicherlecks, auch nicht über 30 Song-Wechsel, eine grosse Karte, Speichern beim Spielen und Automation auf allen Filtern und Lautstärken. Seine drei Befunde kommen in v18.3: Drive überabtastet wieder wie 1.2.1 nur hoch oben mit Resonanz (ein Song mit vielen Drive-Filtern verlor sonst am Taktanfang fast alle Stimmen), Einstellungen, die eine Version nicht kennt, schreibt sie unter ihrem richtigen Namen zurück (v17 hat diesen Fehler selbst: Ein Wechsel auf v17 und zurück setzt Limiter, Crossing guard und OLED-Helligkeit weiterhin auf den Standard), und das Sync-Level des Reverb-Sidechains rutscht beim Speichern nicht mehr um eine Stufe.
+**Tested:**
+- **Build:** 474 files, no warnings. Two complete rebuilds give the same SHA-256. `patches/0001`–`0113` with `l2test/0001`–`0003` give exactly the source tree of v18.2-l2d. All the following checks ran on exactly this build.
+- **Silent tracks** (`tests/silent`): v18.2-l2d and the same firmware without the shortcut give the same output, sample for sample (705,654 samples), and the same 116 arpeggiator notes. v18 deviated from bar 4 on by up to −21 dBFS. The shortcut now applies more often: 26,118 instead of 25,769 times, because no frozen crossfade blocks it any more.
+- **New tests:** `tests/filters` silence_restart: filter ramp, crossfade and fade-in after a silence sound bit for bit like filters that were already set that way before (v18: −33, −20 and −16 dBFS off). `tests/eq` restart: the same for the EQ (v18: −9.5 dBFS off).
+- **Sound:** The full-load song sounds bit for bit like v18 (`47053032…`, `8bdf172e…`), at 91.4% CPU and with the same number of cut voices in device mode (111).
+- **Still passing** (whole firmware in the emulator): song change 131 checks, drone 81, L2, firmware version 49, OLED brightness 26, crossing guard 7, CPU monitor shortcut 34, USB audio 2, volume knob, song browser 39, profiler 21, clock, sections, retune. On the Cortex-A9 code: all filter tests, EQ and volume. On the PC: CPU monitor decoder 503 messages, profiler 1175, drone 150.
+- **Added later:** `tests/run_all.sh` (the tests of the earlier versions, on the PC and the Cortex-A9 code) passes 16 of 16, DelugeRec 47 tests, Baseline 27 (8 of them skipped: they need a window, which the cloud machine does not have). Nothing follows from this for v18.3.
+- **Stress test in the emulator** (v18 against v17, `tests/stress`): no crashes, hangs or memory leaks, not even over 30 song changes, a large card, saving while playing and automation on all filters and volumes. Its three findings are fixed in v18.3: Drive again oversamples like 1.2.1, only high up with resonance (otherwise a song with many Drive filters lost almost all voices at the start of the bar); a version writes settings it does not know back under their correct name (v17 has this bug itself: switching to v17 and back still resets limiter, crossing guard and OLED brightness to the default); and the reverb sidechain's sync level no longer slips by one step when saving.
 
-## v18: Filter ohne Rascheln, saubere Übergänge, Lautstärke in dB, lesbares OLED
+## v18: Filters without rustle, clean transitions, volume in dB, readable OLED
 
-v18 enthält v17. Wie bei v17 hat die Hauptdatei den L2-Cache für Code und Daten, daneben liegt dieselbe Version ohne L2. **v18 ist auf dem Gerät noch nicht getestet.** Geprüft ist alles im Emulator mit dem Maschinencode der Firmware. Vor der Umsetzung haben zwei Prüfer die Mathematik von Filtern und Verstärkung Stufe für Stufe festgelegt (Zahlenformate, Rundung, Überlauf, Headroom, Modulation, Aliasing); jede Etappe wurde daran gemessen.
+v18 contains v17. As with v17, the main file has the L2 cache for code and data, and the same version without L2 is next to it. **v18 has not been tested on the device yet.** Everything is tested in the emulator with the firmware's machine code. Before the implementation, two reviewers laid down the math of the filters and gain step by step (number formats, rounding, overflow, headroom, modulation, aliasing); each stage was measured against it.
 
-**Rascheln und Pfeifen im LPF** (Patches 0081–0083):
-- **Das Rascheln bei tiefem Cutoff ist weg.** Es kam vom absichtlichen «Analog-Rauschen» auf dem Cutoff der Ladder (12 dB, 24 dB, Drive), das schon die Original-Firmware hatte: 0,44 % Schwankung, hörbar als Rauschband um jeden Ton. Es ist entfernt.
-- **Genauer gerechnet:** Unter 4,5 kHz halten die Ladder-Stufen ihren Zustand in 64 Bit. Der Rundungsboden sinkt von −161 bis −178 dBFS auf −183 bis −200 dBFS, und nach der Musik verstummt das Filter wirklich.
-- **Resonanz und Sättigung wie im Original:** Unter etwa 310 Hz senken 12 und 24 dB die Resonanz wieder um bis 9 %, und Song, Kit und Spur sättigen mit 3 statt 2. Die Eigenschwingung dort wird 6 dB leiser, das Brummen bei 32 Hz (z. B. in «New Sitar Grii 10») verschwindet.
+**Rustle and whistle in the LPF** (patches 0081–0083):
+- **The rustle at low cutoff is gone.** It came from the deliberate "analog noise" on the ladder's cutoff (12 dB, 24 dB, Drive), which the original firmware already had: 0.44% fluctuation, audible as a band of noise around every note. It has been removed.
+- **More precise math:** Below 4.5 kHz the ladder stages keep their state in 64 bits. The rounding floor drops from −161 to −178 dBFS to −183 to −200 dBFS, and after the music the filter really goes silent.
+- **Resonance and saturation as in the original:** Below about 310 Hz, 12 and 24 dB lower the resonance again by up to 9%, and song, kit and track saturate with 3 instead of 2. The self-oscillation there gets 6 dB quieter; the hum at 32 Hz (e.g. in "New Sitar Grii 10") disappears.
 
-**Übergänge ohne Stufen und Klicks** (Patches 0084–0098):
-- **Pro Sample statt pro Block:** Cutoff, Resonanz, Morph und der Pegelausgleich bewegen sich pro Sample. Grosse Sprünge laufen über echte Zwischenstellungen, je eine Drittel-Oktave. Der Zipper sinkt je nach Filter um 7 bis 72 dB; ein stehendes Filter rechnet Bit für Bit wie in v17.
-- **10 ms Gleiten** auf jeden neuen Filterwert, egal woher er kommt: Knopf, Automation, MIDI oder Kabel, in Stimmen und in Song-, Kit- und Spurfiltern (vorher glitt nur der Knopf in Synths).
-- **Überblenden:** 7 ms beim Wechsel von Modus oder Routing und beim Ausschalten, ein lineares Einblenden beim Einschalten, links und rechts gleich. Klicks sinken von bis zu 254-fach auf 1,7-fach der normalen Sample-Schrittgrösse.
-- **Kein Überlauf, gerundet:** Die SVF rundet und rechnet bei tiefem Cutoff genau, die HP-Ladder rechnet ihre Resonanz mit voller Auflösung (vorher 8 Bit, Stufen bis 0,5 dB), keine Summe springt mehr ins Gegenteil.
-- **Neuer Stimmen-Zustand:** Eine neue Note erbt nichts mehr von der vorherigen (Community-Fix #4635).
+**Transitions without steps and clicks** (patches 0084–0098):
+- **Per sample instead of per block:** Cutoff, resonance, morph and the level compensation move per sample. Large jumps pass through real intermediate settings, a third of an octave each. Depending on the filter, the zipper drops by 7 to 72 dB; a static filter computes bit for bit as in v17.
+- **10 ms glide** to every new filter value, wherever it comes from: knob, automation, MIDI or patch cable, in voices and in song, kit and track filters (before, only the knob in synths glided).
+- **Crossfading:** 7 ms when changing mode or routing and when switching off, a linear fade-in when switching on, the same left and right. Clicks drop from up to 254 times to 1.7 times the normal sample step size.
+- **No overflow, rounded:** The SVF rounds and computes precisely at low cutoff, the HP ladder computes its resonance at full resolution (before: 8 bits, steps up to 0.5 dB), and no sum jumps to its opposite any more.
+- **Fresh voice state:** A new note no longer inherits anything from the previous one (community fix #4635).
 
-**Klangänderungen, standardmässig an** (Patches 0104, 0106–0108):
-- **Parallel-Routing:** Ein ausgeschaltetes Filter addiert kein Trockensignal mehr, und die Summe beider Filter hat die halbe Lautstärke (−6 dB). Songs mit Routing «Parallel» werden dadurch 6 dB leiser.
-- **Drive:** Mit Resonanz fehlen höchstens 0,53 dB Bass (vorher 13 dB). Die 2×-Überabtastung ist jetzt echt (Halbband-Filter, Spiegel −88 dB statt verdoppelter Samples); unter Last schaltet sie wie bisher ab.
-- **EQ Bass und Treble:** echte Shelf-Filter statt Einpol-Weichen, gleiche Knöpfe und Ecken (199 Hz, 2,8 kHz). Der Rauschboden sinkt von −77 auf −141 dBFS, Klicks beim Drehen von −24 auf −70 dBc. Neutral eingestellt ist der EQ Bit für Bit durchlässig.
+**Sound changes, on by default** (patches 0104, 0106–0108):
+- **Parallel routing:** A switched-off filter no longer adds dry signal, and the sum of both filters has half the volume (−6 dB). Songs with routing "Parallel" therefore get 6 dB quieter.
+- **Drive:** With resonance at most 0.53 dB of bass is missing (before: 13 dB). The 2× oversampling is now real (half-band filter, images −88 dB instead of doubled samples); under load it switches off as before.
+- **EQ bass and treble:** real shelving filters instead of one-pole crossovers, same knobs and corners (199 Hz, 2.8 kHz). The noise floor drops from −77 to −141 dBFS, clicks when turning from −24 to −70 dBc. Set to neutral, the EQ passes the signal through bit for bit.
 
-**Lautstärke** (Patches 0099–0103):
-- **Ein Baustein für alles:** Sound, Kit-Reihe, Kit, Audiospur und Song rampen Lautstärke × Panorama × Sidechain × Filterausgleich pro Sample, exakt aufs Ziel, bei Sprüngen über 6 dB mindestens 5 ms. Das gilt auch für Automation und für mehrere Parameter gleichzeitig. Auch das Ducken der Sidechain setzt darum über mindestens 5 ms ein: Sehr harte Pump-Effekte alter Songs klingen etwas weicher.
-- **Genauer:** v17 verwarf bei jeder Lautstärke die untersten 5 Bit. v18 behält sie, leise Einstellungen verlieren keine Auflösung mehr. Der Pegel vor den Filtern bleibt wie in v17, Lauterdrehen ändert also ihre Sättigung nicht.
-- **Regler in dB:** Jeder Rastschritt ändert den Pegel um 0,5 dB, die Anzeige zeigt dB («−3.5 dB», 7-Segment «-3.5», unten «OFF»), in den Menüs und an den goldenen Knöpfen. Gespeichert wird wie bisher: Songs klingen gleich laut und laden weiter in v17.
-- **Output limiter** (Settings → Community features, standardmässig aus, 7-Segment `LIMT`): ein Spitzenbegrenzer, der 0,7 ms vorausschaut und 1 dB unter Vollaussteuerung weich einsetzt, ohne Aliasing. Er wirkt nur dort, wo der Ausgang sonst hart abschneiden würde. Eingeschaltet verzögert er den Ausgang um diese 0,7 ms; beim Ein- und Ausschalten springt der Ausgang einmal um diese Zeit, das kann kurz knacken. Ausgeschaltet bleibt alles Bit für Bit gleich.
+**Volume** (patches 0099–0103):
+- **One building block for everything:** Sound, kit row, kit, audio track and song ramp volume × panning × sidechain × filter compensation per sample, exactly onto the target, for jumps over 6 dB over at least 5 ms. This also applies to automation and to several parameters at once. So the sidechain ducking also sets in over at least 5 ms: very hard pumping effects in old songs sound a bit softer.
+- **More precise:** v17 discarded the lowest 5 bits at every volume. v18 keeps them; quiet settings no longer lose resolution. The level before the filters stays as in v17, so turning up does not change their saturation.
+- **Controls in dB:** Every detent changes the level by 0.5 dB, and the display shows dB ("−3.5 dB", 7-segment "-3.5", at the bottom "OFF"), in the menus and on the gold knobs. Saving works as before: songs sound equally loud and still load in v17.
+- **Output limiter** (Settings → Community features, off by default, 7-segment `LIMT`): a peak limiter that looks ahead 0.7 ms and sets in softly 1 dB below full scale, without aliasing. It only acts where the output would otherwise clip hard. When on, it delays the output by these 0.7 ms; when switching it on or off, the output jumps once by this time, which can click briefly. When off, everything stays bit for bit the same.
 
-**Filter crossing guard** (Settings → Community features, standardmässig aus, 7-Segment `CROS`, Patches 0109–0111): Kommen sich HPF und LPF nahe oder kreuzen sie sich, senkt er beide Resonanzen gleitend. Liegt das HPF weniger als eine halbe Oktave unter dem LPF oder darüber, ist die gemeinsame Spitze höchstens 0,7 dB höher als die grössere Einzelspitze (ohne ihn bis 39 dB), eine halbe bis anderthalb Oktaven darunter höchstens 1,7 dB. Er greift ab zwei Oktaven Abstand ein. Eine selbst schwingende Ladder hört an der Kreuzung auf zu singen. Weil weniger Resonanz den Durchlass etwas anhebt, kann der Gesamtpegel in einzelnen Fällen bis 3 dB steigen (LP12 mit HPF SVF).
+**Filter crossing guard** (Settings → Community features, off by default, 7-segment `CROS`, patches 0109–0111): When HPF and LPF come close or cross, it lowers both resonances smoothly. If the HPF is less than half an octave below the LPF or above it, the combined peak is at most 0.7 dB higher than the larger single peak (without it up to 39 dB); half an octave to an octave and a half below, at most 1.7 dB. It starts acting from two octaves apart. A self-oscillating ladder stops singing at the crossing. Because less resonance raises the passband slightly, the overall level can rise by up to 3 dB in individual cases (LP12 with HPF SVF).
 
-**OLED** (Patches 0075–0077, 0079):
-- **Firmware-Version lesbar:** in der normalen Schrift auf bis zu drei Zeilen und ohne Hash, z. B. «1.2.1-mastertune-» / «v18-l2d». Der Hash steht weiter im Dateinamen und intern.
-- **Helligkeit:** Settings → OLED brightness, Stufen 1–10 (10 = wie bisher, 1 noch lesbar). Jeder Dreh wirkt sofort, die Stufe gilt auch nach dem Neustart.
+**OLED** (patches 0075–0077, 0079):
+- **Readable firmware version:** in the normal font on up to three lines and without the hash, e.g. "1.2.1-mastertune-" / "v18-l2d". The hash remains in the file name and internally.
+- **Brightness:** Settings → OLED brightness, levels 1–10 (10 = as before, 1 still readable). Each turn takes effect immediately; the level also applies after a restart.
 
-**Song-Übersicht** (Patches 0078, 0080): Eine Gruppe ist der ganze Name ohne die Zahl am Ende («New Sitar Grii», «… 2», «… 10»), die Zeile zeigt den ganzen Namen. Aufgeklappte Gruppen bleiben beim Weiterdrehen offen (bis 8), BACK auf einer Version klappt ihre Gruppe zu. Eine Zahl nach «-» oder «.» gehört zum Namen («TR-808», «Jam 2026-09-27»).
+**Song browser** (patches 0078, 0080): A group is the whole name without the number at the end ("New Sitar Grii", "… 2", "… 10"), and the line shows the whole name. Expanded groups stay open when you keep turning (up to 8); BACK on a version collapses its group. A number after "-" or "." belongs to the name ("TR-808", "Jam 2026-09-27").
 
-**Songname für DelugeRec** (Patch 0112): Solange der Computer den USB-Audio-Stream offen hat, meldet der Deluge Songnamen und Firmware auf USB-MIDI Port 3 (SysEx 0x12). DelugeRec v6 benennt damit seine Aufnahmen «Songname, 28.09.2026 - 1.2.1 v18.WAV». Ab v18.2 braucht es DelugeRec v7: v6 schneidet den Punkt der Version ab («… - 1.2.1 v18.WAV»), v7 schreibt «… - 1.2.1 v18.2.WAV». Nur gesendet, nie beantwortet; im Emulator läuft kein USB, darum am Gerät zu prüfen.
+**Song name for DelugeRec** (patch 0112): While the computer has the USB audio stream open, the Deluge reports the song name and firmware on USB MIDI port 3 (SysEx 0x12). DelugeRec v6 uses this to name its recordings "Song name, 28.09.2026 - 1.2.1 v18.WAV". From v18.2 on, DelugeRec v7 is needed: v6 cuts off the version at the dot ("… - 1.2.1 v18.WAV"), v7 writes "… - 1.2.1 v18.2.WAV". Only sent, never answered; no USB runs in the emulator, so this has to be checked on the device.
 
-**Korrektur:** Beim Laden einer Audiospur schrieb die Firmware ein Kennzeichen in ein falsches Objekt (Fehler aus 1.2.1, Patch 0105). Mit dem neuen EQ hätte das den Song zum Absturz gebracht; jetzt bekommen es nur Instrumente.
+**Fix:** When loading an audio track, the firmware wrote a flag into the wrong object (bug from 1.2.1, patch 0105). With the new EQ this would have crashed the song; now only instruments get it.
 
-**Rechenlast:** Der schwere Testsong braucht im Emulator 91,4 % statt 89,3 % (v17). Im Gerätemodus schneidet v18 gleich viele Stimmen ab (111), davon weniger hart: 5 statt 13. Drive mit echter Überabtastung kostet gut dreimal so viel wie vorher, der EQ mit beiden Bändern doppelt so viel; unter Last schaltet die Überabtastung ab.
+**CPU load:** The heavy test song needs 91.4% instead of 89.3% (v17) in the emulator. In device mode v18 cuts the same number of voices (111), fewer of them hard: 5 instead of 13. Drive with real oversampling costs a good three times as much as before, the EQ with both bands twice as much; under load the oversampling switches off.
 
-**Bekannte Grenzen:**
-- Die 24-dB-Ladder schwingt zu tief, wie schon in 1.2.1 und im Original (−19 Cent bei 600 Hz, −52 bei 1,9 kHz, −127 ab 5,7 kHz); die 12-dB-Ladder trifft den Ton. Drive: −30 Cent bei 2 kHz (v17 −56).
-- Das Halbband-Filter von Drive verzögert um 2,3 Samples; in der Parallel-Summe mit Drive ist das nicht ausgeglichen.
-- Die Song-Lautstärke stellt weiterhin auch die Schwelle des Song-Kompressors, wie in 1.2.1; alte Songs komprimieren so gleich.
-- Der DJ-Filter kommt in v19.
-- **Nach einer Stille** (Kits und Audiospuren) laufen Reste von Filter-, EQ- und Lautstärkerampen über den Wiedereinsatz. Behoben in v18.2.
-- **Drive** überabtastet bei jeder Einstellung. In Songs mit vielen Drive-Filtern kostet das am Taktanfang Stimmen. v18.3 überabtastet wieder wie 1.2.1.
+**Known limitations:**
+- The 24 dB ladder self-oscillates flat, as already in 1.2.1 and in the original (−19 cents at 600 Hz, −52 at 1.9 kHz, −127 from 5.7 kHz); the 12 dB ladder hits the pitch. Drive: −30 cents at 2 kHz (v17 −56).
+- Drive's half-band filter delays by 2.3 samples; in the parallel sum with Drive this is not compensated.
+- The song volume still also sets the threshold of the song compressor, as in 1.2.1; that way old songs compress the same.
+- The DJ filter comes in v19.
+- **After a silence** (kits and audio tracks), leftovers of filter, EQ and volume ramps run over the re-entry. Fixed in v18.2.
+- **Drive** oversamples at every setting. In songs with many Drive filters this costs voices at the start of the bar. v18.3 oversamples like 1.2.1 again.
 
-**Geprüft:**
-- **Build:** 474 Dateien, ohne Warnungen. Je zwei komplette Neubauten ergeben dieselbe SHA-256, bei beiden Varianten. `patches/0001`–`0112` ergeben genau den Quellbaum von v18, dazu `l2test/0001`–`0003` genau den von v18-l2d. Alle folgenden Prüfungen liefen auf genau diesen Builds, die meisten auf der Hauptdatei v18-l2d.
-- **Klang:** Der Volllast-Song klingt mit und ohne L2 Bit für Bit gleich (`47053032…`, `8bdf172e…`), genau wie die Filter-Etappen vorhergesagt hatten. Gegenüber v17 ist er gewollt anders: kein Analog-Rauschen mehr, neue Filter und Lautstärke.
-- **Lautstärkeknopf** (ganze Firmware im Emulator): Jede Raste ändert 0,500 ± 0,002 dB, der grösste Sprung zwischen zwei Samples beim Drehen ist 0,15 % (v17: 5,6 % auf einmal).
-- **Einstellungen** (`tests/settings`, mit Neustart): Firmware-Version 49 Prüfungen, OLED-Helligkeit 26, Crossing guard 7, CPU-Monitor-Kürzel 34, USB audio 2.
-- **Song-Übersicht** (`tests/browser`): 39 Prüfungen, darunter Namen mit «-» und «.» («TR-808», «Jam 2026-09-27», «Mix 1.5»).
-- **Weiterhin bestanden:** L2 (beide Varianten), Drone 81 Prüfungen (beide), Profiler 21 (beide), Song-Wechsel 131, Clock, Sections, Retune.
-- **Gegenprüfer:** je einer für die vier Etappen (Filter, Lautstärke, Klangänderungen, Crossing guard), gemessen an der Vorgabe. Sie fanden zwei kleine Fehler, beide behoben: den Bassausgleich von Drive nach einem Sprung der Ladder-Koeffizienten und eine undefinierte Umwandlung bei Resonanz über Kabel (nur am PC wirksam). Der Emulator fand einen Schreibzugriff ein Sample hinter dem Puffer im rechten Kanal, ebenfalls behoben. Die übrigen Hinweise stehen oben unter «Bekannte Grenzen».
-- **Nachtrag:** Die Prüfung «stille Spuren» gegen eine v18-Referenz ohne die Abkürzung fand einen Fehler nach einer Stille, behoben in v18.2 (siehe dort). Die übrigen offenen Prüfungen liefen auf v18.2.
+**Tested:**
+- **Build:** 474 files, no warnings. Two complete rebuilds each give the same SHA-256, for both variants. `patches/0001`–`0112` give exactly the source tree of v18, with `l2test/0001`–`0003` added exactly that of v18-l2d. All the following checks ran on exactly these builds, most of them on the main file v18-l2d.
+- **Sound:** The full-load song sounds bit for bit the same with and without L2 (`47053032…`, `8bdf172e…`), exactly as the filter stages had predicted. Compared to v17 it is deliberately different: no more analog noise, new filters and volume.
+- **Volume knob** (whole firmware in the emulator): Every detent changes 0.500 ± 0.002 dB; the largest jump between two samples while turning is 0.15% (v17: 5.6% at once).
+- **Settings** (`tests/settings`, with restart): firmware version 49 checks, OLED brightness 26, crossing guard 7, CPU monitor shortcut 34, USB audio 2.
+- **Song browser** (`tests/browser`): 39 checks, including names with "-" and "." ("TR-808", "Jam 2026-09-27", "Mix 1.5").
+- **Still passing:** L2 (both variants), drone 81 checks (both), profiler 21 (both), song change 131, clock, sections, retune.
+- **Reviewers:** one each for the four stages (filters, volume, sound changes, crossing guard), measured against the specification. They found two small bugs, both fixed: Drive's bass compensation after a jump of the ladder coefficients, and an undefined conversion for resonance via patch cable (only effective on the PC). The emulator found a write one sample past the buffer in the right channel, also fixed. The remaining notes are listed above under "Known limitations".
+- **Addendum:** The "silent tracks" check against a v18 reference without the shortcut found a bug after a silence, fixed in v18.2 (see there). The remaining open checks ran on v18.2.
 
-## Bedienung
+## Usage
 
-Das Menü liegt unter **Settings → Tuning → Master tune (Hz)**. Die 7-Segment-Anzeige zeigt `TUNE` → `MTUN`.
+The menu is under **Settings → Tuning → Master tune (Hz)**. The 7-segment display shows `TUNE` → `MTUN`.
 
-- **Bereich:** 415.3 bis 466.2 Hz, das ist ±1 Halbton um 440 Hz.
-- **Schritte:** 0.1 Hz. Der Cursor steht zuerst auf der 1-Hz-Stelle. Mit dem horizontalen Encoder wechselst du auf 0.1 Hz.
-- **Standard:** 440.0 Hz. Bei diesem Wert verhält sich die Firmware exakt wie das originale 1.2.1. Die einzige Ausnahme sind Aufnahmen, die bei einer anderen Stimmung entstanden sind (siehe unten).
+- **Range:** 415.3 to 466.2 Hz, that is ±1 semitone around 440 Hz.
+- **Steps:** 0.1 Hz. The cursor is first on the 1 Hz digit. With the horizontal encoder you move to 0.1 Hz.
+- **Default:** 440.0 Hz. At this value the firmware behaves exactly like the original 1.2.1. The only exception is recordings made at a different tuning (see below).
 
-## Was der Stimmung folgt
+## What follows the tuning
 
-Alles, was klingt, folgt der Stimmung. Die Rechnung ist exakt, die Abweichung liegt unter 0,002 Cent.
+Everything that sounds follows the tuning. The math is exact; the deviation is below 0.002 cents.
 
-| Bereich | Verhalten |
+| Area | Behavior |
 |---|---|
-| Synth- und Kit-Spuren: Wellenformen, Wavetables, Samples, Drum-Samples, FM inkl. Modulatoren, DX7 | folgen der Stimmung |
-| Audio-Clips | folgen der Stimmung; die Tonhöhe wird per Time-Stretch verschoben, das Tempo bleibt synchron |
-| Gehaltene Noten | werden beim Ändern sofort umgestimmt: Synth, Kit, CV und MIDI |
-| CV-Ausgänge | folgen der Stimmung und werden sofort neu ausgegeben |
-| Externe MIDI-Geräte (MIDI-Spuren und MIDI-Drums in Kits) | erhalten „Channel Fine Tuning“ (RPN 1) auf jedem benutzten Kanal, bei MPE auf den Member-Kanälen, siehe unten |
-| Live-Eingang als Oszillator | bleibt unverändert: Er klingt schon in der aktuellen Stimmung, weil das Instrument darauf gestimmt ist |
+| Synth and kit tracks: waveforms, wavetables, samples, drum samples, FM incl. modulators, DX7 | follow the tuning |
+| Audio clips | follow the tuning; the pitch is shifted by time-stretch, the tempo stays in sync |
+| Held notes | are retuned immediately on a change: synth, kit, CV and MIDI |
+| CV outputs | follow the tuning and are output again immediately |
+| External MIDI devices (MIDI tracks and MIDI drums in kits) | receive "Channel Fine Tuning" (RPN 1) on every channel used, with MPE on the member channels, see below |
+| Live input as oscillator | stays unchanged: it already sounds in the current tuning, because the instrument is tuned to it |
 
-## Sample-Bibliothek einmal auf 432 Hz umwandeln (`tools/retune_library.py`)
+## Converting the sample library to 432 Hz once (`tools/retune_library.py`)
 
-Bei einer anderen Stimmung als 440 Hz rechnet der Deluge jede Sample-Stimme um, auch jeden untransponierten Drum-Schlag. Mit Sinc kostet das pro Stereo-Stimme etwa sechsmal so viel wie das direkte Abspielen. Das Werkzeug wandelt die Bibliothek einmal auf die Zielstimmung um. Danach spielt der Deluge diese Samples wieder direkt ab. Eine Firmware-Änderung ist nicht nötig: Die umgewandelten Dateien tragen den Block `mtun`, und eine Datei, deren `mtun` gleich der aktuellen Stimmung ist, spielt exakt ohne Umrechnung.
+At a tuning other than 440 Hz, the Deluge resamples every sample voice, even every untransposed drum hit. With sinc this costs about six times as much per stereo voice as direct playback. The tool converts the library once to the target tuning. After that the Deluge plays these samples directly again. No firmware change is needed: the converted files carry the `mtun` chunk, and a file whose `mtun` equals the current tuning plays exactly, without resampling.
 
 ```sh
 pip install numpy soxr pylibrb
-python3 tools/retune_library.py --card KOPIE_DER_KARTE --dry-run            # nur zeigen, was sich ändert
-python3 tools/retune_library.py --card KOPIE_DER_KARTE --out NEUE_KARTE     # Standard: 432 Hz, 44,1 kHz
-python3 tools/retune_library.py --card KOPIE_DER_KARTE --out NEUE_KARTE --resume   # nach einem Abbruch weiter
+python3 tools/retune_library.py --card CARD_COPY --dry-run            # only show what would change
+python3 tools/retune_library.py --card CARD_COPY --out NEW_CARD       # default: 432 Hz, 44.1 kHz
+python3 tools/retune_library.py --card CARD_COPY --out NEW_CARD --resume   # continue after an interruption
 ```
 
-**Als Fenster unter Windows: DelugeTuner.** Dasselbe Werkzeug gibt es als `DelugeTuner-vN.exe`, im Release [`deluge-tuner`](https://github.com/Giansn/deluge/releases/tag/deluge-tuner). Nichts ist zu installieren, Rubber Band ist dabei. Gebaut wird die Datei aus `tools/deluge_tuner.py` von `.github/workflows/deluge-tuner-windows.yml`, als Skript läuft sie überall mit `python3 tools/deluge_tuner.py`. Das Fenster hat den Retro-Look von DelugeRec und ist auf Deutsch oder Englisch (Schalter im Fenster):
-- **KARTE:** die SD-Karte selbst oder eine Kopie davon. Sie wird nur gelesen.
-- **ZIEL:** ein Ordner auf dem Computer für die neue Karte. Ist er leer, wird er die neue Karte. Sonst entsteht darin ein neuer Ordner «Deluge 432 Hz», bei Bedarf nummeriert. Ist der gewählte Ordner selbst eine Karte (etwa die zuletzt gemachte), kommt der neue Ordner daneben. Ein Ordner in der Karte wird abgelehnt.
-- **Goldener Knopf:** die Stimmung, 415,3 bis 466,2 Hz, zu Beginn 432 Hz. Ziehen, Mausrad oder + und − ändern sie um 1 Hz, mit Shift oder den Pfeiltasten links/rechts um 0,1 Hz. Ein Klick auf die Zahl lässt sie eintippen.
-- **Kästchen:** 44,1 kHz oder die Rate jeder Datei behalten; Spitzen über 0 dBFS als 32-Bit-Float oder etwas leiser (`--no-float`).
-- **LESEN** zeigt nur, was es tun würde (`--dry-run`). **UMSTIMMEN** schreibt die neue Karte. Das Display und die Pads zeigen den Fortschritt, danach die Zusammenfassung; die Pads zeigen dann die Dateien nach Ergebnis.
-- **Anhalten und Fortsetzen:** ESC oder das Schliessen des Fensters hält an, sobald die laufenden Dateien fertig sind. START mit derselben Karte, demselben Ziel und denselben Einstellungen setzt fort (`--resume`).
-- **Platz:** Vorher prüft es den freien Platz am Ziel (etwa 5 % mehr als die Karte).
-- **BERICHT** öffnet `RETUNE_REPORT.txt`. Der Bericht ist wie beim Skript englisch.
+**As a window on Windows: DelugeTuner.** The same tool exists as `DelugeTuner-vN.exe`, in the release [`deluge-tuner`](https://github.com/Giansn/deluge/releases/tag/deluge-tuner). Nothing to install; Rubber Band is included. The file is built from `tools/deluge_tuner.py` by `.github/workflows/deluge-tuner-windows.yml`; as a script it runs anywhere with `python3 tools/deluge_tuner.py`. The window has DelugeRec's retro look and is in German or English (switch in the window):
+- **CARD:** the SD card itself or a copy of it. It is only read.
+- **OUTPUT:** a folder on the computer for the new card. If it is empty, it becomes the new card. Otherwise a new folder "Deluge 432 Hz" is created inside it, numbered if needed. If the chosen folder is itself a card (such as the last one made), the new folder goes next to it. A folder inside the card is rejected.
+- **Gold knob:** the tuning, 415.3 to 466.2 Hz, 432 Hz at the start. Dragging, the mouse wheel or + and − change it by 1 Hz, with Shift or the left/right arrow keys by 0.1 Hz. A click on the number lets you type it in.
+- **Checkboxes:** 44.1 kHz or keep each file's rate; peaks above 0 dBFS as 32-bit float or slightly quieter (`--no-float`).
+- **READ** only shows what it would do (`--dry-run`). **RETUNE** writes the new card. The display and the pads show the progress, then the summary; the pads then show the files by result.
+- **Stopping and resuming:** ESC or closing the window stops as soon as the files in progress are finished. START with the same card, the same output folder and the same settings resumes (`--resume`).
+- **Space:** Beforehand it checks the free space at the output folder (about 5% more than the card).
+- **REPORT** opens `RETUNE_REPORT.txt`. As with the script, the report is in English.
 
-Danach die neue Karte auf eine leere SD-Karte kopieren und am Deluge dieselbe Master-Stimmung einstellen. Tests: `tests/tuner/run.sh`.
+Then copy the new card to an empty SD card and set the same master tuning on the Deluge. Tests: `tests/tuner/run.sh`.
 
-**Was es tut:**
-- **Samples umrechnen:** Jedes Sample wird im exakten Verhältnis umgerechnet (440/432 = 55/54, soxr). Ein 440-Hz-Ton misst danach 432,00 Hz, die Abweichung liegt unter 0,002 Cent. Die Dauer wächst um 55/54.
-- **Abtastrate:** 48- und 96-kHz-Dateien bringt es im selben Durchgang auf 44,1 kHz. Die rechnet der Deluge sonst immer um.
-- **Spitzen über 0 dBFS:** Das Umrechnen kann einzelne Spitzen knapp über 0 dBFS erzeugen, etwa bei Samples, die auf 0 dBFS normalisiert sind. Abgeschnitten wird nichts: Eine solche Datei mit 8 bis 32 Bit PCM schreibt das Werkzeug als 32-Bit-Float, alle anderen Dateien behalten ihr Format. Der Report listet sie auf. Der Deluge begrenzt Float-Samples beim Laden allerdings auf 0 dBFS. Mit `--no-float` wird eine solche Datei stattdessen gerade so viel leiser wie nötig, der Report nennt die dB.
-- **Speicher:** Jede Datei wird in Blöcken von etwa 3 s gelesen, umgerechnet und geschrieben. Ein Auftrag braucht so 50 bis 100 MB, egal wie lang die Datei ist. Das Ergebnis ist Byte für Byte dasselbe wie am Stück gerechnet. Beispiel: Eine 4-Minuten-Datei (61 MB, 24 Bit Stereo) brauchte vorher 1 GB, jetzt 61 MB. Eine Datei mit Spitzen über 0 dBFS wird zweimal gerechnet, der erste Durchgang findet die Spitze.
-- **Gleichzeitige Aufträge:** Wie viele Dateien gleichzeitig laufen, richtet sich nach den Kernen (`--jobs`) und nach dem freien Arbeitsspeicher beim Start: Die Umwandlung nutzt höchstens die Hälfte davon. `--max-memory 4G` setzt die Grenze selbst. Die Konsole zeigt, was gewählt wurde und was gleichzeitig lief.
-- **Abbruch und Fortsetzen (`--resume`):** Jede Datei entsteht unter einem Zwischennamen (`.retune-tmp`) und bekommt ihren Namen erst, wenn sie vollständig auf der Platte ist. `RETUNE_PROGRESS.jsonl` im Zielordner führt die fertigen Dateien. Nach einem Abbruch (Absturz, Neustart, Ctrl+C) setzt derselbe Befehl mit `--resume` fort: Fertige Dateien bleiben, halbe werden gelöscht, der Rest wird umgerechnet. Danach schreibt es alle Songs, Kits und Synths, die kommen immer zuletzt. Das Ergebnis ist dasselbe wie ohne Abbruch. Andere Optionen als beim ersten Lauf lehnt `--resume` ab, ebenso einen Ordner einer älteren Version ohne `RETUNE_PROGRESS.jsonl`: dessen Dateien können halb geschrieben sein.
-- **Positionen anpassen:** Start- und Endmarken, Loops und Audio-Clip-Positionen in allen Songs, Kits und Synths werden angepasst. Ebenso die Chunks `smpl` und `cue` in den Dateien.
-- **Audio-Clips und Samples mit Time-Stretch:** Sie bekommen eine Kopie `_ts`, die nur die Tonhöhe verschiebt und die Länge hält (Rubber Band).
-- **AIFF:** wird zu WAV, weil der Deluge `mtun` nur in WAV liest. Der Pfad im XML wird angepasst.
-- **Pfade mit Umlauten:** werden gefunden. Der Deluge schreibt sie in CP437.
-- **Nie verändert:** die Originalkarte. Es schreibt immer eine neue Karte, dazu `RETUNE_REPORT.txt` mit allen Änderungen und Warnungen. Ein zweiter Lauf ändert nichts mehr.
-- **Unverändert bleiben:** Wavetables und Dateien, die schon die Zielstimmung tragen. Ebenso Dateien, die der Deluge ohnehin nicht lesen kann (WAVE_FORMAT_EXTENSIBLE, mehr als 2 Kanäle, 64-Bit-Float).
+**What it does:**
+- **Resampling samples:** Every sample is resampled at the exact ratio (440/432 = 55/54, soxr). A 440 Hz tone then measures 432.00 Hz; the deviation is below 0.002 cents. The duration grows by 55/54.
+- **Sample rate:** It brings 48 and 96 kHz files to 44.1 kHz in the same pass. The Deluge otherwise always resamples those.
+- **Peaks above 0 dBFS:** Resampling can create single peaks just above 0 dBFS, for example with samples normalized to 0 dBFS. Nothing is clipped: the tool writes such a file with 8 to 32 bit PCM as 32-bit float; all other files keep their format. The report lists them. However, the Deluge limits float samples to 0 dBFS when loading. With `--no-float` such a file is instead made just as much quieter as needed; the report gives the dB.
+- **Memory:** Each file is read, resampled and written in blocks of about 3 s. One job thus needs 50 to 100 MB, however long the file is. The result is byte for byte the same as when computed in one piece. Example: a 4-minute file (61 MB, 24-bit stereo) needed 1 GB before, now 61 MB. A file with peaks above 0 dBFS is computed twice; the first pass finds the peak.
+- **Parallel jobs:** How many files run at the same time depends on the cores (`--jobs`) and on the free RAM at start: the conversion uses at most half of it. `--max-memory 4G` sets the limit yourself. The console shows what was chosen and what ran in parallel.
+- **Interruption and resuming (`--resume`):** Each file is created under a temporary name (`.retune-tmp`) and only gets its name once it is completely on disk. `RETUNE_PROGRESS.jsonl` in the output folder lists the finished files. After an interruption (crash, restart, Ctrl+C), the same command with `--resume` continues: finished files stay, half-written ones are deleted, the rest is resampled. After that it writes all songs, kits and synths; they always come last. The result is the same as without an interruption. `--resume` rejects options that differ from the first run, and likewise a folder from an older version without `RETUNE_PROGRESS.jsonl`: its files may be half-written.
+- **Adjusting positions:** Start and end markers, loops and audio clip positions in all songs, kits and synths are adjusted. So are the `smpl` and `cue` chunks in the files.
+- **Audio clips and samples with time-stretch:** They get a `_ts` copy that only shifts the pitch and keeps the length (Rubber Band).
+- **AIFF:** becomes WAV, because the Deluge only reads `mtun` in WAV. The path in the XML is adjusted.
+- **Paths with umlauts:** are found. The Deluge writes them in CP437.
+- **Never changed:** the original card. It always writes a new card, plus `RETUNE_REPORT.txt` with all changes and warnings. A second run changes nothing more.
+- **Left unchanged:** wavetables and files that already carry the target tuning. Likewise files the Deluge cannot read anyway (WAVE_FORMAT_EXTENSIBLE, more than 2 channels, 64-bit float).
 
-**Was es bringt** (Emulator, v16 bei 432 Hz, Test-Karte mit Kit, Synth-Samples, Multisample und Audio-Clip):
-- Jede untransponierte Stimme spielt direkt, statt mit Time-Stretch sind es 0 Hops statt 13.
-- Pro Stimme und Block fallen die Befehle von 13 300 auf 2 490 (mono), von 17 600 auf 3 011 (Stereo, 48 kHz) und von 19 800 auf 3 000 (Audio-Clip).
-- Die ganze Karte braucht ohne Sample-Cache 34 % weniger, mit Cache 6 %.
+**What it gains** (emulator, v16 at 432 Hz, test card with kit, synth samples, multisample and audio clip):
+- Every untransposed voice plays directly rather than with time-stretch: 0 hops instead of 13.
+- Per voice and block, the instructions drop from 13,300 to 2,490 (mono), from 17,600 to 3,011 (stereo, 48 kHz) and from 19,800 to 3,000 (audio clip).
+- The whole card needs 34% less without the sample cache, 6% less with the cache.
 
-**Grenzen:**
-- **Immer die ganze Karte:** Wandle immer eine Kopie der ganzen Karte um und kopiere das ganze Ergebnis auf eine zweite Karte, nie nur einzelne Ordner. Samples, die mehrere Songs, Kits oder Synths teilen, wären sonst umgewandelt, die Positionen in den übrigen Songs aber nicht. Die Originalkarte bleibt unberührt.
-- **Transponierte Noten** werden weiter umgerechnet, zum Beispiel ein Synth-Sample, das melodisch gespielt wird.
-- **Bei 440 Hz** klingen umgewandelte Samples dank `mtun` richtig, kosten dann aber wieder Umrechnung.
-- **Sehr kurze Loops und Single-Cycle-Samples:** Die Loop-Länge wird auf ganze Samples gerundet, das verstimmt sie um bis zu 1,4 Cent. Das Werkzeug warnt.
-- **`_ts`-Kopien:** Anschläge können um bis zu 4,6 ms verschoben sein.
-- **Loops, die kein Song benutzt**, werden wie Einzel-Samples umgerechnet. Machst du später einen Audio-Clip daraus, streckt der Deluge ihn wieder, er kostet dann also Umrechnung. Solche Loops besser aus einer Kopie der Originale nehmen.
-- **Geprüft:** `tests/retune/run.sh`, auf dem PC und im Emulator. Auf dem Gerät ist es noch nicht getestet.
+**Limitations:**
+- **Always the whole card:** Always convert a copy of the whole card and copy the whole result to a second card, never just single folders. Otherwise samples shared by several songs, kits or synths would be converted, but the positions in the other songs would not. The original card stays untouched.
+- **Transposed notes** are still resampled, for example a synth sample that is played melodically.
+- **At 440 Hz** converted samples sound right thanks to `mtun`, but then cost resampling again.
+- **Very short loops and single-cycle samples:** The loop length is rounded to whole samples, which detunes them by up to 1.4 cents. The tool warns about this.
+- **`_ts` copies:** Attacks can be shifted by up to 4.6 ms.
+- **Loops that no song uses** are resampled like single samples. If you later make an audio clip from one, the Deluge stretches it again, so it then costs resampling. Better take such loops from a copy of the originals.
+- **Tested:** `tests/retune/run.sh`, on the PC and in the emulator. It has not been tested on the device yet.
 
-## Aufnahmen werden nie doppelt gestimmt
+## Recordings are never tuned twice
 
-- **Markierung beim Aufnehmen:** Eine Aufnahme auf dem Deluge (Audio-Clip, Resampling, Sample-Aufnahme, Stem-Export) bei einer anderen Stimmung als 440 Hz bekommt in der WAV-Datei einen 12-Byte-Block `mtun` mit dieser Stimmung.
-- **Abspielen:** Die Aufnahme wird nur um die Differenz zur aktuellen Stimmung verschoben. Eine Aufnahme bei 432 Hz klingt bei 432 Hz also unverändert und wird bei 440 Hz um genau +31,77 Cent angehoben.
-- **Grundton-Erkennung:** Die automatische Erkennung rechnet relativ zur Aufnahme-Stimmung. Die Kette Aufnahme → Erkennung → Transposition → Stimmung trifft den Zielton auf 0,001 Cent genau (siehe Test).
-- **Kompatibilität:** Andere Software überspringt den Block. Geprüft sind Python `wave`, libsndfile (Basis vieler DAWs und Editoren) und scipy; alle lesen bitgenau dieselben Audiodaten.
-- **Ohne Block:** Samples ohne Block, z. B. aus anderen Quellen, gelten als 440-Hz-Material.
+- **Tag when recording:** A recording on the Deluge (audio clip, resampling, sample recording, stem export) at a tuning other than 440 Hz gets a 12-byte `mtun` chunk with this tuning in the WAV file.
+- **Playback:** The recording is only shifted by the difference to the current tuning. So a recording made at 432 Hz sounds unchanged at 432 Hz and is raised by exactly +31.77 cents at 440 Hz.
+- **Root note detection:** The automatic detection computes relative to the recording's tuning. The chain recording → detection → transposition → tuning hits the target pitch to within 0.001 cents (see test).
+- **Compatibility:** Other software skips the chunk. Tested are Python `wave`, libsndfile (the basis of many DAWs and editors) and scipy; all read bit-exactly the same audio data.
+- **Without the chunk:** Samples without the chunk, e.g. from other sources, count as 440 Hz material.
 
-## MIDI-Details
+## MIDI details
 
-Die Stimmung geht als RPN 1 (6 Control-Change-Meldungen) hinaus:
+The tuning goes out as RPN 1 (6 control change messages):
 
-- **Bei Änderung:** sofort an alle Kanäle, die der Song benutzt. Das stimmt auch gehaltene Noten um.
-- **Nach dem Play-Start:** noch einmal, für Geräte, die inzwischen eingeschaltet wurden. Das geschieht erst **nach** den ersten Noten und verzögert sie deshalb nicht.
-- **Vor der ersten Note** auf einem Kanal, der die aktuelle Stimmung noch nicht hat, z. B. nach dem Laden eines Songs mit neuen Kanälen.
-- **Geteilte Kanäle:** Teilen sich mehrere Spuren oder Drums einen Kanal, wird er nur einmal gestimmt.
-- **Schutz des DIN-Puffers:** Der DIN-MIDI-Puffer hat keinen Überlaufschutz. Die Firmware sendet deshalb nur, solange darin Platz ist, und schickt den Rest wenige Millisekunden später. Auch schnelles Drehen am Encoder mit vielen MPE-Kanälen erzeugt so keinen MIDI-Müll.
-- **Nie verstimmt:** War seit dem Einschalten nie eine andere Stimmung als 440 Hz aktiv, geht nichts Zusätzliches hinaus. Nach einer Rückkehr auf 440 Hz setzt die Firmware die Geräte einmal auf 0 Cent zurück.
+- **On a change:** immediately to all channels the song uses. This also retunes held notes.
+- **After play start:** once more, for devices that were switched on in the meantime. This only happens **after** the first notes and therefore does not delay them.
+- **Before the first note** on a channel that does not have the current tuning yet, e.g. after loading a song with new channels.
+- **Shared channels:** If several tracks or drums share a channel, it is tuned only once.
+- **Protecting the DIN buffer:** The DIN MIDI buffer has no overflow protection. The firmware therefore only sends while there is room in it and sends the rest a few milliseconds later. So even fast turning of the encoder with many MPE channels produces no MIDI garbage.
+- **Never detuned:** If no tuning other than 440 Hz has been active since power-on, nothing extra goes out. After a return to 440 Hz the firmware resets the devices to 0 cents once.
 
-## Speicherung
+## Storage
 
-- **Speicherort:** Der Wert steht in `CommunityFeatures.XML` im Hauptverzeichnis der SD-Karte, Eintrag `masterTune`, in Zehntel-Hz, z. B. `4320` für 432.0 Hz. Er wird beim Verlassen des Settings-Menüs gespeichert.
-- **Kompatibilität:** Die offizielle Firmware kennt den Eintrag nicht. Sie behält ihn trotzdem und schreibt ihn unverändert zurück.
-- **Übernahme aus der Fork-Version:** Die Fork-Version (`c1.2.0`) speicherte den Wert in den Flash-Bytes 198–199. Die neue Version übernimmt ihn beim ersten Start. Sobald er in der Datei steht, setzt die Firmware die Flash-Bytes beim nächsten Speichern wieder auf 0, wie die offizielle Firmware. Konflikte mit künftigen Firmware-Versionen entfallen damit.
+- **Location:** The value is in `CommunityFeatures.XML` in the SD card's root folder, entry `masterTune`, in tenths of a Hz, e.g. `4320` for 432.0 Hz. It is saved when leaving the Settings menu.
+- **Compatibility:** The official firmware does not know the entry. It keeps it anyway and writes it back unchanged.
+- **Migration from the fork version:** The fork version (`c1.2.0`) stored the value in flash bytes 198–199. The new version takes it over at the first start. As soon as it is in the file, the firmware sets the flash bytes back to 0 at the next save, like the official firmware. This rules out conflicts with future firmware versions.
 
 ## Installation
 
-1. Kopiere die gewünschte `.bin`-Datei ins Hauptverzeichnis der SD-Karte. Lass dort keine andere `.bin`-Datei liegen.
-2. Halte wie gewohnt beim Einschalten **SHIFT** gedrückt. Der Deluge installiert dann die Firmware.
-3. Kontrolliere danach unter Settings → Firmware version die Versionsbezeichnung aus der Tabelle oben.
+1. Copy the `.bin` file you want to the SD card's root folder. Don't leave any other `.bin` file there.
+2. As usual, hold **SHIFT** while switching on. The Deluge then installs the firmware.
+3. Afterwards check the version name from the table above under Settings → Firmware version.
 
-## Grenzen
+## Limitations
 
-- **Nicht auf dem Gerät getestet.** Geprüft sind der Build (reproduzierbar, zwei Builds mit identischer SHA-256), die Rechnung und das WAV-Format (Tests unten).
-- **CPU:** Abseits von 440 Hz braucht die Wiedergabe etwas mehr Rechenzeit, genau wie eine Transposition um Bruchteile eines Halbtons.
-  - Samples, die bei 440 Hz nativ laufen, werden interpoliert.
-  - Audio-Clips laufen dauernd über den Time-Stretcher. Das ist der grösste Posten, spürbar erst bei vielen Audio-Clips gleichzeitig.
-  - Aufnahmen bei der aktuellen Stimmung laufen dagegen nativ.
-- **Klangqualität:** Die Tonverschiebung nutzt dieselbe Interpolation und denselben Time-Stretcher wie beim Transponieren. Bei Samples im Modus „Pitch/Speed unabhängig“ und bei Audio-Clips gelten deshalb die üblichen, sehr leisen Time-Stretch-Artefakte.
-- **MIDI:** Das Gerät muss RPN 1 (Channel Fine Tuning) auswerten. Das tun viele Synths und DAWs, aber nicht alle. RPN 1 reicht von −100 bis +99,99 Cent. Nur an den beiden Extremwerten 415.3 Hz (−100,02 Cent) und 466.2 Hz (+100,13 Cent) bleibt eine Rest-Abweichung von höchstens 0,15 Cent.
-- **Später eingeschaltete MIDI-Geräte:** Sie bekommen die Stimmung einige Millisekunden nach dem nächsten Play-Start. Ein Gerät, das die Stimmung nur beim Anschlag übernimmt, spielt die allerersten Noten dieses einen Durchlaufs noch in 440 Hz.
-- **Fremde Aufnahmen:** Aufnahmen der Fork-Version oder in einem Editor gespeicherte Kopien haben keinen `mtun`-Block (manche Editoren entfernen unbekannte Blöcke). Sie gelten als 440-Hz-Material.
-- **Barock-Stimmung:** A = 415.0 Hz liegt knapp ausserhalb des Bereichs. Möglich sind 415.3 Hz, also genau ein Halbton unter 440.
+- **Not tested on the device.** Tested are the build (reproducible, two builds with identical SHA-256), the math and the WAV format (tests below).
+- **CPU:** Away from 440 Hz, playback needs a bit more CPU time, just like a transposition by fractions of a semitone.
+  - Samples that play natively at 440 Hz are interpolated.
+  - Audio clips run through the time-stretcher all the time. That is the biggest item, noticeable only with many audio clips at once.
+  - Recordings made at the current tuning, on the other hand, play natively.
+- **Sound quality:** The pitch shift uses the same interpolation and the same time-stretcher as transposing. For samples in "Pitch/speed independent" mode and for audio clips, the usual, very quiet time-stretch artifacts therefore apply.
+- **MIDI:** The external device must evaluate RPN 1 (Channel Fine Tuning). Many synths and DAWs do, but not all. RPN 1 ranges from −100 to +99.99 cents. Only at the two extreme values 415.3 Hz (−100.02 cents) and 466.2 Hz (+100.13 cents) does a residual deviation of at most 0.15 cents remain.
+- **MIDI devices switched on later:** They get the tuning a few milliseconds after the next play start. A device that only applies the tuning at note-on plays the very first notes of that one run still at 440 Hz.
+- **Other recordings:** Recordings from the fork version or copies saved in an editor have no `mtun` chunk (some editors remove unknown chunks). They count as 440 Hz material.
+- **Baroque tuning:** A = 415.0 Hz is just outside the range. 415.3 Hz is possible, i.e. exactly one semitone below 440.
 
-## Versionen
+## Versions
 
 | | Fork `c1.2.0` | Version 1 (`19514d07`) | Version 2 (`49e71650`) |
 |---|---|---|---|
-| Synth-Spuren, CV | ja | ja | ja |
-| Kit-Spuren und Drum-Samples | ja | nein | ja |
-| Audio-Clips und Aufnahmen | nein | nein | ja, ohne Doppelstimmung |
-| Samples mit automatischer Grundton-Erkennung | Stimmung doppelt, z. B. 32 Cent zu tief bei 432 Hz | korrekt | korrekt, auch für eigene Aufnahmen |
-| Live-Eingang als Oszillator | verstimmt | verstimmt | unverändert (korrekt) |
-| Gehaltene Noten | erst ab dem nächsten Anschlag | sofort | sofort, auch in Kits |
-| Externe MIDI-Geräte | nicht gestimmt | RPN 1, vor der ersten Note nach Play-Start (bis 6 ms Verzögerung pro Kanal über DIN) | RPN 1, ohne Verzögerung beim Play-Start, DIN-Puffer geschützt, MIDI-Drums inklusive |
-| Speicherort | Flash-Bytes 198–199 | SD-Datei | SD-Datei |
+| Synth tracks, CV | yes | yes | yes |
+| Kit tracks and drum samples | yes | no | yes |
+| Audio clips and recordings | no | no | yes, without double tuning |
+| Samples with automatic root note detection | tuning applied twice, e.g. 32 cents too low at 432 Hz | correct | correct, also for own recordings |
+| Live input as oscillator | detuned | detuned | unchanged (correct) |
+| Held notes | only from the next note-on | immediately | immediately, also in kits |
+| External MIDI devices | not tuned | RPN 1, before the first note after play start (up to 6 ms delay per channel over DIN) | RPN 1, no delay at play start, DIN buffer protected, MIDI drums included |
+| Storage location | flash bytes 198–199 | SD file | SD file |
 
-Version 1 liegt weiterhin in der Git-Historie dieses Ordners.
+Version 1 is still in this folder's git history.
 
-## Selbst bauen und testen
+## Building and testing it yourself
 
 ```sh
 git clone https://github.com/SynthstromAudible/DelugeFirmware && cd DelugeFirmware
 git checkout release_1_2_1
-git am /pfad/zu/patches/*.patch        # alle = v18.3 ohne L2 (nicht ausgeliefert) (Stände der Versionen: siehe «Quellcode» oben); die Hauptdatei dazu: git am /pfad/zu/l2test/*.patch
-./dbt configure -DRELEASE_TYPE:STRING=mastertune-v18.3-l2d   # Name in der Versionsanzeige
-./dbt build release                      # Ergebnis: build/Release/deluge.bin
-# Bitgleich wie die ausgelieferte Datei: Die Firmware enthält den Commit-Hash (bis v17 im Versionsnamen, immer in der Absturzanzeige), git am
-# erzeugt aber neue Hashes. Vor dem Build in build/src/deluge/version/version.cmake den execute_process mit
-# "rev-parse --short HEAD" durch set(GIT_COMMIT_SHORT "<Hash aus dem Dateinamen>") ersetzen. So ergab der Nachbau
-# von v16 aus 0001-0055 genau 7eed1a77… (geraet/analyse/2026-09-27-nachbau-v16.md auf dem Branch geraet-ergebnisse).
+git am /path/to/patches/*.patch        # all = v18.3 without L2 (not released) (the state of each version: see "Source code" above); for the main file also: git am /path/to/l2test/*.patch
+./dbt configure -DRELEASE_TYPE:STRING=mastertune-v18.3-l2d   # name in the version display
+./dbt build release                      # result: build/Release/deluge.bin
+# Bit-identical to the released file: the firmware contains the commit hash (up to v17 in the version name, always in the crash display), but git am
+# creates new hashes. Before the build, in build/src/deluge/version/version.cmake replace the execute_process with
+# "rev-parse --short HEAD" by set(GIT_COMMIT_SHORT "<hash from the file name>"). That way the rebuild
+# of v16 from 0001-0055 gave exactly 7eed1a77… (device/analysis/2026-09-27-rebuild-v16.md).
 
-# Rechentest (Host-Compiler)
-g++ -std=c++20 -O2 -Isrc/deluge /pfad/zu/tests/master_tune_math_test.cpp -o mt_test && ./mt_test
+# Math test (host compiler)
+g++ -std=c++20 -O2 -Isrc/deluge /path/to/tests/master_tune_math_test.cpp -o mt_test && ./mt_test
 
-# WAV-Test (pip install soundfile scipy)
-python3 /pfad/zu/tests/wav_mtun_chunk_test.py
+# WAV test (pip install soundfile scipy)
+python3 /path/to/tests/wav_mtun_chunk_test.py
 
-# NEON-Pufferverschiebung auf Cortex-A9-Code im Emulator (pip install unicorn)
-python3 /pfad/zu/tests/run_neon_shift_test.py .
+# NEON buffer shift on Cortex-A9 code in the emulator (pip install unicorn)
+python3 /path/to/tests/run_neon_shift_test.py .
 
-# SD-Zugriff über USB (v7) auf dem PC, mit AddressSanitizer
-/pfad/zu/tests/smsysex/run.sh .
+# SD access over USB (v7) on the PC, with AddressSanitizer
+/path/to/tests/smsysex/run.sh .
 
-# USB-Audio (v8): Deskriptoren und Puffer-Simulation auf dem PC
-/pfad/zu/tests/usbaudio/run.sh .
+# USB audio (v8): descriptors and buffer simulation on the PC
+/path/to/tests/usbaudio/run.sh .
 
-# Lade-Warteschlange (v9) auf dem PC (braucht g++-multilib)
-/pfad/zu/tests/streaming/run.sh .
+# Load queue (v9) on the PC (needs g++-multilib)
+/path/to/tests/streaming/run.sh .
 
-# Reverb (v10): alle Modelle auf dem PC gemessen, mit UndefinedBehaviorSanitizer
-/pfad/zu/tests/reverb/run.sh .
+# Reverb (v10): all models measured on the PC, with UndefinedBehaviorSanitizer
+/path/to/tests/reverb/run.sh .
 
-# Delay (v11): Wiederholungen, Zeitänderungen und Filter auf dem PC gemessen, mit UndefinedBehaviorSanitizer
-/pfad/zu/tests/delay/run.sh .
+# Delay (v11): repeats, time changes and filters measured on the PC, with UndefinedBehaviorSanitizer
+/path/to/tests/delay/run.sh .
 
-# Drone (v12): Töne, Beats und Übergänge auf dem PC gemessen, mit UndefinedBehaviorSanitizer
-/pfad/zu/tests/drone/run.sh .
+# Drone (v12): tones, beats and transitions measured on the PC, with UndefinedBehaviorSanitizer
+/path/to/tests/drone/run.sh .
 ```
 
-## Tests im Emulator (Cortex-A9)
+## Tests in the emulator (Cortex-A9)
 
-Alle Tests laufen zusätzlich zum PC auch auf dem Maschinencode des Deluge-Prozessors, einem Cortex-A9, in einem Emulator (unicorn 2.1.4, die neuste Version).
+In addition to the PC, all tests also run on the machine code of the Deluge's processor, a Cortex-A9, in an emulator (unicorn 2.1.4, the latest version).
 
-- **Gleicher Code wie auf dem Deluge:** Gebaut wird mit der Toolchain der Firmware und ihren Code-Flags: Thumb-2, NEON mit Hard-Float, `-O2` und `-funsafe-math-optimizations`. Nur die Link-Zeit-Optimierung über Dateien hinweg fehlt.
-- **Wozu:** So fallen Unterschiede zwischen PC und Deluge auf, bevor die Firmware aufs Gerät kommt:
-  - 32 Bit statt 64 Bit
-  - NEON-Gleitkomma ohne Denormals
-  - Umformungen des Compilers durch die Fast-Math-Flags
+- **Same code as on the Deluge:** It is built with the firmware's toolchain and its code flags: Thumb-2, NEON with hard float, `-O2` and `-funsafe-math-optimizations`. Only the link-time optimization across files is missing.
+- **Why:** This way differences between PC and Deluge show up before the firmware goes onto the device:
+  - 32 bit instead of 64 bit
+  - NEON floating point without denormals
+  - compiler transformations due to the fast-math flags
 
-  Genau so fand der Emulator den Damping-Fehler aus v10.
-- **Ablauf:** Der Test läuft als normales Programm mit Ausgabe, Heap, Dateien und Exit-Code (Semihosting der newlib). Speicherfehler und ungültige Befehle meldet der Emulator mit der Stelle im Quellcode.
-- **Rechenzeit:** Der Emulator zählt die ausgeführten Befehle der DSP-Teile pro Block von 128 Samples (2,9 ms), `run_all.sh` gibt sie am Ende aus. Stand v12:
+  This is exactly how the emulator found the damping bug from v10.
+- **How it runs:** The test runs as a normal program with output, heap, files and exit code (newlib semihosting). The emulator reports memory errors and invalid instructions with the location in the source code.
+- **CPU time:** The emulator counts the executed instructions of the DSP parts per block of 128 samples (2.9 ms); `run_all.sh` prints them at the end. As of v12:
 
-  | Teil | Befehle pro Block | ≈ CPU | 1.2.1 (v10) |
+  | Part | Instructions per block | ≈ CPU | 1.2.1 (v10) |
   |---|---|---|---|
-  | Reverb Freeverb | 70 200 | 6,0 % | |
-  | Reverb Mutable | 39 100 | 3,4 % | |
-  | Reverb Digital | 53 600 | 4,6 % | |
-  | Delay, Zeit ruhig | 9 200 | 0,8 % | 0,7 % |
-  | Delay, Zeit moduliert | 40 100 | 3,5 % | 5,0 %: meist liefen zwei Puffer |
-  | Delay, moduliert mit LPF/HPF | 44 400 | 3,8 % | |
-  | Delay, moduliert, Analog-Modus mit LPF/HPF | 97 000 | 8,4 % | 9,1 % ohne Filter |
-  | Drone, 1 Sinuston | 4 100 | 0,35 % | |
-  | Drone, 1 binauraler Ton | 6 300 | 0,54 % | |
-  | Drone, 16 binaurale Töne mit Obertönen | 79 500 | 6,9 % | |
+  | Reverb Freeverb | 70,200 | 6.0% | |
+  | Reverb Mutable | 39,100 | 3.4% | |
+  | Reverb Digital | 53,600 | 4.6% | |
+  | Delay, time steady | 9,200 | 0.8% | 0.7% |
+  | Delay, time modulated | 40,100 | 3.5% | 5.0%: two buffers were usually running |
+  | Delay, modulated with LPF/HPF | 44,400 | 3.8% | |
+  | Delay, modulated, analog mode with LPF/HPF | 97,000 | 8.4% | 9.1% without filters |
+  | Drone, 1 sine tone | 4,100 | 0.35% | |
+  | Drone, 1 binaural tone | 6,300 | 0.54% | |
+  | Drone, 16 binaural tones with harmonics | 79,500 | 6.9% | |
 
-  Die Prozentangaben rechnen mit 1 Befehl pro Takt bei 400 MHz. Das ist eine grobe Schätzung, denn Caches, Pipeline und Doppel-Ausführung des A9 bildet der Emulator nicht nach. Für Vergleiche zwischen Versionen taugt sie gut.
-- **Was nicht emuliert wird:** Die Hardware (SD-Karte, USB, Display) ersetzen die Tests wie auf dem PC durch eigene Nachbildungen. Der WAV-Test ist reines Python und läuft nur auf dem PC.
+  The percentages assume 1 instruction per clock cycle at 400 MHz. This is a rough estimate, because the emulator does not model the A9's caches, pipeline and dual issue. It works well for comparisons between versions.
+- **What is not emulated:** The tests replace the hardware (SD card, USB, display) with their own models, as on the PC. The WAV test is pure Python and only runs on the PC.
 
 ```sh
-# Alle Tests auf PC und Emulator (braucht python3 mit unicorn: pip install unicorn)
-/pfad/zu/tests/run_all.sh .            # oder: ... . pc / ... . arm
-# Ein einzelner Test im Emulator
-ARM=1 /pfad/zu/tests/delay/run.sh .
+# All tests on PC and emulator (needs python3 with unicorn: pip install unicorn)
+/path/to/tests/run_all.sh .            # or: ... . pc / ... . arm
+# A single test in the emulator
+ARM=1 /path/to/tests/delay/run.sh .
 ```

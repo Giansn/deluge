@@ -1,7 +1,7 @@
-# DelugeRec: Tests unter Windows, 27.09.2026
+# DelugeRec: tests on Windows, 27.09.2026
 
-Auftrag 4 der Entwicklungs-Session. `tools/deluge_rec.py`, `tools/deluge_rec.ico` und `tests/deluge_rec/` stimmen auf `geraet-ergebnisse` (`e0bc3a7`) und auf dem Entwicklungs-Branch überein (`git diff` leer). Die Entwicklungs-Session hatte sie schon selbst übertragen. Darum kein weiterer Commit mit den Dateien.
+Task 4 of the development session. `tools/deluge_rec.py`, `tools/deluge_rec.ico` and `tests/deluge_rec/` are the same on `geraet-ergebnisse` (`e0bc3a7`, now `device-results`) and on the development branch (`git diff` empty). The development session had already carried them over itself, so there is no further commit with the files.
 
-- **Lauf:** `python mastertune-1.2.1/tests/deluge_rec/test_deluge_rec.py` auf Windows 11, Python 3.14.
-- **Ergebnis:** 25 Tests, **alle ok**, 6,3 s.
-- **Am Gerät:** Der Deluge erscheint unter Windows als Aufnahme-Eingang «Línea (Deluge)», 2 Kanäle, 44,1 kHz. Bei allen vier Schnittstellen: MME, DirectSound, WASAPI, WDM-KS. Ein eigener Mitschnitt über WASAPI exklusiv war bitgenau 24 bit, kein Loch mit reiner Stille in 8 + 20 s Wiedergabe.
+- **Run:** `python mastertune-1.2.1/tests/deluge_rec/test_deluge_rec.py` on Windows 11, Python 3.14.
+- **Result:** 25 tests, **all ok**, 6.3 s.
+- **On the device:** The Deluge appears on Windows as the recording input "Línea (Deluge)", 2 channels, 44.1 kHz. With all four interfaces: MME, DirectSound, WASAPI, WDM-KS. A recording of my own over WASAPI exclusive was bit-exact 24 bit, with no hole of pure silence in 8 + 20 s of playback.

@@ -1,67 +1,67 @@
-# Auftrag an die Entwicklungs-Session: Song und Firmware für DelugeRec (SysEx 0x12), 27.09.2026
+# Task for the development session: song and firmware for DelugeRec (SysEx 0x12), 27.09.2026
 
-## Wunsch des Nutzers
+## The user's wish
 
-Die Aufnahmen von DelugeRec sollen den exakten Songnamen, das Datum und die Firmware haben.
+DelugeRec's recordings should carry the exact song name, the date and the firmware.
 
-## Warum es die Firmware braucht
+## Why it needs the firmware
 
-- **Datum:** kennt der PC. DelugeRec schreibt es schon in den Namen und in die Datei.
-- **Format, das der Nutzer will:** `Songname, tt.mm.yyyy - 1.2.1 v17`, zum Beispiel `Rescue 3, 28.09.2026 - 1.2.1 v17.WAV` (DelugeRec v6). Weitere Aufnahmen am selben Tag bekommen « (2)», « (3)». Ohne Meldung vom Deluge heisst die Datei heute `28.09.2026 00-17-26.WAV`, so beim Nutzer mit v17-l2d gesehen.
-- **Songname und Firmware:** USB-Audio trägt nur Samples, der Deluge muss beides selbst melden. Abfragen darf der PC nicht, denn der Nutzer will, dass er nichts an den Deluge sendet. Also meldet der Deluge es von sich aus, wie schon die CPU-Werte (SysEx 0x10) auf Port 3.
+- **Date:** the PC knows it. DelugeRec already writes it into the name and into the file.
+- **The format the user wants:** `Song name, dd.mm.yyyy - 1.2.1 v17`, for example `Rescue 3, 28.09.2026 - 1.2.1 v17.WAV` (DelugeRec v6). More recordings on the same day get " (2)", " (3)". Without a message from the Deluge, the file is called `28.09.2026 00-17-26.WAV` today, as seen by the user with v17-l2d.
+- **Song name and firmware:** USB audio carries only samples; the Deluge has to report both itself. The PC must not ask, because the user wants it to send nothing to the Deluge. So the Deluge reports it on its own, as it already does with the CPU values (SysEx 0x10) on port 3.
 
-## Protokoll
+## Protocol
 
-- **Nachricht:** `F0 00 21 7B 01 12 <JSON> F7` auf USB-MIDI-Port 3 (`upstreamUSBMIDIDevice_port3`), nur gesendet, nie beantwortet.
-  - JSON: `{"song":"Rescue 3","fw":"1.2.1-mastertune-v18"}`, UTF-8, 7 Byte in 8 gepackt wie `util/pack.c` (`pack_8bit_to_7bit`).
-  - `0x12`, weil `0x10` der CPU-Monitor und `0x11` der Profiler belegen.
-- **Wann:**
-  - nur solange der Computer den Audio-Stream offen hat (`usbAudioIsStreaming()`, neu)
-  - sofort beim Start des Streams und beim Wechsel des Songnamens, sonst alle 2 s
-  - nur mit 1 KB Platz im USB-MIDI-Sendepuffer, wie beim CPU-Monitor
-- **Inhalt:**
-  - `song`: `currentSong->name`. Für einen neuen, nie gespeicherten Song leer. FatFs liefert Namen in CP437 (`FF_CODE_PAGE 437`, `FF_LFN_UNICODE 0`). Der Patch wandelt sie mit `ff_oem2uni` nach UTF-8 um, höchstens 120 Zeichen und 240 Byte, gekürzt vor einem ganzen Zeichen.
+- **Message:** `F0 00 21 7B 01 12 <JSON> F7` on USB MIDI port 3 (`upstreamUSBMIDIDevice_port3`), only sent, never answered.
+  - JSON: `{"song":"Rescue 3","fw":"1.2.1-mastertune-v18"}`, UTF-8, 7 bytes packed into 8 as in `util/pack.c` (`pack_8bit_to_7bit`).
+  - `0x12`, because `0x10` is taken by the CPU monitor and `0x11` by the profiler.
+- **When:**
+  - only while the computer has the audio stream open (`usbAudioIsStreaming()`, new)
+  - at once when the stream starts and when the song name changes, otherwise every 2 s
+  - only with 1 KB of room in the USB MIDI send buffer, as with the CPU monitor
+- **Content:**
+  - `song`: `currentSong->name`. Empty for a new song that was never saved. FatFs gives names in CP437 (`FF_CODE_PAGE 437`, `FF_LFN_UNICODE 0`). The patch converts them to UTF-8 with `ff_oem2uni`, at most 120 characters and 240 bytes, cut before a whole character.
   - `fw`: `kFirmwareVersionString`.
 
 ## Patch
 
-`2026-09-27-songinfo.patch` in diesem Ordner, auf v17 mit `patches/0001–0074`, sauber anwendbar mit `git am` (geprüft), auch zusammen mit `l2test/0001–0003`.
+`2026-09-27-songinfo.patch` in this folder, on v17 with `patches/0001–0074`, applies cleanly with `git am` (checked), also together with `l2test/0001–0003`.
 
-- **Basis geprüft:** `release_1_2_1` plus `patches/0001–0074` plus `l2test/0001–0003`, gebaut mit dem Hash `b3385d83`, ergibt Byte für Byte die Datei, die auf dem Gerät läuft (`deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin`, SHA-256 `aad4d080…5ec32c4b`). Bitte in v18 unter der nächsten freien Nummer übernehmen.
+- **Base checked:** `release_1_2_1` plus `patches/0001–0074` plus `l2test/0001–0003`, built with the hash `b3385d83`, gives byte for byte the file that runs on the device (`deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin`, SHA-256 `aad4d080…5ec32c4b`). Please take it into v18 under the next free number.
 
-- **Neue Dateien:** `io/usb/usb_song_info.h` und `.cpp` (die Routine), `usb_song_info_message.cpp` (die Nachricht allein, ohne Hardware).
-- **Geänderte Dateien:**
-  - `usb_audio`: `usbAudioIsStreaming()` gibt `pipeRunning` zurück.
-  - `deluge.cpp`: die Aufgabe «usb song info» alle 0,25 s, gleich nach dem CPU-Monitor.
+- **New files:** `io/usb/usb_song_info.h` and `.cpp` (the routine), `usb_song_info_message.cpp` (the message alone, without hardware).
+- **Changed files:**
+  - `usb_audio`: `usbAudioIsStreaming()` returns `pipeRunning`.
+  - `deluge.cpp`: the task "usb song info" every 0.25 s, right after the CPU monitor.
 
-## Geprüft
+## Checked
 
-- **Build:** `dbt build release` fehlerfrei, keine neuen Warnungen. Die Routine ist gelinkt.
-- **Nachricht gegen DelugeRec:** Der Nachrichtenbau der Firmware, für den PC kompiliert, mit der echten CP437-Tabelle von FatFs (`ffunicode.c`), und der Leser von DelugeRec v5 (`DelugeInfo.parse`) passen zusammen. Alle 8 Fälle kommen exakt an:
-  - «Grüezi» aus CP437
-  - «Café ¢ 45°»
-  - `"` und `\` im Namen
-  - leerer Song
-  - 200 Zeichen, gekürzt auf 120
-  - 120 × «ü» (genau 240 Byte)
-  - ein Umlaut jenseits der 120 Zeichen
-  - ein Steuerzeichen
-  - Die längste mögliche Nachricht hat 428 Byte.
-- **Prüfung:** ein Prüfer über App und Patch. Fünf Fehler bestätigt und behoben:
-  - Umlaute in CP437 (jetzt nach UTF-8 umgewandelt)
-  - Port 3 nie nachgeholt, wenn belegt
-  - möglicher Hänger von python-rtmidi beim Schliessen (jetzt Abfrage statt Callback)
-  - der Kopf `F0 7D 12` nach SysEx mit der Entwickler-ID 0x7D (wird angenommen)
-  - `--list` ohne MIDI-System
-  - Ohne Befund: Puffergrössen, Escaping, Timer-Überlauf, `currentSong` beim Laden, Senden ohne Host (`sendBufferSpace()` 0).
-- **clang-format:** ohne Befund.
+- **Build:** `dbt build release` without errors, no new warnings. The routine is linked.
+- **Message against DelugeRec:** The firmware's message building, compiled for the PC, with FatFs's real CP437 table (`ffunicode.c`), and the reader of DelugeRec v5 (`DelugeInfo.parse`) fit together. All 8 cases arrive exactly:
+  - "Grüezi" from CP437
+  - "Café ¢ 45°"
+  - `"` and `\` in the name
+  - an empty song
+  - 200 characters, cut to 120
+  - 120 × "ü" (exactly 240 bytes)
+  - an umlaut beyond the 120 characters
+  - a control character
+  - The longest possible message has 428 bytes.
+- **Review:** one checker over app and patch. Five bugs confirmed and fixed:
+  - umlauts in CP437 (now converted to UTF-8)
+  - port 3 never retried when it was taken
+  - a possible hang of python-rtmidi when closing (now polling instead of a callback)
+  - the header `F0 7D 12` after SysEx with the developer ID 0x7D (accepted)
+  - `--list` without a MIDI system
+  - Without finding: buffer sizes, escaping, timer overflow, `currentSong` while loading, sending without a host (`sendBufferSpace()` 0).
+- **clang-format:** without finding.
 
-## Nicht geprüft
+## Not checked
 
-- **Am Gerät:** Bitte mit DelugeRec v6 testen. Der Dateiname soll dann `Songname, tt.mm.yyyy - 1.2.1 v18.WAV` lauten, und das Display zeigt «SONG …». Eine Testfirmware habe ich auf Wunsch des Nutzers nicht gebaut: Die Firmware kommt von der Haupt-Session.
-- **Im Emulator:** USB läuft dort nicht.
+- **On the device:** Please test with DelugeRec v6. The file name should then be `Song name, dd.mm.yyyy - 1.2.1 v18.WAV`, and the display shows "SONG …". At the user's request I built no test firmware: the firmware comes from the main session.
+- **In the emulator:** USB doesn't run there.
 
-## Hinweise
+## Notes
 
-- **Port 3 ist geteilt:** Auch CPU-Monitor und Profiler senden dort, und `deluge_profiler.py` liest dort. Unter Windows kann nur ein Programm einen MIDI-Eingang offen haben. DelugeRec und `deluge_profiler.py` gehen also nicht gleichzeitig.
-- **Port 1 bleibt frei:** DelugeRec öffnet nie Port 1, den eine DAW braucht.
+- **Port 3 is shared:** The CPU monitor and the profiler send there too, and `deluge_profiler.py` reads there. On Windows only one program can have a MIDI input open. So DelugeRec and `deluge_profiler.py` don't work at the same time.
+- **Port 1 stays free:** DelugeRec never opens port 1, which a DAW needs.

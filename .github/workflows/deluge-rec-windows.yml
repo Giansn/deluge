@@ -7,7 +7,7 @@ name: DelugeRec for Windows
 # gets the released file.
 on:
   push:
-    branches: [geraet-ergebnisse]
+    branches: [device-results]
     paths:
       - mastertune-1.2.1/tools/deluge_rec.py
       - mastertune-1.2.1/tools/deluge_rec.ico

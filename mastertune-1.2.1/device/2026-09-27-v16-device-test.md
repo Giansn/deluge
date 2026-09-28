@@ -1,108 +1,108 @@
-# Gerätetest v16, 27.09.2026
+# Device test v16, 27.09.2026
 
-Lokale Session am Windows-11-PC, Deluge per USB. Firmware `deluge-1.2.1-mastertune-v16-c610417f.bin` (SHA-256 `7eed1a77…71897f9f`), Werkzeuge aus Commit `0377a67`. Die lokale Session hat am Deluge nur mitgehört (MIDI-Eingang), nichts gesendet und nichts auf die Karte geschrieben.
+Local session on the Windows 11 PC, Deluge by USB. Firmware `deluge-1.2.1-mastertune-v16-c610417f.bin` (SHA-256 `7eed1a77…71897f9f`), tools from commit `0377a67`. The local session only listened to the Deluge (MIDI input), sent nothing and wrote nothing to the card.
 
-## Punkte aus GERAET.md
+## Points from GERAET.md (now DEVICE.md)
 
-| # | Test | Ergebnis | Beobachtung |
+| # | Test | Result | Observation |
 |---|---|---|---|
-| 1 | Version | offen | Laut Nutzer v16 aufgespielt; die Anzeige unter Settings → Firmware version ist nicht abgelesen. Die v16-Symbole ergeben stimmige Funktionsnamen. |
-| 2 | USB audio bleibt an | nicht getestet | |
-| 3 | CPU monitor | teilweise ok | On und Profile laufen, Profile mehrmals umgeschaltet ohne Absturz. Alerts nicht geprüft. |
-| 4 | Drone-Spuren | nicht getestet | |
-| 5 | Messung grosser Song | ok | «New Sitar Grii 10», 30 s Stillstand, 39 s Spielen mit Clips starten und stoppen. Zahlen unten. |
-| 6 | L2-Versionen | teilweise | l2d gemessen, grob (siehe Nachtrag), kein Absturz. l2i offen. |
+| 1 | Version | open | According to the user v16 is flashed; the display under Settings → Firmware version wasn't read. The v16 symbols give consistent function names. |
+| 2 | USB audio stays on | not tested | |
+| 3 | CPU monitor | partly ok | On and Profile run, Profile switched several times without a crash. Alerts not checked. |
+| 4 | Drone tracks | not tested | |
+| 5 | Measurement big song | ok | "New Sitar Grii 10", 30 s idle, 39 s playing, starting and stopping clips. Numbers below. |
+| 6 | L2 versions | partly | l2d measured, roughly (see the addendum), no crash. l2i open. |
 
-## Messung «New Sitar Grii 10» (`2026-09-27-v16-grosser-song.jsonl`, CPU monitor auf Profile)
+## Measurement "New Sitar Grii 10" (`2026-09-27-v16-big-song.jsonl`, CPU monitor on Profile)
 
-| | Stillstand, 30 s | Spielen, 39 s |
+| | Idle, 30 s | Playing, 39 s |
 |---|---|---|
-| CPU-Anzeige Mittel / Spitze | 86,3 % / 62 % | 95,8 % / 213,6 % |
-| Stimmen höchstens | 0 | 16 |
-| Qualität gesenkt (QL) | nie | alle 39 s, Stufe 12–14 |
-| Abgeschnittene Stimmen | 0 | 124, in 21 s |
-| Längste Lücke der Audio-Routine | 0,4 ms | 4,2 ms; in 24 s über 2,9 ms |
-| Audio-Routine / Scheduler (Profil) | 87,4 % / 10,7 % | 96,7 % / 2,1 % |
+| CPU display mean / peak | 86.3% / 62% | 95.8% / 213.6% |
+| Voices at most | 0 | 16 |
+| Quality lowered (QL) | never | all 39 s, level 12–14 |
+| Voices cut | 0 | 124, in 21 s |
+| Longest gap of the audio routine | 0.4 ms | 4.2 ms; above 2.9 ms in 24 s |
+| Audio routine / scheduler (profile) | 87.4% / 10.7% | 96.7% / 2.1% |
 
-**Rechenzeit pro Spur** (auf dem Gerät gemessen, Anteil der Zeit):
+**Computing time per track** (measured on the device, share of the time):
 
-| Spur | Stillstand | Spielen |
+| Track | Idle | Playing |
 |---|---|---|
-| K Guiro | 14,7 % | 10,5 % |
-| K 3L3Ctr0 | 12,0 % | 13,2 % |
-| K 014 CR-78 | 6,6 % | 7,3 % |
-| K KIT1 | 5,7 % | 7,2 % |
-| A AUDIO1 | 5,5 % | 2,8 % |
-| K Rattle V2 | 3,1 % | 3,5 % |
-| K Hihat | 2,9 % | 7,8 % |
-| K Rattle | 2,8 % | 4,0 % |
-| S 170 Sitar 2 / S Oboe / S Kbass | je 0,4 % | 10,4 / 7,6 / 3,3 % |
-| M (2 MIDI-Spuren) | 0,4–0,5 % | 0,1 % |
+| K Guiro | 14.7% | 10.5% |
+| K 3L3Ctr0 | 12.0% | 13.2% |
+| K 014 CR-78 | 6.6% | 7.3% |
+| K KIT1 | 5.7% | 7.2% |
+| A AUDIO1 | 5.5% | 2.8% |
+| K Rattle V2 | 3.1% | 3.5% |
+| K Hihat | 2.9% | 7.8% |
+| K Rattle | 2.8% | 4.0% |
+| S 170 Sitar 2 / S Oboe / S Kbass | 0.4% each | 10.4 / 7.6 / 3.3% |
+| M (2 MIDI tracks) | 0.4–0.5% | 0.1% |
 
-**Funktionen:** `Song::renderAudio` (Zeit in den Spuren) 70 % im Stillstand, 85 % beim Spielen. `reverb::Mutable::process` 6,5 / 5,9 %. Im Stillstand dazu der Scheduler: `TaskManager::chooseBestTask` 5,7 %, `getSecondsFromStart` 4,5 %.
+**Functions:** `Song::renderAudio` (time in the tracks) 70% idle, 85% playing. `reverb::Mutable::process` 6.5 / 5.9%. When idle also the scheduler: `TaskManager::chooseBestTask` 5.7%, `getSecondsFromStart` 4.5%.
 
-## Beobachtungen
+## Observations
 
-- **Stillstand:** Die stillen Kits und die Audiospur belegen zusammen 53 % der Zeit, die Synths je 0,4 %. Das passt zum Befund aus dem Emulator (Audio-Routine fast pausenlos, stille Spuren richten jedes Mal ihre Effekte ein), also zu v17.
-- **Die Rangfolge im Stillstand folgt nicht allein den Effekten auf Kit-Ebene:** Guiro (Delay, Feedback 14–15) kostet 14,7 %, Rattle mit ähnlichem Delay nur 2,8 %. KIT1 ohne Kit-Effekte kostet 5,7 %. Das wäre im Emulator mit einem ähnlichen Song zu prüfen.
-- **Spielen:** Die Schnitte hängen an der Last, nicht an der Karte. 20 der 21 Sekunden mit Schnitten haben eine Lücke über 2,9 ms. In den 5 Sekunden mit Kartenzugriffen (bis 23 ms pro Zugriff) gab es keinen Schnitt. Geschnitten wird, wenn die Kits 3L3Ctr0, Hihat, Guiro und 014 CR-78 zusammen spielen.
-- **Hörbar (Nutzer):** Oboe und Sitar sind fast nicht zu hören, solange die Kits spielen. Es sind offenbar ihre Stimmen, die abgeschnitten werden.
-- Erster Lauf mit CPU monitor auf On (`2026-09-27-v16-cpumonitor.jsonl`, nach 75 s gestoppt, die Datei enthält davon die ersten rund 60 s): beim Starten von Clips Schnitte bis 21 pro Sekunde zusammen mit Kartenzugriffen (4–7 ms) und Lücken bis 4,6 ms.
+- **Idle:** The silent kits and the audio track together take 53% of the time, the synths 0.4% each. That fits the finding from the emulator (the audio routine almost without pause, silent tracks set up their effects every time), i.e. v17.
+- **The ranking when idle doesn't follow the kit-level effects alone:** Guiro (delay, feedback 14–15) costs 14.7%, Rattle with a similar delay only 2.8%. KIT1 without kit effects costs 5.7%. That would be worth checking in the emulator with a similar song.
+- **Playing:** The cuts depend on the load, not on the card. 20 of the 21 seconds with cuts have a gap above 2.9 ms. In the 5 seconds with card accesses (up to 23 ms per access) there was no cut. Voices get cut when the kits 3L3Ctr0, Hihat, Guiro and 014 CR-78 play together.
+- **Audible (user):** Oboe and sitar can hardly be heard while the kits play. Apparently it's their voices that get cut.
+- First run with the CPU monitor on On (`2026-09-27-v16-cpumonitor.jsonl`, stopped after 75 s; the file contains about the first 60 s of it): when starting clips, cuts of up to 21 per second together with card accesses (4–7 ms) and gaps of up to 4.6 ms.
 
-## Der Song (aus dem Backup vom 25.09., gespeichert mit c1.2.1)
+## The song (from the backup of 25.09., saved with c1.2.1)
 
-140 BPM, Song-Reverb Mutable (Room 16), 13 Spuren:
+140 BPM, song reverb Mutable (room 16), 13 tracks:
 
-| Spur | Art | Einstellungen, die ohne Noten weiterlaufen |
+| Track | Kind | Settings that keep running without notes |
 |---|---|---|
-| KIT1 | Kit, 1 Drum (Resample-WAV) | Delay auf dem Drum |
-| AUDIO1 | Audiospur | Eingangs-Monitoring an (rechts), Reverb-Send 9 |
-| Oboe, 170 Sitar 2, Kbass | Synths, Sample + Rechteck | – |
-| Rattle V2 | Kit, 19 Drums | – |
-| Rattle | Kit, 14 Drums | Delay auf dem Kit, Feedback 14 |
-| Hihat | Kit, 14 Drums | Flanger auf dem Kit |
-| Guiro | Kit, 8 Drums | Delay auf dem Kit, Feedback 15, Reverb-Send 4 |
-| 3L3Ctr0 | Kit, 36 Drums | Phaser (Feedback 9) und HPF auf dem Kit |
-| 014 CR-78 | Kit, 14 Drums | Flanger auf dem Kit |
+| KIT1 | kit, 1 drum (resample WAV) | delay on the drum |
+| AUDIO1 | audio track | input monitoring on (right), reverb send 9 |
+| Oboe, 170 Sitar 2, Kbass | synths, sample + square | – |
+| Rattle V2 | kit, 19 drums | – |
+| Rattle | kit, 14 drums | delay on the kit, feedback 14 |
+| Hihat | kit, 14 drums | flanger on the kit |
+| Guiro | kit, 8 drums | delay on the kit, feedback 15, reverb send 4 |
+| 3L3Ctr0 | kit, 36 drums | phaser (feedback 9) and HPF on the kit |
+| 014 CR-78 | kit, 14 drums | flanger on the kit |
 | 2 × MIDI | | |
 
-## Hinweise zu Werkzeugen und Anleitung
+## Notes on tools and instructions
 
-- **Windows-Portnamen:** `Deluge 0`, `MIDIIN2 (Deluge) 1`, `MIDIIN3 (Deluge) 2`. `open_input()` sucht eine 3 am Namensende und nimmt deshalb Port 1, von dem nichts kommt. Mit `-p "MIDIIN3 (Deluge) 2"` geht es. Vorschlag: auch `midiin3` erkennen.
-- **`pip install mido python-rtmidi`** scheitert unter Windows mit Python 3.13 und 3.14. `python-rtmidi` 1.5.8 hat Windows-Pakete nur bis 3.12, sonst will pip kompilieren. Mit Python 3.12 läuft alles.
+- **Windows port names:** `Deluge 0`, `MIDIIN2 (Deluge) 1`, `MIDIIN3 (Deluge) 2`. `open_input()` looks for a 3 at the end of the name and therefore takes port 1, from which nothing comes. With `-p "MIDIIN3 (Deluge) 2"` it works. Suggestion: recognise `midiin3` too.
+- **`pip install mido python-rtmidi`** fails on Windows with Python 3.13 and 3.14. `python-rtmidi` 1.5.8 has Windows packages only up to 3.12, otherwise pip wants to compile. With Python 3.12 everything runs.
 
-## Nachtrag: l2d (`2026-09-27-v16-l2d-grosser-song.jsonl`)
+## Addendum: l2d (`2026-09-27-v16-l2d-big-song.jsonl`)
 
-Firmware `l2test/deluge-1.2.1-mastertune-v16-l2d-03ccaac5.bin`, CPU monitor auf Profile. Anders als geplant: nur 2 s Stillstand, dann 68 s gespielt, länger und mit mehr Clips als bei v16. Der Vergleich ist darum grob. Die Messung mit festem Ablauf folgt.
+Firmware `l2test/deluge-1.2.1-mastertune-v16-l2d-03ccaac5.bin`, CPU monitor on Profile. Other than planned: only 2 s idle, then 68 s played, longer and with more clips than with v16. The comparison is therefore rough. The measurement with a fixed sequence follows.
 
 | | v16 | l2d |
 |---|---|---|
-| Stillstand: CPU-Anzeige | 86,3 % (30 s) | 80,7 % (2 s) |
-| Spielen: Stimmen Mittel / höchstens | 8,6 / 16 | 14,5 / 24 |
-| Abgeschnittene Stimmen | 3,2/s (124 in 39 s) | 2,5/s (173 in 68 s) |
-| Sekunden mit Lücke über 2,9 ms | 62 %, längste 4,2 ms | 74 %, längste 5,1 ms |
-| Qualität gesenkt | die ganze Zeit | die ganze Zeit (Stufe 11–14) |
-| Anteil Sitar / Oboe | 10,4 / 7,6 % | 18,4 / 8,2 % |
+| Idle: CPU display | 86.3% (30 s) | 80.7% (2 s) |
+| Playing: voices mean / at most | 8.6 / 16 | 14.5 / 24 |
+| Voices cut | 3.2/s (124 in 39 s) | 2.5/s (173 in 68 s) |
+| Seconds with a gap above 2.9 ms | 62%, longest 4.2 ms | 74%, longest 5.1 ms |
+| Quality lowered | all the time | all the time (level 11–14) |
+| Share Sitar / Oboe | 10.4 / 7.6% | 18.4 / 8.2% |
 
-- In den ersten 19 s mit l2d: 13 Stimmen im Mittel, kein Schnitt, Lücke über 2,9 ms nur in 4 s. Danach, mit bis zu 24 Stimmen, wieder Schnitte (3,5/s) und Lücken bis 5,1 ms.
-- **Hörbar (Nutzer):** mit l2d «sehr viel besser».
-- Kein Absturz, keine Auffälligkeiten. Während des Tests wurde nichts gespeichert oder aufgenommen.
+- In the first 19 s with l2d: 13 voices on average, no cut, a gap above 2.9 ms in only 4 s. After that, with up to 24 voices, cuts again (3.5/s) and gaps of up to 5.1 ms.
+- **Audible (user):** with l2d "very much better".
+- No crash, nothing unusual. Nothing was saved or recorded during the test.
 
-## Song für den Emulator (Auftrag 2)
+## Song for the emulator (task 2)
 
-- `karte/SONGS/New Sitar Grii 10.XML`: unverändert aus dem Backup vom 25.09. Laut Nutzer ist der Song seither nicht geändert.
-- `karte/SAMPLES/…`: 136 der 139 Samples mit ihren Kartenpfaden, 75,6 MB. Laut Nutzer alles eigene Samples.
-- `karte/samples-new-sitar-grii-10.csv`: alle 139 mit Spur, Grösse, Format und Länge.
-- Es fehlen drei Hihats aus `SAMPLES/PsyPack/` (Kit Hihat), sie liegen nicht im Backup.
-- Formate: 49× stereo 24 bit, 41× mono 16 bit, 21× stereo 16 bit, 18× stereo 32 bit float, 4× stereo 96 kHz 32 bit, 3× mono 24 bit.
-- **Master Tune bei allen Messungen: 432 Hz** (Angabe des Nutzers). Die Backups vom 25./26.09. haben noch keinen Eintrag, sie stammen von vorher.
-  - Bei 432 Hz werden alle Samples interpoliert, auch die Drums: Sie spielen fast alle untransponiert (3L3Ctr0: 1 von 36 transponiert) und liefen bei 440 Hz nativ.
-  - Emulator-Tabelle (`research/OPTIMIERUNG.md`): pro Stereo-Stimme und Block 3 500 Befehle nativ, 12 000 linear (bei QL 14), 20 800 mit Sinc. Das dürfte einen guten Teil der Kit-Last beim Spielen erklären.
-  - Eine Vergleichsmessung mit 440 Hz würde zeigen, was 432 Hz auf dem Gerät kostet.
+- `card/SONGS/New Sitar Grii 10.XML`: unchanged from the backup of 25.09. According to the user the song hasn't changed since.
+- `card/SAMPLES/…`: 136 of the 139 samples with their card paths, 75.6 MB. According to the user all own samples.
+- `card/samples-new-sitar-grii-10.csv`: all 139 with track, size, format and length.
+- Three hi-hats from `SAMPLES/PsyPack/` (kit Hihat) are missing; they aren't in the backup.
+- Formats: 49× stereo 24 bit, 41× mono 16 bit, 21× stereo 16 bit, 18× stereo 32-bit float, 4× stereo 96 kHz 32 bit, 3× mono 24 bit.
+- **Master tune for all measurements: 432 Hz** (the user's statement). The backups of 25./26.09. have no entry yet; they are from before.
+  - At 432 Hz all samples are interpolated, the drums too: almost all of them play untransposed (3L3Ctr0: 1 of 36 transposed) and ran natively at 440 Hz.
+  - Emulator table (`research/OPTIMIZATION.md`): per stereo voice and block 3,500 instructions native, 12,000 linear (at QL 14), 20,800 with sinc. That probably explains a good part of the kit load while playing.
+  - A comparison measurement at 440 Hz would show what 432 Hz costs on the device.
 
-## Dateien
+## Files
 
-- `2026-09-27-v16-grosser-song.jsonl`: die Messung oben (70 s, Profile)
-- `2026-09-27-v16-l2d-grosser-song.jsonl`: l2d, 70 s, Profile
-- `2026-09-27-v16-profile-check.jsonl`: 12 s Profile beim Spielen
-- `2026-09-27-v16-cpumonitor.jsonl`: erster Lauf, CPU monitor auf On
+- `2026-09-27-v16-big-song.jsonl`: the measurement above (70 s, Profile)
+- `2026-09-27-v16-l2d-big-song.jsonl`: l2d, 70 s, Profile
+- `2026-09-27-v16-profile-check.jsonl`: 12 s Profile while playing
+- `2026-09-27-v16-cpumonitor.jsonl`: first run, CPU monitor on On

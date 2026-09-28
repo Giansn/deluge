@@ -1,43 +1,43 @@
-# Nachmessung der beiden Ausschnitte (Claude, 2026-09-26)
+# Re-measuring the two excerpts (Claude, 2026-09-26)
 
-Zwei unabhängige Analysen (Rhythmus, Tonhöhe/Klang) plus eine eigene Gegenprüfung der Kernaussage. Alles aus dem fertigen Mix gemessen, deshalb mit Sicherheitsangabe.
+Two independent analyses (rhythm, pitch/sound) plus a cross-check of the core statement of my own. Everything is measured from the finished mix, so it comes with a confidence note.
 
-## Bestätigt (zwei Methoden stimmen überein)
+## Confirmed (two methods agree)
 
-- **Tempo 138 BPM** (Beat 434,8 ms). Das README nennt 137,8, das ist nur die Rasterstufe der Tempo-Schätzung.
-- **Es gibt eine beschleunigende Figur.** Drei, vier gleich laute Anschläge, deren Abstände jeweils auf etwa das 0,65- bis 0,75-Fache schrumpfen und die genau eine Achtel füllen, bis in den nächsten Schlag:
+- **Tempo 138 BPM** (beat 434.8 ms). The README says 137.8; that is only the grid step of the tempo estimate.
+- **There is an accelerating figure.** Three or four equally loud hits whose gaps each shrink to about 0.65 to 0.75 times the previous one, and which fill exactly one eighth, up to the next beat:
 
-  | Stelle im Lied | Abstände | Summe |
+  | Place in the song | Gaps | Sum |
   |---|---|---|
-  | 0:57,2 | 99 → 64 → 46 ms | 209 ms |
-  | 6:39,2 | 102 → 75 → 46 ms | 223 ms |
-  | 6:31,1 (nur Rhythmus-Analyse) | 99 → 65 → 54 ms | 218 ms |
-  | 6:40,2 (nur Rhythmus-Analyse) | 144 → 94 → 64 ms | 302 ms |
+  | 0:57.2 | 99 → 64 → 46 ms | 209 ms |
+  | 6:39.2 | 102 → 75 → 46 ms | 223 ms |
+  | 6:31.1 (rhythm analysis only) | 99 → 65 → 54 ms | 218 ms |
+  | 6:40.2 (rhythm analysis only) | 144 → 94 → 64 ms | 302 ms |
 
-  Eine Achtel dauert bei 138 BPM 217 ms. Die Abstandszeiten der ersten beiden Stellen haben die Rhythmus-Analyse und die HPSS-Gegenprüfung unabhängig voneinander auf wenige Millisekunden genau gefunden.
-- **Kein durchgehendes 1/32-Arpeggio.** Keine der Methoden findet eine 54-ms-Periodik. Der Arp spielt in Phrasen, nicht durchgehend. Die Angaben «1/32, 25 % Gate, Zufallsreihenfolge» im README lassen sich nicht bestätigen.
-- **Klang:** Sägezahn, Filter offen (Obertöne bis über 3,5 kHz, Abfall etwa 5–6 dB/Oktave, kaum Resonanz), leicht verstimmt (10–15 Cent), eher schmal im Stereo. Bei 6:36 breiter.
-- **Pumpen:** Der Arp selbst wird nicht gepumpt. Bass und Pad ducken nach dem Kick, der Bass hat seine Spitze auf dem Offbeat.
+  An eighth lasts 217 ms at 138 BPM. The rhythm analysis and the HPSS cross-check found the gap times of the first two places independently of each other, to within a few milliseconds.
+- **No continuous 1/32 arpeggio.** None of the methods finds a 54 ms periodicity. The arp plays in phrases, not continuously. The README's statements "1/32, 25% gate, random order" can't be confirmed.
+- **Sound:** sawtooth, filter open (overtones up to above 3.5 kHz, falling about 5–6 dB/octave, hardly any resonance), slightly detuned (10–15 cents), rather narrow in stereo. Wider at 6:36.
+- **Pumping:** The arp itself isn't pumped. Bass and pad duck after the kick; the bass has its peak on the offbeat.
 
-## Nur von einer Methode gefunden (unsicher)
+## Found by one method only (uncertain)
 
-- Eine **verlangsamende** Figur direkt nach dem Kick bei 0:56,1 und 1:03,1: 48 → 55 → 67 → 81 → 99 ms, etwa ×1,2 pro Anschlag.
-- **Harmonie bei 6:36:** Bewegung in D-harmonisch-Moll (A, B♭, C#, D, E, F, G). Bei 0:57 liegt A-Dur mit B und G.
-- **Gate eher 50 % oder mehr** statt 25 %. Das Pad verdeckt hier viel.
-- Ob die Anschläge der Figur einzelne Arp-Töne oder ganze Akkord-Stösse sind, lässt sich aus dem Mix nicht sicher trennen.
+- A **slowing** figure right after the kick at 0:56.1 and 1:03.1: 48 → 55 → 67 → 81 → 99 ms, about ×1.2 per hit.
+- **Harmony at 6:36:** movement in D harmonic minor (A, B♭, C#, D, E, F, G). At 0:57 there is A major with B and G.
+- **Gate rather 50% or more** instead of 25%. The pad covers a lot here.
+- Whether the hits of the figure are single arp notes or whole chord stabs can't be separated safely from the mix.
 
-## Nachbau auf dem Deluge mit Firmware v6 (genau)
-
-- **Tempo:** 138.
-- **Arp:** Sync 1/8, Ratchet notes 3, Ratchet bounce +6, Bounce fade aus.
-- **Einsätze:** 0, 99 und 169 ms nach Beginn der Achtel, also Abstände von 99, 70 und 49 ms. Gemessen wurden 99, 64 und 46 ms bei 0:57 und 102, 75 und 46 ms bei 6:39.
-- **Ratchet probability:** In der Automation-Ansicht nur auf die Achtel vor dem Schlag setzen, an dem die Figur kommen soll, sonst 0.
-
-## Nachbau auf dem Deluge mit Firmware v5 (angenähert)
+## Rebuilding it on the Deluge with firmware v6 (exact)
 
 - **Tempo:** 138.
-- **Arp:** Sync 1/8, Ratchet Bounce +6 bis +7. Das ergibt ein Verhältnis von 0,70 bzw. 0,65, gemessen sind etwa 0,67.
-- **Ratchet-Wahrscheinlichkeit:** In der Automation-Ansicht nur auf die Achtel vor den Schlägen setzen, an denen die Figur kommen soll, sonst 0. Im Stück kommt die Figur nur ab und zu, nicht auf jedem Schritt.
-- **Gleich laute Anschläge:** Der Bounce macht die späten Anschläge leiser, im Stück sind sie gleich laut. Abhilfe: das Patch-Kabel Velocity → Level des Synths auf 0 stellen.
-- **Grenze der 1.3-Ratchets:** Sie wählen die Anzahl zufällig aus 2, 4 oder 8. Im Stück sind es meist 3 Anschläge pro Achtel. Mit 4 kommt ein zusätzlicher kurzer Anschlag etwa 25 ms vor dem Schlag.
-- **Exakt ohne Arp:** Die Figur als Noten in den Clip setzen (tief hineinzoomen). Bei 0:57 liegen die Einsätze 0, 99 und 163 ms nach Beginn der Achtel.
+- **Arp:** sync 1/8, ratchet notes 3, ratchet bounce +6, bounce fade off.
+- **Onsets:** 0, 99 and 169 ms after the start of the eighth, i.e. gaps of 99, 70 and 49 ms. Measured were 99, 64 and 46 ms at 0:57 and 102, 75 and 46 ms at 6:39.
+- **Ratchet probability:** In the automation view set it only on the eighth before the beat where the figure should come, 0 elsewhere.
+
+## Rebuilding it on the Deluge with firmware v5 (approximate)
+
+- **Tempo:** 138.
+- **Arp:** sync 1/8, ratchet bounce +6 to +7. That gives a ratio of 0.70 or 0.65; measured is about 0.67.
+- **Ratchet probability:** In the automation view set it only on the eighths before the beats where the figure should come, 0 elsewhere. In the piece the figure only comes now and then, not on every step.
+- **Equally loud hits:** The bounce makes the late hits quieter; in the piece they're equally loud. Remedy: set the synth's patch cable velocity → level to 0.
+- **Limit of the 1.3 ratchets:** They choose the count at random from 2, 4 or 8. In the piece there are mostly 3 hits per eighth. With 4 an extra short hit comes about 25 ms before the beat.
+- **Exact without the arp:** Put the figure into the clip as notes (zoom in deep). At 0:57 the onsets lie 0, 99 and 163 ms after the start of the eighth.

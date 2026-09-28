@@ -1,129 +1,129 @@
-# deluge.bin im Vergleich zur Original-Firmware 1.3
+# deluge.bin compared with the original firmware 1.3
 
-## Ergebnis
+## Result
 
-`deluge.bin` ist ein eigener Build der Synthstrom Deluge Community Firmware mit einer einzigen funktionalen Erweiterung: einer einstellbaren Grundstimmung („Master Tune“, A4 in Hz). Alle übrigen Abweichungen im Binary sind Folgeeffekte dieser Erweiterung.
+`deluge.bin` is a custom build of the Synthstrom Deluge community firmware with a single functional extension: an adjustable reference pitch ("Master Tune", A4 in Hz). All other differences in the binary are consequences of this extension.
 
 | | |
 |---|---|
-| Datei | `deluge.bin`, 1'737'116 Bytes, SHA-256 `786ae3b549b5754b733e11f37b5c40c13073bd3cbd8b11e330d7d9eb6d041309` |
-| Versionsstring | `1.3.0-dev-50813bcd-dirty` (Kurzform `c1.3.0`) |
-| Build-Pfad im Binary | `/home/g2thek/src/DelugeFirmware/…` |
-| Basis | `SynthstromAudible/DelugeFirmware` `main@50813bcd` vom 2026-09-25 |
-| `dirty` | Beim Build lagen lokale, nicht veröffentlichte Änderungen vor |
+| File | `deluge.bin`, 1,737,116 bytes, SHA-256 `786ae3b549b5754b733e11f37b5c40c13073bd3cbd8b11e330d7d9eb6d041309` |
+| Version string | `1.3.0-dev-50813bcd-dirty` (short form `c1.3.0`) |
+| Build path in the binary | `/home/g2thek/src/DelugeFirmware/…` |
+| Base | `SynthstromAudible/DelugeFirmware` `main@50813bcd` of 2026-09-25 |
+| `dirty` | There were local, unpublished changes at build time |
 
-**Was „Original 1.3“ heisst:** Ein fertiges Release 1.3 gibt es upstream nicht. Es gibt nur die Tags `beta` (2026-09-24), `nightly` und `start_1_3_0`. Verglichen wird deshalb auf zwei Ebenen:
+**What "original 1.3" means:** There is no finished release 1.3 upstream. There are only the tags `beta` (2026-09-24), `nightly` and `start_1_3_0`. So the comparison is on two levels:
 
-1. **Upstream-Unterschied zur offiziellen `beta`:** Die Basis `50813bcd` liegt 3 Commits nach `beta`. Es sind kleine Bugfixes in 3 Dateien (+40/−16 Zeilen):
+1. **Upstream difference to the official `beta`:** The base `50813bcd` lies 3 commits after `beta`. They are small bug fixes in 3 files (+40/−16 lines):
    - `4fdafedb` don't open another menu (#4944)
    - `04c1bf3a` use underlying param to check highlights for patch cables (#4945)
    - `50813bcd` Bugfix/first last clip double (#4943)
 
-   Nicht enthalten ist der neuere Upstream-Commit `47b1d92b` Fix/ param manager leaks (#4920).
-2. **Lokale Änderungen gegenüber genau dieser Basis:** Das ist der Hauptteil dieses Berichts.
+   Not included is the newer upstream commit `47b1d92b` Fix/ param manager leaks (#4920).
+2. **Local changes against exactly this base:** That is the main part of this report.
 
-## Methode
+## Method
 
-Ein direkter Byte-Vergleich ist unbrauchbar. Die lokale Änderung vergrössert `.bss` um 64 Bytes, dadurch beginnt das ganze Programm 0x40 Bytes später (`0x2005c3c0` statt `0x2005c380`). Jede absolute Adresse im Image ändert sich.
+A direct byte comparison is useless. The local change makes `.bss` 64 bytes bigger, so the whole program starts 0x40 bytes later (`0x2005c3c0` instead of `0x2005c380`). Every absolute address in the image changes.
 
-Deshalb wurde das unveränderte Original als Referenz selbst gebaut:
+So the unchanged original was built as a reference:
 
-- gleicher Commit `50813bcd`
-- gleiche offizielle Toolchain (DBT v22, `arm-none-eabi-gcc` 14.2.1 xPack)
-- Konfiguration `release`
-- gleicher Pfad `/home/g2thek/src/DelugeFirmware`, damit `__FILE__`-Strings gleich lang sind
-- Arbeitsbaum ebenfalls „dirty“, damit der Versionsstring identisch ist
+- the same commit `50813bcd`
+- the same official toolchain (DBT v22, `arm-none-eabi-gcc` 14.2.1 xPack)
+- configuration `release`
+- the same path `/home/g2thek/src/DelugeFirmware`, so that `__FILE__` strings have the same length
+- the working tree "dirty" too, so that the version string is identical
 
-Das Ergebnis ist `v1.3.0-dev-50813bcd-dirty` mit 1'733'332 Bytes.
+The result is `v1.3.0-dev-50813bcd-dirty` with 1,733,332 bytes.
 
-Der Vergleich (`tools/fwdiff.py`) verankert beide Images über eindeutige 24-Byte-Fenster. Die Anker werden zu einer monotonen Kette (LIS) verbunden. Danach wird jedes Funktions- und Datensymbol der Referenz mit der Gegenstelle verglichen. Reine Relocation-Effekte werden dabei herausgerechnet: absolute Adressen, BL/B/CBZ-Ziele, ARM-BL und MOVW/MOVT.
+The comparison (`tools/fwdiff.py`) anchors both images by unique 24-byte windows. The anchors are joined into a monotonic chain (LIS). Then every function and data symbol of the reference is compared with its counterpart. Pure relocation effects are taken out: absolute addresses, BL/B/CBZ targets, ARM BL and MOVW/MOVT.
 
-Beleg, dass die Referenz passt: 6'029 von 7'514 Symbolen sind identisch (3'026) oder nur verschoben (3'003).
+Proof that the reference fits: 6,029 of 7,514 symbols are identical (3,026) or only moved (3,003).
 
-## Die lokale Änderung: Master Tune
+## The local change: Master Tune
 
-**Bedienung**
-- Neues Untermenü **Settings → Tuning** (vor „Defaults“) mit einem Eintrag **Master tune (Hz)**. Auf der 7-Segment-Anzeige heissen sie `TUNE` und `MTUN`.
-- Wertebereich 415.3–466.2 Hz, also ±1 Halbton um 440 Hz, in Schritten von 0.1 Hz. Intern wird ein `int` in Zehntel-Hz gespeichert (4153–4662). Standard ist 440.0 Hz.
+**Handling**
+- A new submenu **Settings → Tuning** (before "Defaults") with one entry **Master tune (Hz)**. On the 7-segment display they are called `TUNE` and `MTUN`.
+- Range 415.3–466.2 Hz, i.e. ±1 semitone around 440 Hz, in steps of 0.1 Hz. Internally an `int` in tenths of Hz is stored (4153–4662). The default is 440.0 Hz.
 
-**Berechnung** (neue Funktion bei `0x20078504` im Fork)
+**Computation** (a new function at `0x20078504` in the fork)
 - `Hz = v · 0.1`, `ratio = Hz / 440`
-- `cents = 1200 · log2(ratio)` als `float`
+- `cents = 1200 · log2(ratio)` as `float`
 - `log2Q24 = lround(log2(ratio) · 2^24)`
 - `ratioQ30 = lround(ratio · 2^30)`
-- Anschliessend werden die CV-Kanäle 0 und 1 neu berechnet, sofern ein globaler Zustand gesetzt ist (vermutlich ein geladener Song).
+- Then the CV channels 0 and 1 are recomputed, if a global state is set (probably a loaded song).
 
-**Wirkung** (gefundene Lesezugriffe)
+**Effect** (reads found)
 
-| Stelle | Effekt |
+| Place | Effect |
 |---|---|
-| `Voice::calculatePhaseIncrements` (2×) | Phaseninkremente der Synth-Stimmen × `ratioQ30` |
-| `DxVoice::init`, `DxVoice::update` (ARM-Code) | DX7-Engine: `log2Q24` als Offset im Log-Frequenz-Bereich |
-| `CVEngine::calculateVoltage` | CV-Ausgänge: + `cents` |
-| `Sample::workOutMIDINote` | Grundton-Erkennung von Samples teilt durch Master-Tune-Hz statt fix 440 |
-| `SampleBrowser::loadAllSamplesInFolder` (3×) | Tonbereiche beim Laden ganzer Sample-Ordner ebenfalls relativ zur Master-Tune-Frequenz |
+| `Voice::calculatePhaseIncrements` (2×) | phase increments of the synth voices × `ratioQ30` |
+| `DxVoice::init`, `DxVoice::update` (ARM code) | DX7 engine: `log2Q24` as an offset in the log-frequency domain |
+| `CVEngine::calculateVoltage` | CV outputs: + `cents` |
+| `Sample::workOutMIDINote` | the root-note detection of samples divides by the master tune Hz instead of a fixed 440 |
+| `SampleBrowser::loadAllSamplesInFolder` (3×) | the note ranges when loading whole sample folders, also relative to the master tune frequency |
 
-Damit sind alle vier Stellen umgestellt, an denen das Original fest 440 Hz verwendet (`sample.cpp`, `sample_browser.cpp` 2×, `dx7note.cpp`). In der MIDI-Notenausgabe und in Audio-Clips wurden keine Zugriffe gefunden.
+So all four places where the original uses a fixed 440 Hz are switched (`sample.cpp`, `sample_browser.cpp` 2×, `dx7note.cpp`). No reads were found in the MIDI note output and in audio clips.
 
-**Speicherung**
-- Der Wert wird in den SPI-Flash-Einstellungen in den Bytes **198–199** abgelegt (int16, little endian). `FlashStorage::writeSettings` schreibt sie zusammen mit den Bytes 196/197 in einem 32-Bit-Store.
-- Beim Start (`deluge_main`) wird der Wert gelesen und geprüft. Liegt er ausserhalb von 4153–4662 oder stammen die gespeicherten Einstellungen von einer älteren Firmware-Version, gilt 4400 (440.0 Hz).
-- **Hinweis:** Upstream sind die Bytes 198–199 heute unbelegt. Belegt ein künftiges offizielles Release diese Bytes anders, können die Einstellungen beim Wechsel zwischen diesem Build und der offiziellen Firmware falsch interpretiert werden.
+**Storage**
+- The value is stored in the SPI flash settings in bytes **198–199** (int16, little endian). `FlashStorage::writeSettings` writes them together with bytes 196/197 in one 32-bit store.
+- At startup (`deluge_main`) the value is read and checked. If it lies outside 4153–4662, or if the stored settings come from an older firmware version, 4400 (440.0 Hz) applies.
+- **Note:** Upstream, bytes 198–199 are unused today. If a future official release uses these bytes differently, the settings may be misread when switching between this build and the official firmware.
 
-**Texte**
-- Zwei neue l10n-Strings, „Tuning“ und „Master tune (Hz)“, wurden direkt nach `STRING_FOR_DEFAULTS` eingefügt (neue IDs 701/702).
-- Alle späteren String-IDs verschieben sich dadurch um +2.
-- Sonst gibt es keine neuen oder entfernten Texte.
+**Texts**
+- Two new l10n strings, "Tuning" and "Master tune (Hz)", were inserted right after `STRING_FOR_DEFAULTS` (new IDs 701/702).
+- All later string IDs move by +2.
+- Otherwise there are no new or removed texts.
 
-**Neu gelinkte Bibliotheksfunktionen (newlib libm)**
-- `log2` (544 B), `lround` (124 B) und `__log2_data` (2'192 B)
-- `__log2_data` und `lround` stimmen byte-genau mit `libm.a` der Toolchain überein, `log2` bis auf Adressbezüge.
+**Newly linked library functions (newlib libm)**
+- `log2` (544 B), `lround` (124 B) and `__log2_data` (2,192 B)
+- `__log2_data` and `lround` match the toolchain's `libm.a` byte for byte, `log2` except for address references.
 
-## Warum rund 1'100 Funktionen abweichen
+## Why about 1,100 functions differ
 
-Das Binary ist mit LTO und Section Anchors gebaut. Neue globale Variablen verschieben deshalb die Offsets vieler anderer Globals relativ zu ihrem Anker. Zusammen mit den um +2 verschobenen String-IDs ändern sich dadurch die Immediates in vielen Funktionen, ohne dass sich deren Logik ändert.
+The binary is built with LTO and section anchors. New global variables therefore move the offsets of many other globals relative to their anchor. Together with the string IDs moved by +2, the immediates in many functions change without their logic changing.
 
-| Klasse (1'101 Funktionen) | Anzahl | Bedeutung |
+| Class (1,101 functions) | Count | Meaning |
 |---|---:|---|
-| `reloc` | 47 | nur Adressreste |
-| `struct` | 197 | nur `[reg, #offset]` verschoben |
-| `const` | 64 | nur Konstanten (v. a. String-IDs) |
-| `struct+const` | 204 | beides |
-| `logic` | 589 | Befehlsfolge anders (Codegen-Folgeeffekte; enthält die Tuning-Stellen oben) |
+| `reloc` | 47 | only address remains |
+| `struct` | 197 | only `[reg, #offset]` moved |
+| `const` | 64 | only constants (mainly string IDs) |
+| `struct+const` | 204 | both |
+| `logic` | 589 | different instruction sequence (codegen follow-on effects; contains the tuning places above) |
 
-Dazu kommen 384 geänderte Datenobjekte (vor allem Vtables und Menütabellen). Die vollständige Liste steht in `changed_symbols.csv`.
+On top come 384 changed data objects (mainly vtables and menu tables). The complete list is in `changed_symbols.csv`.
 
-**Grössenbilanz (+3'784 B)**
+**Size balance (+3,784 B)**
 
-| Bereich | Zuwachs |
+| Area | Growth |
 |---|---:|
-| `.text` | +1'208 B (davon 668 B libm, **etwa 540 B neuer App-Code**) |
-| `.rodata` | +2'448 B (davon 2'192 B `__log2_data`, 256 B Vtable/Menülisten) |
+| `.text` | +1,208 B (of it 668 B libm, **about 540 B of new app code**) |
+| `.rodata` | +2,448 B (of it 2,192 B `__log2_data`, 256 B vtable/menu lists) |
 | `.data` | +16 B |
-| `.sdram_data` / `.sdram_rodata` | +32 / +44 B (Texte und l10n-Einträge) |
+| `.sdram_data` / `.sdram_rodata` | +32 / +44 B (texts and l10n entries) |
 | `.exceptions` | +12 B |
 | `.bss` | +64 B |
-| `.sdram_bss` | +128 B (zwei neue Menüobjekte) |
+| `.sdram_bss` | +128 B (two new menu objects) |
 
-**Einschätzung:** Mit etwa 540 Bytes neuem App-Code ist das Tuning-Feature praktisch vollständig erklärt: Rechenfunktion, Menüklasse, Flash-Lesen/-Schreiben und die Eingriffe in Voice, DX7, CV und Sample-Erkennung. Für weitere versteckte Funktionen bleibt kaum Platz. Ganz ausschliessen lassen sich kleine Logikänderungen ohne Quellcode aber nicht.
+**Assessment:** With about 540 bytes of new app code the tuning feature is practically fully explained: the computing function, the menu class, flash reading/writing and the changes in voice, DX7, CV and sample detection. There is hardly room left for other hidden functions. Small logic changes can't be ruled out entirely without the source code, though.
 
-## Reproduktion
+## Reproduction
 
 ```sh
 git clone --filter=blob:none https://github.com/SynthstromAudible/DelugeFirmware /home/g2thek/src/DelugeFirmware
 cd /home/g2thek/src/DelugeFirmware
-git config core.abbrev 8            # Kurz-Hash mit 8 Zeichen wie im Original
+git config core.abbrev 8            # short hash with 8 characters as in the original
 git checkout 50813bcd62d806e0f49c602dcbbb68166e58916d
-touch LOCAL_BUILD_MARKER            # Baum "dirty" -> identischer Versionsstring
-./dbt build release                 # lädt Toolchain v22
+touch LOCAL_BUILD_MARKER            # tree "dirty" -> identical version string
+./dbt build release                 # downloads toolchain v22
 
-# Arbeitsordner mit ref.bin/ref.elf (aus build/Release) und fork.bin (= deluge.bin)
-T=/pfad/zu/diesem/repo/firmware-diff/tools
+# working folder with ref.bin/ref.elf (from build/Release) and fork.bin (= deluge.bin)
+T=/path/to/this/repo/firmware-diff/tools
 export WORK=$PWD/work TC=/home/g2thek/src/DelugeFirmware/toolchain/v22/linux-x86_64/arm-none-eabi-gcc/bin/arm-none-eabi-
 cd $WORK
-python3 $T/fwdiff.py ref.bin fork.bin ref.elf $TC diff.json   # Symbolvergleich -> diff.json
-python3 $T/classify.py                                         # Klassifikation -> classified.json
-python3 $T/gaps.py                                             # grösste Einfügungen
-python3 $T/callers.py 20172738                                 # Aufrufer von log2 im Fork
-python3 $T/annot.py 20078504 200785e4                          # neue Tuning-Funktion, annotiert
+python3 $T/fwdiff.py ref.bin fork.bin ref.elf $TC diff.json   # symbol comparison -> diff.json
+python3 $T/classify.py                                         # classification -> classified.json
+python3 $T/gaps.py                                             # biggest insertions
+python3 $T/callers.py 20172738                                 # callers of log2 in the fork
+python3 $T/annot.py 20078504 200785e4                          # new tuning function, annotated
 ```

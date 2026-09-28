@@ -43,8 +43,8 @@ def song_xml(path, start, end):
             f'\t\t\t\t\t<osc1 type="sample" transpose="0" cents="0" loopMode="1" timeStretchEnable="0" '
             f'fileName="{path}">\n\t\t\t\t\t\t<zone startSamplePos="{start}" endSamplePos="{end}" />\n'
             '\t\t\t\t\t</osc1>\n\t\t\t\t</sound>\n\t\t\t</soundSources>\n\t\t</kit>\n'
-            '\t\t<audioTrack name="Spur ü" />\n\t</instruments>\n\t<sessionClips>\n'
-            f'\t\t<audioClip trackName="Spur ü" filePath="{path}" startSamplePos="0" endSamplePos="44100" '
+            '\t\t<audioTrack name="Track ü" />\n\t</instruments>\n\t<sessionClips>\n'
+            f'\t\t<audioClip trackName="Track ü" filePath="{path}" startSamplePos="0" endSamplePos="44100" '
             'pitchSpeedIndependent="1" length="384" />\n\t</sessionClips>\n</song>\n')
 
 
@@ -71,7 +71,7 @@ def test_umlauts(work):
         return
     txt = open(report_txt, encoding="utf-8").read()
     check("missing" not in txt and "not on the card" not in txt, "umlauts: a file counted as missing")
-    check("\\udc" not in txt and "audioClip Spur ü: SAMPLES/Kick äöü.wav" in txt,
+    check("\\udc" not in txt and "audioClip Track ü: SAMPLES/Kick äöü.wav" in txt,
           "umlauts: the report doesn't show the names")
     rep = json.load(open(os.path.join(out, "RETUNE_REPORT.json"), encoding="utf-8"))
     check(rep["files"].get(KICK, {}).get("uses") == ["keep_length", "resample"],

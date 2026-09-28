@@ -1,186 +1,186 @@
-# Baseline Master für alle Songs, 27.09.2026
+# Baseline master for all songs, 27.09.2026
 
-Firmware: mastertune v17-l2d (`b3385d83`, der Stand auf dem Gerät). Code aus `release_1_2_1` mit `patches/0001–0074` und `l2test/0001–0003`. Songs aus `geraet/karte/SONGS`. Die Messung lief im Emulator mit genau dieser Firmware.
+Firmware: mastertune v17-l2d (`b3385d83`, the state on the device). Code from `release_1_2_1` with `patches/0001–0074` and `l2test/0001–0003`. Songs from `device/card/SONGS`. The measurement ran in the emulator with exactly this firmware.
 
-## Kurz
+## In short
 
-- **Eine abgesegnete Baseline gibt es nicht.** Weder Synthstrom noch die Entwickler der Community-Firmware geben Werte für Song, Spuren oder Master-Kompressor vor.
-  - Offiziell ist nur ein Ziel: am VU-Meter des Deluge nicht über das 3. Pad von oben, also höchstens −4,5 (`docs/community_features.md`, Abschnitt 4.1.8).
-  - Wie die Entwickler den Pegel angelegt haben, zeigen die Voreinstellungen: Song 35, Kit 35, Synth und Kit-Reihe 40.
-- **Ab 40 verliert keine Spur selbst Qualität.**
-  - Jeder Lautstärkeregler ist eine reine Multiplikation in 32 Bit, mit über 30 dB Reserve über der Vollaussteuerung.
-  - Verzerren kann nur die Summe am Ausgang: Bei 0 dBFS schneidet der Deluge hart ab, für Kopfhörer, Line-Out, USB und Resample gleich.
-  - Man hört es zuerst an der Spur, die man gerade aufdreht, weil ihre Spitzen abgeschnitten werden.
-- **Gemessen an deinem Song:** «New Sitar Grii 10» mit allen 7 Clips.
+- **There is no blessed baseline.** Neither Synthstrom nor the developers of the community firmware give values for song, tracks or master compressor.
+  - Only one target is official: on the Deluge's VU meter, not above the 3rd pad from the top, i.e. at most −4.5 (`docs/community_features.md`, section 4.1.8).
+  - How the developers laid out the level shows in the defaults: song 35, kit 35, synth and kit row 40.
+- **From 40 on, no track loses quality by itself.**
+  - Every volume control is a pure multiplication in 32 bits, with over 30 dB of headroom above full scale.
+  - Only the sum at the output can distort: at 0 dBFS the Deluge clips hard, the same for headphones, line out, USB and resample.
+  - You hear it first on the track you're turning up, because its peaks get clipped.
+- **Measured on your song:** "New Sitar Grii 10" with all 7 clips.
 
-  | Kits | Spitze |
+  | Kits | Peak |
   |---|---|
-  | wie gespeichert | −6,1 dBFS |
-  | auf 35 | −1,5 dBFS |
-  | auf 40 | +0,5 dBFS, es clippt |
+  | as saved | −6.1 dBFS |
+  | at 35 | −1.5 dBFS |
+  | at 40 | +0.5 dBFS, it clips |
 
-  Das Clipping beginnt also genau bei 40.
+  So the clipping starts exactly at 40.
 
-## Warum ab 40
+## Why from 40 on
 
-- **Die Kette:**
-  1. Stimme und Effekte der Spur
-  2. Lautstärke der Spur, dann die Summe im Kit
-  3. Kit-Lautstärke, dann die Summe im Song
-  4. Song-Lautstärke und Master-Effekte
-  5. Ausgang
+- **The chain:**
+  1. voice and effects of the track
+  2. volume of the track, then the sum in the kit
+  3. kit volume, then the sum in the song
+  4. song volume and master effects
+  5. output
 
-  Keine dieser Lautstärken sättigt. Zwischen dem Regler einer Spur und dem Ausgang ist in deinen Songs auch keine verzerrende Stufe an:
-  - keine SATURATION
-  - kein Kompressor
-  - kein Bitcrush
-  - die Filter von Kit und Song offen oder ohne Resonanz
-  - Flanger und Phaser rechnen linear
-  - Hall und Digital-Delay clippen erst weit über 0 dBFS
-  - Das einzige Analog-Delay (Kit 3L3Ctr0) hat kein Feedback.
+  None of these volumes saturates. Between a track's control and the output there is no distorting stage switched on in your songs either:
+  - no SATURATION
+  - no compressor
+  - no bitcrush
+  - the kit and song filters open or without resonance
+  - flanger and phaser compute linearly
+  - reverb and digital delay clip only far above 0 dBFS
+  - The only analog delay (kit 3L3Ctr0) has no feedback.
 
-  Absichtlich verzerrende Stufen werden stärker, je lauter das Signal davor ist: SATURATION, Analog-Delay, Filter mit viel Resonanz, Kompressor. In deinen Songs wirkt keine davon nach dem Regler einer Spur.
-- **Die einzige Grenze ist der Ausgang** (`doSomeOutputting`, `lshiftAndSaturate<8>`): hart bei 0 dBFS.
-  - Kurz davor sitzt eine weiche Sättigung (tanh) im Master-Kompressor. Sie läuft immer mit, drückt aber bei 0 dBFS nur 0,17 dB, darunter fast nichts.
-  - Nachgerechnet mit der Tabelle `tanH2d` der Firmware.
-- **Die Messung** (Emulator, knapp 7 s, alle 7 Clips; `2026-09-27-baseline-pegel.json`):
+  Deliberately distorting stages get stronger the louder the signal before them is: SATURATION, analog delay, filters with a lot of resonance, compressor. In your songs none of them acts after a track's control.
+- **The only limit is the output** (`doSomeOutputting`, `lshiftAndSaturate<8>`): hard at 0 dBFS.
+  - Just before it sits a soft saturation (tanh) in the master compressor. It always runs, but at 0 dBFS it pushes down only 0.17 dB, below that almost nothing.
+  - Recomputed with the firmware's table `tanH2d`.
+- **The measurement** (emulator, almost 7 s, all 7 clips; `2026-09-27-baseline-levels.json`):
 
-| Einstellung | Spitze | Samples über 0 dBFS |
+| Setting | Peak | Samples above 0 dBFS |
 |---|---|---|
-| wie gespeichert: Kits 21–27, Reihen meist 40 | −6,1 dBFS | 0 |
-| alle Kits auf 35 (Standard) | −1,5 dBFS | 0 |
-| alle Kits auf 40 | **+0,5 dBFS** | **30** |
-| alle Reihen und Synths von 40 auf 50 | −5,1 dBFS | 0 |
+| as saved: kits 21–27, rows mostly 40 | −6.1 dBFS | 0 |
+| all kits at 35 (default) | −1.5 dBFS | 0 |
+| all kits at 40 | **+0.5 dBFS** | **30** |
+| all rows and synths from 40 to 50 | −5.1 dBFS | 0 |
 
-- **Die Spitze kommt vom Kit 3L3Ctr0 (Kicks und Bässe).**
-  - Mit den Kits steigt sie um 4,6 und 6,7 dB, genau wie der Regler von 3L3Ctr0: 27 → 35 sind +4,7 dB, 27 → 40 sind +6,8 dB.
-  - Die Reihen von 40 auf 50 heben sie nur um 1 dB. Sie kommt also von Reihen, die nicht auf 40 stehen, wohl von den vier Kicks und Bässen dort auf 50.
+- **The peak comes from the kit 3L3Ctr0 (kicks and basses).**
+  - With the kits it rises by 4.6 and 6.7 dB, exactly like the control of 3L3Ctr0: 27 → 35 is +4.7 dB, 27 → 40 is +6.8 dB.
+  - The rows from 40 to 50 raise it by only 1 dB. So it comes from rows that aren't at 40, probably from the four kicks and basses there at 50.
 
-## Was ein Regler in dB macht
+## What a control does in dB
 
-Alle Lautstärkeregler (Song, Kit, Kit-Reihe, Synth, 0–50) folgen derselben Parabel: Von a nach b ändert sich der Pegel um 40·log10(b/a) dB.
+All volume controls (song, kit, kit row, synth, 0–50) follow the same parabola: from a to b the level changes by 40·log10(b/a) dB.
 
-| Regler | 20 | 25 | 27 | 30 | 35 | 40 | 45 | 50 |
+| Control | 20 | 25 | 27 | 30 | 35 | 40 | 45 | 50 |
 |---|---|---|---|---|---|---|---|---|
-| gegenüber 40 | −12,0 | −8,2 | −6,8 | −5,0 | −2,3 | 0 | +2,0 | +3,9 |
-| Song und Kit, gegenüber 35 (Standard) | −9,9 | −6,0 | −4,7 | −2,9 | −0,2 | +2,1 | +4,2 | +6,0 |
+| against 40 | −12.0 | −8.2 | −6.8 | −5.0 | −2.3 | 0 | +2.0 | +3.9 |
+| song and kit, against 35 (default) | −9.9 | −6.0 | −4.7 | −2.9 | −0.2 | +2.1 | +4.2 | +6.0 |
 
-- Synth und Kit-Reihe haben 0 dB bei 25. Ihr Standard 40 hebt also schon um 8,2 dB.
-- Song und Kit haben 0 dB bei 35,4, ihrem Standard. Ein Kit hat fest noch +1,9 dB dazu, als Ausgleich für die Filterresonanz.
+- Synth and kit row have 0 dB at 25. So their default 40 already raises by 8.2 dB.
+- Song and kit have 0 dB at 35.4, their default. A kit also has a fixed +1.9 dB, as compensation for the filter resonance.
 
-## Die Baseline
+## The baseline
 
-| Was | Wert | Warum | Beleg |
+| What | Value | Why | Source |
 |---|---|---|---|
-| Song-Lautstärke (Song-Ansicht, AFFECT ENTIRE, LEVEL; oder SONG MENU > MASTER > VOLUME) | 35 als Start, dann so weit hinunter, bis die Spitze bei −6 dBFS liegt | Sie wirkt vor dem Ausgang: Alles wird leiser, das Verhältnis der Spuren bleibt. In 32 Bit kostet Leiserstellen keine Qualität. | Voreinstellung; Messung |
-| Kit (Clip-Ansicht mit AFFECT ENTIRE, oder in der Song-Ansicht das Clip-Pad halten) | höchstens 35 | Deine Kits stehen auf 21–27 | Voreinstellung |
-| Synth, Kit-Reihe | 40 als Obergrenze für Lautes wie Kick und Bass, 45–50 nur für leise Samples | Von 40 auf 50 sind es +3,9 dB | Voreinstellung |
-| Master-Kompressor | aus (Threshold 0, wie in deinen Songs) | Bei 0 regelt er nicht und hebt nichts an. Eingeschaltet gleicht er seine Reduktion mit Make-up-Gain aus, er schafft also keine Reserve. Für Aufnahmen: Mastering am PC. | Code; die Doku nennt nur Bereiche |
-| Spitze | höchstens −6 dBFS | In DelugeRec bleibt das Pad −3 dunkel. Am VU-Meter des Deluge höchstens das 3. Pad von oben. Die Reserve deckt Stellen ab, die man nicht gemessen hat. | Doku 4.1.8 (−4,5); Messung |
-| VOLUME-Knopf am Deluge | beliebig | analog nach dem Wandler, wirkt nicht auf USB und Resample | Code |
-| VOL in DelugeRec | 0 dB | bitgenau. Leiser stellen repariert kein Clipping, das schon im Deluge passiert. | DelugeRec |
-| Startsong | DEFAULTS > STARTUP SONG > TEMPLATE, darin die Song-Lautstärke speichern | Der Deluge lädt beim Einschalten `SONGS/DEFAULT.XML` als Song ohne Namen (`deluge.cpp`). | Doku; Code |
+| Song volume (song view, AFFECT ENTIRE, LEVEL; or SONG MENU > MASTER > VOLUME) | 35 to start, then down until the peak lies at −6 dBFS | It acts before the output: everything gets quieter, the balance of the tracks stays. In 32 bits turning down costs no quality. | default; measurement |
+| Kit (clip view with AFFECT ENTIRE, or in song view hold the clip pad) | at most 35 | Your kits are at 21–27 | default |
+| Synth, kit row | 40 as the upper limit for loud things like kick and bass, 45–50 only for quiet samples | From 40 to 50 is +3.9 dB | default |
+| Master compressor | off (threshold 0, as in your songs) | At 0 it doesn't regulate and raises nothing. Switched on it makes up its reduction with make-up gain, so it creates no headroom. For recordings: mastering on the PC. | code; the docs only give ranges |
+| Peak | at most −6 dBFS | In DelugeRec the pad −3 stays dark. On the Deluge's VU meter at most the 3rd pad from the top. The headroom covers passages that weren't measured. | docs 4.1.8 (−4.5); measurement |
+| VOLUME knob on the Deluge | any | analog after the converter, doesn't act on USB and resample | code |
+| VOL in DelugeRec | 0 dB | bit-exact. Turning it down doesn't repair clipping that already happens in the Deluge. | DelugeRec |
+| Startup song | DEFAULTS > STARTUP SONG > TEMPLATE, save the song volume in it | At power-up the Deluge loads `SONGS/DEFAULT.XML` as a song without a name (`deluge.cpp`). | docs; code |
 
-**Für deine Songs:**
-- **«New Sitar Grii 10»:**
-  - Die Song-Lautstärke kann bei 35 bleiben, solange die Kits um 25 stehen (−6,1 dBFS).
-  - Mit den Kits auf dem Standard 35 braucht der Song 27: −1,5 − 4,7 = −6,2 dBFS.
-- **«Rescue»:**
-  - Ein Synth auf 34,8, nicht gemessen.
-  - Im Master steht die Resonanz des Tiefpasses auf dem Maximum. Solange der Tiefpass ganz offen ist, läuft der Filter nicht. Dreht man ihn zu, arbeitet er mit voller Resonanz.
+**For your songs:**
+- **"New Sitar Grii 10":**
+  - The song volume can stay at 35 as long as the kits are around 25 (−6.1 dBFS).
+  - With the kits at the default 35 the song needs 27: −1.5 − 4.7 = −6.2 dBFS.
+- **"Rescue":**
+  - One synth at 34.8, not measured.
+  - In the master the low-pass's resonance is at maximum. As long as the low-pass is fully open, the filter doesn't run. If you close it, it works with full resonance.
 
-## Alle Songs prüfen und auf die Baseline setzen: DelugeBaseline
+## Checking all songs and setting them to the baseline: DelugeBaseline
 
-**DelugeBaseline-vN.exe** (Release `deluge-baseline` auf GitHub, gebaut von `.github/workflows/deluge-baseline-windows.yml` aus `tools/deluge_baseline.py` und `tools/baseline_check.py`) hat zwei Funktionen, PEGEL und NORM, je im Modus LESEN (zeigt nur) oder ANPASSEN (zeigt, schreibt beim zweiten START):
+**DelugeBaseline-vN.exe** (release `deluge-baseline` on GitHub, built by `.github/workflows/deluge-baseline-windows.yml` from `tools/deluge_baseline.py` and `tools/baseline_check.py`) has two functions, LEVELS and NORM, each in the mode READ (only shows) or APPLY (shows, writes on the second START):
 
-- **Pegel lesen:** liest nur. Der Bericht von `baseline_check.py`, siehe unten.
-- **Pegel anpassen:**
-  - Song-Lautstärke über 35 auf 35, Master-Kompressor aus
-  - Kits und Audio-Spuren über 35 auf 35
-  - Synths und Kit-Reihen so weit hinunter, dass sie höchstens wie 40 mit einem voll ausgesteuerten Sample wirken
-  - Automation behält ihre Form, alle Werte sinken gleich.
-  - SATURATION, Kompressoren der Spuren, Analog-Delay und Filter bleiben: Das ist Klang, kein Pegel.
-- **NORM (Samples normalisieren):** Lesen zeigt, was es ändern würde, Anpassen tut es.
-  - Hebt jedes Sample unter `SAMPLES/`, dessen Spitze unter dem Ziel liegt (Standard −1 dBFS), bis zum Ziel an, nie darüber. Keine Spitze wird geschnitten, nichts clippt.
-  - Samples am Ziel oder darüber bleiben. Format, Bittiefe und alle Chunks bleiben, nur das Audio ändert sich.
-  - Die Bereiche eines Multisamples bekommen eine gemeinsame Verstärkung, damit ihr Verhältnis bleibt.
-  - **Ausgleichen** (Standard an): Jeder Oszillator, der ein angehobenes Sample spielt, wird um genau so viel leiser gestellt (Osc A/B Volume), in jedem Clip jedes Songs und in den Kits und Synths von `KITS/` und `SYNTHS/`. Die Stimme bekommt dasselbe Signal wie vorher, noch vor Filtern und Effekten.
-  - Nie angefasst: Wavetables und Audio-Clips.
-  - Mit Ausgleich bleiben auch Samples, die sich nicht sicher ausgleichen lassen: Oszillator-Pegel nicht gespeichert oder mit Kabel, FM, ein Format von vor 2017, oder eine Kopie im eigenen Ordner des Songs (`SONGS/<Song>/`, von «Collect media»). Die Firmware sucht dort zuerst, sobald eine Datei des Songs fehlt, und spielt dann vielleicht die Kopie.
-  - Ein Clip gehört zu seinem Instrument nach Name und Ordner, wie in der Firmware: Zwei Synths «Bass» in verschiedenen Ordnern bleiben getrennt.
-- **Zurück:** spielt eine Sicherung zurück, der alte Stand kommt wieder.
-- **Schreiben:** immer erst nach einer Vorschau. Zum Ankreuzen: direkt auf die SD-Karte (die alten Dateien kommen nach `BASELINE-BACKUP/<Datum Zeit Funktion>/`) oder in einen Kopie-Ordner (nur die geänderten Dateien, im Aufbau der Karte).
-- **Fenster:** im Look von DelugeRec, etwas grösser für den Text. Deutsch oder Englisch, mit dem Schalter SPRACHE / LANGUAGE.
-  - OLED mit Pixelschrift, ein Pad pro Song: grün in Ordnung, orange mit Hinweisen, rot nicht lesbar.
-  - FUNKTION: PEGEL (P) oder NORM (N). MODUS: LESEN (L) oder ANPASSEN (A). START (Enter) führt aus. Bei ANPASSEN zeigt das OLED zuerst, was sich ändern würde, die Pads der betroffenen Songs blinken. START nochmals schreibt, Esc bricht ab.
-  - SCHREIBEN NACH: SD-KARTE DIREKT oder KOPIE-ORDNER ankreuzen. NORMALISIEREN: AUSGLEICHEN ankreuzen, der goldene Knopf ZIEL wählt das Ziel der Samples: 0, −0,3, −1, −3 oder −6 dBFS.
-  - KARTE (K) wählt die Karte, BERICHT (B) öffnet den ganzen Bericht als Text, ZURÜCK (Z) zeigt die Sicherungen. Mausrad und Pfeiltasten blättern durch die Liste.
+- **Read levels:** only reads. The report of `baseline_check.py`, see below.
+- **Apply levels:**
+  - song volume above 35 to 35, master compressor off
+  - kits and audio tracks above 35 to 35
+  - synths and kit rows down far enough that they act at most like 40 with a fully driven sample
+  - Automation keeps its shape; all values drop by the same amount.
+  - SATURATION, the tracks' compressors, analog delay and filters stay: that's sound, not level.
+- **NORM (normalize samples):** Read shows what it would change, apply does it.
+  - Raises every sample under `SAMPLES/` whose peak lies below the target (default −1 dBFS) up to the target, never above. No peak is cut, nothing clips.
+  - Samples at the target or above stay. Format, bit depth and all chunks stay; only the audio changes.
+  - The ranges of a multisample get a common gain, so that their balance stays.
+  - **Compensate** (default on): Every oscillator that plays a raised sample is turned down by exactly as much (osc A/B volume), in every clip of every song and in the kits and synths of `KITS/` and `SYNTHS/`. The voice gets the same signal as before, still before filters and effects.
+  - Never touched: wavetables and audio clips.
+  - With compensation, samples that can't be compensated safely stay too: oscillator level not saved or with a cable, FM, a format from before 2017, or a copy in the song's own folder (`SONGS/<Song>/`, from "Collect media"). The firmware looks there first as soon as a file of the song is missing, and may then play the copy.
+  - A clip belongs to its instrument by name and folder, as in the firmware: two synths "Bass" in different folders stay apart.
+- **Restore:** plays back a backup; the old state comes back.
+- **Writing:** always only after a preview. To tick: directly onto the SD card (the old files go to `BASELINE-BACKUP/<date time function>/`) or into a copy folder (only the changed files, in the card's layout).
+- **Window:** in DelugeRec's look, a little bigger for the text. German or English, with the switch SPRACHE / LANGUAGE.
+  - OLED with a pixel font, one pad per song: green in order, orange with notes, red unreadable.
+  - FUNCTION: LEVELS (L) or NORM (N). MODE: READ (R) or APPLY (A). START (Enter) runs it. With APPLY the OLED first shows what would change, and the pads of the songs concerned blink. START again writes, Esc cancels.
+  - WRITE TO: tick SD CARD DIRECTLY or COPY FOLDER. NORMALIZE: tick COMPENSATE; the gold knob TARGET chooses the samples' target: 0, −0.3, −1, −3 or −6 dBFS.
+  - CARD (C) chooses the card, REPORT (T) opens the whole report as text, RESTORE (B) shows the backups. Mouse wheel and arrow keys scroll through the list.
 
-Ohne Fenster, zum Beispiel für die lokale Session: `py mastertune-1.2.1/tools/deluge_baseline.py [--lang en] check|levels|normalize E:\ [--yes]`. Ohne `--yes` zeigt es nur, was es tun würde.
+Without a window, e.g. for the local session: `py mastertune-1.2.1/tools/deluge_baseline.py [--lang en] check|levels|normalize E:\ [--yes]`. Without `--yes` it only shows what it would do.
 
-**Geprüft im Emulator** (v17-l2d, «New Sitar Grii 10», alle 7 Clips, dieselben 302'400 Samples wie oben):
+**Checked in the emulator** (v17-l2d, "New Sitar Grii 10", all 7 clips, the same 302,400 samples as above):
 
-| Karte | Spitze | RMS | Unterschied zum Original |
+| Card | Peak | RMS | Difference to the original |
 |---|---|---|---|
-| Original | −6,147 dBFS | −25,785 dBFS | |
-| normalisiert und ausgeglichen: 73 Samples um 0,2 bis 23,2 dB angehoben, 59 Oszillatoren ausgeglichen | −6,146 dBFS | −25,784 dBFS | höchstens 1 LSB (16 Bit), im Mittel −103 dBFS |
-| Pegel angewendet | −6,147 dBFS | −25,785 dBFS | keiner |
+| Original | −6.147 dBFS | −25.785 dBFS | |
+| normalized and compensated: 73 samples raised by 0.2 to 23.2 dB, 59 oscillators compensated | −6.146 dBFS | −25.784 dBFS | at most 1 LSB (16 bit), −103 dBFS on average |
+| levels applied | −6.147 dBFS | −25.785 dBFS | none |
 
-- **Normalisieren mit Ausgleich:** Der Song klingt gleich.
-- **Pegel:** ändert hier nichts Hörbares. Die zu lauten Reihen in 3L3Ctr0 haben im Clip keine Noten und klingen nur, wenn man sie live spielt. Die Spitze machen Reihen auf 40, also innerhalb der Baseline. Der Bericht schreibt «ohne Noten» dazu.
+- **Normalizing with compensation:** The song sounds the same.
+- **Levels:** change nothing audible here. The too loud rows in 3L3Ctr0 have no notes in the clip and only sound when you play them live. The peak comes from rows at 40, i.e. within the baseline. The report adds "without notes".
 
-### Was «Prüfen» meldet (`baseline_check.py`)
-
-```
-py mastertune-1.2.1/tools/baseline_check.py E:\ --out baseline-karte.md
-```
-
-- **Es meldet:**
-  - Song, Kit oder Audio-Spur über 35
-  - den Master-Kompressor, wenn er an ist
-  - Synths und Kit-Reihen über 40, mit «ohne Noten», wenn die Reihe in keinem Clip Noten hat
-  - Stufen nach den Reglern, die mit dem Pegel stärker verzerren: SATURATION, Kompressor, Analog-Delay mit Feedback, Tiefpass mit Drive, aktive Filter mit Resonanz ab 25
-- **Leise Samples:** Eine Reihe über 40 ist erlaubt, wenn ihr Sample leise genug ist. Das Skript liest dazu die Spitze des Samples im gespielten Ausschnitt und den Pegel des Oszillators. «Wirkt wie» ist der Regler, den ein voll ausgesteuertes Sample für denselben Pegel bräuchte: Regler mal 10^(Spitze/40), mal Osc-Pegel durch 50. Ein Sample mit −4,6 dBFS auf 50 wirkt wie 38,4 und ist in Ordnung.
-- **Ohne diese Erlaubnis:** Spielt die Stimme auch einen Oszillator, Rauschen oder FM, zählt der Regler allein.
-- **Pegel in dB wie am Deluge ab mastertune v18:** Jeder Pegel steht als Reglerwert und in dB, zum Beispiel «40,0 (+8,16 dB)». Die Formel ist die der Firmware (`volume_steps.cpp`, Patch 0101): 40·log10((p + 2³¹) / 2³¹), bei Kit, Audio-Spur und Song 6,02 dB weniger. Beispiele:
-  - Song 35 = −0,18 dB, der Standard 35,4 = 0,00 dB, Synth 40 = +8,16 dB.
-  - Oben: Synth 50 = +12,04 dB, Kit und Song 50 = +6,02 dB.
-- **Zwischen den Rasten:** v18 dreht in 0,5-dB-Schritten, gespeichert wird wie bisher. Die Werte liegen darum zwischen den alten Stellen 0–50.
-  - Bericht und Fenster zeigen sie auf 0,1 genau und die dB auf 0,01 genau. Nie wird auf eine ganze Stelle gerundet.
-  - Die Grenzen gelten in dB: Was weniger als 0,005 dB darüber liegt, gilt als an der Grenze.
-  - Dadurch meldet der Bericht jetzt auch knappe Überschreitungen, etwa eine Reihe auf 45 mit einem Sample bei −2 dBFS: +0,05 dB über 40. Die frühere Toleranz von 0,4 Stellen hat solche Fälle verschluckt.
-- **Auf der Kartenkopie:**
-  - «New Sitar Grii 10»: fünf Reihen im Kit 3L3Ctr0 (Kicks und Bässe, wirken wie 40,8 bis 49,9, alle ohne Noten) und die Reihe «hihatlong» auf 50, deren Sample hier fehlt. Eine der Reihen steht auf 49,6 (+11,90 dB), der alte Bericht zeigte 50.
-  - «Rescue»: in Ordnung, die lauteste Reihe steht auf 34,8 (+5,73 dB)
-- **Grenze:** Ob ein Song clippt, sagt es nicht. Das zeigt nur das Messen.
-
-## Das VU-Meter des Deluge
-
-- **Es zeigt keine Spitzen.** Es zeigt den Mittelwert, und seine dB sind gestaucht: `(ln(Mittelwert) − 16,7) × 4`. Ein angezeigtes dB sind etwa 2,2 echte dB (`view.cpp`, `envelope_follower.cpp`).
-- **Es kann schon clippen, während das Meter gelb zeigt.** Die Doku nennt das 2. Pad von oben «soft clipping», die Firmware schneidet aber hart ab (siehe oben).
-- **Für die Baseline gilt DelugeRec:** Es misst jede Spitze einzeln.
-- **Einschalten:** AFFECT ENTIRE an, LEVEL/PAN wählen, dann LEVEL/PAN nochmals drücken (Doku 4.1.8).
-
-## Belegt und nicht belegt
-
-- **Offiziell** (Repo von Synthstrom: `docs/community_features.md`, `CHANGELOG.md`):
-  - das Ziel −4,5 am VU-Meter
-  - Release 1.1: Der Kompressor wurde geändert, «um Clipping zu verringern». Songs aus 1.0 brauchen eventuell eine neue Song-Lautstärke.
-- **Voreinstellungen der Firmware:** Song 35, Kit 35, Synth und Reihe 40, Velocity 64, Master-Kompressor aus.
-- **Community, nur als Suchtreffer gesehen:** Das Forum war von hier aus gesperrt, die Autoren konnte ich nicht prüfen.
-  - Die Song-Lautstärke in der Vorlage tief stellen und den Pegel am Ausgang oder am Mischpult holen.
-  - Ab Velocity 100 clippt es mit den Standardwerten.
-- **Nicht gefunden:**
-  - Werte für Spuren, Master-Kompressor, Sends und Panorama
-  - wie viele Spuren ohne Clipping gehen
-
-## Messung nachbauen
+### What "check" reports (`baseline_check.py`)
 
 ```
-python3 baseline_pegel.py <deluge.elf> ../karte <out> --song-dir <dev>/mastertune-1.2.1/tests/song \
-    --build <Ordner mit blockcount.so>
+py mastertune-1.2.1/tools/baseline_check.py E:\ --out baseline-card.md
 ```
 
-- **Dauer und Aufbau:** Ein Lauf dauert etwa 2 min. Das Skript nutzt `sitar_emu.py`: 440 Hz, alle Kits, 1 Takt Vorlauf, dann 302'400 Samples.
-- **Spitze:** vor dem Clip am Ausgang gemessen, darum kann sie über 0 dBFS liegen.
-- **Grenze:** Nur dieser Ausschnitt ist gemessen, andere Stellen im Song können lauter sein.
+- **It reports:**
+  - song, kit or audio track above 35
+  - the master compressor, if it's on
+  - synths and kit rows above 40, with "without notes" if the row has no notes in any clip
+  - stages after the controls that distort more with the level: SATURATION, compressor, analog delay with feedback, low-pass with drive, active filters with resonance from 25
+- **Quiet samples:** A row above 40 is allowed if its sample is quiet enough. For this the script reads the sample's peak in the played range and the oscillator's level. "Acts like" is the control a fully driven sample would need for the same level: control times 10^(peak/40), times osc level divided by 50. A sample at −4.6 dBFS at 50 acts like 38.4 and is in order.
+- **Without this allowance:** If the voice also plays an oscillator, noise or FM, the control alone counts.
+- **Levels in dB as on the Deluge from mastertune v18 on:** Every level is shown as the control value and in dB, for example "40.0 (+8.16 dB)". The formula is the firmware's (`volume_steps.cpp`, patch 0101): 40·log10((p + 2³¹) / 2³¹), for kit, audio track and song 6.02 dB less. Examples:
+  - song 35 = −0.18 dB, the default 35.4 = 0.00 dB, synth 40 = +8.16 dB.
+  - At the top: synth 50 = +12.04 dB, kit and song 50 = +6.02 dB.
+- **Between the detents:** v18 turns in 0.5 dB steps, and it saves as before. The values therefore lie between the old positions 0–50.
+  - Report and window show them to 0.1 and the dB to 0.01. Nothing is ever rounded to a whole position.
+  - The limits apply in dB: whatever lies less than 0.005 dB above counts as at the limit.
+  - So the report now also reports narrow overshoots, like a row at 45 with a sample at −2 dBFS: +0.05 dB above 40. The former tolerance of 0.4 positions swallowed such cases.
+- **On the card copy:**
+  - "New Sitar Grii 10": five rows in the kit 3L3Ctr0 (kicks and basses, acting like 40.8 to 49.9, all without notes) and the row "hihatlong" at 50, whose sample is missing here. One of the rows is at 49.6 (+11.90 dB); the old report showed 50.
+  - "Rescue": in order, the loudest row is at 34.8 (+5.73 dB)
+- **Limit:** It doesn't say whether a song clips. Only measuring shows that.
+
+## The Deluge's VU meter
+
+- **It doesn't show peaks.** It shows the mean, and its dB are compressed: `(ln(mean) − 16.7) × 4`. One displayed dB is about 2.2 real dB (`view.cpp`, `envelope_follower.cpp`).
+- **It can already clip while the meter shows yellow.** The docs call the 2nd pad from the top "soft clipping", but the firmware clips hard (see above).
+- **For the baseline, DelugeRec counts:** it measures every single peak.
+- **Switching on:** AFFECT ENTIRE on, choose LEVEL/PAN, then press LEVEL/PAN again (docs 4.1.8).
+
+## Backed and not backed
+
+- **Official** (Synthstrom's repo: `docs/community_features.md`, `CHANGELOG.md`):
+  - the target −4.5 on the VU meter
+  - release 1.1: the compressor was changed "to reduce clipping". Songs from 1.0 may need a new song volume.
+- **The firmware's defaults:** song 35, kit 35, synth and row 40, velocity 64, master compressor off.
+- **Community, only seen as search hits:** The forum was blocked from here; I couldn't check the authors.
+  - Set the song volume low in the template and get the level at the output or on the mixer.
+  - From velocity 100 on it clips with the default values.
+- **Not found:**
+  - values for tracks, master compressor, sends and panorama
+  - how many tracks work without clipping
+
+## Rebuilding the measurement
+
+```
+python3 baseline_levels.py <deluge.elf> ../card <out> --song-dir <dev>/mastertune-1.2.1/tests/song \
+    --build <folder with blockcount.so>
+```
+
+- **Duration and setup:** A run takes about 2 min. The script uses `sitar_emu.py`: 440 Hz, all kits, 1 bar of lead-in, then 302,400 samples.
+- **Peak:** measured at the output before the clip, so it can lie above 0 dBFS.
+- **Limit:** Only this range is measured; other passages in the song can be louder.

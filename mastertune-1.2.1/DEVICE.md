@@ -2,7 +2,7 @@
 
 These instructions are for the Claude session on the computer the Deluge is connected to by USB.
 
-**Renamed on 28.09.2026:** this file used to be `GERAET.md`, and the folder `geraet/` is now `device/` (`geraet/analyse/` → `device/analysis/`, `geraet/karte/` → `device/card/`). The branch `geraet-ergebnisse` keeps its name. **The whole repository is in English now: write reports, notes and commit messages in English.**
+**Renamed on 28.09.2026:** this file used to be `GERAET.md`, and the folder `geraet/` is now `device/` (`geraet/analyse/` → `device/analysis/`, `geraet/karte/` → `device/card/`). The results branch is now `device-results` (formerly `geraet-ergebnisse`, which will be deleted once both sessions have switched): `git fetch && git checkout -b device-results origin/device-results`, then merge the development branch into it as before. **The whole repository is in English now: write reports, notes and commit messages in English.**
 
 **Roles:**
 - **The cloud session develops:** firmware code, builds, emulator tests, releases. It alone is responsible for these.
@@ -136,5 +136,5 @@ Note every point with ok or not ok and a short observation.
 - **Where:** in `mastertune-1.2.1/device/`, named after the pattern `YYYY-MM-DD-<version>-<topic>`, in English.
   - A short report as `.md`: the points above with ok or not ok and the observations.
   - The measurements as `.jsonl`.
-- **Push:** to a branch of its own, `geraet-ergebnisse`, never to the development branch. That way the two sessions don't get in each other's way.
+- **Push:** to a branch of its own, `device-results`, never to the development branch. That way the two sessions don't get in each other's way.
 - **Tell:** The user tells the cloud session, which then fetches the results.

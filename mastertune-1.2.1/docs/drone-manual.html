@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="de-CH">
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Frequenz-Drone – Handbuch</title>
+<title>Frequency Drone – Manual</title>
 <style>
   @page { size: A4; margin: 16mm 15mm 16mm 15mm; }
   :root { --ink: #1d1d1f; --muted: #5f6368; --line: #d9dce1; --accent: #2d5bd7; --soft: #f3f5f9; }
@@ -35,46 +35,46 @@
 <body>
 
 <div class="cover">
-  <h1>Frequenz-Drone</h1>
-  <div class="subtitle">Handbuch für den Deluge mit Firmware 1.2.1-mastertune v16 (v15: ohne Drone-Spuren; v13 und v14: zudem ohne Life, FM und Pulse; v12: zudem ohne Triolen, Attack/Release, Knopf-Sektionen und Reverb-Send, dort pulsieren die Pads)</div>
-  <p>Der Drone spielt bis zu <b>16 Dauertöne</b> unter die Musik deines Songs. Jeder Ton kann ruhig stehen oder in einem Beat schweben: <b>binaural</b>, <b>monaural</b> oder <b>isochron</b>, frei in Hertz oder synchron zum Tempo, auch in Triolen. Die Tonhöhe stellst du in Hertz oder als Note ein, die dem Master Tune folgt. Isochrone Pulse haben Attack und Release. Der Drone duckt sich unter die Sidechain des Songs, kann ins Song-Reverb senden und wird mit dem Song gespeichert.</p>
+  <h1>Frequency Drone</h1>
+  <div class="subtitle">Manual for the Deluge with firmware 1.2.1-mastertune v16 (v15: without drone tracks; v13 and v14: also without Life, FM and Pulse; v12: also without triplets, Attack/Release, knob sections and reverb send, and its pads pulse)</div>
+  <p>The drone plays up to <b>16 sustained tones</b> under the music of your song. Each tone can be steady or carry a beat: <b>binaural</b>, <b>monaural</b> or <b>isochronic</b>, free in hertz or synced to the tempo, also in triplets. You set the pitch in hertz or as a note that follows the Master Tune. Isochronic pulses have attack and release. The drone ducks under the song's sidechain, can send to the song reverb and is saved with the song.</p>
   <ol class="toc">
-    <li>Schnellstart</li>
-    <li>Die Drone-Ansicht</li>
-    <li>Alle Bedienelemente</li>
-    <li>Anzeige: OLED und 7-Segment</li>
-    <li>Die vier Modi</li>
-    <li>Tonhöhe: Hertz oder Note</li>
-    <li>Beat und Tempo-Sync</li>
-    <li>Klangfarben</li>
-    <li>Pegel, Pan, Lautstärke und Mix</li>
+    <li>Quick start</li>
+    <li>The drone view</li>
+    <li>All controls</li>
+    <li>Display: OLED and 7-segment</li>
+    <li>The four modes</li>
+    <li>Pitch: hertz or note</li>
+    <li>Beat and tempo sync</li>
+    <li>Timbres</li>
+    <li>Level, pan, volume and mix</li>
     <li>Sidechain</li>
-    <li>Das Menü</li>
-    <li>Speichern, Laden, Export</li>
-    <li>Mit externen Geräten</li>
-    <li>Rezepte</li>
-    <li>Technische Daten und Grenzen</li>
+    <li>The menu</li>
+    <li>Saving, loading, export</li>
+    <li>With external devices</li>
+    <li>Recipes</li>
+    <li>Specifications and limits</li>
   </ol>
 </div>
 
 <div class="box warn">
-  <b>Zuerst leise.</b> Dauertöne, besonders tiefe und viele gleichzeitig, können über Kopfhörer lauter wirken als erwartet. Beginne mit wenig Lautstärke und erhöhe sie langsam.<br>
-  <b>Keine Therapie:</b> Die Bezeichnungen Delta bis Gamma beschreiben nur Frequenzbereiche. Wie Beats auf Menschen wirken, ist wissenschaftlich umstritten. Der Drone ist ein Klangwerkzeug, kein medizinisches Gerät.
+  <b>Start quiet.</b> Sustained tones, especially low ones and many at once, can seem louder than expected on headphones. Start at a low volume and raise it slowly.<br>
+  <b>Not a therapy:</b> The names Delta to Gamma only describe frequency ranges. How beats affect people is scientifically disputed. The drone is a sound tool, not a medical device.
 </div>
 
-<h2>1. Schnellstart</h2>
+<h2>1. Quick start</h2>
 <ol>
-  <li>Im <b>Song-View</b> die Taste <span class="key">SCALE</span> drücken. Die Drone-Ansicht öffnet sich, die Scale-LED leuchtet.</li>
-  <li>In der untersten Reihe das <b>Mute-Pad</b> drücken (erste Spalte rechts neben dem Raster). Es wird grün, Ton 1 klingt: ein Sinus mit 200 Hz.</li>
-  <li>Den <b>oberen goldenen Knopf</b> drehen, um die Tonhöhe zu ändern: 1 Hz pro Raste, schnell gedreht 10 Hz.</li>
-  <li>Die Taste <span class="key">KIT</span> drücken: Der Ton wird <i>binaural</i>. Mit Kopfhörern hörst du jetzt eine Schwebung von 10 Hz.</li>
-  <li>Den <b>unteren goldenen Knopf</b> drehen, um den Beat zu ändern, oder ihn <b>drücken</b>, damit der Beat dem Tempo folgt (zuerst 1/16).</li>
-  <li>Mit <span class="key">BACK</span>, <span class="key">SONG</span> oder <span class="key">SCALE</span> zurück in den Song-View. Der Drone klingt weiter.</li>
+  <li>In <b>song view</b>, press the <span class="key">SCALE</span> button. The drone view opens and the Scale LED lights up.</li>
+  <li>In the bottom row, press the <b>mute pad</b> (first column to the right of the grid). It turns green and tone 1 sounds: a sine at 200 Hz.</li>
+  <li>Turn the <b>upper gold knob</b> to change the pitch: 1 Hz per detent, 10 Hz when turned fast.</li>
+  <li>Press the <span class="key">KIT</span> button: the tone becomes <i>binaural</i>. On headphones you now hear a beating of 10 Hz.</li>
+  <li>Turn the <b>lower gold knob</b> to change the beat, or <b>press</b> it so the beat follows the tempo (1/16 at first).</li>
+  <li>Go back to song view with <span class="key">BACK</span>, <span class="key">SONG</span> or <span class="key">SCALE</span>. The drone keeps sounding.</li>
 </ol>
-<p class="small">Alternativ öffnest du die Drone-Ansicht im Song-View über <span class="key">SELECT</span> drücken (Song-Menü) → <i>Drone</i>. Im Arranger gibt es diesen Menüpunkt nicht, weil der Rückweg immer in den Song-View führt.</p>
+<p class="small">Alternatively, open the drone view in song view by pressing <span class="key">SELECT</span> (song menu) → <i>Drone</i>. The arranger does not have this menu item, because the way back always leads to song view.</p>
 
-<h2>2. Die Drone-Ansicht</h2>
-<p>Die Ansicht ist gebaut wie der Song-View: eine Reihe pro Ton statt eines Clips, <b>Ton 1 unten</b>. Acht Töne sind gleichzeitig sichtbar. Mit dem <b>Y-Encoder</b> (vertikal) scrollst du zu den Tönen 9–16.</p>
+<h2>2. The drone view</h2>
+<p>The view is built like song view: one row per tone instead of one per clip, <b>tone 1 at the bottom</b>. Eight tones are visible at once. Use the <b>Y encoder</b> (vertical) to scroll to tones 9–16.</p>
 
 <figure class="figure">
 <svg width="640" height="300" viewBox="0 0 640 300" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="11">
@@ -84,318 +84,318 @@
     <g id="rows"></g>
   </g>
 </svg>
-<figcaption>Die Pads der Drone-Ansicht. Jede Reihe ist ein Ton. Der Balken zeigt den Pegel in der Farbe des Modus, rechts folgen Mute-Spalte und Audition-Spalte.</figcaption>
+<figcaption>The pads of the drone view. Each row is a tone. The bar shows the level in the mode's color, followed on the right by the mute column and the audition column.</figcaption>
 </figure>
 
 <div class="grid2">
 <div>
-<h3>Pads in einer Reihe</h3>
+<h3>Pads in a row</h3>
 <ul>
-  <li><b>Balken</b> = Pegel des Tons, 16 Pads für 0–50.</li>
-  <li><b>Pad antippen</b> setzt den Pegel und wählt den Ton: Pad 1 = 3, Pad 8 = 25, Pad 16 = 50.</li>
-  <li><b>Gewählter Ton:</b> Seine Reihe leuchtet hinter dem Balken schwach grau.</li>
-  <li><b>Ausgeschaltete Töne</b> sind stark abgedunkelt, ihre Einstellungen bleiben erhalten.</li>
-  <li><b>Ruhige Anzeige:</b> Die Pads leuchten gleichmässig und blinken nicht mit dem Beat.</li>
+  <li><b>Bar</b> = level of the tone, 16 pads for 0–50.</li>
+  <li><b>Tapping a pad</b> sets the level and selects the tone: pad 1 = 3, pad 8 = 25, pad 16 = 50.</li>
+  <li><b>Selected tone:</b> its row glows faint gray behind the bar.</li>
+  <li><b>Tones that are off</b> are strongly dimmed; their settings are kept.</li>
+  <li><b>Steady display:</b> the pads light evenly and do not flash with the beat.</li>
 </ul>
 </div>
 <div>
-<h3>Farben und Seitenspalten</h3>
+<h3>Colors and side columns</h3>
 <ul>
-  <li><span class="swatch" style="background:#ffa03c"></span>Orange: Ton (ruhig)</li>
-  <li><span class="swatch" style="background:#1e46ff"></span>Blau: Binaural</li>
-  <li><span class="swatch" style="background:#00beaa"></span>Türkis: Monaural</li>
-  <li><span class="swatch" style="background:#be1eff"></span>Violett: Isochron</li>
-  <li><b>Mute-Spalte:</b> <span class="swatch" style="background:#00ff00"></span>grün = an, <span class="swatch" style="background:#5a0000"></span>dunkelrot = aus. Antippen schaltet den Ton um und wählt ihn.</li>
-  <li><b>Audition-Spalte:</b> antippen wählt den Ton. Weiss = gewählt, sonst die Modusfarbe gedämpft.</li>
+  <li><span class="swatch" style="background:#ffa03c"></span>Orange: Tone (steady)</li>
+  <li><span class="swatch" style="background:#1e46ff"></span>Blue: Binaural</li>
+  <li><span class="swatch" style="background:#00beaa"></span>Turquoise: Monaural</li>
+  <li><span class="swatch" style="background:#be1eff"></span>Violet: Isochronic</li>
+  <li><b>Mute column:</b> <span class="swatch" style="background:#00ff00"></span>green = on, <span class="swatch" style="background:#5a0000"></span>dark red = off. Tapping toggles the tone and selects it.</li>
+  <li><b>Audition column:</b> tapping selects the tone. White = selected, otherwise the mode color, dimmed.</li>
 </ul>
 </div>
 </div>
 
-<h2 class="page-break">3. Alle Bedienelemente</h2>
+<h2 class="page-break">3. All controls</h2>
 <table>
-  <tr><th style="width:34%">Element</th><th>Wirkung</th></tr>
-  <tr><td>Pad im Raster</td><td>Pegel des Tons dieser Reihe setzen und Ton wählen</td></tr>
-  <tr><td>Mute-Pad</td><td>Ton an/aus, Ton wählen</td></tr>
-  <tr><td>Audition-Pad</td><td>Ton wählen</td></tr>
-  <tr><td>Y-Encoder drehen</td><td>scrollen: Töne 1–8 bis 9–16</td></tr>
-  <tr><td>X-Encoder drehen</td><td>Pegel des gewählten Tons in 1-er-Schritten (0–50)</td></tr>
-  <tr><td><span class="key">SHIFT</span> + X-Encoder</td><td>Pan des gewählten Tons (−32 links bis +32 rechts)</td></tr>
-  <tr><td>Select drehen</td><td>Tonhöhe des gewählten Tons in spürbaren Rasten: in Hz 1 Hz pro Klick, mit <span class="key">SHIFT</span> 0,1 Hz; als Note ein Halbton, mit <span class="key">SHIFT</span> ein Cent</td></tr>
-  <tr><td><span class="key">SYNTH</span> / <span class="key">KIT</span> / <span class="key">MIDI</span> / <span class="key">CV</span></td><td>Modus des gewählten Tons: Ton / Binaural / Monaural / Isochron. Die LED der Taste zeigt den aktuellen Modus.</td></tr>
-  <tr><td>Select drücken</td><td>Menü des gewählten Tons und des ganzen Drones öffnen (Kapitel 11)</td></tr>
-  <tr><td colspan="2" style="background:#f3f5f9"><b>Goldknöpfe in der Sektion Cutoff/Resonance</b> (Tonhöhe/Beat, beim Öffnen gewählt)</td></tr>
-  <tr><td>Oberer Goldknopf drehen, Einstellung in Hz</td><td>Frequenz: 1 Hz pro Raste; schnell gedreht 10 Hz; mit <span class="key">SHIFT</span> 0,01 Hz</td></tr>
-  <tr><td>Oberer Goldknopf drehen, Einstellung als Note</td><td>Note in Halbtönen; mit <span class="key">SHIFT</span> Cent (±50)</td></tr>
-  <tr><td>Oberen Goldknopf drücken</td><td>zwischen Hz und Note wechseln. Die Tonhöhe bleibt (nächste Note plus Cent, bzw. deren Frequenz).</td></tr>
-  <tr><td>Unterer Goldknopf drehen, Beat frei</td><td>Beat: 0,1 Hz pro Raste, mit <span class="key">SHIFT</span> 0,01 Hz (0–100 Hz)</td></tr>
-  <tr><td>Unterer Goldknopf drehen, Beat synchron</td><td>Notenwert: 1/1, 1/1T, 1/2, 1/2T … 1/64, 1/64T (T = Triole)</td></tr>
-  <tr><td>Unteren Goldknopf drücken</td><td>Tempo-Sync an/aus. Beim Einschalten kommt der zuletzt benutzte Notenwert zurück (zuerst 1/16). Beim Ausschalten gilt wieder der Beat in Hz.</td></tr>
-  <tr><td colspan="2" style="background:#f3f5f9"><b>Goldknöpfe in den anderen Sektionen</b> (Mod-Taste neben den Knöpfen drücken)</td></tr>
-  <tr><td>Level/Pan</td><td>oben: Pegel des gewählten Tons (0–50) · unten: Pan (−32 bis +32)</td></tr>
-  <tr><td>Attack/Release</td><td>oben: Attack · unten: Release des isochronen Pulses des gewählten Tons (0–50, angezeigt als 0–100 %)</td></tr>
-  <tr><td>Sidechain/Reverb</td><td>oben: Sidechain-Ducking des ganzen Drones (0–50) · unten: Reverb-Send des ganzen Drones (0–50)</td></tr>
-  <tr><td>Delay (v15)</td><td>oben: Life des ganzen Drones (0–50) · unten: Rate, wie schnell sich alles bewegt (0–50, 25 = Grundeinstellung)</td></tr>
-  <tr><td>ModFX (v15)</td><td>oben: FM des ganzen Drones (0–50), <b>drücken</b>: FM-Form Sine oder Saw · unten: Pulse width (5–50 %)</td></tr>
-  <tr><td>andere Mod-Tasten</td><td>ohne Funktion; die Sektion bleibt</td></tr>
-  <tr><td><span class="key">BACK</span>, <span class="key">SONG</span>, <span class="key">SCALE</span></td><td>zurück in den Song-View</td></tr>
-  <tr><td><span class="key">PLAY</span>, <span class="key">RECORD</span>, Tempo, Speichern, Laden</td><td>wie gewohnt</td></tr>
+  <tr><th style="width:34%">Control</th><th>Effect</th></tr>
+  <tr><td>Pad in the grid</td><td>set the level of this row's tone and select the tone</td></tr>
+  <tr><td>Mute pad</td><td>tone on/off, select tone</td></tr>
+  <tr><td>Audition pad</td><td>select tone</td></tr>
+  <tr><td>Turn Y encoder</td><td>scroll: tones 1–8 to 9–16</td></tr>
+  <tr><td>Turn X encoder</td><td>level of the selected tone in steps of 1 (0–50)</td></tr>
+  <tr><td><span class="key">SHIFT</span> + X encoder</td><td>pan of the selected tone (−32 left to +32 right)</td></tr>
+  <tr><td>Turn Select</td><td>pitch of the selected tone in tactile detents: in Hz 1 Hz per click, with <span class="key">SHIFT</span> 0.1 Hz; as a note one semitone, with <span class="key">SHIFT</span> one cent</td></tr>
+  <tr><td><span class="key">SYNTH</span> / <span class="key">KIT</span> / <span class="key">MIDI</span> / <span class="key">CV</span></td><td>mode of the selected tone: Tone / Binaural / Monaural / Isochronic. The button's LED shows the current mode.</td></tr>
+  <tr><td>Press Select</td><td>open the menu of the selected tone and of the whole drone (chapter 11)</td></tr>
+  <tr><td colspan="2" style="background:#f3f5f9"><b>Gold knobs in the Cutoff/Resonance section</b> (pitch/beat, selected on opening)</td></tr>
+  <tr><td>Turn upper gold knob, set in Hz</td><td>frequency: 1 Hz per detent; 10 Hz when turned fast; with <span class="key">SHIFT</span> 0.01 Hz</td></tr>
+  <tr><td>Turn upper gold knob, set as a note</td><td>note in semitones; with <span class="key">SHIFT</span> cents (±50)</td></tr>
+  <tr><td>Press upper gold knob</td><td>switch between Hz and note. The pitch stays (the nearest note plus cents, or the note's frequency).</td></tr>
+  <tr><td>Turn lower gold knob, beat free</td><td>beat: 0.1 Hz per detent, with <span class="key">SHIFT</span> 0.01 Hz (0–100 Hz)</td></tr>
+  <tr><td>Turn lower gold knob, beat synced</td><td>note value: 1/1, 1/1T, 1/2, 1/2T … 1/64, 1/64T (T = triplet)</td></tr>
+  <tr><td>Press lower gold knob</td><td>tempo sync on/off. Switching it on brings back the last note value used (1/16 at first). Switching it off brings back the beat in Hz.</td></tr>
+  <tr><td colspan="2" style="background:#f3f5f9"><b>Gold knobs in the other sections</b> (press the mod button next to the knobs)</td></tr>
+  <tr><td>Level/Pan</td><td>upper: level of the selected tone (0–50) · lower: pan (−32 to +32)</td></tr>
+  <tr><td>Attack/Release</td><td>upper: attack · lower: release of the selected tone's isochronic pulse (0–50, shown as 0–100 %)</td></tr>
+  <tr><td>Sidechain/Reverb</td><td>upper: sidechain ducking of the whole drone (0–50) · lower: reverb send of the whole drone (0–50)</td></tr>
+  <tr><td>Delay (v15)</td><td>upper: Life of the whole drone (0–50) · lower: Rate, how fast everything moves (0–50, 25 = default)</td></tr>
+  <tr><td>ModFX (v15)</td><td>upper: FM of the whole drone (0–50), <b>press</b>: FM form Sine or Saw · lower: Pulse width (5–50 %)</td></tr>
+  <tr><td>other mod buttons</td><td>no function; the section stays</td></tr>
+  <tr><td><span class="key">BACK</span>, <span class="key">SONG</span>, <span class="key">SCALE</span></td><td>back to song view</td></tr>
+  <tr><td><span class="key">PLAY</span>, <span class="key">RECORD</span>, tempo, save, load</td><td>as usual</td></tr>
 </table>
-<p class="small">Die LED der gewählten Mod-Taste leuchtet, die LED-Ringe der Knöpfe zeigen die Werte (bei Tonhöhe/Beat bleiben sie dunkel). Ein Druck auf die Goldknöpfe wirkt nur in der Sektion Cutoff/Resonance und (oberer Knopf) in der Sektion ModFX. Die gewählte Sektion bleibt, auch nach dem Menü. Die Goldknöpfe wirken in der Drone-Ansicht nur auf den Drone, nicht auf die Song-Parameter. Rückgängig machen (Undo) gibt es in der Drone-Ansicht nicht; Drone-Einstellungen gehören nicht zum Undo-Verlauf.</p>
+<p class="small">The LED of the selected mod button lights up, and the knobs' LED rings show the values (for pitch/beat they stay dark). Pressing the gold knobs only works in the Cutoff/Resonance section and (upper knob) in the ModFX section. The selected section stays, even after the menu. In the drone view, the gold knobs act only on the drone, not on the song parameters. There is no undo in the drone view; drone settings are not part of the undo history.</p>
 
-<h2>4. Anzeige: OLED und 7-Segment</h2>
+<h2>4. Display: OLED and 7-segment</h2>
 <div class="grid2">
 <div>
 <h3>OLED</h3>
 <ul>
-  <li><b>Titel:</b> Nummer und Modus des gewählten Tons, z. B. <code>3: Binaural</code>. Ist der Ton aus, steht <code>- off</code> dahinter.</li>
-  <li><b>Gross:</b> die Tonhöhe, <code>200.00 Hz</code> oder als Note, z. B. <code>A2 +12c</code>.</li>
-  <li><b>Unterste Zeile:</b>
+  <li><b>Title:</b> number and mode of the selected tone, e.g. <code>3: Binaural</code>. If the tone is off, <code>- off</code> follows.</li>
+  <li><b>Large:</b> the pitch, <code>200.00 Hz</code> or as a note, e.g. <code>A2 +12c</code>.</li>
+  <li><b>Bottom line:</b>
     <ul>
-      <li>Modus Ton: Klangfarbe und Pegel, z. B. <code>Sine  Level 40</code></li>
-      <li>andere Modi: Beat mit Frequenzband, z. B. <code>Beat 10.00 Hz Alpha</code></li>
-      <li>mit Tempo-Sync: <code>1/16: 8.00 Hz Alpha</code>, als Triole <code>1/16T: 12.00 Hz Beta</code></li>
+      <li>Tone mode: timbre and level, e.g. <code>Sine  Level 40</code></li>
+      <li>other modes: beat with frequency band, e.g. <code>Beat 10.00 Hz Alpha</code></li>
+      <li>with tempo sync: <code>1/16: 8.00 Hz Alpha</code>, as a triplet <code>1/16T: 12.00 Hz Beta</code></li>
     </ul>
   </li>
-  <li>Kurze Einblendungen zeigen Pegel, Pan, Modus, <code>Hz</code>/<code>Note</code>, <code>SYNC</code>/<code>Beat</code>, die gewählte Knopf-Sektion und deren Werte, z. B. <code>Attack 12%</code>.</li>
+  <li>Short pop-ups show level, pan, mode, <code>Hz</code>/<code>Note</code>, <code>SYNC</code>/<code>Beat</code>, the selected knob section and its values, e.g. <code>Attack 12%</code>.</li>
 </ul>
 </div>
 <div>
-<h3>7-Segment</h3>
+<h3>7-segment</h3>
 <ul>
-  <li><b>Frequenz</b> mit so vielen Nachkommastellen, wie Platz haben: <code>55.25</code>, <code>440.0</code>, <code>1200</code>.</li>
-  <li><b>Note</b> als Name, z. B. <code>A2</code> (Kreuz als Punkt).</li>
-  <li><b>Beim Drehen</b> kurz eingeblendet:
+  <li><b>Frequency</b> with as many decimal places as fit: <code>55.25</code>, <code>440.0</code>, <code>1200</code>.</li>
+  <li><b>Note</b> as a name, e.g. <code>A2</code> (sharp shown as a dot).</li>
+  <li><b>While turning</b>, shown briefly:
     <ul>
-      <li>Pegel: Zahl</li>
-      <li>Pan: Zahl</li>
-      <li>Beat: in Zehnteln, z. B. <code>7.8</code></li>
-      <li>Notenwert: <code>16</code> für 1/16, <code>16T</code> für die Triole</li>
+      <li>Level: number</li>
+      <li>Pan: number</li>
+      <li>Beat: in tenths, e.g. <code>7.8</code></li>
+      <li>Note value: <code>16</code> for 1/16, <code>16T</code> for the triplet</li>
     </ul>
   </li>
 </ul>
 </div>
 </div>
-<p class="small">Notennamen folgen der Deluge-Zählung: A3 = 440 Hz, mittleres C = C3.</p>
+<p class="small">Note names follow the Deluge numbering: A3 = 440 Hz, middle C = C3.</p>
 
-<h2>5. Die vier Modi</h2>
+<h2>5. The four modes</h2>
 <figure class="figure">
 <svg width="620" height="150" viewBox="0 0 620 150" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="11">
   <text x="10" y="18" font-weight="bold">Binaural</text>
   <text x="10" y="36" fill="#5f6368">f = 200 Hz, Beat = 10 Hz</text>
-  <rect x="10" y="50" width="130" height="28" rx="4" fill="#e8eeff" stroke="#1e46ff"/><text x="75" y="68" text-anchor="middle">links 195 Hz</text>
-  <rect x="10" y="88" width="130" height="28" rx="4" fill="#e8eeff" stroke="#1e46ff"/><text x="75" y="106" text-anchor="middle">rechts 205 Hz</text>
-  <text x="10" y="138" fill="#5f6368">Schwebung entsteht im Kopf</text>
+  <rect x="10" y="50" width="130" height="28" rx="4" fill="#e8eeff" stroke="#1e46ff"/><text x="75" y="68" text-anchor="middle">left 195 Hz</text>
+  <rect x="10" y="88" width="130" height="28" rx="4" fill="#e8eeff" stroke="#1e46ff"/><text x="75" y="106" text-anchor="middle">right 205 Hz</text>
+  <text x="10" y="138" fill="#5f6368">beating arises in the head</text>
 
   <text x="220" y="18" font-weight="bold">Monaural</text>
-  <text x="220" y="36" fill="#5f6368">beide Töne in beiden Ohren</text>
+  <text x="220" y="36" fill="#5f6368">both tones in both ears</text>
   <path d="M220 83 Q 240 58 260 83 T 300 83 T 340 83 T 380 83" fill="none" stroke="#00beaa" stroke-width="1.5"/>
   <path d="M220 83 C 250 50, 290 50, 320 83 S 360 116, 380 83" fill="none" stroke="#0a7d70" stroke-width="1" stroke-dasharray="3 2"/>
-  <text x="220" y="138" fill="#5f6368">Schwebung hörbar im Klang</text>
+  <text x="220" y="138" fill="#5f6368">beating audible in the sound</text>
 
-  <text x="430" y="18" font-weight="bold">Isochron</text>
-  <text x="430" y="36" fill="#5f6368">Ton pulsiert im Beat</text>
+  <text x="430" y="18" font-weight="bold">Isochronic</text>
+  <text x="430" y="36" fill="#5f6368">tone pulses with the beat</text>
   <g fill="#e9d6ff" stroke="#be1eff">
     <rect x="430" y="55" width="30" height="50" rx="3"/><rect x="480" y="55" width="30" height="50" rx="3"/><rect x="530" y="55" width="30" height="50" rx="3"/><rect x="580" y="55" width="30" height="50" rx="3"/>
   </g>
-  <text x="430" y="138" fill="#5f6368">an/aus mit Attack und Release</text>
+  <text x="430" y="138" fill="#5f6368">on/off with attack and release</text>
 </svg>
 </figure>
 <table>
-  <tr><th style="width:18%">Modus</th><th>Was du hörst</th><th style="width:28%">Hinweis</th></tr>
-  <tr><td>Ton</td><td>Ein ruhiger Dauerton, links und rechts gleich (Pan beachten).</td><td>Beat und Sync spielen keine Rolle.</td></tr>
-  <tr><td>Binaural</td><td>Links die Frequenz minus den halben Beat, rechts plus den halben Beat. Die Schwebung entsteht erst im Kopf.</td><td><b>Nur mit Kopfhörern</b> wirksam; über Lautsprecher klingt es wie Monaural.</td></tr>
-  <tr><td>Monaural</td><td>Dieselben zwei Töne, aber beide in beiden Ohren. Die Schwebung ist im Klang selbst hörbar, auch über Lautsprecher.</td><td>Gut für Räume und Aufnahmen.</td></tr>
-  <tr><td>Isochron</td><td>Ein Ton, der im Beat an- und ausgeht. Wie weich er ein- und aussetzt, bestimmen Attack und Release.</td><td>Deutlichste Wirkung, auch über Lautsprecher.</td></tr>
+  <tr><th style="width:18%">Mode</th><th>What you hear</th><th style="width:28%">Remark</th></tr>
+  <tr><td>Tone</td><td>A steady sustained tone, the same left and right (mind the pan).</td><td>Beat and sync play no role.</td></tr>
+  <tr><td>Binaural</td><td>Left the frequency minus half the beat, right plus half the beat. The beating only arises in the head.</td><td>Works <b>only with headphones</b>; over speakers it sounds like Monaural.</td></tr>
+  <tr><td>Monaural</td><td>The same two tones, but both in both ears. The beating is audible in the sound itself, also over speakers.</td><td>Good for rooms and recordings.</td></tr>
+  <tr><td>Isochronic</td><td>One tone that switches on and off with the beat. Attack and release set how softly it starts and stops.</td><td>Clearest effect, also over speakers.</td></tr>
 </table>
-<h3>Attack und Release beim isochronen Puls</h3>
-<p>Der Puls ist die halbe Zeit eines Beat-Zyklus an. <b>Attack</b> ist die Zeit, in der er am Anfang ansteigt, <b>Release</b> die Zeit, in der er danach abklingt. Beide gehen von 0 bis 50. Jeder Schritt ist 2 % der halben Zykluslänge, 50 also die ganze eingeschaltete Hälfte. So behält der Puls seine Form, wenn sich Beat oder Tempo ändern. Nie ist eine Flanke kürzer als 1 ms, damit nichts knackt. Neu stehen beide auf 6: Bei 10 Hz sind das 6 ms, wie in v12.</p>
+<h3>Attack and release of the isochronic pulse</h3>
+<p>The pulse is on for half of each beat cycle. <b>Attack</b> is the time in which it rises at the start, <b>Release</b> the time in which it then fades. Both go from 0 to 50. Each step is 2 % of half the cycle length, so 50 is the whole half that is on. This way the pulse keeps its shape when the beat or tempo changes. An edge is never shorter than 1 ms, so nothing clicks. Both start at 6: at 10 Hz that is 6 ms, as in v12.</p>
 <table>
-  <tr><th>Attack / Release</th><th>Klang</th></tr>
-  <tr><td>0–6</td><td>deutlicher, harter Puls</td></tr>
-  <tr><td>15–25</td><td>weich, ohne Kanten</td></tr>
-  <tr><td>50 / 50</td><td>fast sinusförmiges An- und Abschwellen</td></tr>
-  <tr><td>50 / 0</td><td>schwillt an und bricht ab, wie ein rückwärts laufender Ton</td></tr>
+  <tr><th>Attack / Release</th><th>Sound</th></tr>
+  <tr><td>0–6</td><td>clear, hard pulse</td></tr>
+  <tr><td>15–25</td><td>soft, without edges</td></tr>
+  <tr><td>50 / 50</td><td>almost sinusoidal swelling and fading</td></tr>
+  <tr><td>50 / 0</td><td>swells and cuts off, like a tone played backwards</td></tr>
 </table>
-<p>Ein neuer Modus oder eine neue Klangfarbe wird kurz durch die Stille geblendet, damit nichts knackt. Pegel, Tonhöhe, Beat und Pan gleiten weich zum neuen Wert.</p>
+<p>A new mode or a new timbre is faded briefly through silence, so nothing clicks. Level, pitch, beat and pan glide smoothly to the new value.</p>
 <table>
   <tr><th>Band</th><th>Delta</th><th>Theta</th><th>Alpha</th><th>Beta</th><th>Gamma</th></tr>
-  <tr><td>Beat</td><td>unter 4 Hz</td><td>4 bis unter 8 Hz</td><td>8 bis unter 13 Hz</td><td>13 bis unter 30 Hz</td><td>ab 30 Hz</td></tr>
+  <tr><td>Beat</td><td>below 4 Hz</td><td>4 to below 8 Hz</td><td>8 to below 13 Hz</td><td>13 to below 30 Hz</td><td>30 Hz and above</td></tr>
 </table>
-<p class="small">Das OLED zeigt das Band zum aktuellen Beat an. Der Beat kann höchstens so hoch sein wie die Frequenz selbst, damit der tiefere Ton nicht unter 0 Hz fällt.</p>
+<p class="small">The OLED shows the band for the current beat. The beat can be at most as high as the frequency itself, so the lower tone does not fall below 0 Hz.</p>
 
-<h2 class="page-break">6. Tonhöhe: Hertz oder Note</h2>
+<h2 class="page-break">6. Pitch: hertz or note</h2>
 <div class="grid2">
 <div>
-<h3>In Hertz</h3>
-<p>10,00 bis 5000,00 Hz, auf 0,01 Hz genau. Praktisch für feste Frequenzen, zum Beispiel 432 Hz, 528 Hz oder eine Raumresonanz. Eine Frequenz in Hertz bleibt stehen, auch wenn du den Master Tune änderst.</p>
+<h3>In hertz</h3>
+<p>10.00 to 5000.00 Hz, accurate to 0.01 Hz. Useful for fixed frequencies, for example 432 Hz, 528 Hz or a room resonance. A frequency in hertz stays fixed, even if you change the Master Tune.</p>
 </div>
 <div>
-<h3>Als Note</h3>
-<p>Note 0–127 plus −50 bis +50 Cent. Der Ton <b>folgt dem Master Tune</b> (Settings → Tuning) wie alle anderen Klänge des Deluge. Stimmst du den Master Tune auf ein externes Instrument, passt der Drone automatisch.</p>
+<h3>As a note</h3>
+<p>Note 0–127 plus −50 to +50 cents. The tone <b>follows the Master Tune</b> (Settings → Tuning) like all other sounds of the Deluge. If you tune the Master Tune to an external instrument, the drone matches automatically.</p>
 </div>
 </div>
-<p>Wechselst du mit dem Knopfdruck oder im Menü (<i>Pitch as</i>) zwischen Hz und Note, bleibt die Tonhöhe erhalten. Aus einer Frequenz wird die nächste Note mit Cent, aus einer Note ihre Frequenz beim aktuellen Master Tune.</p>
+<p>If you switch between Hz and note with a knob press or in the menu (<i>Pitch as</i>), the pitch is kept. A frequency becomes the nearest note with cents; a note becomes its frequency at the current Master Tune.</p>
 
-<h2>7. Beat und Tempo-Sync</h2>
-<p>Der Beat ist die Schwebungs- oder Pulsfrequenz der Modi Binaural, Monaural und Isochron. Frei gilt 0 bis 100 Hz in 0,01-Hz-Schritten; neu steht er auf 10 Hz. Mit Tempo-Sync folgt er dem Songtempo, gerade oder als Triole (drei in der Zeit von zwei, also 1,5-mal so schnell):</p>
+<h2>7. Beat and tempo sync</h2>
+<p>The beat is the beating or pulse frequency of the Binaural, Monaural and Isochronic modes. Free, it runs from 0 to 100 Hz in 0.01 Hz steps; it starts at 10 Hz. With tempo sync it follows the song tempo, straight or as a triplet (three in the time of two, so 1.5 times as fast):</p>
 <table>
-  <tr><th>Notenwert</th><th>1/1</th><th>1/2</th><th>1/4</th><th>1/8</th><th>1/16</th><th>1/32</th><th>1/64</th></tr>
-  <tr><td>Beat bei 120 BPM</td><td>0,5 Hz</td><td>1 Hz</td><td>2 Hz</td><td>4 Hz</td><td>8 Hz</td><td>16 Hz</td><td>32 Hz</td></tr>
+  <tr><th>Note value</th><th>1/1</th><th>1/2</th><th>1/4</th><th>1/8</th><th>1/16</th><th>1/32</th><th>1/64</th></tr>
+  <tr><td>Beat at 120 BPM</td><td>0.5 Hz</td><td>1 Hz</td><td>2 Hz</td><td>4 Hz</td><td>8 Hz</td><td>16 Hz</td><td>32 Hz</td></tr>
   <tr><td>Band</td><td>Delta</td><td>Delta</td><td>Delta</td><td>Theta</td><td>Alpha</td><td>Beta</td><td>Gamma</td></tr>
-  <tr><td>Triole bei 120 BPM</td><td>0,75 Hz</td><td>1,5 Hz</td><td>3 Hz</td><td>6 Hz</td><td>12 Hz</td><td>24 Hz</td><td>48 Hz</td></tr>
+  <tr><td>Triplet at 120 BPM</td><td>0.75 Hz</td><td>1.5 Hz</td><td>3 Hz</td><td>6 Hz</td><td>12 Hz</td><td>24 Hz</td><td>48 Hz</td></tr>
 </table>
 <ul>
-  <li><b>Läuft der Song,</b> rastet der Puls auf dem Taktraster ein (im Test auf 1,2 ms genau). Das gilt auch mit externer MIDI-Clock und mit Sync-Scaling.</li>
-  <li><b>Steht der Song,</b> läuft der Beat im eingestellten Tempo frei weiter.</li>
-  <li><b>Tempowechsel</b> folgt der Beat weich.</li>
+  <li><b>When the song is playing,</b> the pulse locks onto the bar grid (accurate to 1.2 ms in the test). This also applies with external MIDI clock and with sync scaling.</li>
+  <li><b>When the song is stopped,</b> the beat runs on freely at the set tempo.</li>
+  <li>The beat follows <b>tempo changes</b> smoothly.</li>
 </ul>
 
-<h2>8. Klangfarben</h2>
+<h2>8. Timbres</h2>
 <table>
-  <tr><th style="width:18%">Klangfarbe</th><th>Klang</th></tr>
-  <tr><td>Sine</td><td>reiner Sinus, am klarsten für Beats</td></tr>
-  <tr><td>Soft</td><td>weiche Obertöne 2–5, warm</td></tr>
-  <tr><td>Organ</td><td>Oktaven wie bei Orgel-Zugriegeln</td></tr>
-  <tr><td>Rich</td><td>Obertöne 2–8, sägezahnartig und hell</td></tr>
-  <tr><td>Pulse (v15)</td><td>Rechteck mit einstellbarer Breite (<i>Pulse width</i> 5–50 %, Standard 30): hohl und nasal bei schmaler, voll bei 50 %. Mit Life wandert die Breite langsam.</td></tr>
+  <tr><th style="width:18%">Timbre</th><th>Sound</th></tr>
+  <tr><td>Sine</td><td>pure sine, clearest for beats</td></tr>
+  <tr><td>Soft</td><td>soft harmonics 2–5, warm</td></tr>
+  <tr><td>Organ</td><td>octaves like organ drawbars</td></tr>
+  <tr><td>Rich</td><td>harmonics 2–8, sawtooth-like and bright</td></tr>
+  <tr><td>Pulse (v15)</td><td>square wave with adjustable width (<i>Pulse width</i> 5–50 %, default 30): hollow and nasal when narrower, full at 50 %. With Life the width drifts slowly.</td></tr>
 </table>
-<p>Alle Klangfarben sind bandbegrenzt: Obertöne über 18 kHz fallen weg, damit bei hohen Tönen nichts spiegelt oder zirpt. Die Klangfarbe wählst du im Menü (<i>Timbre</i>). Pulse gilt für den einzelnen Ton, die Breite für den ganzen Drone.</p>
+<p>All timbres are band-limited: harmonics above 18 kHz are dropped, so nothing aliases or chirps on high tones. You choose the timbre in the menu (<i>Timbre</i>). Pulse applies to the single tone, the width to the whole drone.</p>
 
-<h2>8a. Leben und FM (v15)</h2>
-<p>Ein Dauerton klingt schnell starr. Mit <b>Life</b> bewegt sich jeder Ton von selbst, wie von Hand gespielt; mit <b>FM</b> bekommt er eine Farbe, die aufblüht und wieder abklingt. Beides gilt für den ganzen Drone, jeder Ton bewegt sich aber auf eigenen Bahnen.</p>
+<h2>8a. Life and FM (v15)</h2>
+<p>A sustained tone soon sounds rigid. With <b>Life</b>, each tone moves by itself, as if played by hand; with <b>FM</b> it gets a color that blooms and fades again. Both apply to the whole drone, but each tone moves on its own paths.</p>
 <table>
-  <tr><th style="width:18%">Einstellung</th><th>Wirkung</th></tr>
-  <tr><td>Life 0–50</td><td>Jeder Ton wandert auf langsamen Zufallsbahnen, die sich nie wiederholen. Bei 50: Tonhöhe ±6 Cent (Bahn um 0,08 Hz), Lautstärke ±3 dB («Atem»), Helligkeit und Stereo-Position («Schimmer»). Alles wächst gleichmässig mit Life. Bei einem schwebenden Ton wandern beide Seiten gemeinsam: Der Beat bleibt genau wie eingestellt.</td></tr>
-  <tr><td>Rate 0–50</td><td>Wie schnell Life und das Aufblühen der FM sich bewegen. 25 wie vorgesehen; je 12,5 Schritte doppelt bzw. halb so schnell.</td></tr>
-  <tr><td>FM 0–50</td><td>Ein Modulator auf der Frequenz des Tons plus 0,3 Hz färbt ihn. Die Tiefe blüht auf und klingt ab, jeder Ton auf seiner eigenen Bahn. Bei hohen Tönen wird sie begrenzt, damit nichts hörbar spiegelt.</td></tr>
-  <tr><td>FM form</td><td>Sine: weich, glockig · Saw: heller, blecherner. Der Wechsel blendet über.</td></tr>
+  <tr><th style="width:18%">Setting</th><th>Effect</th></tr>
+  <tr><td>Life 0–50</td><td>Each tone drifts on slow random paths that never repeat. At 50: pitch ±6 cents (path at about 0.08 Hz), volume ±3 dB ("breath"), brightness and stereo position ("shimmer"). Everything grows evenly with Life. On a beating tone, both sides drift together: the beat stays exactly as set.</td></tr>
+  <tr><td>Rate 0–50</td><td>How fast Life and the blooming of the FM move. 25 as designed; every 12.5 steps doubles or halves the speed.</td></tr>
+  <tr><td>FM 0–50</td><td>A modulator at the tone's frequency plus 0.3 Hz colors it. The depth blooms and fades, each tone on its own path. On high tones it is limited, so nothing audibly aliases.</td></tr>
+  <tr><td>FM form</td><td>Sine: soft, bell-like · Saw: brighter, more tinny. Switching crossfades.</td></tr>
 </table>
 <ul>
-  <li><b>Bei Life 0 und FM 0</b> (und ohne Pulse) klingt der Drone genau wie in v13 und v14.</li>
-  <li>Änderungen von Life, Rate und FM gleiten, es klickt nichts. Ein Wechsel zu oder von Pulse geht wie jeder Wechsel der Klangfarbe durch Stille.</li>
-  <li>Life bewegt nur, was der Drone selbst macht. Tempo-Sync, Sidechain und Master Tune gelten weiter wie eingestellt.</li>
+  <li><b>At Life 0 and FM 0</b> (and without Pulse) the drone sounds exactly as in v13 and v14.</li>
+  <li>Changes to Life, Rate and FM glide; nothing clicks. A switch to or from Pulse goes through silence, like any change of timbre.</li>
+  <li>Life only moves what the drone itself does. Tempo sync, sidechain and Master Tune still apply as set.</li>
 </ul>
 
-<h2>9. Pegel, Pan, Lautstärke und Mix</h2>
+<h2>9. Level, pan, volume and mix</h2>
 <ul>
-  <li><b>Pegel</b> pro Ton, 0–50 in 1-dB-Schritten, 0 ist stumm. Ein Ton mit Pegel 50 und Drone-Lautstärke 50 liegt bei −12 dBFS. Neue Töne starten mit Pegel 40.</li>
-  <li><b>Pan</b> pro Ton, −32 bis +32, mit gleicher Leistung: In der Mitte 0 dB, ganz aussen bis +3 dB auf der einen Seite. Bei Binaural wirkt Pan als Balance zwischen den Ohren: Stark gepannt hört ein Ohr seinen Ton kaum noch, die Schwebung geht verloren.</li>
-  <li><b>Volume</b> (im Menü): Lautstärke des ganzen Drones, 0–50 in 1-dB-Schritten, 50 = 0 dB, neu 40.</li>
-  <li><b>Song-Lautstärke:</b> Der Drone folgt ihr wie das Metronom.</li>
-  <li><b>Im Mix</b> kommt der Drone nach den Song-Effekten dazu, also ohne Delay und Song-Filter. Über USB-Audio (v8) ist er zu hören.</li>
-  <li><b>Reverb</b> (im Menü <i>Reverb amount</i> oder unterer Goldknopf in der Sektion Sidechain/Reverb): Send des ganzen Drones ins Reverb des Songs, 0–50. Bei 50 sendet er so viel wie ein Sound mit ganz aufgedrehtem Reverb-Knopf. Der Send folgt Pegel, Pan und Sidechain-Ducking und gleitet beim Drehen weich.</li>
+  <li><b>Level</b> per tone, 0–50 in 1 dB steps, 0 is silent. A tone at level 50 with drone volume 50 sits at −12 dBFS. New tones start at level 40.</li>
+  <li><b>Pan</b> per tone, −32 to +32, equal power: 0 dB in the center, up to +3 dB on one side at the far ends. With Binaural, pan acts as a balance between the ears: panned hard, one ear barely hears its tone and the beating is lost.</li>
+  <li><b>Volume</b> (in the menu): volume of the whole drone, 0–50 in 1 dB steps, 50 = 0 dB, starts at 40.</li>
+  <li><b>Song volume:</b> the drone follows it, like the metronome.</li>
+  <li><b>In the mix</b> the drone is added after the song effects, so without delay and song filter. It can be heard over USB audio (v8).</li>
+  <li><b>Reverb</b> (menu <i>Reverb amount</i> or lower gold knob in the Sidechain/Reverb section): send of the whole drone into the song's reverb, 0–50. At 50 it sends as much as a sound with the reverb knob turned fully up. The send follows level, pan and sidechain ducking and glides smoothly when turned.</li>
 </ul>
-<div class="box">Viele laute Töne zusammen können übersteuern: 16 Töne auf Pegel 50 ergeben weit mehr als Vollaussteuerung. Für Flächen aus vielen Tönen den Pegel pro Ton oder die Drone-Lautstärke senken.</div>
+<div class="box">Many loud tones together can clip: 16 tones at level 50 add up to far more than full scale. For pad sounds of many tones, lower the level per tone or the drone volume.</div>
 
 <h2>10. Sidechain</h2>
-<p>Der Drone kann sich unter die Sidechain-Auslöser des Songs ducken, zum Beispiel unter eine Kick mit <i>Send to sidechain</i>. Der Pegel gleitet dabei von Sample zu Sample, so knackt nichts.</p>
+<p>The drone can duck under the song's sidechain triggers, for example under a kick with <i>Send to sidechain</i>. The level glides from sample to sample, so nothing clicks.</p>
 <table>
-  <tr><th style="width:30%">Menüpunkt (Sidechain)</th><th>Wirkung</th></tr>
-  <tr><td>Volume ducking</td><td>Stärke 0–50, bei 0 aus. Der Pegel sinkt am tiefsten Punkt eines vollen Schlags linear: 10 → −2 dB, 20 → −4 dB, 30 → −8 dB, 40 → −14 dB, 50 → ganz weg. Beim Drehen zeigt das OLED die Tiefe, z. B. <code>Sidechain 30  -8dB</code>.</td></tr>
-  <tr><td>SYNC</td><td>Hüllkurve im Tempo, wie bei den anderen Sidechains</td></tr>
-  <tr><td>ATTACK / RELEASE</td><td>wie schnell der Drone abtaucht und zurückkommt</td></tr>
-  <tr><td>SHAPE (Titel <i>Sidech. shape</i>)</td><td>Form der Kurve, wie beim Reverb; nur sichtbar, wenn Volume ducking über 0 ist</td></tr>
+  <tr><th style="width:30%">Menu item (Sidechain)</th><th>Effect</th></tr>
+  <tr><td>Volume ducking</td><td>Amount 0–50, off at 0. At the lowest point of a full hit, the level drops linearly: 10 → −2 dB, 20 → −4 dB, 30 → −8 dB, 40 → −14 dB, 50 → fully gone. While turning, the OLED shows the depth, e.g. <code>Sidechain 30  -8dB</code>.</td></tr>
+  <tr><td>SYNC</td><td>envelope in tempo, as with the other sidechains</td></tr>
+  <tr><td>ATTACK / RELEASE</td><td>how fast the drone ducks and comes back</td></tr>
+  <tr><td>SHAPE (title <i>Sidech. shape</i>)</td><td>shape of the curve, as with the reverb; only visible when Volume ducking is above 0</td></tr>
 </table>
 
-<h2 class="page-break">11. Das Menü</h2>
-<p><span class="key">SELECT</span> drücken öffnet das Menü <i>Drone tone</i> für den gewählten Ton. Punkte, die gerade nicht gelten, werden ausgeblendet. Die Namen stehen so, wie der Deluge sie anzeigt.</p>
+<h2 class="page-break">11. The menu</h2>
+<p>Pressing <span class="key">SELECT</span> opens the <i>Drone tone</i> menu for the selected tone. Items that do not apply at the moment are hidden. The names are written as the Deluge shows them.</p>
 <table>
-  <tr><th style="width:22%">Punkt</th><th style="width:34%">Werte</th><th>Sichtbar</th></tr>
-  <tr><td>MODE</td><td>Tone, Binaural, Monaural, Isochronic</td><td>immer</td></tr>
-  <tr><td>Pitch as</td><td>Hz, Note (wechselt mit gleicher Tonhöhe)</td><td>immer</td></tr>
-  <tr><td>Frequency</td><td>10,00–5000,00 Hz</td><td>bei Hz</td></tr>
-  <tr><td>Note</td><td>0–127, als Notenname angezeigt</td><td>bei Note</td></tr>
-  <tr><td>Cents</td><td>−50 bis +50</td><td>bei Note</td></tr>
-  <tr><td>Beat</td><td>0,00–100,00 Hz</td><td>nicht bei Tone, und Sync aus</td></tr>
-  <tr><td>SYNC</td><td>Off, 1/1, 1/1T bis 1/64, 1/64T</td><td>nicht bei Tone</td></tr>
-  <tr><td>ATTACK</td><td>0–50 (angezeigt 0–100 %)</td><td>bei Isochronic</td></tr>
-  <tr><td>RELEASE</td><td>0–50 (angezeigt 0–100 %)</td><td>bei Isochronic</td></tr>
-  <tr><td>Timbre</td><td>Sine, Soft, Organ, Rich, Pulse</td><td>immer</td></tr>
-  <tr><td>Level</td><td>0–50</td><td>immer</td></tr>
-  <tr><td>PAN</td><td>−32 bis +32</td><td>immer</td></tr>
-  <tr><td>Volume</td><td>0–50, ganzer Drone</td><td>immer</td></tr>
-  <tr><td>Reverb amount</td><td>0–50, Send des ganzen Drones</td><td>immer</td></tr>
-  <tr><td>Life</td><td>0–50, ganzer Drone (Kapitel 8a)</td><td>immer</td></tr>
-  <tr><td>Rate</td><td>0–50, ganzer Drone, 25 = Grundeinstellung</td><td>immer</td></tr>
-  <tr><td>FM</td><td>0–50, ganzer Drone</td><td>immer</td></tr>
-  <tr><td>FM form</td><td>Sine, Saw</td><td>immer</td></tr>
-  <tr><td>Pulse width</td><td>5–50 %, ganzer Drone</td><td>immer</td></tr>
-  <tr><td>Sidechain</td><td>Untermenü (Kapitel 10), ganzer Drone</td><td>immer</td></tr>
+  <tr><th style="width:22%">Item</th><th style="width:34%">Values</th><th>Visible</th></tr>
+  <tr><td>MODE</td><td>Tone, Binaural, Monaural, Isochronic</td><td>always</td></tr>
+  <tr><td>Pitch as</td><td>Hz, Note (switches at the same pitch)</td><td>always</td></tr>
+  <tr><td>Frequency</td><td>10.00–5000.00 Hz</td><td>with Hz</td></tr>
+  <tr><td>Note</td><td>0–127, shown as a note name</td><td>with Note</td></tr>
+  <tr><td>Cents</td><td>−50 to +50</td><td>with Note</td></tr>
+  <tr><td>Beat</td><td>0.00–100.00 Hz</td><td>not with Tone, and sync off</td></tr>
+  <tr><td>SYNC</td><td>Off, 1/1, 1/1T to 1/64, 1/64T</td><td>not with Tone</td></tr>
+  <tr><td>ATTACK</td><td>0–50 (shown as 0–100 %)</td><td>with Isochronic</td></tr>
+  <tr><td>RELEASE</td><td>0–50 (shown as 0–100 %)</td><td>with Isochronic</td></tr>
+  <tr><td>Timbre</td><td>Sine, Soft, Organ, Rich, Pulse</td><td>always</td></tr>
+  <tr><td>Level</td><td>0–50</td><td>always</td></tr>
+  <tr><td>PAN</td><td>−32 to +32</td><td>always</td></tr>
+  <tr><td>Volume</td><td>0–50, whole drone</td><td>always</td></tr>
+  <tr><td>Reverb amount</td><td>0–50, send of the whole drone</td><td>always</td></tr>
+  <tr><td>Life</td><td>0–50, whole drone (chapter 8a)</td><td>always</td></tr>
+  <tr><td>Rate</td><td>0–50, whole drone, 25 = default</td><td>always</td></tr>
+  <tr><td>FM</td><td>0–50, whole drone</td><td>always</td></tr>
+  <tr><td>FM form</td><td>Sine, Saw</td><td>always</td></tr>
+  <tr><td>Pulse width</td><td>5–50 %, whole drone</td><td>always</td></tr>
+  <tr><td>Sidechain</td><td>submenu (chapter 10), whole drone</td><td>always</td></tr>
 </table>
-<p>Mit <span class="key">BACK</span> verlässt du das Menü, zurück in die Drone-Ansicht.</p>
+<p><span class="key">BACK</span> leaves the menu and takes you back to the drone view.</p>
 
-<h2>12. Speichern, Laden, Export</h2>
+<h2>12. Saving, loading, export</h2>
 <ul>
-  <li><b>Speichern:</b> Der Drone wird mit dem Song gespeichert (Tag <code>&lt;drone&gt;</code>), aber nur, wenn er eingerichtet ist. Ältere Firmware überspringt ihn einfach.</li>
-  <li><b>Laden:</b> Beim Laden eines anderen Songs oder bei <i>Clear Song</i> blendet der Drone in etwa 60 ms aus. Der Drone des neuen Songs setzt aus der Stille ein.</li>
-  <li><b>Stem-Export:</b> Der Drone ist nicht in den Stems. Danach setzt er wieder aus der Stille ein.</li>
-  <li><b>Aufnehmen:</b> Über USB-Audio oder den Ausgang nimmst du ihn mit dem Rest des Songs auf.</li>
+  <li><b>Saving:</b> the drone is saved with the song (tag <code>&lt;drone&gt;</code>), but only if it has been set up. Older firmware simply skips it.</li>
+  <li><b>Loading:</b> when you load another song or use <i>Clear Song</i>, the drone fades out in about 60 ms. The new song's drone starts from silence.</li>
+  <li><b>Stem export:</b> the drone is not in the stems. Afterwards it starts again from silence.</li>
+  <li><b>Recording:</b> you record it with the rest of the song via USB audio or the output.</li>
 </ul>
 
-<h2>13. Mit externen Geräten</h2>
-<p>Stell die Töne auf <b>Note</b> und stimme den <b>Master Tune</b> (Settings → Tuning) auf dein Gerät, zum Beispiel eine volca keys. Dann liegen Drone und Instrument in derselben Stimmung. Verschiebst du den Master Tune später, folgen alle Töne mit Note mit; Töne in Hz bleiben stehen.</p>
+<h2>13. With external devices</h2>
+<p>Set the tones to <b>Note</b> and tune the <b>Master Tune</b> (Settings → Tuning) to your device, for example a volca keys. Then the drone and the instrument share the same tuning. If you move the Master Tune later, all tones set as notes follow; tones in Hz stay fixed.</p>
 
-<h2>14. Rezepte</h2>
+<h2>14. Recipes</h2>
 <table>
-  <tr><th style="width:24%">Ziel</th><th>So geht's</th></tr>
-  <tr><td>Ruhiges Alpha-Bett</td><td>Ton 1: Binaural, Sine, 200 Hz, Beat 10 Hz, Pegel 35. Ton 2: Binaural, Soft, 300 Hz, Beat 10 Hz, Pegel 28. Mit Kopfhörern hören.</td></tr>
-  <tr><td>Puls im Groove</td><td>Isochron, Sync 1/16 (bei 120 BPM 8 Hz), Rich, eine Oktave unter dem Grundton des Songs. Sidechain mit Volume ducking 20 dazu.</td></tr>
-  <tr><td>Weicher Triolen-Puls</td><td>Isochron, Sync 1/8T, Soft, Attack 20, Release 30. In der Sektion Attack/Release mit den Goldknöpfen live formen.</td></tr>
-  <tr><td>Drone im Raum</td><td>Monaural, Organ, Reverb amount 20–30: Der Drone sitzt im selben Raum wie der Song.</td></tr>
-  <tr><td>Grundton-Fläche</td><td>Drei Töne als Note: Grundton, Quinte, Oktave; Timbre Organ, Modus Ton, Pegel 30–35. Die Töne folgen dem Master Tune.</td></tr>
-  <tr><td>Schwebender Chor</td><td>Monaural, Soft, dieselbe Note auf zwei Tönen, Beat 0,3 und 0,5 Hz, Pan −20 und +20.</td></tr>
-  <tr><td>Langsame Bewegung</td><td>Binaural oder Monaural mit Sync 1/1 oder 1/2: eine Schwebung pro Takt oder halbem Takt.</td></tr>
-  <tr><td>Atmende Fläche (v15)</td><td>Drei Töne Soft als Grundton, Quinte, Oktave; Life 25, Rate 20. Die Fläche bewegt sich langsam von selbst, jeder Ton ein wenig anders.</td></tr>
-  <tr><td>Glocken im Nebel (v15)</td><td>Monaural, Sine, zwei hohe Töne; FM 30 mit Form Sine, Life 15, Reverb amount 25.</td></tr>
-  <tr><td>Rauer Bass-Drone (v15)</td><td>Ton, Pulse, eine tiefe Note; Pulse width 15, FM 20 mit Form Saw, Life 10. Mit Sidechain unter die Kick legen.</td></tr>
+  <tr><th style="width:24%">Goal</th><th>How to</th></tr>
+  <tr><td>Calm alpha bed</td><td>Tone 1: Binaural, Sine, 200 Hz, Beat 10 Hz, Level 35. Tone 2: Binaural, Soft, 300 Hz, Beat 10 Hz, Level 28. Listen on headphones.</td></tr>
+  <tr><td>Pulse in the groove</td><td>Isochronic, Sync 1/16 (8 Hz at 120 BPM), Rich, one octave below the song's root note. Add sidechain with Volume ducking 20.</td></tr>
+  <tr><td>Soft triplet pulse</td><td>Isochronic, Sync 1/8T, Soft, Attack 20, Release 30. Shape it live with the gold knobs in the Attack/Release section.</td></tr>
+  <tr><td>Drone in the room</td><td>Monaural, Organ, Reverb amount 20–30: the drone sits in the same room as the song.</td></tr>
+  <tr><td>Root-note pad</td><td>Three tones as notes: root, fifth, octave; Timbre Organ, mode Tone, Level 30–35. The tones follow the Master Tune.</td></tr>
+  <tr><td>Floating choir</td><td>Monaural, Soft, the same note on two tones, Beat 0.3 and 0.5 Hz, Pan −20 and +20.</td></tr>
+  <tr><td>Slow movement</td><td>Binaural or Monaural with Sync 1/1 or 1/2: one beating per bar or half bar.</td></tr>
+  <tr><td>Breathing pad (v15)</td><td>Three Soft tones as root, fifth, octave; Life 25, Rate 20. The pad moves slowly by itself, each tone a little differently.</td></tr>
+  <tr><td>Bells in the fog (v15)</td><td>Monaural, Sine, two high tones; FM 30 with form Sine, Life 15, Reverb amount 25.</td></tr>
+  <tr><td>Rough bass drone (v15)</td><td>Tone, Pulse, one low note; Pulse width 15, FM 20 with form Saw, Life 10. Put it under the kick with sidechain.</td></tr>
 </table>
 
-<h2>15. Technische Daten und Grenzen</h2>
+<h2>15. Specifications and limits</h2>
 <table>
-  <tr><th style="width:36%">Eigenschaft</th><th>Wert</th></tr>
-  <tr><td>Töne</td><td>16, jeder mit Modus, Klangfarbe, Tonhöhe, Beat, Sync, Pegel, Pan</td></tr>
-  <tr><td>Frequenz / Note</td><td>10,00–5000,00 Hz · Note 0–127 ± 50 Cent</td></tr>
-  <tr><td>Beat</td><td>0–100 Hz frei (0,01 Hz genau) oder 1/1–1/64 synchron, auch als Triole</td></tr>
-  <tr><td>Isochroner Puls</td><td>Attack und Release 0–50 (je 2 % der halben Zykluslänge), mindestens 1 ms</td></tr>
-  <tr><td>Reverb-Send</td><td>0–50 für den ganzen Drone</td></tr>
-  <tr><td>Pegel, Volume, Pan</td><td>0–50 (1 dB), 0–50 (1 dB), −32 bis +32</td></tr>
-  <tr><td>Reinheit</td><td>Sinus: Nebenprodukte unter −108 dB</td></tr>
-  <tr><td>Life, FM, Pulse (v15)</td><td>Life und FM 0–50 und Rate 0–50 für den ganzen Drone, FM-Form Sine oder Saw, Pulsbreite 5–50 %</td></tr>
-  <tr><td>Rechenzeit (Cortex-A9, im Emulator gezählt)</td><td>1 Sinuston 0,35 %, 1 binauraler Ton 0,5 %, 16 binaurale Töne mit Obertönen 6,9 % der CPU. Mit v15 je binauralem Ton: Life 0,7–1,0 %, FM 1,3 %, Pulse 1,0 %, alles zusammen 2,1 %; 16 Töne mit allem gut 30 %. Der Drone wird nie gekürzt wie Synth-Stimmen.</td></tr>
-  <tr><td>Speicher</td><td>Wellentabellen 27 KB internes RAM, mit v15 zusätzlich 14 KB (Sägezahn-Tabellen für Pulse und FM)</td></tr>
+  <tr><th style="width:36%">Property</th><th>Value</th></tr>
+  <tr><td>Tones</td><td>16, each with mode, timbre, pitch, beat, sync, level, pan</td></tr>
+  <tr><td>Frequency / note</td><td>10.00–5000.00 Hz · note 0–127 ± 50 cents</td></tr>
+  <tr><td>Beat</td><td>0–100 Hz free (accurate to 0.01 Hz) or 1/1–1/64 synced, also as triplets</td></tr>
+  <tr><td>Isochronic pulse</td><td>Attack and release 0–50 (each step 2 % of half the cycle length), at least 1 ms</td></tr>
+  <tr><td>Reverb send</td><td>0–50 for the whole drone</td></tr>
+  <tr><td>Level, Volume, Pan</td><td>0–50 (1 dB), 0–50 (1 dB), −32 to +32</td></tr>
+  <tr><td>Purity</td><td>Sine: spurious products below −108 dB</td></tr>
+  <tr><td>Life, FM, Pulse (v15)</td><td>Life and FM 0–50 and Rate 0–50 for the whole drone, FM form Sine or Saw, pulse width 5–50 %</td></tr>
+  <tr><td>CPU time (Cortex-A9, counted in the emulator)</td><td>1 sine tone 0.35 %, 1 binaural tone 0.5 %, 16 binaural tones with harmonics 6.9 % of the CPU. With v15 per binaural tone: Life 0.7–1.0 %, FM 1.3 %, Pulse 1.0 %, all together 2.1 %; 16 tones with everything just over 30 %. The drone is never culled like synth voices.</td></tr>
+  <tr><td>Memory</td><td>Wavetables 27 KB internal RAM, with v15 another 14 KB (sawtooth tables for Pulse and FM)</td></tr>
 </table>
 <ul>
-  <li><b>Getestet</b> im Emulator (46 Prüfpunkte auf PC und Cortex-A9) und auf dem Gerät mit v12. Die Neuerungen von v13 und v15 sind auf dem Gerät noch nicht getestet; Life, FM und Pulse sind auf dem PC mit 116 Prüfpunkten geprüft.</li>
-  <li>Der Song-Drone sendet kein MIDI und nimmt keine Noten von Tastatur oder MIDI an. Drone-Spuren (Kapitel 16) nehmen Noten an: Sie öffnen das Gate der Reihe.</li>
-  <li>Die Werte des Song-Drones lassen sich nicht automatisieren. Bei Drone-Spuren wird die Tonhöhe jeder Reihe mit REC als Hz-Spur aufgenommen (Kapitel 16).</li>
+  <li><b>Tested</b> in the emulator (46 checks on PC and Cortex-A9) and on the device with v12. The new features of v13 and v15 are not yet tested on the device; Life, FM and Pulse are checked on the PC with 116 checks.</li>
+  <li>The song drone sends no MIDI and takes no notes from the keyboard or MIDI. Drone tracks (chapter 16) take notes: they open the row's gate.</li>
+  <li>The song drone's values cannot be automated. With drone tracks, the pitch of each row is recorded with REC as a Hz track (chapter 16).</li>
 </ul>
 
-<h2 class="page-break">16. Drone-Spuren (v16)</h2>
-<p>Der Song-Drone klingt, solange er an ist. Mit <b>Drone-Spuren</b> setzt du Drones gezielt: Eine Drone-Spur ist ein Kit, dessen Reihen Drone-Töne sind. Ihre Clips startest du in der Song-View und legst sie im Arranger ab wie jeden Kit-Clip. Mehrere Drone-Spuren können sich überlagern, jede mit den Effekten, der Lautstärke und der Sidechain ihres Kits.</p>
+<h2 class="page-break">16. Drone tracks (v16)</h2>
+<p>The song drone sounds as long as it is on. With <b>drone tracks</b> you place drones where you want them: a drone track is a kit whose rows are drone tones. You launch their clips in song view and place them in the arranger like any kit clip. Several drone tracks can overlap, each with its kit's effects, volume and sidechain.</p>
 <table>
-  <tr><th style="width:30%">Was</th><th>So geht's</th></tr>
-  <tr><td>Drone-Spur aus dem Drone machen</td><td>In der Drone-Ansicht <span class="key">SHIFT</span> + <span class="key">KIT</span>. Es entsteht ein neues Kit (DRONE1, DRONE2 …) mit 16 Reihen, den Tönen des Song-Drones; die eingeschalteten Töne bekommen eine Note über den ganzen Clip. Der Clip steht unten in der Song-View und ist noch nicht gestartet. Der Song-Drone selbst bleibt unverändert.</td></tr>
-  <tr><td>Eine Kit-Reihe zur Drone-Reihe machen</td><td>In der Clip-View eines Kits das Audition-Pad der Reihe halten (oder eine neue Reihe anlegen), dann <span class="key">SHIFT</span> + <span class="key">KIT</span>. Die Reihe klingt mit 200 Hz.</td></tr>
-  <tr><td>Gate</td><td>Die Noten einer Drone-Reihe sind ihr Gate: Solange eine Note dauert, klingt der Ton, mit weichem Ein- und Ausblenden. Eine Note über den ganzen Clip hält über die Loop-Grenze. Mit dem Arpeggiator der Reihe pulsiert der Ton im Rhythmus.</td></tr>
-  <tr><td>Reihe wählen</td><td>Ihr Audition-Pad (Affect Entire aus). Klingt die Reihe gerade aus dem Sequenzer, wählt das Pad sie nur aus, sie klingt weiter.</td></tr>
-  <tr><td>Tonhöhe</td><td>Select drehen: 1 Hz pro Raste, mit <span class="key">SHIFT</span> 0,1 Hz. Oberer Goldknopf: 1 Hz, schnell gedreht 10 Hz, mit <span class="key">SHIFT</span> 0,01 Hz. Ein Ton als Note: Halbtöne, mit <span class="key">SHIFT</span> Cent.</td></tr>
-  <tr><td>Pegel</td><td>Unterer Goldknopf</td></tr>
-  <tr><td>Menü der Reihe</td><td>Select drücken: Modus, Tonhöhe, Beat, Sync, Puls, Klangfarbe, Pegel, Pan, dazu Arpeggiator und Randomizer der Reihe</td></tr>
-  <tr><td>Anzeige</td><td>OLED: Modus und Hz als Name der Reihe; 7-Segment: die Hz</td></tr>
+  <tr><th style="width:30%">What</th><th>How to</th></tr>
+  <tr><td>Make a drone track from the drone</td><td>In the drone view, <span class="key">SHIFT</span> + <span class="key">KIT</span>. This creates a new kit (DRONE1, DRONE2 …) with 16 rows, the tones of the song drone; the tones that are on get a note across the whole clip. The clip sits at the bottom of song view and is not launched yet. The song drone itself stays unchanged.</td></tr>
+  <tr><td>Turn a kit row into a drone row</td><td>In a kit's clip view, hold the row's audition pad (or create a new row), then <span class="key">SHIFT</span> + <span class="key">KIT</span>. The row sounds at 200 Hz.</td></tr>
+  <tr><td>Gate</td><td>A drone row's notes are its gate: as long as a note lasts, the tone sounds, with a soft fade in and out. A note across the whole clip holds over the loop boundary. With the row's arpeggiator, the tone pulses in rhythm.</td></tr>
+  <tr><td>Select a row</td><td>Its audition pad (Affect Entire off). If the row is sounding from the sequencer at the time, the pad only selects it; it keeps sounding.</td></tr>
+  <tr><td>Pitch</td><td>Turn Select: 1 Hz per detent, with <span class="key">SHIFT</span> 0.1 Hz. Upper gold knob: 1 Hz, 10 Hz when turned fast, with <span class="key">SHIFT</span> 0.01 Hz. A tone set as a note: semitones, with <span class="key">SHIFT</span> cents.</td></tr>
+  <tr><td>Level</td><td>Lower gold knob</td></tr>
+  <tr><td>Row menu</td><td>Press Select: mode, pitch, beat, sync, pulse, timbre, level, pan, plus the row's arpeggiator and randomizer</td></tr>
+  <tr><td>Display</td><td>OLED: mode and Hz as the row's name; 7-segment: the Hz</td></tr>
 </table>
-<h3>Hz-Wechsel aufnehmen und spielen</h3>
+<h3>Recording and playing Hz changes</h3>
 <ul>
-  <li><span class="key">PLAY</span>, dann <span class="key">RECORD</span>, dann Select oder den oberen Goldknopf drehen: Jeder Wechsel wird als Knoten in die <b>Hz-Spur</b> der Reihe geschrieben und spielt im nächsten Loop wieder ab. Zwischen zwei Knoten gleitet der Ton in etwa 15 ms. Das geht auch beim Aufnehmen in den Arranger.</li>
-  <li>Ohne <span class="key">RECORD</span> ändert sich der Grundton der Reihe; eine aufgenommene Hz-Spur verschiebt sich mit.</li>
-  <li>Unter <span class="key">RECORD</span>: <span class="key">SHIFT</span> + Select nimmt die feinen 0,1-Hz-Schritte auf. <span class="key">SHIFT</span> + oberer Goldknopf löscht die Hz-Spur, wie jede Automation; die Reihe kehrt sofort zu ihrem Grundton zurück.</li>
-  <li>Die Hz-Spur gehört zur Reihe, nicht zu den Noten: Noten aufnehmen, verschieben oder euklidisch verteilen lässt sie unverändert.</li>
-  <li>MIDI-Pitch-Bend auf einer Drone-Reihe wirkt im Bend-Bereich der Reihe (Standard 2 Halbtöne) und wird unter <span class="key">RECORD</span> ebenfalls aufgenommen.</li>
+  <li><span class="key">PLAY</span>, then <span class="key">RECORD</span>, then turn Select or the upper gold knob: each change is written as a node into the row's <b>Hz track</b> and plays back in the next loop. Between two nodes the tone glides in about 15 ms. This also works when recording into the arranger.</li>
+  <li>Without <span class="key">RECORD</span>, the row's base pitch changes; a recorded Hz track shifts with it.</li>
+  <li>While <span class="key">RECORD</span> is on: <span class="key">SHIFT</span> + Select records the fine 0.1 Hz steps. <span class="key">SHIFT</span> + upper gold knob deletes the Hz track, like any automation; the row goes back to its base pitch at once.</li>
+  <li>The Hz track belongs to the row, not to the notes: recording notes, moving them or spreading them in a Euclidean pattern leaves it unchanged.</li>
+  <li>MIDI pitch bend on a drone row acts within the row's bend range (default 2 semitones) and is also recorded while <span class="key">RECORD</span> is on.</li>
 </ul>
-<h3>Gut zu wissen</h3>
+<h3>Good to know</h3>
 <ul>
-  <li>Rechenzeit: pro klingender Reihe etwa 0,3–0,45 % CPU, 16 Reihen 5–7 %. Reihen mit geschlossenem Gate kosten nichts.</li>
-  <li>Ein neues Drone-Kit klingt gleich laut wie der Song-Drone bei derselben Einstellung.</li>
-  <li>Songs mit Drone-Spuren öffnen ältere Firmware ohne die Drone-Reihen, die übrigen Reihen bleiben richtig. Dort gespeichert, sind die Drone-Reihen weg.</li>
+  <li>CPU time: about 0.3–0.45 % CPU per sounding row, 16 rows 5–7 %. Rows with a closed gate cost nothing.</li>
+  <li>A new drone kit sounds as loud as the song drone at the same setting.</li>
+  <li>Older firmware opens songs with drone tracks without the drone rows; the other rows stay correct. If you save them there, the drone rows are gone.</li>
 </ul>
 
 <script>
@@ -451,8 +451,8 @@
   const sx = 16 * (P + GAP) + SIDE_GAP;
   text(sx + P / 2, 8 * (P + GAP) + 14, 'Mute', 'middle', null, '#5f6368');
   text(sx + P + GAP + P / 2, 8 * (P + GAP) + 14, 'Aud.', 'middle', null, '#5f6368');
-  text(8 * (P + GAP), 8 * (P + GAP) + 14, 'Pegel als Balken (Pad antippen setzt ihn)', 'middle', null, '#5f6368');
-  text(-26, -6, 'Ton', 'start', null, '#5f6368');
+  text(8 * (P + GAP), 8 * (P + GAP) + 14, 'Level as a bar (tapping a pad sets it)', 'middle', null, '#5f6368');
+  text(-26, -6, 'Tone', 'start', null, '#5f6368');
 })();
 </script>
 </body>

@@ -177,7 +177,7 @@
    "drone": 0.01
   }
  },
- "432 Hz, wie gespeichert": {
+ "432 Hz, as saved": {
   "master_tune_hz": 432.0,
   "window": 128,
   "mean_window": 126.3,
@@ -263,7 +263,7 @@
    "drone": 0.01
   }
  },
- "440 Hz, wie gespeichert": {
+ "440 Hz, as saved": {
   "master_tune_hz": 440.0,
   "window": 128,
   "mean_window": 126.3,

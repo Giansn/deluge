@@ -8,7 +8,7 @@ name: DelugeTuner for Windows
 # builds and tests, and deluge-tuner gets the released file. retune_library.py's own tests: tests/retune/run.sh.
 on:
   push:
-    branches: [geraet-ergebnisse]
+    branches: [device-results]
     paths:
       - mastertune-1.2.1/tools/deluge_tuner.py
       - mastertune-1.2.1/tools/retune_library.py

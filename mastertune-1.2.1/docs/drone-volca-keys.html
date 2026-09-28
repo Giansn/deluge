@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="de-CH">
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Drone mit volca keys – Handbuch</title>
+<title>Drone with volca keys – Manual</title>
 <style>
   @page { size: A4; margin: 16mm 15mm 16mm 15mm; }
   :root { --ink: #1d1d1f; --muted: #5f6368; --line: #d9dce1; --accent: #2d5bd7; --soft: #f3f5f9; }
@@ -40,55 +40,55 @@
 <body>
 
 <div class="cover">
-  <h1>Drone mit volca keys</h1>
-  <div class="subtitle">Handbuch für den Deluge mit Firmware 1.2.1-mastertune v16 (oder neuer) und eine Korg volca keys</div>
-  <p>Die volca keys ist ein kleiner analoger Synthesizer mit drei Oszillatoren, einem Filter und einer Hüllkurve. Vom Deluge aus gespielt, liefert sie lange, warme Töne, die sich langsam bewegen. Der <b>Frequenz-Drone</b> des Deluge legt exakte Töne und Schwebungen darunter: binaural, monaural oder isochron. Dieses Handbuch zeigt, wie du beides verkabelst, stimmst, spielst und aufnimmst.</p>
+  <h1>Drone with volca keys</h1>
+  <div class="subtitle">Manual for the Deluge with firmware 1.2.1-mastertune v16 (or newer) and a Korg volca keys</div>
+  <p>The volca keys is a small analog synthesizer with three oscillators, one filter and one envelope. Played from the Deluge, it delivers long, warm tones that move slowly. The Deluge's <b>Frequency Drone</b> lays exact tones and beatings underneath: binaural, monaural or isochronic. This manual shows you how to wire, tune, play and record both.</p>
   <ol class="toc">
-    <li>Wofür die Kombination gut ist</li>
-    <li>Verkabelung</li>
-    <li>Die volca keys einrichten</li>
-    <li>Den Deluge einrichten</li>
-    <li>Stimmung: volca und Master Tune</li>
-    <li>Drones auf der volca spielen</li>
-    <li>Zusammen mit dem Frequenz-Drone</li>
-    <li>Die volca durch den Deluge</li>
-    <li>Rezepte</li>
-    <li>CC-Tabelle</li>
-    <li>Fehlersuche</li>
-    <li>Grenzen und offene Punkte</li>
+    <li>What the combination is good for</li>
+    <li>Wiring</li>
+    <li>Setting up the volca keys</li>
+    <li>Setting up the Deluge</li>
+    <li>Tuning: volca and Master Tune</li>
+    <li>Playing drones on the volca</li>
+    <li>Together with the Frequency Drone</li>
+    <li>The volca through the Deluge</li>
+    <li>Recipes</li>
+    <li>CC table</li>
+    <li>Troubleshooting</li>
+    <li>Limits and open points</li>
   </ol>
 </div>
 
 <div class="box warn">
-  <b>Zuerst leise.</b> Dauertöne, besonders tiefe, können über Kopfhörer lauter wirken als erwartet. Beginne an volca und Deluge mit wenig Lautstärke und erhöhe sie langsam.<br>
-  <b>Quellenlage:</b> Die Angaben zur volca keys stützen sich auf die MIDI-Tabelle von Korg (v1.02), Auszüge aus dem Korg-Handbuch, Testberichte und Foren. Punkte mit der Marke <span class="tag">prüfen</span> sind unsicher oder widersprüchlich belegt. Kontrolliere sie auf dem Gerät oder im Korg-Handbuch, bevor du dich darauf verlässt.
+  <b>Start quiet.</b> Sustained tones, especially low ones, can seem louder than expected on headphones. Start with a low volume on the volca and the Deluge and raise it slowly.<br>
+  <b>Sources:</b> The information on the volca keys is based on Korg's MIDI chart (v1.02), excerpts from the Korg manual, reviews and forums. Points marked <span class="tag">verify</span> are uncertain or have conflicting sources. Check them on the device or in the Korg manual before you rely on them.
 </div>
 
-<h2>1. Wofür die Kombination gut ist</h2>
+<h2>1. What the combination is good for</h2>
 <div class="grid2">
 <div>
-<h3>Was die volca keys beiträgt</h3>
+<h3>What the volca keys adds</h3>
 <ul>
-  <li>Analoger Klang, der leicht driftet und dadurch lebt</li>
-  <li>Drei Oszillatoren: als Akkord mit bis zu drei Tönen (Poly) oder als ein breiter Ton (Unison, Octave, Fifth)</li>
-  <li>Filter, LFO und Delay für langsame Bewegung</li>
-  <li>Fernsteuerbar per MIDI: Noten, Pitch Bend und 16 Control Changes (CC)</li>
+  <li>Analog sound that drifts slightly and so feels alive</li>
+  <li>Three oscillators: as a chord of up to three notes (Poly) or as one wide tone (Unison, Octave, Fifth)</li>
+  <li>Filter, LFO and delay for slow movement</li>
+  <li>Remote control via MIDI: notes, pitch bend and 16 control changes (CC)</li>
 </ul>
 </div>
 <div>
-<h3>Was der Deluge beiträgt</h3>
+<h3>What the Deluge adds</h3>
 <ul>
-  <li>Lange Noten in einem MIDI-Clip, CC-Automation, MIDI-Clock</li>
-  <li>Den Frequenz-Drone mit exakten Tönen: Tone, Binaural, Monaural, Isochronic, mit Sidechain</li>
-  <li>Drone-Spuren (v16), die du wie Clips startest</li>
-  <li>Aufnahme der volca über den Line-in, auch als Audio-Clip, der dem Master Tune folgt</li>
+  <li>Long notes in a MIDI clip, CC automation, MIDI clock</li>
+  <li>The Frequency Drone with exact tones: Tone, Binaural, Monaural, Isochronic, with sidechain</li>
+  <li>Drone tracks (v16) that you launch like clips</li>
+  <li>Recording the volca via the line in, also as an audio clip that follows the Master Tune</li>
 </ul>
 </div>
 </div>
-<p>Typische Anwendungen: eine analoge Fläche über einem binauralen Fundament, eine Filterfahrt über viele Takte, eine langsame Schwebung zwischen dem driftenden Analogton und dem exakten Drone-Ton, oder eine Aufnahme der volca, die du danach auf 432 Hz umstimmst.</p>
-<div class="box"><b>Faustregel:</b> Die volca keys steht fest auf A = 440 Hz. Lass den Master Tune auf <b>440.0</b> und stell die Drone-Töne auf <b>Note</b>. Dann passen volca und Drone zusammen. Für 432 Hz und andere Stimmungen siehe Kapitel 5.</div>
+<p>Typical uses: an analog pad over a binaural foundation, a filter sweep over many bars, a slow beating between the drifting analog tone and the exact drone tone, or a recording of the volca that you then retune to 432 Hz.</p>
+<div class="box"><b>Rule of thumb:</b> The volca keys is fixed at A = 440 Hz. Leave the Master Tune at <b>440.0</b> and set the drone tones to <b>Note</b>. Then the volca and the drone match. For 432 Hz and other tunings, see chapter 5.</div>
 
-<h2>2. Verkabelung</h2>
+<h2>2. Wiring</h2>
 <figure class="figure">
 <svg width="580" height="263" viewBox="0 0 640 290" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="11">
   <defs>
@@ -102,306 +102,306 @@
   <text x="36" y="62" fill="#5f6368" font-size="10">1.2.1-mastertune v16</text>
   <text x="220" y="84" text-anchor="end">MIDI OUT</text>
   <text x="220" y="124" text-anchor="end">Gate 4 (Trigger clock)</text>
-  <text x="220" y="164" text-anchor="end">Line-in</text>
+  <text x="220" y="164" text-anchor="end">Line in</text>
   <circle cx="230" cy="80" r="4" fill="#fff" stroke="#1d1d1f"/>
   <circle cx="230" cy="120" r="4" fill="#fff" stroke="#1d1d1f"/>
   <circle cx="230" cy="160" r="4" fill="#fff" stroke="#1d1d1f"/>
   <circle cx="125" cy="200" r="4" fill="#fff" stroke="#1d1d1f"/>
-  <text x="125" y="192" text-anchor="middle" fill="#5f6368" font-size="10">Ausgang</text>
+  <text x="125" y="192" text-anchor="middle" fill="#5f6368" font-size="10">Output</text>
   <!-- volca -->
   <rect x="410" y="20" width="210" height="180" rx="8" fill="#f3f5f9" stroke="#1d1d1f" stroke-width="1.2"/>
   <text x="426" y="46" font-weight="bold" font-size="14">volca keys</text>
-  <text x="426" y="62" fill="#5f6368" font-size="10">kein MIDI OUT</text>
+  <text x="426" y="62" fill="#5f6368" font-size="10">no MIDI OUT</text>
   <text x="420" y="84">MIDI IN</text>
   <text x="420" y="124">SYNC IN (max. 20 V)</text>
-  <text x="420" y="164">Kopfhörer (Ausgang)</text>
+  <text x="420" y="164">Headphones (output)</text>
   <circle cx="410" cy="80" r="4" fill="#fff" stroke="#1d1d1f"/>
   <circle cx="410" cy="120" r="4" fill="#fff" stroke="#1d1d1f"/>
   <circle cx="410" cy="160" r="4" fill="#fff" stroke="#1d1d1f"/>
   <circle cx="515" cy="200" r="4" fill="#fff" stroke="#1d1d1f"/>
   <!-- MIDI -->
   <line x1="235" y1="80" x2="403" y2="80" stroke="#2d5bd7" stroke-width="2" marker-end="url(#aBlue)"/>
-  <text x="320" y="73" text-anchor="middle" font-weight="bold" fill="#2d5bd7">MIDI-Kabel (Pflicht)</text>
-  <text x="320" y="95" text-anchor="middle" fill="#5f6368" font-size="9.5">Noten · CC · Pitch Bend · Clock</text>
+  <text x="320" y="73" text-anchor="middle" font-weight="bold" fill="#2d5bd7">MIDI cable (required)</text>
+  <text x="320" y="95" text-anchor="middle" fill="#5f6368" font-size="9.5">Notes · CC · Pitch Bend · Clock</text>
   <!-- Sync -->
   <line x1="235" y1="120" x2="403" y2="120" stroke="#5f6368" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#aGrey)"/>
   <text x="320" y="113" text-anchor="middle" fill="#5f6368">optional: Sync</text>
-  <text x="320" y="135" text-anchor="middle" fill="#5f6368" font-size="9.5">3,5 mm mono</text>
+  <text x="320" y="135" text-anchor="middle" fill="#5f6368" font-size="9.5">3.5 mm mono</text>
   <!-- Audio -->
   <line x1="405" y1="160" x2="237" y2="160" stroke="#1a8f4a" stroke-width="2" marker-end="url(#aGreen)"/>
   <text x="320" y="153" text-anchor="middle" fill="#1a8f4a" font-weight="bold">Audio</text>
-  <text x="320" y="175" text-anchor="middle" fill="#5f6368" font-size="9.5">3,5 mm Stereo</text>
+  <text x="320" y="175" text-anchor="middle" fill="#5f6368" font-size="9.5">3.5 mm stereo</text>
   <!-- Mixer -->
   <rect x="230" y="232" width="180" height="42" rx="6" fill="#fff" stroke="#1d1d1f" stroke-width="1.2"/>
-  <text x="320" y="252" text-anchor="middle" font-weight="bold">Mischpult</text>
-  <text x="320" y="266" text-anchor="middle" fill="#5f6368" font-size="10">oder Kopfhörer</text>
+  <text x="320" y="252" text-anchor="middle" font-weight="bold">Mixer</text>
+  <text x="320" y="266" text-anchor="middle" fill="#5f6368" font-size="10">or headphones</text>
   <polyline points="125,204 125,253 223,253" fill="none" stroke="#1d1d1f" stroke-width="1.5" marker-end="url(#aGrey)"/>
   <polyline points="515,204 515,253 417,253" fill="none" stroke="#1a8f4a" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#aGreen)"/>
-  <text x="522" y="232" fill="#1a8f4a" font-size="10">oder direkt,</text>
-  <text x="522" y="245" fill="#1a8f4a" font-size="10">ohne Line-in</text>
+  <text x="522" y="232" fill="#1a8f4a" font-size="10">or direct,</text>
+  <text x="522" y="245" fill="#1a8f4a" font-size="10">without line in</text>
 </svg>
-<figcaption>Grundaufbau. Pflicht ist nur das MIDI-Kabel. Sync und Line-in sind optional. Ohne Line-in geht die volca direkt ans Mischpult.</figcaption>
+<figcaption>Basic setup. Only the MIDI cable is required. Sync and line in are optional. Without line in, the volca goes straight to the mixer.</figcaption>
 </figure>
 <table>
-  <thead><tr><th style="width:28%">Verbindung</th><th style="width:24%">Kabel</th><th>Wozu</th></tr></thead>
-  <tr><td>Deluge MIDI OUT → volca MIDI IN</td><td>MIDI-Kabel. Dass die volca eine 5-polige DIN-Buchse hat, ist sehr wahrscheinlich <span class="tag">prüfen</span></td><td>Noten, Pitch Bend, CCs und MIDI-Clock. Das ist die einzige nötige Verbindung.</td></tr>
-  <tr><td>Deluge Gate 4 → volca SYNC IN</td><td>3,5 mm mono</td><td>Nur, wenn der Sequencer der volca per Puls laufen soll. Gate 4 muss dafür auf <i>Clock</i> stehen (Kapitel 4). Für Noten vom Deluge nicht nötig. SYNC IN verträgt höchstens 20 V.</td></tr>
-  <tr><td>volca Kopfhörer → Deluge Line-in</td><td>3,5 mm Stereo, Stecker passend zur Line-in-Buchse</td><td>Aufnahme als Audio-Clip, Input als Oszillator, Resampling (Kapitel 8)</td></tr>
-  <tr><td>oder volca Kopfhörer → Mischpult</td><td>3,5 mm Stereo</td><td>wenn die volca nicht durch den Deluge laufen soll</td></tr>
+  <thead><tr><th style="width:28%">Connection</th><th style="width:24%">Cable</th><th>Purpose</th></tr></thead>
+  <tr><td>Deluge MIDI OUT → volca MIDI IN</td><td>MIDI cable. That the volca has a 5-pin DIN socket is very likely <span class="tag">verify</span></td><td>Notes, pitch bend, CCs and MIDI clock. This is the only connection you need.</td></tr>
+  <tr><td>Deluge Gate 4 → volca SYNC IN</td><td>3.5 mm mono</td><td>Only if the volca's sequencer should run from pulses. For this, Gate 4 must be set to <i>Clock</i> (chapter 4). Not needed for notes from the Deluge. SYNC IN takes at most 20 V.</td></tr>
+  <tr><td>volca headphones → Deluge line in</td><td>3.5 mm stereo, plug to fit the line-in socket</td><td>Recording as an audio clip, input as an oscillator, resampling (chapter 8)</td></tr>
+  <tr><td>or volca headphones → mixer</td><td>3.5 mm stereo</td><td>if the volca should not run through the Deluge</td></tr>
 </table>
 <ul>
-  <li><b>Keine Rückrichtung:</b> Die volca keys hat keinen MIDI OUT (nur als Umbau). Reglerbewegungen an der volca kann der Deluge deshalb nicht als MIDI aufnehmen. Automation entsteht immer auf dem Deluge.</li>
-  <li><b>SYNC OUT</b> der volca (3,5 mm mono, 5 V, Puls 15 ms) wird in diesem Aufbau nicht gebraucht.</li>
-  <li><b>Strom:</b> 6 × AA reichen etwa 10 Stunden. Für lange Drone-Sessions ist ein 9-V-Netzteil (DC) sicherer.</li>
+  <li><b>No return path:</b> The volca keys has no MIDI OUT (only as a mod). So the Deluge cannot record knob movements on the volca as MIDI. Automation is always created on the Deluge.</li>
+  <li>The volca's <b>SYNC OUT</b> (3.5 mm mono, 5 V, 15 ms pulse) is not needed in this setup.</li>
+  <li><b>Power:</b> 6 × AA last about 10 hours. For long drone sessions a 9 V power adapter (DC) is safer.</li>
 </ul>
 
-<h2>3. Die volca keys einrichten</h2>
-<p>Die globalen Einstellungen der volca erreichst du laut Korg-Handbuch, indem du sie <b>mit gedrückter FUNC-Taste einschaltest</b>. Die Parameter liegen dann auf den Step-Tasten: <b>1</b> Auto-Power-Off, <b>2</b> Batterietyp, <b>3</b> SYNC-OUT-Polarität, <b>4</b> SYNC-IN-Polarität, <b>6</b> MIDI-Clock, <b>7</b> MIDI ShortMessage. <b>REC</b> speichert und startet neu, <b>PLAY</b> bricht ab, ohne zu speichern.</p>
+<h2>3. Setting up the volca keys</h2>
+<p>According to the Korg manual, you reach the volca's global settings by <b>switching it on while holding the FUNC button</b>. The parameters are then on the step buttons: <b>1</b> Auto Power Off, <b>2</b> battery type, <b>3</b> SYNC OUT polarity, <b>4</b> SYNC IN polarity, <b>6</b> MIDI clock, <b>7</b> MIDI ShortMessage. <b>REC</b> saves and restarts, <b>PLAY</b> cancels without saving.</p>
 <table class="split">
-  <thead><tr><th style="width:22%">Einstellung</th><th style="width:34%">Für diesen Aufbau</th><th>Hinweis</th></tr></thead>
-  <tr><td>MIDI-Kanal</td><td><b>1</b> lassen, das ist der Standard</td><td>Der Deluge-Clip kommt dann auch auf Kanal 1. Wie genau man den Kanal ändert, beschreiben die Quellen unterschiedlich: Tasten 1–16 direkt, über MEMORY oder mit FUNC + Taste 16 <span class="tag">prüfen</span></td></tr>
-  <tr><td>MIDI-Clock</td><td>LED von Step 6 an = <b>Auto</b> (folgt der MIDI-Clock), aus = intern</td><td>Nur wichtig, wenn Sequencer oder Motion Sequence der volca im Tempo des Deluge laufen sollen. Unter MIDI-Clock ist der Tempo-Regler der volca ohne Wirkung.</td></tr>
-  <tr><td>SYNC-IN-Polarität</td><td>steigende Flanke (Standard)</td><td>globaler Parameter auf Taste 4; nur mit Sync-Kabel wichtig</td></tr>
-  <tr><td>Auto-Power-Off</td><td>für lange Drones aus</td><td>Taste 1. Die volca schaltet sich sonst nach etwa 4 Stunden ab.</td></tr>
-  <tr><td>MIDI ShortMessage</td><td>Standard lassen</td><td>Taste 7. Was der Parameter genau bewirkt, ist nicht belegt <span class="tag">prüfen</span>. Reagiert die volca nicht auf Noten oder CCs vom Deluge, ihn umschalten.</td></tr>
+  <thead><tr><th style="width:22%">Setting</th><th style="width:34%">For this setup</th><th>Remark</th></tr></thead>
+  <tr><td>MIDI channel</td><td>leave at <b>1</b>, the default</td><td>The Deluge clip then also goes to channel 1. The sources differ on exactly how to change the channel: buttons 1–16 directly, via MEMORY or with FUNC + button 16 <span class="tag">verify</span></td></tr>
+  <tr><td>MIDI clock</td><td>LED of step 6 on = <b>Auto</b> (follows MIDI clock), off = internal</td><td>Only matters if the volca's sequencer or Motion Sequence should run at the Deluge's tempo. Under MIDI clock, the volca's tempo knob has no effect.</td></tr>
+  <tr><td>SYNC IN polarity</td><td>rising edge (default)</td><td>global parameter on button 4; only matters with a sync cable</td></tr>
+  <tr><td>Auto Power Off</td><td>off for long drones</td><td>Button 1. Otherwise the volca switches itself off after about 4 hours.</td></tr>
+  <tr><td>MIDI ShortMessage</td><td>leave at default</td><td>Button 7. What exactly the parameter does is not documented <span class="tag">verify</span>. If the volca does not respond to notes or CCs from the Deluge, switch it.</td></tr>
 </table>
-<p class="small">Steckt ein Kabel in SYNC IN, folgt der Sequencer der volca nur noch den Pulsen und ignoriert seinen eigenen Takt. Das Korg-Handbuch nennt auch den Tempobereich als globalen Parameter. Für diesen Aufbau spielt er keine Rolle, weil das Tempo vom Deluge kommt.</p>
+<p class="small">If a cable is plugged into SYNC IN, the volca's sequencer follows only the pulses and ignores its own clock. The Korg manual also lists the tempo range as a global parameter. It plays no role in this setup, because the tempo comes from the Deluge.</p>
 
-<h2>4. Den Deluge einrichten</h2>
-<h3>MIDI-Clip für die volca</h3>
-<p>Das Einrichten eines MIDI-Clips gehört zur Standard-Bedienung von 1.2.1. Die Mastertune-Unterlagen beschreiben es nicht, das offizielle Deluge-Handbuch erklärt es ausführlich. Kurz:</p>
+<h2>4. Setting up the Deluge</h2>
+<h3>MIDI clip for the volca</h3>
+<p>Setting up a MIDI clip is part of the standard operation of 1.2.1. The mastertune documents do not describe it; the official Deluge manual explains it in detail. In short:</p>
 <ol>
-  <li>Einen neuen Clip anlegen, wie gewohnt, und in die Clip-View wechseln.</li>
-  <li>Die Taste <span class="key">MIDI</span> drücken. Der Clip spielt jetzt auf einen MIDI-Kanal, die MIDI-LED leuchtet.</li>
-  <li>Select drehen, bis der Kanal der volca erscheint (Standard: 1).</li>
-  <li>Noten setzen. Für Drones: lange Noten, siehe Kapitel 6.</li>
+  <li>Create a new clip as usual and switch to clip view.</li>
+  <li>Press the <span class="key">MIDI</span> button. The clip now plays to a MIDI channel, and the MIDI LED lights up.</li>
+  <li>Turn Select until the volca's channel appears (default: 1).</li>
+  <li>Enter notes. For drones: long notes, see chapter 6.</li>
 </ol>
-<h3>Clock und Stimmung</h3>
+<h3>Clock and tuning</h3>
 <table>
-  <thead><tr><th style="width:36%">Menü</th><th>Was du einstellst</th></tr></thead>
-  <tr><td>Settings → MIDI → Clock → Output<br><span class="small">Titel «MIDI clock out»</span></td><td>An, wenn die volca im Tempo mitlaufen soll (ihre MIDI-Clock auf Auto). Seit v15 läuft der MIDI-Clock-Ausgang auch weiter, wenn der Deluge selbst einer externen MIDI-Clock folgt.</td></tr>
-  <tr><td>Settings → Gate → Gate output 4 → <b>Clock</b><br><span class="small">Titel «Gate out4 mode»</span><br>Settings → Trigger clock → Output → PPQN<br><span class="small">Titel «Output PPQN»</span></td><td>Nur mit Sync-Kabel. Die Trigger-Clock kommt aus <b>Gate 4</b>, aber nur, wenn sein Modus auf <b>Clock</b> steht. Standard ist V-trig, dann bleibt das Sync-Kabel stumm. <i>Output PPQN</i> auf <b>2</b> stellen: Die Belege sprechen für 1 Puls pro 2 Steps <span class="tag">prüfen</span>. Vergleiche das Tempo der volca mit dem des Deluge. Einfacher ist MIDI-Clock ohne Sync-Kabel.</td></tr>
-  <tr><td>Settings → Tuning → Master tune (Hz)<br><span class="small">7-Segment: <code>TUNE</code> → <code>MTUN</code></span></td><td>Für die volca auf <b>440.0</b> lassen (Kapitel 5). Bereich 415.3 bis 466.2 Hz in 0.1-Hz-Schritten.</td></tr>
+  <thead><tr><th style="width:36%">Menu</th><th>What you set</th></tr></thead>
+  <tr><td>Settings → MIDI → Clock → Output<br><span class="small">Title "MIDI clock out"</span></td><td>On if the volca should run along at the tempo (its MIDI clock set to Auto). Since v15 the MIDI clock output also keeps running when the Deluge itself follows an external MIDI clock.</td></tr>
+  <tr><td>Settings → Gate → Gate output 4 → <b>Clock</b><br><span class="small">Title "Gate out4 mode"</span><br>Settings → Trigger clock → Output → PPQN<br><span class="small">Title "Output PPQN"</span></td><td>Only with a sync cable. The trigger clock comes from <b>Gate 4</b>, but only if its mode is set to <b>Clock</b>. The default is V-trig, and then the sync cable stays silent. Set <i>Output PPQN</i> to <b>2</b>: the sources point to 1 pulse per 2 steps <span class="tag">verify</span>. Compare the volca's tempo with the Deluge's. MIDI clock without a sync cable is simpler.</td></tr>
+  <tr><td>Settings → Tuning → Master tune (Hz)<br><span class="small">7-segment: <code>TUNE</code> → <code>MTUN</code></span></td><td>Leave it at <b>440.0</b> for the volca (chapter 5). Range 415.3 to 466.2 Hz in 0.1 Hz steps.</td></tr>
 </table>
 
-<h2>5. Stimmung: volca und Master Tune</h2>
-<p>Die volca keys hat <b>weder einen Master Tune noch eine Feinstimmung</b>. A = 440 Hz ist damit faktisch fest. Der Master Tune des Deluge verschiebt deshalb alles im Deluge, aber nicht die volca.</p>
+<h2>5. Tuning: volca and Master Tune</h2>
+<p>The volca keys has <b>neither a Master Tune nor a fine tuning</b>. So A = 440 Hz is effectively fixed. The Deluge's Master Tune therefore shifts everything in the Deluge, but not the volca.</p>
 <table class="split">
-  <thead><tr><th style="width:36%">Klangquelle</th><th>Folgt dem Master Tune?</th></tr></thead>
-  <tr><td>Drone-Töne als <b>Note</b></td><td>ja</td></tr>
-  <tr><td>Drone-Töne in <b>Hz</b></td><td>nein, die Frequenz bleibt stehen</td></tr>
-  <tr><td>Synth, Kit, Samples des Deluge</td><td>ja</td></tr>
-  <tr><td>Audio-Clips, auch Aufnahmen der volca</td><td>ja, per Time-Stretch, das Tempo bleibt synchron. Eine Aufnahme wird nur um die Differenz zu ihrer Aufnahme-Stimmung verschoben, nie doppelt.</td></tr>
-  <tr><td>volca, per MIDI gespielt</td><td>Der Deluge sendet bei einer Stimmung abseits von 440 Hz <b>RPN 1</b> (Channel Fine Tuning) auf ihren Kanal. Dass die volca RPN 1 auswertet, ist nicht belegt und angesichts der fehlenden Feinstimmung unwahrscheinlich <span class="tag">prüfen</span>. Rechne damit, dass sie auf 440 bleibt.</td></tr>
-  <tr><td>volca über Line-in als Oszillator</td><td>nein, sie klingt unverändert in ihrer eigenen Stimmung</td></tr>
+  <thead><tr><th style="width:36%">Sound source</th><th>Follows the Master Tune?</th></tr></thead>
+  <tr><td>Drone tones as <b>Note</b></td><td>yes</td></tr>
+  <tr><td>Drone tones in <b>Hz</b></td><td>no, the frequency stays fixed</td></tr>
+  <tr><td>Deluge synths, kits, samples</td><td>yes</td></tr>
+  <tr><td>Audio clips, including recordings of the volca</td><td>yes, by time-stretch; the tempo stays in sync. A recording is only shifted by the difference from the tuning it was recorded at, never twice.</td></tr>
+  <tr><td>volca, played via MIDI</td><td>With a tuning other than 440 Hz, the Deluge sends <b>RPN 1</b> (Channel Fine Tuning) on its channel. That the volca evaluates RPN 1 is not documented and, given the missing fine tuning, unlikely <span class="tag">verify</span>. Expect it to stay at 440.</td></tr>
+  <tr><td>volca via line in as an oscillator</td><td>no, it sounds unchanged in its own tuning</td></tr>
 </table>
 
-<h3>Das Auto-Tuning der volca</h3>
-<p>Die volca stimmt sich selbst nach: Nach etwa <b>10 Sekunden Stille</b> korrigiert sie die Drift ihrer Oszillatoren. Das läuft laufend, eine Aufwärmzeit ist nicht nötig. Daraus folgt für Drones <span class="tag">prüfen</span>: Solange ein Dauerton klingt, stimmt sie nicht nach und kann mit der Zeit leicht wandern. Gönn ihr zwischen zwei Stücken mehr als 10 Sekunden Stille, zum Beispiel mit <span class="key">PLAY</span> auf dem Deluge anhalten.</p>
+<h3>The volca's auto-tuning</h3>
+<p>The volca retunes itself: after about <b>10 seconds of silence</b> it corrects the drift of its oscillators. This runs continuously; no warm-up time is needed. For drones this means <span class="tag">verify</span>: as long as a sustained tone sounds, it does not retune and can drift slightly over time. Give it more than 10 seconds of silence between two pieces, for example by stopping with <span class="key">PLAY</span> on the Deluge.</p>
 
-<h3>Bei 440 Hz (empfohlen)</h3>
-<p>Master Tune auf 440.0, alle Drone-Töne, die zur volca passen sollen, auf <b>Note</b> (oberen Goldknopf drücken oder im Menü <i>Pitch as</i>). Das ist der Weg aus Kapitel 13 des Drone-Handbuchs: den Master Tune auf das externe Gerät stimmen. Bei der volca heisst das: 440.0. War der Master Tune seit dem Einschalten nie woanders, sendet der Deluge auch kein RPN 1.</p>
+<h3>At 440 Hz (recommended)</h3>
+<p>Master Tune at 440.0, and all drone tones that should match the volca set to <b>Note</b> (press the upper gold knob or use <i>Pitch as</i> in the menu). This is the approach from chapter 13 of the Drone manual: tune the Master Tune to the external device. For the volca that means 440.0. If the Master Tune has never been set to anything else since power-on, the Deluge also sends no RPN 1.</p>
 
 <div class="keep">
-<h3>Bei 432 Hz: ehrliche Möglichkeiten</h3>
-<p>Von 440 auf 432 Hz sind es −31,77 Cent. Die volca kann das nicht von sich aus. Es gibt drei Wege:</p>
+<h3>At 432 Hz: honest options</h3>
+<p>From 440 to 432 Hz is −31.77 cents. The volca cannot do this by itself. There are three ways:</p>
 <table>
-  <thead><tr><th style="width:20%">Weg</th><th style="width:44%">So geht's</th><th>Haken</th></tr></thead>
-  <tr><td><b>A. Aufnehmen, dann umstimmen</b> (sicherster Weg)</td><td>Master Tune auf <b>440.0</b>, die volca als Audio-Clip aufnehmen (Kapitel 8). Danach Master Tune auf 432.0: Der Clip klingt um 31,77 Cent tiefer, das Tempo bleibt. Drone-Töne als Note folgen mit.</td><td>Nicht live. Time-Stretch braucht mehr Rechenzeit und hat sehr leise Artefakte. <b>Wichtig:</b> Eine Aufnahme bei Master Tune 432.0 gilt als 432-Material und bliebe auf der Tonhöhe der volca, also 440.</td></tr>
-  <tr><td><b>B. Pitch Bend</b></td><td>Die volca per Pitch Bend um etwa 32 Cent tiefer stellen. Bei einem Bend-Bereich von ±2 Halbtönen sind das rund 16 % des Wegs nach unten (14-Bit-Wert etwa 6890 statt 8192). Mit einem Stimmgerät kontrollieren.</td><td>Der Bend-Bereich stammt aus einem Forum. Auflösung und Zusammenspiel mit dem Auto-Tuning sind nicht belegt <span class="tag">prüfen</span>. Wie der Deluge einen festen Bend-Wert in einem MIDI-Clip hält, steht nicht in den Mastertune-Unterlagen (offizielles Handbuch). Jeder weitere Bend kommt obendrauf.</td></tr>
-  <tr><td><b>C. Bewusst gegeneinander</b></td><td>Master Tune 432.0, die volca bleibt auf 440. Gleiche Noten schweben dann hörbar gegeneinander: bei A2 um 4 Hz, bei A3 um 8 Hz.</td><td>Nur als Effekt brauchbar, nicht als Stimmung.</td></tr>
+  <thead><tr><th style="width:20%">Way</th><th style="width:44%">How to</th><th>Drawback</th></tr></thead>
+  <tr><td><b>A. Record, then retune</b> (safest way)</td><td>Master Tune at <b>440.0</b>, record the volca as an audio clip (chapter 8). Then Master Tune to 432.0: the clip sounds 31.77 cents lower, the tempo stays. Drone tones set as notes follow.</td><td>Not live. Time-stretch needs more CPU time and has very quiet artifacts. <b>Important:</b> A recording made at Master Tune 432.0 counts as 432 material and would stay at the volca's pitch, that is 440.</td></tr>
+  <tr><td><b>B. Pitch bend</b></td><td>Lower the volca by about 32 cents with pitch bend. With a bend range of ±2 semitones, that is about 16 % of the way down (14-bit value about 6890 instead of 8192). Check with a tuner.</td><td>The bend range comes from a forum. Resolution and interaction with the auto-tuning are not documented <span class="tag">verify</span>. How the Deluge holds a fixed bend value in a MIDI clip is not in the mastertune documents (official manual). Any further bend adds on top.</td></tr>
+  <tr><td><b>C. Deliberately against each other</b></td><td>Master Tune 432.0, the volca stays at 440. The same notes then beat audibly against each other: at A2 by 4 Hz, at A3 by 8 Hz.</td><td>Only useful as an effect, not as a tuning.</td></tr>
 </table>
 </div>
-<div class="box">Ein Drone-Ton auf <b>432 Hz in Hz</b> ist etwas anderes als Master Tune 432.0: Er bleibt stehen, auch wenn du den Master Tune änderst. Bei Master Tune 432.0 ergibt die Note A3 genau 432 Hz.</div>
+<div class="box">A drone tone at <b>432 Hz in Hz</b> is not the same as Master Tune 432.0: it stays fixed, even if you change the Master Tune. At Master Tune 432.0 the note A3 gives exactly 432 Hz.</div>
 
-<h2>6. Drones auf der volca spielen</h2>
-<h3>Lange Noten</h3>
+<h2>6. Playing drones on the volca</h2>
+<h3>Long notes</h3>
 <ul>
-  <li>Setz im MIDI-Clip lange Noten, für eine Fläche über den ganzen Clip. Die volca hält den Ton, solange die Note dauert.</li>
-  <li><b>Eine neue Note startet die Hüllkurve für alle gehaltenen Noten neu</b> (Sekundärquelle). Für eine ruhige Fläche beginnen deshalb alle Töne eines Akkords gleichzeitig. Gestaffelte Einsätze erzeugen jedes Mal einen neuen Anschlag.</li>
-  <li>Eine Note, die bei Step 1 beginnt und den ganzen Clip füllt, hält der Deluge über die Loop-Grenze. Er sendet dort weder Note-Off noch Note-On, die volca schlägt also nicht neu an.</li>
-  <li>Im Modus Poly spielt die volca bis zu drei Töne. Was bei mehr als drei Noten geschieht, ist nicht belegt <span class="tag">prüfen</span>. Bleib bei höchstens drei.</li>
+  <li>Enter long notes in the MIDI clip, for a pad across the whole clip. The volca holds the tone as long as the note lasts.</li>
+  <li><b>A new note restarts the envelope for all held notes</b> (secondary source). So for a calm pad, start all notes of a chord at the same time. Staggered entries create a new attack each time.</li>
+  <li>A note that starts at step 1 and fills the whole clip is held by the Deluge across the loop boundary. It sends neither Note Off nor Note On there, so the volca does not retrigger.</li>
+  <li>In Poly mode the volca plays up to three notes. What happens with more than three notes is not documented <span class="tag">verify</span>. Stick to three at most.</li>
 </ul>
-<h3>Stimmmodi (VOICE)</h3>
+<h3>Voice modes (VOICE)</h3>
 <table>
-  <thead><tr><th style="width:18%">Modus</th><th style="width:36%">Klang</th><th>Für Drones</th></tr></thead>
-  <tr><td>Poly</td><td>3 Töne, Sägezahn</td><td>Akkord mit bis zu drei Tönen, zum Beispiel Grundton, Quinte, Oktave</td></tr>
-  <tr><td>Unison</td><td>mono, alle drei Oszillatoren auf einem Ton</td><td>breiter, tragender Einzelton; mit Detune schwebend</td></tr>
-  <tr><td>Octave</td><td>mono</td><td>Einzelton mit Oktav-Klang</td></tr>
-  <tr><td>Fifth</td><td>mono</td><td>Einzelton mit Quint-Klang, offen und leer</td></tr>
-  <tr><td>Unison Ring</td><td>Rechteck mit Ringmodulation</td><td>metallischer, glockiger Ton</td></tr>
-  <tr><td>Poly Ring</td><td>Rechteck mit Ringmodulation</td><td>metallischer Akkord</td></tr>
+  <thead><tr><th style="width:18%">Mode</th><th style="width:36%">Sound</th><th>For drones</th></tr></thead>
+  <tr><td>Poly</td><td>3 notes, sawtooth</td><td>chord of up to three notes, for example root, fifth, octave</td></tr>
+  <tr><td>Unison</td><td>mono, all three oscillators on one note</td><td>wide, carrying single tone; beating with Detune</td></tr>
+  <tr><td>Octave</td><td>mono</td><td>single tone with an octave sound</td></tr>
+  <tr><td>Fifth</td><td>mono</td><td>single tone with a fifth sound, open and empty</td></tr>
+  <tr><td>Unison Ring</td><td>square wave with ring modulation</td><td>metallic, bell-like tone</td></tr>
+  <tr><td>Poly Ring</td><td>square wave with ring modulation</td><td>metallic chord</td></tr>
 </table>
-<p class="small">Per MIDI wählt CC 40 den Modus. Welche Werte welchen Modus ergeben, ist nicht belegt <span class="tag">prüfen</span>. Stell den Modus deshalb am Regler der volca ein. Dasselbe gilt für die Oktavlage (CC 41, am Regler 6 Oktaven).</p>
+<p class="small">Via MIDI, CC 40 selects the mode. Which values give which mode is not documented <span class="tag">verify</span>. So set the mode with the volca's knob. The same applies to the octave setting (CC 41, 6 octaves on the knob).</p>
 
 <div class="grid2">
 <div>
-<h3>Hüllkurve für Dauertöne</h3>
+<h3>Envelope for sustained tones</h3>
 <ul>
-  <li><b>Attack</b> hoch: Der Ton blendet langsam ein.</li>
-  <li><b>Sustain</b> ganz auf: Der Ton hält seine Lautstärke. Dass er dann unbegrenzt hält, ist abgeleitet <span class="tag">prüfen</span>.</li>
-  <li><b>Decay/Release</b> lang: Der Ton klingt weich aus.</li>
-  <li>Es gibt nur <b>eine</b> Hüllkurve und <b>ein</b> Filter (12 dB) für alle drei Stimmen.</li>
+  <li><b>Attack</b> high: the tone fades in slowly.</li>
+  <li><b>Sustain</b> fully up: the tone holds its volume. That it then holds indefinitely is inferred <span class="tag">verify</span>.</li>
+  <li><b>Decay/Release</b> long: the tone fades out softly.</li>
+  <li>There is only <b>one</b> envelope and <b>one</b> filter (12 dB) for all three voices.</li>
 </ul>
 </div>
 <div>
-<h3>Detune und Portamento</h3>
+<h3>Detune and portamento</h3>
 <ul>
-  <li><b>Detune</b> (CC 42) verstimmt die Oszillatoren gegeneinander. Im Unison entsteht eine innere Schwebung, die den Ton breit macht.</li>
-  <li><b>Portamento</b> (CC 5) lässt den Ton von Note zu Note gleiten. Mit langen Noten wird daraus eine langsame Wanderung.</li>
+  <li><b>Detune</b> (CC 42) detunes the oscillators against each other. In Unison this creates an inner beating that makes the tone wide.</li>
+  <li><b>Portamento</b> (CC 5) makes the tone glide from note to note. With long notes this becomes a slow drift.</li>
 </ul>
 </div>
 </div>
 
-<h3>Langsame Filterfahrten</h3>
+<h3>Slow filter sweeps</h3>
 <ul>
-  <li><b>Per CC:</b> CC 44 (Cutoff) im MIDI-Clip über viele Takte automatisieren. Wie man CCs in einem MIDI-Clip aufnimmt oder zeichnet, gehört zur Standard-Bedienung von 1.2.1 (offizielles Handbuch). Die volca hat keinen MIDI OUT, der Weg führt also immer über den Deluge.</li>
-  <li><b>Per LFO:</b> LFO Rate (CC 46) tief, LFO Cutoff Int (CC 48) nach Geschmack. Wellenformen Sägezahn, Dreieck, Rechteck. Der LFO kann auf den Notenanfang synchronisiert werden (Trigger Sync).</li>
-  <li><b>Stufen:</b> Bei hoher Resonanz stuft das Filter laut einem Testbericht hörbar ab. Für sehr langsame Fahrten die Resonanz mässig halten.</li>
-  <li><b>Delay:</b> Delay Time (CC 52) und Feedback (CC 53) geben Raum. Feedback regelt zugleich den Anteil des Delays im Klang.</li>
+  <li><b>Via CC:</b> automate CC 44 (Cutoff) in the MIDI clip over many bars. How to record or draw CCs in a MIDI clip is part of the standard operation of 1.2.1 (official manual). The volca has no MIDI OUT, so the route always goes through the Deluge.</li>
+  <li><b>Via LFO:</b> LFO Rate (CC 46) low, LFO Cutoff Int (CC 48) to taste. Waveforms sawtooth, triangle, square. The LFO can be synced to the start of the note (Trigger Sync).</li>
+  <li><b>Steps:</b> according to a review, the filter steps audibly at high resonance. For very slow sweeps, keep the resonance moderate.</li>
+  <li><b>Delay:</b> Delay Time (CC 52) and Feedback (CC 53) add space. Feedback also sets the amount of delay in the sound.</li>
 </ul>
 
-<h2>7. Zusammen mit dem Frequenz-Drone</h2>
-<p>Den Song-Drone öffnest du im Song-View mit <span class="key">SCALE</span> oder über <span class="key">SELECT</span> → Song-Menü → <i>Drone</i>. Die Bedienung beschreibt das Drone-Handbuch. Hier geht es um das Zusammenspiel.</p>
-<h3>Gleiche Töne treffen</h3>
+<h2>7. Together with the Frequency Drone</h2>
+<p>You open the song drone in song view with <span class="key">SCALE</span> or via <span class="key">SELECT</span> → song menu → <i>Drone</i>. The Drone manual describes how to operate it. This chapter is about how the two play together.</p>
+<h3>Hitting the same notes</h3>
 <ul>
-  <li>Drone-Ton auf <b>Note</b> stellen: oberen Goldknopf drücken oder im Menü <i>Pitch as</i>. Oberen Goldknopf drehen wählt die Note, mit <span class="key">SHIFT</span> die Cent.</li>
-  <li>Die Notennamen folgen der Deluge-Zählung: A3 = 440 Hz, mittleres C = C3. Weil der Deluge der volca ihre Noten schickt, gilt diese Zählung für MIDI-Clip und Drone gleichermassen.</li>
-  <li>Für ein Fundament den Drone eine oder zwei Oktaven unter den Grundton der volca legen. Für Wärme passt eine Quinte oder Oktave darüber.</li>
+  <li>Set the drone tone to <b>Note</b>: press the upper gold knob or use <i>Pitch as</i> in the menu. Turning the upper gold knob selects the note, with <span class="key">SHIFT</span> the cents.</li>
+  <li>The note names follow the Deluge numbering: A3 = 440 Hz, middle C = C3. Because the Deluge sends the volca its notes, this numbering applies equally to the MIDI clip and the drone.</li>
+  <li>For a foundation, place the drone one or two octaves below the volca's root note. For warmth, a fifth or octave above works well.</li>
 </ul>
-<h3>Binauraler Beat unter einem analogen Akkord</h3>
-<p>Die volca spielt im Modus Poly einen Akkord. Darunter liegen ein oder zwei Drone-Töne im Modus <b>Binaural</b> (Taste <span class="key">KIT</span>) auf dem Grundton, eine oder zwei Oktaven tiefer. Die Schwebung entsteht nur im Drone, die volca liefert die Fläche darüber. Das wirkt <b>nur mit Kopfhörern</b>.</p>
-<h3>Schwebung zwischen Analog und Digital</h3>
-<p>Legst du einen Drone-Ton auf dieselbe Note wie die volca und verstimmst ihn um wenige Cent, schweben die beiden Töne langsam gegeneinander. Die Schwebung beträgt etwa <i>Frequenz × Cent ÷ 1731</i>: bei A2 (220 Hz) und 3 Cent rund 0,4 Hz. Weil die volca leicht driftet, wandert die Schwebung mit. Das klingt lebendig.</p>
+<h3>Binaural beat under an analog chord</h3>
+<p>The volca plays a chord in Poly mode. Below it are one or two drone tones in <b>Binaural</b> mode (<span class="key">KIT</span> button) on the root note, one or two octaves lower. The beating arises only in the drone; the volca provides the pad above it. This works <b>only with headphones</b>.</p>
+<h3>Beating between analog and digital</h3>
+<p>If you put a drone tone on the same note as the volca and detune it by a few cents, the two tones slowly beat against each other. The beating is about <i>frequency × cents ÷ 1731</i>: at A2 (220 Hz) and 3 cents, about 0.4 Hz. Because the volca drifts slightly, the beating drifts with it. This sounds alive.</p>
 <h3>Sidechain</h3>
-<p>Der Drone kann sich unter die Sidechain-Auslöser des Songs ducken, zum Beispiel unter eine Kick mit <i>Send to sidechain</i>. Im Drone-Menü unter <i>Sidechain</i> stehen <i>Volume ducking</i>, SYNC, ATTACK/RELEASE und SHAPE. Die volca duckt dabei nicht mit, ihre Fläche bleibt stehen, während der Drone darunter pumpt.</p>
-<h3>Drone-Spuren (v16)</h3>
-<p>In der Drone-Ansicht erzeugt <span class="key">SHIFT</span> + <span class="key">KIT</span> ein Kit DRONE1 (DRONE2 …) aus den Drone-Tönen. Die Noten der Reihen sind das Gate, der Arpeggiator einer Reihe lässt den Ton pulsieren. Den Clip startest du in der Song-View zusammen mit dem MIDI-Clip der volca. So beginnen und enden volca und Drone gemeinsam.</p>
-<div class="box">Pegel: Ein Drone-Ton mit Level 50 und Volume 50 liegt bei −12 dBFS. Die volca kommt über den Line-in oder das Mischpult dazu. Gleiche beide nach Gehör an und beginne mit einem Drone-Level um 30.</div>
+<p>The drone can duck under the song's sidechain triggers, for example under a kick with <i>Send to sidechain</i>. In the drone menu under <i>Sidechain</i> you find <i>Volume ducking</i>, SYNC, ATTACK/RELEASE and SHAPE. The volca does not duck along; its pad stays steady while the drone pumps underneath.</p>
+<h3>Drone tracks (v16)</h3>
+<p>In the drone view, <span class="key">SHIFT</span> + <span class="key">KIT</span> creates a kit DRONE1 (DRONE2 …) from the drone tones. The rows' notes are the gate; a row's arpeggiator makes the tone pulse. You launch the clip in song view together with the volca's MIDI clip. That way the volca and the drone start and end together.</p>
+<div class="box">Level: a drone tone at Level 50 and Volume 50 sits at −12 dBFS. The volca comes in via the line in or the mixer. Balance the two by ear and start with a drone Level of about 30.</div>
 
-<h2>8. Die volca durch den Deluge</h2>
-<p>Mit einem Kabel vom Kopfhörer-Ausgang der volca in den Line-in des Deluge kannst du die volca aufnehmen oder durch den Deluge schicken. Beginne mit wenig Lautstärke an der volca. Wie Audio-Clips und Aufnahmen im Einzelnen bedient werden, beschreibt das offizielle Deluge-Handbuch. Die Menüpunkte heissen <i>Audio source</i>, <i>Input (left/right/stereo)</i> und <i>Monitoring</i>.</p>
+<h2>8. The volca through the Deluge</h2>
+<p>With a cable from the volca's headphone output into the Deluge's line in, you can record the volca or send it through the Deluge. Start with a low volume on the volca. The official Deluge manual describes in detail how to use audio clips and recording. The menu items are called <i>Audio source</i>, <i>Input (left/right/stereo)</i> and <i>Monitoring</i>.</p>
 <table class="split">
-  <thead><tr><th style="width:24%">Weg</th><th style="width:44%">Was passiert</th><th>Stimmung</th></tr></thead>
-  <tr><td><b>Audio-Clip</b></td><td>Eine Audio-Spur mit <i>Audio source</i> auf dem Input nimmt die volca auf. Mit <i>Monitoring</i> hörst du den Eingang während der Aufnahme.</td><td>Die Aufnahme folgt danach dem Master Tune. Ist die Stimmung beim Aufnehmen nicht 440, bekommt die WAV-Datei einen <code>mtun</code>-Block und wird nie doppelt gestimmt.</td></tr>
-  <tr><td><b>Input als Oszillator</b></td><td>Ein Synth des Deluge nutzt den Line-in als Oszillator. Die volca läuft so durch Filter, Hüllkurven und Effekte des Deluge.</td><td>folgt dem Master Tune nicht, weil die volca selbst schon gestimmt ist</td></tr>
-  <tr><td><b>Resampling</b></td><td>Der Deluge nimmt seinen eigenen Ausgang auf, mit der volca über den Line-in.</td><td>wie ein Audio-Clip, mit <code>mtun</code>-Block, wenn Master Tune ≠ 440</td></tr>
+  <thead><tr><th style="width:24%">Route</th><th style="width:44%">What happens</th><th>Tuning</th></tr></thead>
+  <tr><td><b>Audio clip</b></td><td>An audio track with <i>Audio source</i> set to the input records the volca. With <i>Monitoring</i> you hear the input while recording.</td><td>The recording then follows the Master Tune. If the tuning is not 440 while recording, the WAV file gets an <code>mtun</code> block and is never tuned twice.</td></tr>
+  <tr><td><b>Input as oscillator</b></td><td>A Deluge synth uses the line in as an oscillator. This way the volca runs through the Deluge's filters, envelopes and effects.</td><td>does not follow the Master Tune, because the volca itself is already tuned</td></tr>
+  <tr><td><b>Resampling</b></td><td>The Deluge records its own output, with the volca via the line in.</td><td>like an audio clip, with an <code>mtun</code> block if Master Tune ≠ 440</td></tr>
 </table>
 <ul>
-  <li><b>Drone in Aufnahmen:</b> Der Song-Drone ist über den Ausgang und USB-Audio zu hören und landet auch in <b>Resampling-Aufnahmen</b>. In <b>Stems fehlt er</b>.</li>
-  <li><b>432 Hz:</b> Für Weg A aus Kapitel 5 mit Master Tune 440.0 aufnehmen, erst danach umstellen.</li>
+  <li><b>Drone in recordings:</b> the song drone can be heard via the output and USB audio and also ends up in <b>resampling recordings</b>. It is <b>missing from stems</b>.</li>
+  <li><b>432 Hz:</b> for way A from chapter 5, record at Master Tune 440.0 and only change it afterwards.</li>
 </ul>
 
-<h2>9. Rezepte</h2>
-<p class="small">Werte an der volca sind Reglerstellungen nach Gehör. Die Deluge-Werte stammen aus dem Drone-Handbuch. Alle Rezepte gehen von MIDI-Kanal 1 und Master Tune 440.0 aus, ausser Rezept 5.</p>
+<h2>9. Recipes</h2>
+<p class="small">Values on the volca are knob positions by ear. The Deluge values come from the Drone manual. All recipes assume MIDI channel 1 and Master Tune 440.0, except recipe 5.</p>
 
 <div class="recipe">
-<h3>1. Analoger Akkord über binauralem Grund</h3>
+<h3>1. Analog chord over a binaural base</h3>
 <ol>
-  <li>volca: VOICE auf <b>Poly</b>, Attack etwa halb, Sustain ganz auf, Decay/Release lang, Cutoff halb.</li>
-  <li>Deluge: MIDI-Clip mit 4 Takten, darin C3, E3 und G3 gleichzeitig über den ganzen Clip.</li>
-  <li><span class="key">SCALE</span> im Song-View. Ton 1: Mute-Pad an, <span class="key">KIT</span> (Binaural), <i>Pitch as</i> Note, Note C2, Timbre Sine, Beat 6 Hz, Level 32.</li>
-  <li>Ton 2: Binaural, Note G2, Timbre Soft, Beat 6 Hz, Level 26.</li>
-  <li><span class="key">PLAY</span>. Mit Kopfhörern hören.</li>
+  <li>volca: VOICE to <b>Poly</b>, Attack about half, Sustain fully up, Decay/Release long, Cutoff half.</li>
+  <li>Deluge: MIDI clip of 4 bars, with C3, E3 and G3 together across the whole clip.</li>
+  <li><span class="key">SCALE</span> in song view. Tone 1: mute pad on, <span class="key">KIT</span> (Binaural), <i>Pitch as</i> Note, note C2, Timbre Sine, Beat 6 Hz, Level 32.</li>
+  <li>Tone 2: Binaural, note G2, Timbre Soft, Beat 6 Hz, Level 26.</li>
+  <li><span class="key">PLAY</span>. Listen on headphones.</li>
 </ol>
 </div>
 
 <div class="recipe">
-<h3>2. Unison-Drone mit Filterfahrt über 16 Takte</h3>
+<h3>2. Unison drone with a filter sweep over 16 bars</h3>
 <ol>
-  <li>volca: VOICE auf <b>Unison</b>, Detune etwa ein Viertel, Attack lang, Sustain ganz auf, Resonanz mässig.</li>
-  <li>Deluge: MIDI-Clip mit 16 Takten, eine Note A1 über den ganzen Clip.</li>
-  <li>Im Clip CC 44 (Cutoff) automatisieren: in 8 Takten von tief nach hoch, in 8 Takten zurück.</li>
-  <li>Drone Ton 1: Modus Tone (<span class="key">SYNTH</span>), <i>Pitch as</i> Note (oberen Goldknopf drücken), Note A0, Timbre Sine, Level 30. Er trägt die Tiefe, während das Filter wandert.</li>
+  <li>volca: VOICE to <b>Unison</b>, Detune about a quarter, Attack long, Sustain fully up, resonance moderate.</li>
+  <li>Deluge: MIDI clip of 16 bars, one note A1 across the whole clip.</li>
+  <li>Automate CC 44 (Cutoff) in the clip: from low to high over 8 bars, back over 8 bars.</li>
+  <li>Drone tone 1: mode Tone (<span class="key">SYNTH</span>), <i>Pitch as</i> Note (press the upper gold knob), note A0, Timbre Sine, Level 30. It carries the low end while the filter moves.</li>
 </ol>
 </div>
 
 <div class="recipe">
-<h3>3. Langsame Schwebung gegen die volca</h3>
+<h3>3. Slow beating against the volca</h3>
 <ol>
-  <li>volca: <b>Unison</b>, Detune ganz zu, Sustain ganz auf. MIDI-Clip mit einer langen Note A2.</li>
-  <li>Drone Ton 1: Modus Tone, Timbre Soft, <i>Pitch as</i> Note (oberen Goldknopf drücken), Note A2, dann <span class="key">SHIFT</span> + oberen Goldknopf drehen bis +3 Cent.</li>
-  <li>Level so wählen, dass Drone und volca etwa gleich laut sind. Es entsteht eine Schwebung von rund 0,4 Hz.</li>
-  <li>Optional: Life 10 (Sektion Delay, oberer Goldknopf) für zusätzliche Bewegung.</li>
+  <li>volca: <b>Unison</b>, Detune fully down, Sustain fully up. MIDI clip with one long note A2.</li>
+  <li>Drone tone 1: mode Tone, Timbre Soft, <i>Pitch as</i> Note (press the upper gold knob), note A2, then turn <span class="key">SHIFT</span> + upper gold knob to +3 cents.</li>
+  <li>Set Level so that the drone and the volca are about equally loud. This creates a beating of about 0.4 Hz.</li>
+  <li>Optional: Life 10 (Delay section, upper gold knob) for extra movement.</li>
 </ol>
 </div>
 
 <div class="recipe">
-<h3>4. Pulsierender Ring-Drone im Tempo</h3>
+<h3>4. Pulsing ring drone in tempo</h3>
 <ol>
-  <li>volca: VOICE auf <b>Poly Ring</b>, Sustain ganz auf, Delay Time mittel, Feedback gering.</li>
-  <li>Deluge: MIDI-Clip mit zwei langen Noten im Quintabstand, zum Beispiel D2 und A2.</li>
-  <li>Drone Ton 1: <span class="key">CV</span> (Isochronic), <i>Pitch as</i> Note (oberen Goldknopf drücken), Note D1, Timbre Soft. Unteren Goldknopf drücken (SYNC) und auf 1/8T drehen. Sektion Attack/Release: Attack 20, Release 30.</li>
-  <li>Eine Kick mit <i>Send to sidechain</i> dazu, im Drone-Menü <i>Volume ducking</i> 20.</li>
+  <li>volca: VOICE to <b>Poly Ring</b>, Sustain fully up, Delay Time medium, Feedback low.</li>
+  <li>Deluge: MIDI clip with two long notes a fifth apart, for example D2 and A2.</li>
+  <li>Drone tone 1: <span class="key">CV</span> (Isochronic), <i>Pitch as</i> Note (press the upper gold knob), note D1, Timbre Soft. Press the lower gold knob (SYNC) and turn it to 1/8T. Attack/Release section: Attack 20, Release 30.</li>
+  <li>Add a kick with <i>Send to sidechain</i>, and set <i>Volume ducking</i> to 20 in the drone menu.</li>
 </ol>
 </div>
 
 <div class="recipe">
-<h3>5. Die volca auf 432 Hz bringen</h3>
+<h3>5. Bringing the volca to 432 Hz</h3>
 <ol>
-  <li>Settings → Tuning → Master tune (Hz) auf <b>440.0</b>.</li>
-  <li>volca wie in Rezept 2 einstellen und über den Line-in in einen Audio-Clip aufnehmen, zum Beispiel 8 Takte.</li>
-  <li>Master Tune auf <b>432.0</b>. Der Audio-Clip klingt jetzt 31,77 Cent tiefer, das Tempo bleibt.</li>
-  <li>Drone-Töne als Note folgen mit, A3 liegt jetzt bei 432 Hz. Töne in Hz bleiben stehen.</li>
-  <li>Die volca nicht mehr live dazuspielen: Sie steht weiter auf 440.</li>
+  <li>Settings → Tuning → Master tune (Hz) to <b>440.0</b>.</li>
+  <li>Set up the volca as in recipe 2 and record it via the line in into an audio clip, for example 8 bars.</li>
+  <li>Master Tune to <b>432.0</b>. The audio clip now sounds 31.77 cents lower; the tempo stays.</li>
+  <li>Drone tones set as notes follow; A3 is now at 432 Hz. Tones in Hz stay fixed.</li>
+  <li>Do not play the volca live along with it any more: it is still at 440.</li>
 </ol>
 </div>
 
-<h2>10. CC-Tabelle</h2>
-<p>Nach der MIDI-Tabelle von Korg (v1.02). CC-Werte reichen nach MIDI-Standard von 0 bis 127. Laut Korg sind einzelne Parameter nur per MIDI erreichbar (in der Tabelle mit * markiert). Welche das sind, zeigt die Korg-Tabelle selbst.</p>
+<h2>10. CC table</h2>
+<p>Based on Korg's MIDI chart (v1.02). By the MIDI standard, CC values range from 0 to 127. According to Korg, some parameters can only be reached via MIDI (marked with * in the chart). The Korg chart itself shows which ones.</p>
 <table class="split">
-  <thead><tr><th style="width:8%">CC</th><th style="width:26%">Parameter</th><th>Für Drones</th></tr></thead>
-  <tr><td>5</td><td>Portamento</td><td>Gleiten zwischen langen Noten</td></tr>
-  <tr><td>11</td><td>Expression</td><td>Wirkung auf dem Gerät prüfen <span class="tag">prüfen</span></td></tr>
-  <tr><td>40</td><td>Voice</td><td>Stimmmodus; Wertebereiche nicht belegt, am Regler wählen <span class="tag">prüfen</span></td></tr>
-  <tr><td>41</td><td>Octave</td><td>Oktavlage; Wertebereiche nicht belegt <span class="tag">prüfen</span></td></tr>
-  <tr><td>42</td><td>Detune</td><td>Breite und innere Schwebung, vor allem im Unison</td></tr>
-  <tr><td>43</td><td>VCO EG Int</td><td>Tonhöhe folgt der Hüllkurve; für ruhige Drones wenig</td></tr>
-  <tr><td>44</td><td>Cutoff</td><td>der Regler für langsame Filterfahrten</td></tr>
-  <tr><td>45</td><td>VCF EG Int</td><td>wie weit die Hüllkurve das Filter öffnet</td></tr>
-  <tr><td>46</td><td>LFO Rate</td><td>tief für langsame Bewegung</td></tr>
-  <tr><td>47</td><td>LFO Pitch Int</td><td>Vibrato; wenig macht den Ton lebendig</td></tr>
-  <tr><td>48</td><td>LFO Cutoff Int</td><td>Filter atmet mit dem LFO</td></tr>
-  <tr><td>49</td><td>Attack</td><td>Einblenden</td></tr>
-  <tr><td>50</td><td>Decay/Release</td><td>Ausklingen</td></tr>
-  <tr><td>51</td><td>Sustain</td><td>ganz auf für Dauertöne</td></tr>
-  <tr><td>52</td><td>Delay Time</td><td>Raum</td></tr>
-  <tr><td>53</td><td>Delay Feedback</td><td>Wiederholungen und Anteil des Delays</td></tr>
+  <thead><tr><th style="width:8%">CC</th><th style="width:26%">Parameter</th><th>For drones</th></tr></thead>
+  <tr><td>5</td><td>Portamento</td><td>gliding between long notes</td></tr>
+  <tr><td>11</td><td>Expression</td><td>check the effect on the device <span class="tag">verify</span></td></tr>
+  <tr><td>40</td><td>Voice</td><td>voice mode; value ranges not documented, choose it on the knob <span class="tag">verify</span></td></tr>
+  <tr><td>41</td><td>Octave</td><td>octave setting; value ranges not documented <span class="tag">verify</span></td></tr>
+  <tr><td>42</td><td>Detune</td><td>width and inner beating, especially in Unison</td></tr>
+  <tr><td>43</td><td>VCO EG Int</td><td>pitch follows the envelope; use little for calm drones</td></tr>
+  <tr><td>44</td><td>Cutoff</td><td>the knob for slow filter sweeps</td></tr>
+  <tr><td>45</td><td>VCF EG Int</td><td>how far the envelope opens the filter</td></tr>
+  <tr><td>46</td><td>LFO Rate</td><td>low for slow movement</td></tr>
+  <tr><td>47</td><td>LFO Pitch Int</td><td>vibrato; a little makes the tone come alive</td></tr>
+  <tr><td>48</td><td>LFO Cutoff Int</td><td>the filter breathes with the LFO</td></tr>
+  <tr><td>49</td><td>Attack</td><td>fade in</td></tr>
+  <tr><td>50</td><td>Decay/Release</td><td>fade out</td></tr>
+  <tr><td>51</td><td>Sustain</td><td>fully up for sustained tones</td></tr>
+  <tr><td>52</td><td>Delay Time</td><td>space</td></tr>
+  <tr><td>53</td><td>Delay Feedback</td><td>repeats and amount of delay</td></tr>
 </table>
 <table>
-  <thead><tr><th style="width:34%">Weitere MIDI-Meldungen</th><th>Stand</th></tr></thead>
-  <tr><td>Note On/Off</td><td>ja</td></tr>
-  <tr><td>Velocity</td><td>wird laut einem Forum ausgewertet <span class="tag">prüfen</span></td></tr>
-  <tr><td>Pitch Bend</td><td>ja; Bereich laut Forum ±2 Halbtöne, nicht änderbar <span class="tag">prüfen</span></td></tr>
-  <tr><td>Program Change, RPN 1 (Fine Tuning), Local Control</td><td>nicht belegt, vermutlich nicht vorhanden <span class="tag">prüfen</span></td></tr>
+  <thead><tr><th style="width:34%">Other MIDI messages</th><th>Status</th></tr></thead>
+  <tr><td>Note On/Off</td><td>yes</td></tr>
+  <tr><td>Velocity</td><td>evaluated, according to a forum <span class="tag">verify</span></td></tr>
+  <tr><td>Pitch Bend</td><td>yes; range ±2 semitones according to a forum, not changeable <span class="tag">verify</span></td></tr>
+  <tr><td>Program Change, RPN 1 (Fine Tuning), Local Control</td><td>not documented, probably not available <span class="tag">verify</span></td></tr>
 </table>
-<p class="small">Die Liste enthält keinen CC für die Resonanz. Der Frequenz-Drone selbst sendet kein MIDI, nimmt keine Noten an und lässt sich nicht automatisieren. Alle CCs an die volca kommen aus dem MIDI-Clip.</p>
+<p class="small">The list contains no CC for resonance. The Frequency Drone itself sends no MIDI, takes no notes and cannot be automated. All CCs to the volca come from the MIDI clip.</p>
 
-<h2>11. Fehlersuche</h2>
+<h2>11. Troubleshooting</h2>
 <table class="split">
-  <thead><tr><th style="width:30%">Problem</th><th>Ursache und Lösung</th></tr></thead>
-  <tr><td>Die volca spielt nicht</td><td>Kabel an MIDI OUT des Deluge und MIDI IN der volca? Clip auf demselben Kanal wie die volca (Standard 1)? Clip gestartet und nicht stumm? Lautstärke der volca offen? Globalen Parameter MIDI ShortMessage (Taste 7) umschalten <span class="tag">prüfen</span>.</td></tr>
-  <tr><td>Der Tempo-Regler der volca tut nichts</td><td>Sie folgt der MIDI-Clock (LED Step 6 an) oder einem Sync-Kabel. Das ist so gewollt.</td></tr>
-  <tr><td>Sequencer der volca läuft doppelt oder halb so schnell</td><td>Mit Sync-Kabel: <i>Output PPQN</i> passt nicht. Statt 2 den Wert 4 versuchen oder MIDI-Clock ohne Kabel nutzen. Läuft sie gar nicht: Gate 4 auf <i>Clock</i>?</td></tr>
-  <tr><td>Die Fläche setzt neu an</td><td>Eine neue Note startet die Hüllkurve für alle Töne neu. Akkordtöne gleichzeitig beginnen lassen. An der Loop-Grenze: Die Note muss bei Step 1 beginnen und den ganzen Clip füllen.</td></tr>
-  <tr><td>Ein Ton fehlt im Akkord</td><td>Mehr als drei Noten gleichzeitig oder ein Mono-Modus aktiv. VOICE auf Poly, höchstens drei Noten.</td></tr>
-  <tr><td>volca und Drone passen nicht zusammen</td><td>Master Tune nicht auf 440.0? Die volca folgt ihm nicht. Drone-Töne in Hz statt als Note? Nach langer Spielzeit kann die volca driften: mehr als 10 s Stille geben, dann stimmt sie nach.</td></tr>
-  <tr><td>Aufnahme klingt bei 432 Hz zu hoch</td><td>Sie entstand bei Master Tune 432.0 und gilt deshalb als 432-Material. Mit 440.0 neu aufnehmen.</td></tr>
-  <tr><td>Filterfahrt klingt stufig</td><td>Bei hoher Resonanz stuft das Filter hörbar ab. Resonanz senken oder die Bewegung mit dem LFO machen.</td></tr>
-  <tr><td>Die volca ist plötzlich aus</td><td>Auto-Power-Off nach etwa 4 Stunden oder leere Batterien. Parameter auf Taste 1 ausschalten, Netzteil verwenden.</td></tr>
+  <thead><tr><th style="width:30%">Problem</th><th>Cause and solution</th></tr></thead>
+  <tr><td>The volca does not play</td><td>Cable in the Deluge's MIDI OUT and the volca's MIDI IN? Clip on the same channel as the volca (default 1)? Clip launched and not muted? The volca's volume turned up? Switch the global parameter MIDI ShortMessage (button 7) <span class="tag">verify</span>.</td></tr>
+  <tr><td>The volca's tempo knob does nothing</td><td>It follows the MIDI clock (LED of step 6 on) or a sync cable. This is intended.</td></tr>
+  <tr><td>The volca's sequencer runs twice or half as fast</td><td>With a sync cable: <i>Output PPQN</i> does not match. Try 4 instead of 2, or use MIDI clock without a cable. If it does not run at all: Gate 4 set to <i>Clock</i>?</td></tr>
+  <tr><td>The pad sound restarts</td><td>A new note restarts the envelope for all notes. Start chord notes at the same time. At the loop boundary: the note must start at step 1 and fill the whole clip.</td></tr>
+  <tr><td>A note is missing from the chord</td><td>More than three notes at once, or a mono mode is active. VOICE to Poly, at most three notes.</td></tr>
+  <tr><td>The volca and the drone do not match</td><td>Master Tune not at 440.0? The volca does not follow it. Drone tones in Hz instead of as notes? After playing for a long time the volca can drift: give it more than 10 s of silence, then it retunes.</td></tr>
+  <tr><td>A recording sounds too high at 432 Hz</td><td>It was made at Master Tune 432.0 and so counts as 432 material. Record it again at 440.0.</td></tr>
+  <tr><td>A filter sweep sounds steppy</td><td>At high resonance the filter steps audibly. Lower the resonance or make the movement with the LFO.</td></tr>
+  <tr><td>The volca suddenly switches off</td><td>Auto Power Off after about 4 hours, or empty batteries. Turn off the parameter on button 1, use a power adapter.</td></tr>
 </table>
 
-<h2>12. Grenzen und offene Punkte</h2>
-<h3>Grenzen</h3>
+<h2>12. Limits and open points</h2>
+<h3>Limits</h3>
 <ul>
-  <li>Die volca keys hat keine Feinstimmung. Der Master Tune des Deluge stimmt sie nicht um, 432 Hz geht nur über Aufnahme oder Pitch Bend (Kapitel 5).</li>
-  <li>Paraphon: drei Stimmen teilen sich ein Filter und eine Hüllkurve. Unabhängige Hüllkurven pro Ton gibt es nicht.</li>
-  <li>Kein MIDI OUT: Die volca kann weder Noten noch Reglerbewegungen an den Deluge schicken.</li>
-  <li>Auto-Tuning nur in Pausen: Bei stundenlangen Dauertönen kann die volca leicht wandern.</li>
+  <li>The volca keys has no fine tuning. The Deluge's Master Tune does not retune it; 432 Hz only works via recording or pitch bend (chapter 5).</li>
+  <li>Paraphonic: three voices share one filter and one envelope. There are no independent envelopes per note.</li>
+  <li>No MIDI OUT: the volca can send neither notes nor knob movements to the Deluge.</li>
+  <li>Auto-tuning only in pauses: with sustained tones lasting hours, the volca can drift slightly.</li>
 </ul>
-<h3>Offene Punkte <span class="tag">prüfen</span></h3>
-<p>Nicht oder widersprüchlich belegt sind: die MIDI-IN-Buchse als 5-polige DIN (sehr wahrscheinlich); der genaue Weg zum MIDI-Kanal; die Pulse pro Step an SYNC IN (vermutlich 2 PPQN); die Wertebereiche von CC 40 und CC 41, die Wirkung von CC 11 und welche Parameter nur per MIDI erreichbar sind; Pitch-Bend-Bereich, Velocity, Program Change, RPN 1 und Local Control; das Verhalten bei mehr als drei Noten und das Dauer-Halten bei Sustain ganz auf; ob ein Dauerton das Auto-Tuning unterdrückt. Auf der Seite des Deluge: ein fester Pitch-Bend-Wert in einem MIDI-Clip.</p>
-<p class="small">Quellen zur volca: MIDI-Tabelle von Korg v1.02, Produktseite korg.com (Anschlüsse, Strom), Auszüge aus dem Korg-Handbuch, Sound On Sound, Sweetwater, sonicstate, zZounds, korgforums.com. Zum Deluge: README und Drone-Handbuch von 1.2.1-mastertune, Quellcode v16 (Menünamen, Gate 4 als Trigger-Clock und sein Modus, lange Noten an der Loop-Grenze, Drone beim Resampling).</p>
+<h3>Open points <span class="tag">verify</span></h3>
+<p>Not documented, or with conflicting sources: the MIDI IN socket as 5-pin DIN (very likely); the exact way to set the MIDI channel; the pulses per step at SYNC IN (probably 2 PPQN); the value ranges of CC 40 and CC 41, the effect of CC 11 and which parameters can only be reached via MIDI; pitch bend range, velocity, Program Change, RPN 1 and Local Control; the behavior with more than three notes and indefinite holding with Sustain fully up; whether a sustained tone suppresses the auto-tuning. On the Deluge side: a fixed pitch bend value in a MIDI clip.</p>
+<p class="small">Sources on the volca: Korg's MIDI chart v1.02, product page korg.com (connections, power), excerpts from the Korg manual, Sound On Sound, Sweetwater, sonicstate, zZounds, korgforums.com. On the Deluge: README and Drone manual of 1.2.1-mastertune, source code v16 (menu names, Gate 4 as trigger clock and its mode, long notes at the loop boundary, drone during resampling).</p>
 
 </body>
 </html>

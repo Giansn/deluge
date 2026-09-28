@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Pegel von «New Sitar Grii 10» im Emulator bei anderen Reglerstellungen (Baseline Master, 27.09.2026).
+"""Levels of "New Sitar Grii 10" in the emulator at other control settings (baseline master, 27.09.2026).
 
-Baut aus geraet/karte vier Karten und misst jede mit sitar_emu.py (--all-kits, 440 Hz, 4 Takte):
-  ref     der Song wie gespeichert
-  kits35  alle Kits (kitParams volume) auf 35.4, den Standard (0x3504F334)
-  kits40  alle Kits auf 40 (0x4CCCCCA8)
-  rows50  alle Synths und Kit-Reihen auf 40 (soundParams volume 0x4CCCCCA8) auf 50 (0x7FFFFFFF)
-Die Samples der Karte werden verlinkt, nicht kopiert. Ergebnis: <out>/baseline-pegel.json mit Spitze und RMS in dBFS
-(vor dem Clip am Ausgang gemessen) und der Zahl der Samples über Vollaussteuerung.
+Builds four cards from device/card and measures each with sitar_emu.py (--all-kits, 440 Hz, 4 bars):
+  ref     the song as saved
+  kits35  all kits (kitParams volume) at 35.4, the default (0x3504F334)
+  kits40  all kits at 40 (0x4CCCCCA8)
+  rows50  all synths and kit rows at 40 (soundParams volume 0x4CCCCCA8) to 50 (0x7FFFFFFF)
+The card's samples are linked, not copied. Result: <out>/baseline-levels.json with peak and RMS in dBFS
+(measured at the output before the clip) and the number of samples above full scale.
 
-Usage: baseline_pegel.py <deluge.elf> <karte> <out> --song-dir <tests/song> --build <dir mit blockcount.so>
+Usage: baseline_levels.py <deluge.elf> <card> <out> --song-dir <tests/song> --build <dir with blockcount.so>
 """
 import argparse
 import json
@@ -29,18 +29,18 @@ VARIANTS = {
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("elf")
-    ap.add_argument("karte")
+    ap.add_argument("card")
     ap.add_argument("out")
     ap.add_argument("--song-dir", required=True)
     ap.add_argument("--build", required=True)
     args = ap.parse_args()
-    song = open(os.path.join(args.karte, "SONGS", "New Sitar Grii 10.XML"), encoding="utf-8").read()
+    song = open(os.path.join(args.card, "SONGS", "New Sitar Grii 10.XML"), encoding="utf-8").read()
     results = {}
     for name, change in VARIANTS.items():
-        card = os.path.join(args.out, "karte-" + name)
+        card = os.path.join(args.out, "card-" + name)
         os.makedirs(os.path.join(card, "SONGS"), exist_ok=True)
         if not os.path.exists(os.path.join(card, "SAMPLES")):
-            os.symlink(os.path.abspath(os.path.join(args.karte, "SAMPLES")), os.path.join(card, "SAMPLES"))
+            os.symlink(os.path.abspath(os.path.join(args.card, "SAMPLES")), os.path.join(card, "SAMPLES"))
         with open(os.path.join(card, "SONGS", "New Sitar Grii 10.XML"), "w", encoding="utf-8") as f:
             f.write(change(song))
         run = os.path.join(args.out, name)
@@ -50,7 +50,7 @@ def main():
         with open(os.path.join(run, "result.json")) as f:
             results[name] = json.load(f)["output"]
         print(name, results[name])
-    with open(os.path.join(args.out, "baseline-pegel.json"), "w") as f:
+    with open(os.path.join(args.out, "baseline-levels.json"), "w") as f:
         json.dump(results, f, indent=1)
 
 
