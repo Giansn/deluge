@@ -18,8 +18,14 @@
 # lpf_ramp_math_test.cpp (v18): the LP ladders' per-sample coefficient ramps in float64: every mid-ramp set stable and
 # within 0.5 dB of the real ladder with its moveability (30 Hz <-> 18 kHz in one block); where the ladders sing
 # against their cutoff (printed).
-# TEST=filter_tone, TEST=hpf_whistle, TEST=lpf_whistle, TEST=lpf_precision, TEST=lpf_ramp_math or TEST=filter_neutral:
-# only that one.
+# svf_precision_test.cpp (v18): the SVF at low cutoff against a float64 model: the error's DC, A-weighted error, tail
+# (v17 truncated: DC -88 dBFS, tail stuck at -101; v18: DC <= -175, tail -178).
+# filter_neutral also: slow sweeps (1 and 1/8 octave per second), jumps (28 Hz <-> 16 kHz every block), hpres (the HP
+# ladder's level in the resonance's finest steps), glide (the filter params' 10 ms glide; ONLY=<name> for one sweep).
+# lpf_ramp_math also: the ramps in pieces (Filter::rampKnots(), PIECES=0: one straight line) and edge (where the ladders
+# sing at the top of the cutoff).
+# TEST=filter_tone, TEST=hpf_whistle, TEST=lpf_whistle, TEST=lpf_precision, TEST=svf_precision, TEST=lpf_ramp_math or
+# TEST=filter_neutral: only that one.
 # song_filter_emu.py, master_filter_emu.py --check 10: the same in the whole firmware (song view, the gold knob).
 set -e
 FW=$(cd "$1" && pwd)
