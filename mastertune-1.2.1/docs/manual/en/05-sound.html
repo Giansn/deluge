@@ -68,7 +68,7 @@
 <ul>
   <li><b>HPF whistle</b> <span class="tag">v17</span>: with a lot of resonance the HP ladder self-oscillates. Since the community's filter rework it limited 12–18 dB higher than the original firmware; in the song master that gave a whistle up to 27 dB above the music. It now limits like the original again: about 17 dB quieter in song, kit and track, about 12 dB in synths. The tone is not completely gone; it sits at about the level of the music. Below about 39% HPF resonance the sound is bit for bit the same as before.</li>
   <li><b>24 dB ladder:</b> it self-oscillates flat, as in 1.2.1: −19 cents at 600 Hz, −52 at 1.9 kHz, −127 from 5.7 kHz. The 12 dB ladder hits the pitch.</li>
-  <li><b>Drive LPF:</b> it self-oscillates from about 50% resonance, at around 9–21 kHz, as in 1.2.1. Below the oversampling threshold its tone is 56 cents flat at 2 kHz (5.4).</li>
+  <li><b>Drive LPF:</b> it self-oscillates from about 50% resonance, at around 9–21 kHz, as in 1.2.1. Below the oversampling threshold its tone is 56 cents flat at 2 kHz (§5.4).</li>
 </ul>
 <div class="box"><b>Example: "the LPF has no effect".</b> In one song the song LPF's resonance was at maximum. From about 36 on the cutoff knob, the filter oscillated by itself, about 10 dB above the music, and its tone followed the knob down. Fix: in song view, with the filter button on LPF, turn the lower gold knob (resonance) below about 35, then save. To delete an automation of the filter as well, hold <span class="key">SHIFT</span> and press the upper gold knob ("Automation deleted"); without <span class="key">SHIFT</span> the press changes the filter type.</div>
 
@@ -211,10 +211,10 @@
   <tr><td>Kit, audio track</td><td>At most 35.</td></tr>
   <tr><td>Synth, kit row</td><td>40 as the upper limit for loud things like kick and bass; 45–50 only for quiet samples.</td></tr>
   <tr><td>Master compressor</td><td>Off. Switched on, it makes up its reduction with make-up gain, so it creates no headroom.</td></tr>
-  <tr><td>Peak</td><td>At most −6 dBFS. In DelugeRec the pad at −3 stays dark (8.2).</td></tr>
+  <tr><td>Peak</td><td>At most −6 dBFS. In DelugeRec the pad at −3 stays dark (§8.2).</td></tr>
   <tr><td>VOLUME knob</td><td>Any. It is analog, after the converter, and doesn't act on USB and resampling.</td></tr>
 </table>
-<p>DelugeBaseline checks all songs of a card against this baseline and can set them to it (8.4).</p>
+<p>DelugeBaseline checks all songs of a card against this baseline and can set them to it (§8.4).</p>
 <p><b>Output limiter</b> <span class="tag">v18</span>: Settings → Community features → <b>Output limiter</b> (7-segment <code>LIMT</code>), off by default. A peak limiter that looks ahead 0.7 ms and sets in softly 1 dB below full scale, without aliasing. It acts only where the output would otherwise clip hard.</p>
 <ul>
   <li>When it is on, the output comes 0.7 ms later. When you switch it on or off, the output jumps once by this time, which can click briefly.</li>
@@ -224,7 +224,7 @@
 <h3 id="sound-sidechain">5.9 Sidechain <span class="tag">v3, v18</span></h3>
 <ul>
   <li><b>No click when ducking.</b> In 1.2.1 the volume ramp of each buffer started at the new value and overshot; with more than 6 dB of ducking within one buffer, the gain even flipped polarity. Now the ramp runs from the old to the new value, and the reverb return follows smoothly. The bug is also in the current community firmware.</li>
-  <li><b>At least 5 ms</b> for jumps over 6 dB since v18 (5.7).</li>
+  <li><b>At least 5 ms</b> for jumps over 6 dB since v18 (§5.7).</li>
   <li><b>The song's reverb sidechain keeps its sync level</b> <span class="tag">v18.3</span>. Since 1.2.1 it slipped one step lower at every save and load. Existing songs load with the saved value.</li>
 </ul>
 
@@ -299,7 +299,7 @@
 <p class="small">The delay is 1 sample (0.02 ms) longer than in 1.2.1, because all its write paths now use the same position.</p>
 
 <h3 id="sound-ear">5.12 Try it by ear</h3>
-<p>v18.x has not been played on a real Deluge yet. These short checks, ideally with headphones, show the changes. Please report anything that sounds wrong (11.8).</p>
+<p>v18.x has not been played on a real Deluge yet. These short checks, ideally with headphones, show the changes. Please report anything that sounds wrong (§11.8).</p>
 <table>
   <tr><th style="width:22%">Check</th><th>What to do and what to expect</th></tr>
   <tr><td>Rustle</td><td>A synth with LPF 24 dB, cutoff low (about 10–20), resonance medium, a long note. The band of noise around the note is gone. The same with 12 dB and Drive.</td></tr>

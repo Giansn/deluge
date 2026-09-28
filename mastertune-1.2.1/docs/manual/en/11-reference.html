@@ -46,12 +46,12 @@
 <h3 id="ref-keys">11.2 Buttons and shortcuts</h3>
 <table>
   <tr><th style="width:30%">Where</th><th style="width:30%">Press</th><th>What happens</th></tr>
-  <tr><td>any view, also playing</td><td>hold <span class="key">LEARN</span>, press <span class="key">TEMPO</span></td><td>CPU monitor off, or back to the last mode (3.4)</td></tr>
-  <tr><td>Master tune (Hz)</td><td>horizontal encoder</td><td>moves the cursor between the 1 Hz and the 0.1 Hz digit (2.1)</td></tr>
-  <tr><td>song browser, group line</td><td><span class="key">SELECT</span> or <span class="key">LOAD</span></td><td>opens the group (7.1)</td></tr>
-  <tr><td>song browser, a version</td><td><span class="key">BACK</span></td><td>closes its group (7.1)</td></tr>
-  <tr><td>song browser, a version</td><td><span class="key">SHIFT</span> + <span class="key">SAVE</span></td><td>deletes; blocked on a closed group line (7.1)</td></tr>
-  <tr><td>song change armed</td><td>gold knobs, mod buttons</td><td>act on the master effects of the playing song (7.2)</td></tr>
+  <tr><td>any view, also playing</td><td>hold <span class="key">LEARN</span>, press <span class="key">TEMPO</span></td><td>CPU monitor off, or back to the last mode (§3.4)</td></tr>
+  <tr><td>Master tune (Hz)</td><td>horizontal encoder</td><td>moves the cursor between the 1 Hz and the 0.1 Hz digit (§2.1)</td></tr>
+  <tr><td>song browser, group line</td><td><span class="key">SELECT</span> or <span class="key">LOAD</span></td><td>opens the group (§7.1)</td></tr>
+  <tr><td>song browser, a version</td><td><span class="key">BACK</span></td><td>closes its group (§7.1)</td></tr>
+  <tr><td>song browser, a version</td><td><span class="key">SHIFT</span> + <span class="key">SAVE</span></td><td>deletes; blocked on a closed group line (§7.1)</td></tr>
+  <tr><td>song change armed</td><td>gold knobs, mod buttons</td><td>act on the master effects of the playing song (§7.2)</td></tr>
   <tr><td>song view</td><td><span class="key">SCALE</span></td><td>opens the drone view (chapter 9)</td></tr>
   <tr><td>drone view</td><td><span class="key">SHIFT</span> + <span class="key">KIT</span></td><td>creates a drone track (chapter 9)</td></tr>
   <tr><td>kit clip view, audition pad held</td><td><span class="key">SHIFT</span> + <span class="key">KIT</span></td><td>turns the row into a drone row (chapter 9)</td></tr>
@@ -60,14 +60,14 @@
 <h3 id="ref-display">11.3 Displays and messages</h3>
 <table>
   <tr><th style="width:26%">Display</th><th style="width:14%">Where</th><th>Meaning</th></tr>
-  <tr><td><code>UGAP</code>, "USB audio gap"</td><td>7-segment, OLED</td><td>The computer got an empty USB audio packet: a 1 ms gap in the recording. At most every 10 s. Please report it (4.6).</td></tr>
-  <tr><td><code>C-ON</code>, <code>COFF</code>, <code>C-AL</code></td><td>7-segment</td><td>The shortcut set the CPU monitor to On, Off or Alerts (3.4).</td></tr>
-  <tr><td><code>-3.5</code>, <code>OFF</code></td><td>7-segment</td><td>A volume in dB; <code>OFF</code> at the very bottom (5.7).</td></tr>
-  <tr><td>a blinking number</td><td>7-segment</td><td>Song change: loops remaining. Without blinking: bars. With a dot: beats (7.2).</td></tr>
-  <tr><td>"Bars remaining 3"</td><td>OLED</td><td>Song change countdown in the title line (7.2).</td></tr>
-  <tr><td>"Open the group first"</td><td>OLED</td><td>You tried to delete on a closed group line in the song browser (7.1).</td></tr>
-  <tr><td>small animation, top right</td><td>OLED</td><td>The Deluge is loading or saving (7.3).</td></tr>
-  <tr><td><code>1.2.1-mastertune-</code> / <code>v18.3-l2d</code></td><td>OLED</td><td>Settings → Firmware version (1.4).</td></tr>
+  <tr><td><code>UGAP</code>, "USB audio gap"</td><td>7-segment, OLED</td><td>The computer got an empty USB audio packet: a 1 ms gap in the recording. At most every 10 s. Please report it (§4.6).</td></tr>
+  <tr><td><code>C-ON</code>, <code>COFF</code>, <code>C-AL</code></td><td>7-segment</td><td>The shortcut set the CPU monitor to On, Off or Alerts (§3.4).</td></tr>
+  <tr><td><code>-3.5</code>, <code>OFF</code></td><td>7-segment</td><td>A volume in dB; <code>OFF</code> at the very bottom (§5.7).</td></tr>
+  <tr><td>a blinking number</td><td>7-segment</td><td>Song change: loops remaining. Without blinking: bars. With a dot: beats (§7.2).</td></tr>
+  <tr><td>"Bars remaining 3"</td><td>OLED</td><td>Song change countdown in the title line (§7.2).</td></tr>
+  <tr><td>"Open the group first"</td><td>OLED</td><td>You tried to delete on a closed group line in the song browser (§7.1).</td></tr>
+  <tr><td>small animation, top right</td><td>OLED</td><td>The Deluge is loading or saving (§7.3).</td></tr>
+  <tr><td><code>1.2.1-mastertune-</code> / <code>v18.3-l2d</code></td><td>OLED</td><td>Settings → Firmware version (§1.4).</td></tr>
 </table>
 
 <h3 id="ref-cpu">11.4 CPU monitor abbreviations</h3>
@@ -83,64 +83,64 @@
   <tr><td>SD</td><td>live view, page</td><td>Loads from the card, mean and longest duration.</td></tr>
   <tr><td>direness</td><td>page, live view</td><td>0–14. Above 0 the quality is lowered; from about 80 samples behind voices are cut.</td></tr>
 </table>
-<p class="small">"Live view" is the line of <code>tools/deluge_profiler.py live</code> (8.6), "page" is <code>tools/cpu_monitor.html</code> (8.5).</p>
+<p class="small">"Live view" is the line of <code>tools/deluge_profiler.py live</code> (§8.6), "page" is <code>tools/cpu_monitor.html</code> (§8.5).</p>
 
 <h3 id="ref-files">11.5 Files on the card</h3>
 <table>
   <tr><th style="width:32%">File or folder</th><th>What mastertune keeps there</th></tr>
-  <tr><td>the firmware <code>.bin</code> (root folder)</td><td>Only for installing; leave only one there (1.3).</td></tr>
+  <tr><td>the firmware <code>.bin</code> (root folder)</td><td>Only for installing; leave only one there (§1.3).</td></tr>
   <tr><td><code>CommunityFeatures.XML</code> (root folder)</td><td>The community settings, the master tune (<code>masterTune</code>, in tenths of a Hz), the CPU monitor mode.</td></tr>
   <tr><td><code>SONGS/</code></td><td>Songs, with the drone and drone tracks (chapter 9).</td></tr>
-  <tr><td><code>SYNTHS/</code></td><td>Synth presets, for example the ping-pong presets (6.4).</td></tr>
-  <tr><td>recordings (WAV)</td><td>At a tuning other than 440 Hz with an <code>mtun</code> chunk (2.3).</td></tr>
-  <tr><td><code>BASELINE-BACKUP/</code></td><td>Backups written by DelugeBaseline (8.4).</td></tr>
+  <tr><td><code>SYNTHS/</code></td><td>Synth presets, for example the ping-pong presets (§6.4).</td></tr>
+  <tr><td>recordings (WAV)</td><td>At a tuning other than 440 Hz with an <code>mtun</code> chunk (§2.3).</td></tr>
+  <tr><td><code>BASELINE-BACKUP/</code></td><td>Backups written by DelugeBaseline (§8.4).</td></tr>
 </table>
 
 <h3 id="ref-trouble">11.6 Troubleshooting</h3>
 <p>Find your problem in its group. Each line gives the cause and what to do.</p>
 <h4>Installing and settings</h4>
 <table>
-  <tr><td style="width:31%">The Deluge doesn't install the firmware.</td><td>Leave only one <code>.bin</code> in the root folder and hold <span class="key">SHIFT</span> while switching on (1.3).</td></tr>
-  <tr><td>It crashes or behaves strangely.</td><td>Install <code>deluge-1.2.1-mastertune-v18-124aeaa2.bin</code>, v18 without L2, and report what happened (11.8).</td></tr>
-  <tr><td>The master tune is back at the old value after switching off.</td><td>It is saved when you leave the Settings menu. Leave it with <span class="key">BACK</span> first (2.1).</td></tr>
-  <tr><td>Output limiter, crossing guard and OLED brightness are back at their defaults.</td><td>You switched to v17 or 1.2.1 and back; they lose settings they don't know. Set them again (7.6).</td></tr>
+  <tr><td style="width:31%">The Deluge doesn't install the firmware.</td><td>Leave only one <code>.bin</code> in the root folder and hold <span class="key">SHIFT</span> while switching on (§1.3).</td></tr>
+  <tr><td>It crashes or behaves strangely.</td><td>Install <code>deluge-1.2.1-mastertune-v18-124aeaa2.bin</code>, v18 without L2, and report what happened (§11.8).</td></tr>
+  <tr><td>The master tune is back at the old value after switching off.</td><td>It is saved when you leave the Settings menu. Leave it with <span class="key">BACK</span> first (§2.1).</td></tr>
+  <tr><td>Output limiter, crossing guard and OLED brightness are back at their defaults.</td><td>You switched to v17 or 1.2.1 and back; they lose settings they don't know. Set them again (§7.6).</td></tr>
 </table>
 <h4>Tuning</h4>
 <table>
-  <tr><td style="width:31%">An external synth doesn't follow the master tune.</td><td>It must evaluate RPN 1 (Channel Fine Tuning). A device switched on later gets the tuning after the next play start (2.4).</td></tr>
-  <tr><td>A recording made at 432 Hz sounds off after editing it on the computer.</td><td>Some editors remove the <code>mtun</code> chunk; the copy then counts as 440 Hz material. Use the original recording (2.3).</td></tr>
+  <tr><td style="width:31%">An external synth doesn't follow the master tune.</td><td>It must evaluate RPN 1 (Channel Fine Tuning). A device switched on later gets the tuning after the next play start (§2.4).</td></tr>
+  <tr><td>A recording made at 432 Hz sounds off after editing it on the computer.</td><td>Some editors remove the <code>mtun</code> chunk; the copy then counts as 440 Hz material. Use the original recording (§2.3).</td></tr>
 </table>
 <h4>Load</h4>
 <table>
-  <tr><td style="width:31%"><code>QL</code> or <code>VC</code> appear.</td><td>The Deluge can't keep up. See what costs CPU in 3.5: at 432 Hz convert the samples with DelugeTuner; use fewer living drone tones.</td></tr>
-  <tr><td>The CPU monitor shows 85–90% while nothing plays.</td><td>Up to v16 that was busy waiting, not overload. From v17 on the monitor shows the real load (3.4).</td></tr>
-  <tr><td>The first hit of an unused kit row comes late.</td><td>The Kit RAM saver released its sample start. Switch it off if this bothers you (3.3).</td></tr>
+  <tr><td style="width:31%"><code>QL</code> or <code>VC</code> appear.</td><td>The Deluge can't keep up. See what costs CPU in §3.5: at 432 Hz convert the samples with DelugeTuner; use fewer living drone tones.</td></tr>
+  <tr><td>The CPU monitor shows 85–90% while nothing plays.</td><td>Up to v16 that was busy waiting, not overload. From v17 on the monitor shows the real load (§3.4).</td></tr>
+  <tr><td>The first hit of an unused kit row comes late.</td><td>The Kit RAM saver released its sample start. Switch it off if this bothers you (§3.3).</td></tr>
 </table>
 <h4>USB</h4>
 <table>
-  <tr><td style="width:31%">The computer doesn't show the audio input.</td><td>Switch USB audio on, restart, and connect the Deluge as a USB device, not as a host (4.2).</td></tr>
+  <tr><td style="width:31%">The computer doesn't show the audio input.</td><td>Switch USB audio on, restart, and connect the Deluge as a USB device, not as a host (§4.2).</td></tr>
   <tr><td>USB audio is off again after a restart.</td><td>Up to v15 the setting was saved only when you left the menu with <span class="key">BACK</span>. From v16 on it is saved at once.</td></tr>
-  <tr><td>The Deluge isn't recognised or hangs with USB audio.</td><td>Unplug the USB cable, start the Deluge, switch USB audio off (4.6).</td></tr>
-  <tr><td>The DAW lost the Deluge's MIDI ports.</td><td>With USB audio on, the computer sees a new device. Assign the ports again (4.6).</td></tr>
-  <tr><td><code>UGAP</code> appears.</td><td>A 1 ms gap under very high load. Please report it (4.6).</td></tr>
-  <tr><td>deluge-editor says "needs community 1.3.0 or later".</td><td>The Deluge reports 1.2.1. Ignore it: opening and saving work (8.7).</td></tr>
-  <tr><td>A file with umlauts in its name doesn't open over USB.</td><td>Use only A–Z, 0–9 and _ in names (8.7).</td></tr>
+  <tr><td>The Deluge isn't recognised or hangs with USB audio.</td><td>Unplug the USB cable, start the Deluge, switch USB audio off (§4.6).</td></tr>
+  <tr><td>The DAW lost the Deluge's MIDI ports.</td><td>With USB audio on, the computer sees a new device. Assign the ports again (§4.6).</td></tr>
+  <tr><td><code>UGAP</code> appears.</td><td>A 1 ms gap under very high load. Please report it (§4.6).</td></tr>
+  <tr><td>deluge-editor says "needs community 1.3.0 or later".</td><td>The Deluge reports 1.2.1. Ignore it: opening and saving work (§8.7).</td></tr>
+  <tr><td>A file with umlauts in its name doesn't open over USB.</td><td>Use only A–Z, 0–9 and _ in names (§8.7).</td></tr>
 </table>
 <h4>Sound</h4>
 <table>
-  <tr><td style="width:31%">A song with routing Parallel is quieter.</td><td>Since v18 the parallel sum has half the volume, −6 dB. Raise the song's volume (5.2).</td></tr>
-  <tr><td>The filter whistles, or a tone follows the cutoff knob.</td><td>The resonance is so high that the filter oscillates by itself. Turn the resonance down (5.3).</td></tr>
-  <tr><td>An old song's reverb sounds stiller.</td><td>Songs without the new settings load with Modulation 0. Set Modulation to 50 for the old sound (5.10).</td></tr>
-  <tr><td>Echoes bend in pitch when the delay time changes.</td><td>Time change is on Tape; old songs with a modulated or automated delay rate load that way. Choose Fade (5.11).</td></tr>
-  <tr><td>Hard sidechain pumping sounds softer.</td><td>Since v18 ducking takes at least 5 ms (5.7).</td></tr>
-  <tr><td>The output clips.</td><td>Only the sum at the output clips, at 0 dBFS. Lower the song volume until the peak lies at −6 dBFS, or switch the Output limiter on (5.8).</td></tr>
-  <tr><td>A click when switching the Output limiter.</td><td>The output moves once by 0.7 ms. This is expected (5.8).</td></tr>
+  <tr><td style="width:31%">A song with routing Parallel is quieter.</td><td>Since v18 the parallel sum has half the volume, −6 dB. Raise the song's volume (§5.2).</td></tr>
+  <tr><td>The filter whistles, or a tone follows the cutoff knob.</td><td>The resonance is so high that the filter oscillates by itself. Turn the resonance down (§5.3).</td></tr>
+  <tr><td>An old song's reverb sounds stiller.</td><td>Songs without the new settings load with Modulation 0. Set Modulation to 50 for the old sound (§5.10).</td></tr>
+  <tr><td>Echoes bend in pitch when the delay time changes.</td><td>Time change is on Tape; old songs with a modulated or automated delay rate load that way. Choose Fade (§5.11).</td></tr>
+  <tr><td>Hard sidechain pumping sounds softer.</td><td>Since v18 ducking takes at least 5 ms (§5.7).</td></tr>
+  <tr><td>The output clips.</td><td>Only the sum at the output clips, at 0 dBFS. Lower the song volume until the peak lies at −6 dBFS, or switch the Output limiter on (§5.8).</td></tr>
+  <tr><td>A click when switching the Output limiter.</td><td>The output moves once by 0.7 ms. This is expected (§5.8).</td></tr>
 </table>
 <h4>Tools</h4>
 <table>
-  <tr><td style="width:31%">Windows warns when you start a tool.</td><td>The programs are not signed. Click More info, then Run anyway (8.1).</td></tr>
-  <tr><td>DelugeRec names the take "… 1.2.1 v18.WAV" with v18.3.</td><td>DelugeRec v6 cuts the version at the dot. Use v7 or later (8.2).</td></tr>
-  <tr><td>The profiler shows wrong function names.</td><td>Load the <code>.symbols.json</code> that lies next to the <code>.bin</code> you installed (8.6).</td></tr>
+  <tr><td style="width:31%">Windows warns when you start a tool.</td><td>The programs are not signed. Click More info, then Run anyway (§8.1).</td></tr>
+  <tr><td>DelugeRec names the take "… 1.2.1 v18.WAV" with v18.3.</td><td>DelugeRec v6 cuts the version at the dot. Use v7 or later (§8.2).</td></tr>
+  <tr><td>The profiler shows wrong function names.</td><td>Load the <code>.symbols.json</code> that lies next to the <code>.bin</code> you installed (§8.6).</td></tr>
 </table>
 
 <h3 id="ref-history">11.7 Version history</h3>
@@ -174,6 +174,6 @@
   <li>the version from Settings → Firmware version;</li>
   <li>what you did, exactly;</li>
   <li>what the display showed: frozen, a restart, or a message like "E…";</li>
-  <li>for load problems, if you can, a CSV from the CPU monitor page (8.5) or a <code>.jsonl</code> recording from the profiler (8.6).</li>
+  <li>for load problems, if you can, a CSV from the CPU monitor page (§8.5) or a <code>.jsonl</code> recording from the profiler (§8.6).</li>
 </ul>
 </div>

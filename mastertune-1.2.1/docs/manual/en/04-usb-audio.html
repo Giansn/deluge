@@ -62,7 +62,7 @@
   <tr><td>Linux</td><td><code>arecord -l</code> lists "Deluge".</td></tr>
   <tr><td>DAW</td><td>Choose "Deluge" as the input and set the project to 44.1 kHz.</td></tr>
 </table>
-<p>To record without a DAW, use DelugeRec (8.2). It names each take after the song.</p>
+<p>To record without a DAW, use DelugeRec (§8.2). It names each take after the song.</p>
 
 <h3 id="usb-timing">4.4 Timing and latency</h3>
 <ul>
@@ -73,7 +73,7 @@
 </ul>
 
 <h3 id="usb-songname">4.5 The song name for recordings <span class="tag">v18</span></h3>
-<p>While the computer has the audio stream open, the Deluge reports the song name and the firmware version on USB MIDI port 3. DelugeRec uses this to name its takes, for example "Song name, 28.09.2026 - 1.2.1 v18.3.WAV" (8.2). The Deluge only sends this; it never waits for an answer. Because USB doesn't run in the emulator, this has to be confirmed on the device.</p>
+<p>While the computer has the audio stream open, the Deluge reports the song name and the firmware version on USB MIDI port 3. DelugeRec uses this to name its takes, for example "Song name, 28.09.2026 - 1.2.1 v18.3.WAV" (§8.2). The Deluge only sends this; it never waits for an answer. Because USB doesn't run in the emulator, this has to be confirmed on the device.</p>
 
 <h3 id="usb-limits">4.6 Limitations and messages</h3>
 <table>
@@ -81,5 +81,5 @@
   <tr><td>Other sample rates</td><td>Only 44.1 kHz. If the DAW runs at another rate, the operating system resamples. In exclusive mode or with ASIO the project must be at 44.1 kHz.</td></tr>
   <tr><td>MIDI ports moved</td><td>With USB audio on, the computer sees the Deluge as a new device. You may have to assign the MIDI ports in your DAW again.</td></tr>
   <tr><td>Not recognised or hangs</td><td>Unplug the USB cable, start the Deluge, switch USB audio off.</td></tr>
-  <tr><td><code>UGAP</code>, "USB audio gap"</td><td>The computer got an empty packet: a 1 ms gap in the recording. This can happen under very high load, because the Deluge disables all interrupts while it computes each track. The message comes at most every 10 seconds. Please report it (11.8).</td></tr>
+  <tr><td><code>UGAP</code>, "USB audio gap"</td><td>The computer got an empty packet: a 1 ms gap in the recording. This can happen under very high load, because the Deluge disables all interrupts while it computes each track. The message comes at most every 10 seconds. Please report it (§11.8).</td></tr>
 </table>

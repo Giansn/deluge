@@ -487,7 +487,7 @@ Raw data: `raw/midi-timing.json`. Commits `c89b7b35` and `a8e8af32` (on v13). Me
 ## 7g. Delay without pitch jump (v14)
 
 Raw data: `raw/delay-v14.json`. Commits `cd7f09ef`, `9ec940a2` (branch `delay-v14`).
-- **Cause of the bending:** On a time change the buffer turns at a different rate. What is already in it plays back faster or slower, the pitch shifts by the rate ratio (25% shorter: +386 cents), and the feedback carries it on.
+- **Cause of the bending:** On a time change the buffer turns at a different rate. What is already in it plays back faster or slower, the pitch shifts by the rate ratio (20% shorter: +386 cents), and the feedback carries it on.
 - **Fade (new, default):** The new time runs in a fresh buffer, the input crossfades over in 23 ms, and the old buffer plays out its echoes with the original time and pitch. Pitch ≤ 0.008 cents, artifacts ≤ −85 dB. Tape matches the previous behavior.
 - **Also fixed:**
   - click on the first echo after a pause

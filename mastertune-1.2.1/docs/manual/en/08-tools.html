@@ -5,12 +5,12 @@
 <h3 id="tools-overview">8.1 Overview</h3>
 <table>
   <tr><th style="width:19%">Tool</th><th>What it does</th><th style="width:31%">Where to get it</th></tr>
-  <tr><td>DelugeRec</td><td>Records the Deluge's USB audio, with a monitor on the headphones (8.2).</td><td>Release <code>deluge-rec</code> (v7)</td></tr>
-  <tr><td>DelugeTuner</td><td>Retunes a card's sample library once to the master tune (8.3).</td><td>Release <code>deluge-tuner</code> (v2)</td></tr>
-  <tr><td>DelugeBaseline</td><td>Checks the levels of all songs on a card and evens them out, with a backup (8.4).</td><td>Release <code>deluge-baseline</code> (v4)</td></tr>
-  <tr><td>CPU monitor page</td><td>Logs the CPU monitor live and as CSV (8.5).</td><td><code>tools/cpu_monitor.html</code></td></tr>
-  <tr><td>Profiler</td><td>Shows the CPU time per track, task and function (8.6).</td><td><code>tools/profiler.html</code>, <code>tools/deluge_profiler.py</code></td></tr>
-  <tr><td>DEx, deluge-editor</td><td>Files and presets on the SD card over USB (8.7).</td><td><code>dex.silicak.es</code>, <code>cyface.github.io/deluge-editor</code></td></tr>
+  <tr><td>DelugeRec</td><td>Records the Deluge's USB audio, with a monitor on the headphones (§8.2).</td><td>Release <code>deluge-rec</code> (v7)</td></tr>
+  <tr><td>DelugeTuner</td><td>Retunes a card's sample library once to the master tune (§8.3).</td><td>Release <code>deluge-tuner</code> (v2)</td></tr>
+  <tr><td>DelugeBaseline</td><td>Checks the levels of all songs on a card and evens them out, with a backup (§8.4).</td><td>Release <code>deluge-baseline</code> (v4)</td></tr>
+  <tr><td>CPU monitor page</td><td>Logs the CPU monitor live and as CSV (§8.5).</td><td><code>tools/cpu_monitor.html</code></td></tr>
+  <tr><td>Profiler</td><td>Shows the CPU time per track, task and function (§8.6).</td><td><code>tools/profiler.html</code>, <code>tools/deluge_profiler.py</code></td></tr>
+  <tr><td>DEx, deluge-editor</td><td>Files and presets on the SD card over USB (§8.7).</td><td><code>dex.silicak.es</code>, <code>cyface.github.io/deluge-editor</code></td></tr>
 </table>
 <ul>
   <li><b>The Windows programs</b> are one <code>.exe</code> each, with nothing to install. The newest version is always in its release at <code>github.com/Giansn/deluge/releases</code>. Windows asks once, because they are not signed: click <b>More info</b>, then <b>Run anyway</b>.</li>
@@ -34,11 +34,11 @@
   <tr><td>MON</td><td>The monitor on the headphones.</td></tr>
   <tr><td>FOLDER</td><td>Opens the folder with the recordings.</td></tr>
   <tr><td>VOL</td><td>Leave it at 0 dB: then the recording is bit-exact. Turning it down doesn't repair clipping that already happens in the Deluge.</td></tr>
-  <tr><td>Pads</td><td>The level. For the baseline in 5.8 the pad at −3 should stay dark.</td></tr>
+  <tr><td>Pads</td><td>The level. For the baseline in §5.8 the pad at −3 should stay dark.</td></tr>
 </table>
 </div>
 <ul>
-  <li><b>Take names:</b> with firmware v18 or later, DelugeRec names each take after the song, the date and the firmware, for example "Song name, 28.09.2026 - 1.2.1 v18.3.WAV". The Deluge reports the song name while the audio stream is open (4.5). From v18.2 on you need DelugeRec v7: v6 cuts the version off at the dot.</li>
+  <li><b>Take names:</b> with firmware v18 or later, DelugeRec names each take after the song, the date and the firmware, for example "Song name, 28.09.2026 - 1.2.1 v18.3.WAV". The Deluge reports the song name while the audio stream is open (§4.5). From v18.2 on you need DelugeRec v7: v6 cuts the version off at the dot.</li>
   <li><b>As a script:</b> <code>pip install sounddevice numpy</code>, then <code>python tools/deluge_rec.py</code>. Without a Deluge: <code>--demo</code>.</li>
 </ul>
 
@@ -47,7 +47,7 @@
   <img class="shot window" src="../../../screenshots/deluge_tuner.png" alt="DelugeTuner having read a card">
   <figcaption>DelugeTuner after READ: what it would retune at 432.0 Hz, and how much.</figcaption>
 </figure>
-<p>Away from 440 Hz the Deluge resamples every sample voice (2.5). DelugeTuner converts the sample library of a card once to the master tune. The converted files carry the <code>mtun</code> chunk (2.3), so the Deluge plays them directly again. The firmware needs no change for this.</p>
+<p>Away from 440 Hz the Deluge resamples every sample voice (§2.5). DelugeTuner converts the sample library of a card once to the master tune. The converted files carry the <code>mtun</code> chunk (§2.3), so the Deluge plays them directly again. The firmware needs no change for this.</p>
 <ol>
   <li><b>CARD:</b> choose the SD card or a copy of it. It is only read.</li>
   <li><b>OUTPUT:</b> choose a folder on the computer for the new card. An empty folder becomes the new card; otherwise a new folder "Deluge 432 Hz" is created inside it, numbered if needed. A folder inside the card is refused.</li>
@@ -82,7 +82,7 @@
   <img class="shot window" src="../../../screenshots/deluge_baseline.png" alt="DelugeBaseline having read a card">
   <figcaption>DelugeBaseline after reading a card: one pad per song, green in order, orange with notes.</figcaption>
 </figure>
-<p>DelugeBaseline checks all songs on a card against the level baseline in 5.8 and can set them to it. It has two functions, each in the mode <b>READ</b> (only shows) or <b>APPLY</b> (shows, then writes on the second START):</p>
+<p>DelugeBaseline checks all songs on a card against the level baseline in §5.8 and can set them to it. It has two functions, each in the mode <b>READ</b> (only shows) or <b>APPLY</b> (shows, then writes on the second START):</p>
 <table>
   <tr><th style="width:18%">Function</th><th>What APPLY changes</th></tr>
   <tr><td>LEVELS</td><td>Song volume above 35 to 35, master compressor off. Kits and audio tracks above 35 to 35. Synths and kit rows down far enough that they act at most like 40 with a fully driven sample. Automation keeps its shape. Saturation, the tracks' compressors, analog delay and filters stay: that is sound, not level.</td></tr>
@@ -99,7 +99,7 @@
 
 <h3 id="tools-cpu">8.5 The CPU monitor page</h3>
 <ol>
-  <li>Connect the Deluge by USB and switch the CPU monitor on (3.4).</li>
+  <li>Connect the Deluge by USB and switch the CPU monitor on (§3.4).</li>
   <li>Open <code>tools/cpu_monitor.html</code> in Chrome or Edge; dragging the file into the window is enough. Click <b>Connect</b> and allow MIDI with SysEx.</li>
   <li>Leave the input on "All inputs" or choose the Deluge's port 3. Tiles and a graph of the last 5 minutes run live.</li>
   <li><b>Export CSV</b> saves every second received: one line per second, semicolon as separator.</li>

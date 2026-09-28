@@ -57,7 +57,7 @@
 <p><b>What it means:</b></p>
 <ul>
   <li><b>About 20–25% less DSP work per sample,</b> the same in all three songs.</li>
-  <li><b>At moderate load the audio routine's time can roughly halve</b> (the Sitar song: −44 to −54%). 1.2.1 computed in tiny blocks with a fixed overhead per track (3.2). Near full load this advantage disappears: both then use nearly all the time and differ only in how often they lower the quality and cut voices.</li>
+  <li><b>At moderate load the audio routine's time can roughly halve</b> (the Sitar song: −44 to −54%). 1.2.1 computed in tiny blocks with a fixed overhead per track (§3.2). Near full load this advantage disappears: both then use nearly all the time and differ only in how often they lower the quality and cut voices.</li>
   <li><b>More voices before cutting:</b> 32 instead of 20.4 on average in the full-load song. Part of it comes from the lighter DSP, part from the gentler culling taken over from the current community firmware.</li>
   <li><b>"Half the load" is not right as a general claim.</b> It holds only at moderate load.</li>
 </ul>
@@ -71,7 +71,7 @@
   <tr><td>Gentler culling</td><td>v4</td><td>As in the current community firmware: less often, fewer voices, and half of them faded out instead of cut.</td></tr>
   <tr><td>No needless cuts while streaming</td><td>v17</td><td>Culling and quality reduction judge the audio routine's own CPU time, no longer the loading task including the wait for the card.</td></tr>
   <tr><td>Faster DSP</td><td>v3, v13</td><td>Resampled sample voices about 40% cheaper; faster filters, oscillators and track effects. All bit-identical.</td></tr>
-  <tr><td>L2 cache</td><td>v17</td><td>For code and data, in the main file (1.5).</td></tr>
+  <tr><td>L2 cache</td><td>v17</td><td>For code and data, in the main file (§1.5).</td></tr>
 </table>
 <div class="box warn"><b>The price of the minimum window.</b> Under light load, notes you play live start with the next block, on average about 0.5 ms later. The reserve against dropouts is smaller: at least 63 samples (1.4 ms) in the emulator, with no dropout in any test.</div>
 
@@ -133,7 +133,7 @@
   <tr><td>Off</td><td>Nothing. Switched off, the monitor costs a single check per pass of the audio routine.</td></tr>
   <tr><td>On</td><td>The line, for example <code>CPU 39% 14V</code>, plus <code>QL</code> and <code>VC</code> while they happen.</td></tr>
   <tr><td>Alerts</td><td>Only <code>QL</code> and <code>VC</code>, and only while they happen.</td></tr>
-  <tr><td>Profile</td><td>The line as with On. In addition the Deluge sends measurements for the profiler to the computer (8.6). <span class="tag">v16</span></td></tr>
+  <tr><td>Profile</td><td>The line as with On. In addition the Deluge sends measurements for the profiler to the computer (§8.6). <span class="tag">v16</span></td></tr>
 </table>
 <ul>
   <li><b>The shortcut</b> switches between Off and the mode you used last (On or Alerts), in every view and also while playing. It confirms briefly, on the 7-segment display <code>C-ON</code>, <code>COFF</code> or <code>C-AL</code>.</li>
@@ -146,12 +146,12 @@
 <p><code>QL</code> means the audio routine is behind the output. The Deluge then saves on quality: simpler oscillator tables, linear instead of sinc interpolation. From about 80 samples behind it switches voices off: that is <code>VC</code>. What costs CPU:</p>
 <table>
   <tr><th style="width:27%">What</th><th>Cost and what you can do</th></tr>
-  <tr><td>Master tune away from 440 Hz</td><td>Every sample voice is resampled. Convert the library once with DelugeTuner (8.3).</td></tr>
+  <tr><td>Master tune away from 440 Hz</td><td>Every sample voice is resampled. Convert the library once with DelugeTuner (§8.3).</td></tr>
   <tr><td>Drone</td><td>A binaural tone 0.6%, with Life, FM and Pulse together 2.1%; 16 such tones a good 30%. The drone is not culled like synth voices, so use many living tones with an eye on the monitor (chapter 9).</td></tr>
   <tr><td>Drone tracks</td><td>0.3–0.45% per sounding row. Rows with a closed gate cost nothing.</td></tr>
   <tr><td>Song reverb</td><td>Computed once for the whole song. Digital needs about a third more than Mutable.</td></tr>
   <tr><td>Delay</td><td>Since v14 about 0.8% more per delay at rest and 1.1% more during a time change. A modulated time costs more, because the delay then resamples.</td></tr>
-  <tr><td>Drive LPF</td><td>Oversampled only high up with resonance (5.4). Under load the oversampling switches off.</td></tr>
+  <tr><td>Drive LPF</td><td>Oversampled only high up with resonance (§5.4). Under load the oversampling switches off.</td></tr>
   <tr><td>EQ</td><td>Since v18 twice as much as before with both bands in use.</td></tr>
 </table>
 <p class="small">The percentages are estimates from the emulator at 1 instruction per clock cycle. They are good for comparisons, not exact for the device.</p>

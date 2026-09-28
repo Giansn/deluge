@@ -8,12 +8,12 @@
   <tr><td>Kit arpeggiator</td><td>Kit with <span class="key">AFFECT ENTIRE</span> pressed → menu → Kit arpeggiator</td><td>Plays a kit's rows like the notes of a chord (Up, Down, Random, Walk, Pattern …). Switch it off per row with "Include in kit arp".</td></tr>
   <tr><td>Arp for MIDI and gate rows</td><td>Select the row → menu</td><td>Its own arpeggiator and randomizer, with the shortcut column 11 as on MIDI tracks. Before, there was only a warning LED.</td></tr>
   <tr><td>Preset, with Walk</td><td>Arpeggiator → Preset</td><td>Now also in the list, not only on the pad.</td></tr>
-  <tr><td>Latch <span class="tag">new</span></td><td>Arpeggiator → Latch</td><td>The arp keeps playing after you let go (6.2).</td></tr>
+  <tr><td>Latch <span class="tag">new</span></td><td>Arpeggiator → Latch</td><td>The arp keeps playing after you let go (§6.2).</td></tr>
   <tr><td>Step repeat</td><td>Arpeggiator → Step repeat</td><td>Each step is repeated 1–8 times.</td></tr>
   <tr><td>Note modes</td><td>Arpeggiator → Note mode</td><td>Walk 1–3: randomly one step forward or back. Pattern: a random but repeating order; select it again to roll a new one.</td></tr>
   <tr><td>Chord simulator</td><td>Kit row → Arpeggiator</td><td>A drum row plays a chord: 5th, sus2, minor, major, sus4, m7, 7, maj7.</td></tr>
-  <tr><td>Ratchets and bounce <span class="tag">new</span></td><td>Arpeggiator → Ratchet notes, Ratchet bounce, Bounce length, Bounce velocity</td><td>Ratchet hits that speed up or slow down like a bouncing ball, up to a ping-pong roll (6.3).</td></tr>
-  <tr><td>Randomizer</td><td>Its own menu right after Arpeggiator</td><td>Lock, spreads and probabilities (6.5).</td></tr>
+  <tr><td>Ratchets and bounce <span class="tag">new</span></td><td>Arpeggiator → Ratchet notes, Ratchet bounce, Bounce length, Bounce velocity</td><td>Ratchet hits that speed up or slow down like a bouncing ball, up to a ping-pong roll (§6.3).</td></tr>
+  <tr><td>Randomizer</td><td>Its own menu right after Arpeggiator</td><td>Lock, spreads and probabilities (§6.5).</td></tr>
   <tr><td>Automation</td><td>Automation view, <span class="key">SELECT</span> encoder</td><td>All new arp parameters of synths and kit rows; for the kit (Affect Entire) also those of the kit arp.</td></tr>
 </table>
 <p class="small">"new" marks what community firmware 1.3 doesn't have either.</p>
@@ -120,6 +120,6 @@
   <li><b>Stock 1.2.1</b> loads mastertune files but skips the new entries (kit arp, randomizer, latch, bounce) and loses them at the next save. Walk and Pattern become Up there.</li>
   <li><b>Automation view:</b> the internal parameter numbers now match those of 1.3. This only changes which parameter is preselected when you first open an old song in automation view. Values, automations, mod knob and MIDI learn assignments are saved by name and are not affected.</li>
   <li><b>Same start every time:</b> in 1.2.1 LFOs, mod FX and the arp started at a random point after loading. Now they always start the same way. <span class="tag">v13</span></li>
-  <li><b>deluge-editor</b> doesn't show the arp additions (8.7). Set them on the Deluge; they are kept in the file when the editor saves.</li>
+  <li><b>deluge-editor</b> doesn't show the arp additions (§8.7). Set them on the Deluge; they are kept in the file when the editor saves.</li>
 </ul>
 <p class="small">Not taken over from 1.3: the pad shortcuts in column 15 (velocity spread, Lock, Note probability), because 1.2.1 uses these pads for patching; and the MIDI Follow CCs for arp parameters, because they would have shifted existing assignments.</p>

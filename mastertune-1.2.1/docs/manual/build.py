@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Builds the mastertune manual, one PDF per language, from the chapter files in docs/manual/<lang>/.
 
-Usage: python3 docs/manual/build.py [en] [de] [--chrome PATH]
+Usage: python3 docs/manual/build.py [en] [de] [--chrome PATH] [--only 01-start,05-sound --out /tmp/check.pdf]
 - Joins style.css and the chapters (CHAPTERS, in this order; a missing one is skipped with a note) into
   docs/manual/build/<lang>.html and prints it to docs/mastertune-manual-<lang>.pdf with headless Chromium: A4, page
   numbers from style.css, the headings as PDF bookmarks.
 - Two passes: the table of contents in 00-cover.html has <span class="pg" data-for="ID"></span> placeholders. After
   the first pass, the page of every heading with that id comes from the PDF's bookmarks (PyMuPDF) and is filled in.
+- --only builds just the named chapters, --out writes the PDF (and its HTML next to it) elsewhere: for checking a few
+  chapters without touching the real PDF.
 Needs headless Chromium and, for the page numbers, PyMuPDF (pip install pymupdf).
 """
 import argparse
@@ -23,10 +25,10 @@ CHAPTERS = ["00-cover", "01-start", "02-master-tune", "03-load-cpu-monitor", "04
 TITLES = {"en": "mastertune – Manual", "de": "mastertune – Handbuch"}
 
 
-def assemble(lang):
+def assemble(lang, only=None):
     css = open(os.path.join(HERE, "style.css"), encoding="utf-8").read()
     parts = []
-    for name in CHAPTERS:
+    for name in only or CHAPTERS:
         path = os.path.join(HERE, lang, name + ".html")
         if not os.path.exists(path):
             print(f"{lang}: {name}.html missing, skipped", file=sys.stderr)
@@ -71,12 +73,19 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("langs", nargs="*", default=["en", "de"])
     ap.add_argument("--chrome", default="/opt/pw-browsers/chromium-1194/chrome-linux/chrome")
+    ap.add_argument("--only", help="comma-separated chapter names, e.g. 01-start,05-sound")
+    ap.add_argument("--out", help="the PDF to write instead of docs/mastertune-manual-<lang>.pdf (one language only)")
     a = ap.parse_args()
+    if a.out and len(a.langs) != 1:
+        ap.error("--out needs exactly one language")
+    only = [c for c in a.only.split(",") if c] if a.only else None
+    if only and set(only) - set(CHAPTERS):
+        ap.error("unknown chapter: " + ", ".join(sorted(set(only) - set(CHAPTERS))))
     os.makedirs(os.path.join(HERE, "build"), exist_ok=True)
     for lang in a.langs:
-        src = os.path.join(HERE, "build", lang + ".html")
-        out = os.path.join(DOCS, f"mastertune-manual-{lang}.pdf")
-        text = assemble(lang)
+        out = os.path.abspath(a.out) if a.out else os.path.join(DOCS, f"mastertune-manual-{lang}.pdf")
+        src = os.path.splitext(out)[0] + ".html" if a.out else os.path.join(HERE, "build", lang + ".html")
+        text = assemble(lang, only)
         open(src, "w", encoding="utf-8").write(text)
         print_pdf(a.chrome, src, out)
         try:
