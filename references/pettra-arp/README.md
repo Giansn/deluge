@@ -9,6 +9,8 @@ Two 28-second excerpts (192 kbps MP3) of the arpeggiator passages, cut from the 
 
 ## Measured (from the mix, band-split analysis, approximate)
 
+**Superseded in part:** the 1/32 rate, the 25 % gate and the random order below come from a first analysis that assumed a 1/32 grid. Two later checks (`ANALYSIS.md`) find no continuous 1/32 or 1/16 stream but phrases with an accelerating figure. The preset built from them is `mastertune-1.2.1/presets/SYNTHS/PETTRA ARP.XML`.
+
 - Tempo 137.8 BPM.
 - Arp rate: 1/32 notes (54 ms per step, about 18 notes per second). No 1/16 or 1/8 pulse in the arp band, no 1/64 gating.
 - Gate: short. One sharp peak per step, level above half for about 25 % of the step. Snappy amp decay, no sustain.
@@ -18,6 +20,6 @@ Two 28-second excerpts (192 kbps MP3) of the arpeggiator passages, cut from the 
 - Timbre: mono, saw-type voice, harmonics dense to about 8 kHz. At 0:55 the spectrum is flat from 500 Hz to 4 kHz then rolls off (filter open). At 6:36 it is louder and tilted about 4 dB per octave darker (lower cutoff).
 - Under it: sustained saw pad and bass alternating A2 and G2 bar to bar, side-chained to the kick on quarter notes.
 
-## Deluge starting point
+## Deluge starting point (first analysis; use the preset PETTRA ARP instead)
 
 Synth: saw (or two saws slightly detuned, but keep it mono). Arp: rate 1/32, mode random, octaves 2, gate about 25 %. Env 1 (amp): attack 0, decay short, sustain 0. LPF around 4 kHz for the 0:55 sound, lower for 6:36. Play A-C#-E as the held chord for the first passage.

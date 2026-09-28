@@ -61,6 +61,11 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
    - **If it stops** (crash, power, full disk): the same command with `--resume` and the same folders. Finished files stay, half-done ones are redone.
    - Files whose peaks went over 0 dBFS are written as 32-bit float, as wanted. The Deluge still limits them to 0 dBFS when it plays them.
    - Then copy onto a second card, push `RETUNE_REPORT.txt` too, and repeat task 2 with the converted card.
+7. **PETTRA ARP onto the Deluge and by ear** (new on 28.09.2026; the synth for the arp of Pettra "You Are The Seeds", details in `presets/README.md`):
+   - Copy `presets/SYNTHS/PETTRA ARP.XML` (and, if not there yet, `PETTRA PINGPONG.XML` and `PINGPONG ROLL.XML`) into `SYNTHS` on the card: with a card reader, or over USB with DEx (https://dex.silicak.es, Chrome or Edge, upload into `SYNTHS`).
+   - On the Deluge: a new synth clip, load PETTRA ARP, tempo 138, Arpeggiator → Latch on, hold A4 C#5 E5. Let it run for 8 bars.
+   - Compare with `references/pettra-arp/Pettra_arp_0m48-1m16.mp3` at 0:55–0:58 and with `presets/demo/PETTRA ARP.wav` (the emulator's render). Does the figure (3 hits into the next step, faster each time) sound like the song's? Is the pluck too bright or too dark, the figure too frequent or too rare? Does it sound closer with whole chords (Randomizer → Chord Polyphony 3, Chord Probability 100 %)?
+   - Optionally record 8 bars with DelugeRec. Write a short report in English to `device/` and push it to `device-results`; no WAV needed.
 
 ### Done: "Rescue", the LPF has no effect (27.09.2026)
 

@@ -41,3 +41,16 @@ Two independent analyses (rhythm, pitch/sound) plus a cross-check of the core st
 - **Equally loud hits:** The bounce makes the late hits quieter; in the piece they're equally loud. Remedy: set the synth's patch cable velocity → level to 0.
 - **Limit of the 1.3 ratchets:** They choose the count at random from 2, 4 or 8. In the piece there are mostly 3 hits per eighth. With 4 an extra short hit comes about 25 ms before the beat.
 - **Exact without the arp:** Put the figure into the clip as notes (zoom in deep). At 0:57 the onsets lie 0, 99 and 163 ms after the start of the eighth.
+
+# Checked again (Claude, 2026-09-28), for the preset PETTRA ARP
+
+Both excerpts, kick grid from the kick's attack (±10 ms), constant-Q spectrograms and onset envelopes per band.
+
+- **No continuous arp stream, confirmed.** The autocorrelation of the onsets has its peaks at the beat (r ≈ 0.7, the kick) and the eighth (r up to 0.24, offbeat hat and bass). At 1/32 (54 ms) r ≤ 0.02, at 1/16 (109 ms) r ≤ 0.06, at 3/16 (327 ms) r ≤ 0.04. A continuous arp would stand out clearly in 1.2–5 kHz.
+- **Two kinds of hits:** tonal plucks (a harmonic stack, bright at the attack) at changing places, and thin clicks without pitch (percussion; dense around 6:39–6:41, a roll into the beat). Only the plucks belong to the arp.
+- **The figure, confirmed:** 0:57.18 (the offbeat), 0:57.29, 0:57.35, then the beat at 0:57.40: gaps 102, 67, 52 ms, i.e. ×0.66 and ×0.78.
+- **A slowing figure after the kick** at 0:56.52: hits +49, +119, +229 ms (gaps 49, 70, 110 ms). Seen once; fits the uncertain one above.
+- **Brightness after a pluck** (0:56.35–0:56.64, median of four): 1.5–4 kHz −3, −5, −7 dB and 4–9 kHz −8, −16, −19 dB at 20, 40, 60 ms. The top decays fast, then the pad and reverb hold a floor around −20 dB.
+- **Not separable from the mix:** single notes or chords per pluck, the note order between the figures.
+
+The preset `mastertune-1.2.1/presets/SYNTHS/PETTRA ARP.XML` is built from this (see `mastertune-1.2.1/presets/README.md`).
