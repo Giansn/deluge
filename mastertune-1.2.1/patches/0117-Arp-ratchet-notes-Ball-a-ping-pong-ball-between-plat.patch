@@ -1,24 +1,23 @@
-From 259320839027ffc405a2460bc8824bafcb54154a Mon Sep 17 00:00:00 2001
+From cb2a63755dbb22c2573bbcc45c51e6681caffeb9 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Mon, 28 Sep 2026 22:25:54 +0000
 Subject: [PATCH] Arp: ratchet notes Ball, a ping-pong ball between plates that
  close in and part again
 
-A roll over each half of the ratchet: the first half speeds up into its middle (each gap the one before times r,
-r from the ratchet bounce as for the roll), where the ball buzzes at 15 ms, the second half is the same backwards.
-With negative bounce the plates meet at both ends of the ratchet (on the step) and are furthest apart in its
-middle. Bounce velocity Rise makes the buzz the loudest. Measured in Pettra "You Are The Seeds" (its synth stem,
-separated with MDX-Net): the hits speed up from the beat to a buzz of about 15 ms and slow down again within the
-ratchet. Menu Arpeggiator > Ratchet notes: Auto, 2 ... 8, Roll, Ball; saved as ratchetNotes="254" (older firmware
-reads it as 8 notes).
+A roll over each half of the ratchet. The first half speeds up into its middle (each gap the one before times r, r
+from the ratchet bounce as for the roll), where the ball buzzes at 15 ms. The second half is a roll backwards with
+its own, faster ratio (1 - r_p = 1.5 (1 - r)): after the buzz the gaps grow faster than they shrank, so the ball
+ends slower than it started, as the arp figure in Pettra "You Are The Seeds" does. With negative bounce the plates
+meet at both ends of the ratchet (on the step) and are furthest apart in its middle. Menu Arpeggiator > Ratchet
+notes: Auto, 2 ... 8, Roll, Ball; saved as ratchetNotes="254" (older firmware reads it as 8 notes).
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
 ---
- .../gui/menu_item/arpeggiator/ratchet_notes.h | 13 +++--
- src/deluge/modulation/arpeggiator.cpp         | 48 ++++++++++++++++---
- src/deluge/modulation/arpeggiator.h           |  9 +++-
- 3 files changed, 60 insertions(+), 10 deletions(-)
+ .../gui/menu_item/arpeggiator/ratchet_notes.h | 13 ++-
+ src/deluge/modulation/arpeggiator.cpp         | 90 ++++++++++++++++---
+ src/deluge/modulation/arpeggiator.h           | 17 +++-
+ 3 files changed, 105 insertions(+), 15 deletions(-)
 
 diff --git a/src/deluge/gui/menu_item/arpeggiator/ratchet_notes.h b/src/deluge/gui/menu_item/arpeggiator/ratchet_notes.h
 index e570dee8..c1725c50 100644
@@ -62,7 +61,7 @@ index e570dee8..c1725c50 100644
  };
  } // namespace deluge::gui::menu_item::arpeggiator
 diff --git a/src/deluge/modulation/arpeggiator.cpp b/src/deluge/modulation/arpeggiator.cpp
-index 2eae24f6..f4fa2b1d 100644
+index 2eae24f6..25460c6e 100644
 --- a/src/deluge/modulation/arpeggiator.cpp
 +++ b/src/deluge/modulation/arpeggiator.cpp
 @@ -143,6 +143,7 @@ void ArpeggiatorBase::resetRatchet() {
@@ -93,13 +92,13 @@ index 2eae24f6..f4fa2b1d 100644
  	if (isRatchetRolling) {
  		isRatchetBouncing = false;
  		setupRatchetRoll(settings);
-@@ -731,15 +734,22 @@ uint8_t ArpeggiatorBase::getBounceVelocityScale(BounceVelocity mode, float gap,
+@@ -731,15 +734,23 @@ uint8_t ArpeggiatorBase::getBounceVelocityScale(BounceVelocity mode, float gap,
  // come closer than kRollMinGapSamples, they go on at that pace as a buzz (trrrr), until one such gap before S.
  // Negative bounce plays the same hits backwards in time (plates moving apart), bounce 0 is an even roll of 8 hits per
  // step (never closer than the buzz). With r from the bounce amount like the ratchet bounce: 0.95 (+1) ... 0.5 (+10)
 +// Ball (mastertune v18.4): the plates close in and part again within the ratchet. The first half is a roll into its
-+// middle, where the ball buzzes (15 ms), the second half the same roll backwards: faster and faster, the buzz, then
-+// slower and slower. With negative bounce the plates meet at both ends of the ratchet (on the step) and are furthest
++// middle, where the ball buzzes (15 ms), the second half a roll backwards with its own, faster ratio (kBallPartFactor):
++// faster and faster, the buzz, then slower and slower, ending slower than it started. With negative bounce the plates meet at both ends of the ratchet (on the step) and are furthest
 +// apart in its middle. The hits come from the roll of one half (rollSpan), see getRatchetNoteStart()
  void ArpeggiatorBase::setupRatchetRoll(ArpeggiatorSettings* settings) {
  	constexpr float kStep = (float)(1 << 24);
@@ -113,48 +112,98 @@ index 2eae24f6..f4fa2b1d 100644
  		increment = settings->getPhaseIncrement(0) >> 8;
  	}
 -	float minGap = (increment != 0) ? (float)increment * kRollMinGapSamples : kStep / 8;
-+	float minGap = (increment != 0) ? (float)increment * (rollBall ? kBallMinGapSamples : kRollMinGapSamples) : kStep / 8;
++	float minGapSamples = rollBall ? kBallMinGapSamples : kRollMinGapSamples;
++	float minGap = (increment != 0) ? (float)increment * minGapSamples : kStep / 8;
  	minGap = std::clamp(minGap, kStep / 256, span);
  
  	int32_t amount = std::clamp<int32_t>(settings->ratchetBounce, -kMaxRatchetBounce, kMaxRatchetBounce);
-@@ -772,6 +782,12 @@ void ArpeggiatorBase::setupRatchetRoll(ArpeggiatorSettings* settings) {
+@@ -772,19 +783,49 @@ void ArpeggiatorBase::setupRatchetRoll(ArpeggiatorSettings* settings) {
  		rollLongestGap = (geometric > 0) ? span * (1.0f - ratio) : minGap;
  		rollShortestGap = minGap;
  	}
 +	if (rollBall) {
-+		// Both halves: hits 0 ... h - 1 of the roll into the middle, the hit in the middle, then the other half
++		// The closing half: the roll into the middle, as above. The parting half: the same kind of roll with its own,
++		// faster ratio, backwards, so the ball ends slower than it started (kBallPartFactor)
 +		rollBallHalfHits = std::clamp<uint32_t>(hits, 1, kMaxRollHits / 2);
-+		ratchetNotesCount = 2 * rollBallHalfHits;
++		rollRatioPart = rollRatio;
++		rollGeometricHitsPart = rollGeometricHits;
++		uint32_t partHits = hits;
++		if (amount != 0) {
++			float ratio = std::max(0.3f, 1.0f - kBallPartFactor * (1.0f - rollRatio));
++			float gap = span * (1.0f - ratio);
++			float remaining = span;
++			uint32_t geometric = 0;
++			while (gap >= minGap && geometric < kMaxRollHits) {
++				gap *= ratio;
++				remaining *= ratio;
++				geometric++;
++			}
++			rollRatioPart = ratio;
++			rollGeometricHitsPart = geometric;
++			partHits = geometric + (uint32_t)(remaining / minGap);
++			rollLongestGap = (geometric > 0) ? span * (1.0f - ratio) : minGap; // the parting's first gap is the longest
++		}
++		rollBallPartHits = std::clamp<uint32_t>(partHits, 1, kMaxRollHits / 2);
++		ratchetNotesCount = rollBallHalfHits + rollBallPartHits;
 +		return;
 +	}
  	ratchetNotesCount = std::clamp<uint32_t>(hits, 1, kMaxRollHits);
  }
  
-@@ -796,6 +812,23 @@ uint32_t ArpeggiatorBase::getRatchetNoteStart(uint32_t index) {
+ // Where hit index of an accelerating roll starts, in positions from the start of the ratchet
+ float ArpeggiatorBase::getRollStartAccelerating(uint32_t index) {
+-	if (rollRatio >= 1.0f) {
++	return getRollStart(index, rollRatio, rollGeometricHits);
++}
++
++// The same for a roll with the given ratio and number of hits before its buzz (a ball's parting half has its own)
++float ArpeggiatorBase::getRollStart(uint32_t index, float ratio, uint32_t geometricHits) {
++	if (ratio >= 1.0f) {
+ 		return (float)index * rollEvenGap;
+ 	}
+-	if (index <= rollGeometricHits) {
+-		return rollSpan * (1.0f - std::pow(rollRatio, (float)index));
++	if (index <= geometricHits) {
++		return rollSpan * (1.0f - std::pow(ratio, (float)index));
+ 	}
+-	return rollSpan * (1.0f - std::pow(rollRatio, (float)rollGeometricHits))
+-	       + (float)(index - rollGeometricHits) * rollMinGap;
++	return rollSpan * (1.0f - std::pow(ratio, (float)geometricHits)) + (float)(index - geometricHits) * rollMinGap;
+ }
+ 
+ // Where the note at index of the current ratchet starts, in 1/2^24ths of a step from the start of the ratchet. Index
+@@ -796,6 +837,30 @@ uint32_t ArpeggiatorBase::getRatchetNoteStart(uint32_t index) {
  			return end;
  		}
  		float start;
 +		if (rollBall) {
-+			// rollSpan is half the ratchet; h hits per half. Closing in the middle: the roll into it, a hit right in
-+			// it, then the same hits mirrored about it. Meeting at the ends: the mirrored roll out of the start, then
-+			// the roll into the end
++			// rollSpan is half the ratchet. Closing in the middle: the roll into it (h hits), a hit right in it, then
++			// the parting roll (p hits) backwards. Meeting at the ends: the parting roll backwards out of the start,
++			// then the roll into the end
 +			uint32_t h = rollBallHalfHits;
++			uint32_t p = rollBallPartHits;
 +			if (!rollMirrored) {
-+				start = (index < h)    ? getRollStartAccelerating(index)
-+				        : (index == h) ? rollSpan
-+				                       : 2.0f * rollSpan - getRollStartAccelerating(2 * h - index);
++				if (index < h) {
++					start = getRollStartAccelerating(index);
++				}
++				else if (index == h) {
++					start = rollSpan;
++				}
++				else {
++					start = 2.0f * rollSpan - getRollStart(h + p - index, rollRatioPart, rollGeometricHitsPart);
++				}
 +			}
 +			else {
-+				start = (index == 0) ? 0.0f
-+				        : (index < h) ? rollSpan - getRollStartAccelerating(h - index)
-+				                      : rollSpan + getRollStartAccelerating(index - h);
++				start = (index == 0)  ? 0.0f
++				        : (index < p) ? rollSpan - getRollStart(p - index, rollRatioPart, rollGeometricHitsPart)
++				                      : rollSpan + getRollStartAccelerating(index - p);
 +			}
 +			return std::min((uint32_t)start, end);
 +		}
  		if (!rollMirrored) {
  			start = getRollStartAccelerating(index);
  		}
-@@ -1994,9 +2027,12 @@ bool ArpeggiatorSettings::readCommonTagsFromFile(Deserializer& reader, char cons
+@@ -1994,9 +2059,12 @@ bool ArpeggiatorSettings::readCommonTagsFromFile(Deserializer& reader, char cons
  	}
  	else if (!strcmp(tagName, "ratchetNotes")) {
  		int32_t notes = reader.readTagOrAttributeValueInt();
@@ -171,10 +220,10 @@ index 2eae24f6..f4fa2b1d 100644
  	else if (!strcmp(tagName, "lastLockedNoteProb")) {
  		lastLockedNoteProbabilityParameterValue = reader.readTagOrAttributeValueInt();
 diff --git a/src/deluge/modulation/arpeggiator.h b/src/deluge/modulation/arpeggiator.h
-index 77f6401b..5ec685a1 100644
+index 77f6401b..202bdca7 100644
 --- a/src/deluge/modulation/arpeggiator.h
 +++ b/src/deluge/modulation/arpeggiator.h
-@@ -44,10 +44,14 @@ constexpr int32_t kMaxRatchetBounce = 10;
+@@ -44,10 +44,18 @@ constexpr int32_t kMaxRatchetBounce = 10;
  constexpr uint32_t kMaxFixedRatchetNotes = 8;
  // ratchetNotes value for a roll: hits until the plates close (see ArpeggiatorBase::setupRatchetRoll())
  constexpr uint8_t kRatchetNotesRoll = 255;
@@ -184,12 +233,16 @@ index 77f6401b..5ec685a1 100644
  constexpr uint32_t kMaxBounceLength = 16;
  // A roll's buzz: its hits never come closer than this (16 ms), and it has at most this many
  constexpr float kRollMinGapSamples = 706.0f;
-+// A ball's buzz: 15 ms, as the one in Pettra "You Are The Seeds" (references/pettra-arp/METHODS.md)
++// A ball's buzz: 15 ms, a rattle rather than a tone. The shortest gaps of the arp in Pettra "You Are The Seeds" can't be
++// measured under its bass (references/pettra-arp/METHODS.md); 15 ms is the buzz that came closest by ear
 +constexpr float kBallMinGapSamples = 661.0f;
++// A ball's plates part faster than they close in: each parting gap grows by 1 / r_p with 1 - r_p = this times 1 - r,
++// so the ball ends slower than it started, as the figure in Pettra does
++constexpr float kBallPartFactor = 1.5f;
  constexpr uint32_t kMaxRollHits = 255;
  
  // How a bouncing ratchet's velocity follows its gaps (the numbers are what songs store, 0 and 1 as the old on/off)
-@@ -126,7 +130,8 @@ public:
+@@ -126,7 +134,8 @@ public:
  	uint8_t ratchetBounceLength{1};
  
  	// Number of notes in a ratchet: 0 = random like 1.3 (2, 4 or 8, weighted by the ratchet amount), 2 ... 8 = always
@@ -199,12 +252,23 @@ index 77f6401b..5ec685a1 100644
  	uint8_t ratchetNotes{0};
  
  	// MPE settings
-@@ -380,6 +385,8 @@ protected:
+@@ -303,6 +312,7 @@ protected:
+ 	void setupRatchetBounce(ArpeggiatorSettings* settings);
+ 	void setupRatchetRoll(ArpeggiatorSettings* settings);
+ 	float getRollStartAccelerating(uint32_t index);
++	float getRollStart(uint32_t index, float ratio, uint32_t geometricHits);
+ 	void advanceRatchetSpanStep(ArpeggiatorSettings* settings);
+ 	bool evaluateRhythm(uint32_t rhythm, bool isRatchet);
+ 	bool evaluateNoteProbability(bool isRatchet);
+@@ -380,6 +390,11 @@ protected:
  	// Roll state (ratchet notes = Roll): the hits are computed from these as they come, not stored
  	bool isRatchetRolling = false;
  	bool rollMirrored = false;      // negative bounce: the hits of the positive one, backwards in time
 +	bool rollBall = false;          // Ball: a roll over each half, the second backwards (rollSpan is then a half)
-+	uint32_t rollBallHalfHits = 0;  // Ball: the hits of one half
++	uint32_t rollBallHalfHits = 0;  // Ball: the hits of the closing half
++	uint32_t rollBallPartHits = 0;  // Ball: the hits of the parting half
++	float rollRatioPart = 1.0f;     // Ball: the parting half's ratio (see kBallPartFactor)
++	uint32_t rollGeometricHitsPart = 0;
  	float rollRatio = 1.0f;         // each gap is the one before times this; 1 = an even roll
  	float rollSpan = 0.0f;          // the whole ratchet, in 1/2^24ths of a step
  	float rollMinGap = 0.0f;        // the buzz: no gap shorter than this

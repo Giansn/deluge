@@ -5,7 +5,8 @@ emulator, compared.
 The tracker: spectral flux of a short STFT (512 samples, 11.6 ms, hop 64 = 1.45 ms) over 1.5-10 kHz, rises only,
 against the frame 2 back, minus its running median; peaks at least 11 ms apart (above the 9 ms period of a 110 Hz
 bass, whose waveform edges would otherwise count). A steady tone is a steady spectrum and gives no flux; only new
-energy does.
+energy does. But the window is shorter than a lower bass's period, so its edges still count: the D2 and C#2 bass at
+6:39 (13.7 and 14.5 ms) is what this tracker shows as a buzz on the song (METHODS.md, "Reading the samples")
 
 For each file: the gaps between onsets (11-300 ms), their share in the buzz (12-18 ms), the geometric ladder they bunch
 on (the Rayleigh test of analyse.py) and the Jensen-Shannon distance of the log-gap histogram to the song's.

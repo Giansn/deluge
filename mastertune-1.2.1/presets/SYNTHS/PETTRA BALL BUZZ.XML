@@ -121,7 +121,7 @@
 		randomizerLock="0"
 		latch="0"
 		ratchetBounce="3"
-		ratchetBounceFade="2"
+		ratchetBounceFade="0"
 		ratchetBounceLength="2"
 		ratchetNotes="254"
 		kitArp="1"

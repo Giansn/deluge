@@ -22,6 +22,7 @@ SR = 44100
 STEP_8TH = SR * 60 // 120 // 2  # 11025 samples at 120 BPM
 MIN_GAP = 706  # kRollMinGapSamples
 BALL_MIN_GAP = 661  # kBallMinGapSamples (15 ms)
+BALL_PART_FACTOR = 1.5  # kBallPartFactor
 
 CASES = {
     # name: arp attributes, sound params, bars to record
@@ -111,14 +112,15 @@ def expected_roll(span, ratio, mirrored, even_gap=None, min_gap=MIN_GAP):
 
 
 def expected_ball(span, ratio, mirrored):
-    """The roll over each half: into the middle, a hit in it, the same backwards; mirrored: out of the start, into
-    the end (ArpeggiatorBase::getRatchetNoteStart)"""
+    """The roll over each half: into the middle, a hit in it, the parting roll (its own, faster ratio) backwards;
+    mirrored: the parting roll backwards out of the start, the roll into the end (ArpeggiatorBase::getRatchetNoteStart)"""
     half = span / 2
     acc = expected_roll(half, ratio, False, min_gap=BALL_MIN_GAP)
-    h = len(acc)
+    part = expected_roll(half, max(0.3, 1 - BALL_PART_FACTOR * (1 - ratio)), False, min_gap=BALL_MIN_GAP)
+    h, p = len(acc), len(part)
     if not mirrored:
-        return acc + [half] + [span - acc[2 * h - i] for i in range(h + 1, 2 * h)]
-    return [0.0] + [half - acc[h - i] for i in range(1, h)] + [half + acc[i - h] for i in range(h, 2 * h)]
+        return acc + [half] + [span - part[h + p - i] for i in range(h + 1, h + p)]
+    return [0.0] + [half - part[p - i] for i in range(1, p)] + [half + acc[i - p] for i in range(p, p + h)]
 
 
 def expected_finite(n, amount, span):

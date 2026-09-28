@@ -46,25 +46,32 @@ The question: in the finished mix of Pettra "You Are The Seeds", how does the br
 
 - **The model:** MDX-Net from KUIELab (Music Demixing Challenge 2021), its "other" model as the UVR project ships it (`kuielab_a_other.onnx`, 30 MB, on GitHub). A U-Net takes the complex stereo spectrogram as 4 channels (left and right, real and imaginary: [1, 4, 2048 bins, 512 frames]) and returns the target's spectrogram directly.
 - **The code around it** follows KUIELab's `ConvTDFNet.stft()/istft()` and `demix()`: n_fft 8192, hop 1024, the first 2048 bins (up to 11 kHz), chunks of 512 frames with n_fft/2 of trim on both sides, the output times 1.035. It runs with onnxruntime on the CPU, no PyTorch: 16 s for both excerpts.
-- **Result:** a synth stem without kick, hats and bass, about 20 dB below the mix (the kick and bass carry most of the energy). The plucks and their fast runs show clearly, which the kick hid in the mix.
+- **Result:** a synth stem without kick and hats, about 20 dB below the mix (the kick and bass carry most of the energy). The bass's fundamental goes to the bass stem, but its partials above ~200 Hz stay (see "Reading the samples").
 
-**On the stem**, the fast runs are visible:
-- 6:39.57 in the song: from the beat the hits speed up (32, 25, 22 ms), then buzz at **15 ms** for about 17 hits, then slow down again (23, 33 ms), all within one beat.
-- **22 %** of all gaps between onsets on the stem lie in the buzz (12–18 ms).
-- A pitfall: a low saw (the 110 Hz bass, 9 ms period; the pad's E3, 6 ms) has one sharp edge per period, and a high-band envelope tracker counts each edge as a hit. The tracker in `compare.py` uses the spectral flux of a short STFT instead (a steady tone is a steady spectrum) with peaks at least 11 ms apart.
+**On the stem** the plucks and their figures show clearly, which the kick hid in the mix. What looked like fast runs on it, though, is mostly the bass (next section): a tracker on the stem counted gaps of 12–18 ms (22 % of all) and, at 6:39.57, a "buzz at 15 ms" of about 17 hits.
+
+## Reading the samples (`samples.py`): the fast hits are the bass
+
+Instead of a spectrogram, the samples themselves: a 3 kHz high-pass, the peak per 0.5 ms, and an attack wherever it rises 8 dB over the 3 ms before.
+- **What it finds:** at 6:39.4–6:39.7 hits every **13.7 ms** before the beat, with a second train that drifts from 8.4 to 7.7 ms behind the first; from the beat on every **7.2 ms** for 100 ms, then 7.7, 8.5, 10.8 ms. It looks like a buzz of the arp.
+- **The partials say otherwise:** at 200–2000 Hz the stem's strongest peaks sit on one harmonic series (h3 … h19, within 1–2 %): **73.1 Hz (D2)** before the beat, **69.1 Hz (C#2)** from the beat on. In the early excerpt (0:56) it is **109.3 Hz (A2)**, where the hits come every 9.1 ms.
+- **The periods match:** D2 13.7 ms, C#2 14.5 ms (7.2 ms: two edges per period), A2 9.1 ms. The drifting second train is a second, detuned oscillator. So these "hits" are the waveform edges of a bright, detuned saw bass. MDX-Net moves its fundamental to the bass stem, but its partials above ~200 Hz stay in "other", and every edge rises like an attack.
+- **The trackers count them too:** the one in `compare.py` (an 11.6 ms STFT, peaks at least 11 ms apart) is shorter than these periods. Its "buzz at 15 ms" at 6:39.57 and the song's 22 % below are the bass.
+- **Removing the edges** doesn't work well enough:
+  - An RMS over 2.3 ms with a morphological opening over 3.5 ms (min filter, then max filter) keeps a pluck that rings for tens of ms and drops a lone spike. On a render it finds the known gaps; on the song, where the bass is bright, its edges survive (trains of 9 and 13.5–16 ms again).
+  - Separating by pitch needs a window of several bass periods (30–45 ms), and that merges gaps shorter than about 20–25 ms.
+- **So:** in this mix the arp's gaps under about 25 ms can't be measured with these methods. What holds:
+  - the ladder of ×0.67 for 25–180 ms (method 3, whose 46 ms window sees the bass as a steady spectrum);
+  - the figures in `ANALYSIS.md`.
+- The buzz of PETTRA BALL (15 ms) is therefore set by ear. So is its shape: the hits at the start and the end as clear as the buzz, and an end slower than the start.
 
 ## Analysis by synthesis (`compare.py`)
 
-The same tracker on the stem and on renders of the real firmware in the emulator:
+The same tracker on the stem and on renders of the real firmware in the emulator. It was meant to compare the share of gaps in a buzz (12–18 ms):
+- the song 22 %;
+- `PETTRA ARP.wav` 9 %, `PETTRA PINGPONG BALL B.wav` 8 %, the first `PETTRA BALL.wav` 29 %.
 
-| | Buzz (12–18 ms) |
-|---|---:|
-| Song (synth stem) | 22 % |
-| `PETTRA ARP.wav` (1/8 with a 3-hit figure now and then) | 9 % |
-| `PETTRA PINGPONG BALL B.wav` (x0.67 down to 40 ms, then a jump) | 8 % |
-| `PETTRA BALL.wav` (the arp mode Ball, v18.4) | 29 % |
-
-The earlier versions stopped at 40 ms and never buzzed; that is what was missing by ear ("even faster, the gap even smaller"). The arp mode Ball (firmware v18.4, `mastertune-1.2.1/presets/README.md`) goes down to the 15 ms buzz. The histogram distance (Jensen–Shannon) is no good measure here: a render sits on exact rungs, the song spreads.
+The song's share is its bass, though (see above), and the renders have no bass, so the numbers say nothing about the arp. The histogram distance (Jensen–Shannon) is no good measure either: a render sits on exact rungs, the song spreads.
 
 ## Other methods (web research, 2026-09-28)
 
