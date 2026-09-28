@@ -1,5 +1,5 @@
-# Arbeitsweise in diesem Repo
+# How we work in this repo
 
-- **Agenten- und Workflow-Arbeit kompakt halten.** Wenige Agenten, klare Wortlimits im Prompt (Ergebnis höchstens ~300 Wörter), wenige Tool-Aufrufe, keine Essays und keine Vollabdeckung ohne ausdrücklichen Auftrag. Verifikation: höchstens ein Gegenprüfer pro Befund. Der Cloud-Container hat 4 CPUs, also laufen nur 2 Agenten gleichzeitig. Jeder zusätzliche Agent verlängert die Wartezeit.
-- **Rollen:** Die Cloud-Session entwickelt: Firmware-Code, Builds, Emulator-Tests, Releases. Eine lokale Session am Rechner mit dem Deluge macht nur Gerätetests und Live-Ansicht (`mastertune-1.2.1/GERAET.md`) und ändert keinen Firmware-Code.
-- **Antworten an den Nutzer:** kurz und prägnant, auf Deutsch mit Schweizer Rechtschreibung (ss statt ß). Wichtige Details und das Gesamtbild nicht weglassen und begründen.
+- **Keep agent and workflow work compact.** Few agents, clear word limits in the prompt (result at most ~300 words), few tool calls, no essays and no full coverage unless explicitly asked. Verification: at most one checker per finding. The cloud container has 4 CPUs, so only 2 agents run at the same time. Every extra agent makes the wait longer.
+- **Roles:** The cloud session develops: firmware code, builds, emulator tests, releases. A local session at the computer with the Deluge only does device tests and live views (`mastertune-1.2.1/DEVICE.md`) and changes no firmware code.
+- **Language:** Everything in the repository is in English: docs, reports, code comments, commit messages. Answers to the user in the chat: short and precise, in German with Swiss spelling (ss instead of ß). Don't leave out important details or the big picture, and give reasons.

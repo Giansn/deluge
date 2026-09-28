@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de-CH">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -51,47 +51,47 @@ details p { margin: 6px 0; }
 <body>
 <main>
 <h1>Deluge Profiler</h1>
-<p class="lead">Wofür der Deluge seine Rechenzeit braucht, gemessen auf dem Gerät. Für die Messversion mastertune-v15-prof: Settings → CPU monitor → Profile, Deluge per USB verbinden, die Symbol-Datei derselben Firmware laden. Braucht Chrome oder Edge (Web MIDI mit SysEx).</p>
+<p class="lead">What the Deluge spends its computing time on, measured on the device. For the measurement version mastertune-v15-prof and later: Settings → CPU monitor → Profile, connect the Deluge by USB, load the symbol file of the same firmware. Needs Chrome or Edge (Web MIDI with SysEx).</p>
 
 <div class="bar">
-	<button id="connect">Verbinden</button>
-	<select id="input" disabled><option value="">Alle Eingänge</option></select>
-	<label class="file">Symbole laden (.json)<input type="file" id="symbols" accept=".json"></label>
+	<button id="connect">Connect</button>
+	<select id="input" disabled><option value="">All inputs</option></select>
+	<label class="file">Load symbols (.json)<input type="file" id="symbols" accept=".json"></label>
 	<button id="pause" disabled>Pause</button>
-	<button id="clear" disabled>Zurücksetzen</button>
-	<button id="save" disabled>Aufnahme speichern</button>
-	<button id="csv" disabled>CSV exportieren</button>
-	<span id="status">Nicht verbunden</span>
+	<button id="clear" disabled>Reset</button>
+	<button id="save" disabled>Save recording</button>
+	<button id="csv" disabled>Export CSV</button>
+	<span id="status">Not connected</span>
 </div>
 
 <div class="tiles">
-	<div class="tile"><div class="k">Gemessen</div><div class="v" id="time">–</div><div class="s" id="time-s"></div></div>
-	<div class="tile"><div class="k">Audio-Routine</div><div class="v" id="audio">–</div><div class="s">Anteil der Zeit</div></div>
-	<div class="tile"><div class="k">In den Spuren</div><div class="v" id="outputs">–</div><div class="s">Rechenzeit aller Spuren</div></div>
-	<div class="tile" id="t-lost"><div class="k">Verloren</div><div class="v" id="lost">0</div><div class="s" id="lost-s"></div></div>
-	<div class="tile"><div class="k">Symbole</div><div class="v" id="syms">–</div><div class="s" id="syms-s">noch keine geladen</div></div>
+	<div class="tile"><div class="k">Measured</div><div class="v" id="time">–</div><div class="s" id="time-s"></div></div>
+	<div class="tile"><div class="k">Audio routine</div><div class="v" id="audio">–</div><div class="s">share of the time</div></div>
+	<div class="tile"><div class="k">In the tracks</div><div class="v" id="outputs">–</div><div class="s">computing time of all tracks</div></div>
+	<div class="tile" id="t-lost"><div class="k">Lost</div><div class="v" id="lost">0</div><div class="s" id="lost-s"></div></div>
+	<div class="tile"><div class="k">Symbols</div><div class="v" id="syms">–</div><div class="s" id="syms-s">none loaded yet</div></div>
 </div>
 
 <div class="cols">
 	<div>
-		<h2>Nach Spur</h2>
-		<div class="table"><table><thead><tr><th>Anteil</th><th>Spur</th></tr></thead><tbody id="by-output"></tbody></table></div>
-		<h2>Nach Task</h2>
-		<div class="table"><table><thead><tr><th>Anteil</th><th>Task</th></tr></thead><tbody id="by-task"></tbody></table></div>
+		<h2>By track</h2>
+		<div class="table"><table><thead><tr><th>Share</th><th>Track</th></tr></thead><tbody id="by-output"></tbody></table></div>
+		<h2>By task</h2>
+		<div class="table"><table><thead><tr><th>Share</th><th>Task</th></tr></thead><tbody id="by-task"></tbody></table></div>
 	</div>
 	<div>
-		<h2>Nach Funktion</h2>
-		<div class="table"><table><thead><tr><th>Anteil</th><th>Funktion</th></tr></thead><tbody id="by-function"></tbody></table></div>
+		<h2>By function</h2>
+		<div class="table"><table><thead><tr><th>Share</th><th>Function</th></tr></thead><tbody id="by-function"></tbody></table></div>
 	</div>
 </div>
 
 <details>
-	<summary>Was die Zahlen bedeuten</summary>
-	<p><b>Stichproben:</b> 1000-mal pro Sekunde schaut der Deluge nach, an welcher Stelle im Code er gerade steht. Der Anteil einer Funktion an den Stichproben ist ihr Anteil an der Rechenzeit.</p>
-	<p><b>Nach Spur:</b> Die Rechenzeit jeder Spur, auf dem Gerät genau gemessen, als Anteil der Zeit. Das zeigt, welche Spur wie viel kostet, auch wenn sie gerade still ist.</p>
-	<p><b>Song::renderAudio:</b> Während eine Spur rechnet, sind die Interrupts gesperrt. Die Stichproben dieser Zeit landen gesammelt in Song::renderAudio. Welche Spur es war, steht unter «Nach Spur». Welche Funktionen darin arbeiten, zeigt das Profil im Emulator (tests/song).</p>
-	<p><b>Audio-Routine:</b> Anteil der Zeit in AudioEngine::routine. Im Stillstand füllt sie die freie Zeit mit sehr kleinen Blöcken. Das ist Beschäftigung, keine Überlast.</p>
-	<p><b>Verloren:</b> Stichproben, die nicht zum Computer kamen (USB zu voll). Ein paar schaden nicht.</p>
+	<summary>What the numbers mean</summary>
+	<p><b>Samples:</b> 1000 times a second the Deluge looks where in the code it is. A function's share of the samples is its share of the computing time.</p>
+	<p><b>By track:</b> the computing time of every track, measured exactly on the device, as a share of the time. It shows which track costs how much, even when it is silent.</p>
+	<p><b>Song::renderAudio:</b> While a track computes, the interrupts are disabled. The samples of that time land collected in Song::renderAudio. Which track it was is under "By track". Which functions work inside it shows the profile in the emulator (tests/song).</p>
+	<p><b>Audio routine:</b> share of the time in AudioEngine::routine. When idle it fills the free time with very small blocks. That is busy waiting, not overload.</p>
+	<p><b>Lost:</b> samples that didn't reach the computer (USB too full). A few do no harm.</p>
 </details>
 </main>
 
@@ -166,7 +166,7 @@ const $ = (id) => document.getElementById(id);
 const NO_TASK = 31, NO_OUTPUT = 255, SAMPLE_RATE = 1000;
 let access = null;
 let paused = false;
-let recording = [];   // Raw messages, for "Aufnahme speichern" (deluge_profiler.py report reads it)
+let recording = [];   // Raw messages, for "Save recording" (deluge_profiler.py report reads it)
 let functions = [];   // [start, size, name] sorted by start
 let starts = [];
 let byAddress = new Map(); // address -> weight, named when drawing (symbols may come later)
@@ -240,7 +240,7 @@ function onMessage(event) {
 	for (const id of ["pause", "clear", "save", "csv"]) {
 		$(id).disabled = false;
 	}
-	$("status").textContent = "Daten kommen";
+	$("status").textContent = "Data coming in";
 }
 
 function rowsHtml(entries, whole, meterClass) {
@@ -270,7 +270,7 @@ function draw() {
 	}
 	dirty = false;
 	$("time").textContent = (total / SAMPLE_RATE).toFixed(1) + " s";
-	$("time-s").textContent = total + " Stichproben";
+	$("time-s").textContent = total + " samples";
 	$("audio").textContent = total ? (100 * audio / total).toFixed(1) + " %" : "–";
 	let outputSum = 0;
 	for (const t of outputTicks.values()) {
@@ -278,7 +278,7 @@ function draw() {
 	}
 	$("outputs").textContent = windowTicks ? (100 * outputSum / windowTicks).toFixed(1) + " %" : "–";
 	$("lost").textContent = String(dropped);
-	$("lost-s").textContent = lostMessages ? lostMessages + " Meldungen verloren" : "Stichproben";
+	$("lost-s").textContent = lostMessages ? lostMessages + " messages lost" : "samples";
 	$("t-lost").classList.toggle("warn", dropped > total / 100);
 	if (total) {
 		$("by-task").innerHTML = rowsHtml([...byTask.entries()].sort((a, b) => b[1] - a[1])
@@ -287,7 +287,7 @@ function draw() {
 	}
 	if (windowTicks) {
 		$("by-output").innerHTML = rowsHtml([...outputTicks.entries()].sort((a, b) => b[1] - a[1]).slice(0, 60)
-			.map(([o, t]) => [outputNames[o] || "Spur " + (o + 1), t]), windowTicks, "o");
+			.map(([o, t]) => [outputNames[o] || "Track " + (o + 1), t]), windowTicks, "o");
 	}
 }
 setInterval(draw, 500);
@@ -305,7 +305,7 @@ function listen() {
 function fillInputs() {
 	const select = $("input");
 	const chosen = select.value;
-	select.innerHTML = "<option value=\"\">Alle Eingänge</option>";
+	select.innerHTML = "<option value=\"\">All inputs</option>";
 	access.inputs.forEach((input) => {
 		const o = document.createElement("option");
 		o.value = input.id;
@@ -315,20 +315,20 @@ function fillInputs() {
 	select.value = [...select.options].some((o) => o.value === chosen) ? chosen : "";
 	select.disabled = false;
 	if (!total) {
-		$("status").textContent = access.inputs.size ? "Warte auf Daten (CPU monitor auf Profile?)" : "Keine MIDI-Eingänge gefunden";
+		$("status").textContent = access.inputs.size ? "Waiting for data (CPU monitor on Profile?)" : "No MIDI inputs found";
 	}
 	listen();
 }
 
 $("connect").addEventListener("click", async () => {
 	if (!navigator.requestMIDIAccess) {
-		$("status").textContent = "Dieser Browser kann kein Web MIDI. Bitte Chrome oder Edge verwenden.";
+		$("status").textContent = "This browser has no Web MIDI. Please use Chrome or Edge.";
 		return;
 	}
 	try {
 		access = await navigator.requestMIDIAccess({ sysex: true });
 	} catch (err) {
-		$("status").textContent = "Kein Zugriff auf MIDI mit SysEx: " + err.message;
+		$("status").textContent = "No access to MIDI with SysEx: " + err.message;
 		return;
 	}
 	$("connect").disabled = true;
@@ -352,13 +352,13 @@ $("symbols").addEventListener("change", async (e) => {
 		dirty = true;
 		draw();
 	} catch (err) {
-		$("syms-s").textContent = "Datei unlesbar: " + err.message;
+		$("syms-s").textContent = "File unreadable: " + err.message;
 	}
 });
 
 $("pause").addEventListener("click", () => {
 	paused = !paused;
-	$("pause").textContent = paused ? "Weiter" : "Pause";
+	$("pause").textContent = paused ? "Continue" : "Pause";
 });
 
 $("clear").addEventListener("click", () => {
@@ -398,7 +398,7 @@ $("csv").addEventListener("click", () => {
 		lines.push("task;\"" + taskName(t) + "\";" + (100 * n / total).toFixed(2));
 	}
 	for (const [o, t] of [...outputTicks.entries()].sort((a, b) => b[1] - a[1])) {
-		lines.push("output;\"" + (outputNames[o] || "Spur " + (o + 1)).replace(/"/g, "\"\"") + "\";"
+		lines.push("output;\"" + (outputNames[o] || "Track " + (o + 1)).replace(/"/g, "\"\"") + "\";"
 			+ (100 * t / Math.max(windowTicks, 1)).toFixed(2));
 	}
 	for (const [name, n] of byFunction()) {

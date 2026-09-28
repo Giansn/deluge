@@ -1,72 +1,72 @@
-# L2-Cache: die Testversion für Code (l2i)
+# L2 cache: the test version for code (l2i)
 
-**Ab v17 ist die Version mit L2 für Code und Daten (l2d) die Hauptdatei** im Hauptordner (`deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin`), weil sie sich mit v16 am Gerät bewährt hat: «New Sitar Grii 10» hörbar besser, kein Absturz. Hier bleibt die Zwischenstufe **l2i**: v17 mit L2 nur für Code, sonst unverändert, auch mit dem Profiler (Settings → CPU monitor → Profile, siehe `prof/README.md`). Die passende `.symbols.json` liegt neben jeder Datei. Sie sind zum Messen und Testen gedacht, nicht für Auftritte, solange sie nicht länger auf dem Gerät geprüft sind.
+**From v17 on, the version with L2 for code and data (l2d) is the main file** in the main folder (`deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin`), because it proved itself with v16 on the device: "New Sitar Grii 10" audibly better, no crash. What stays here is the intermediate stage **l2i**: v17 with L2 for code only, otherwise unchanged, also with the profiler (Settings → CPU monitor → Profile, see `prof/README.md`). The matching `.symbols.json` lies next to every file. They are meant for measuring and testing, not for gigs, as long as they aren't checked longer on the device.
 
-**Erste Messung am Gerät (mit v14):** Der CPU-Monitor zeigte ohne L2 97 %, 13 Stimmen, Qualität gesenkt und abgeschnittene Stimmen. Mit L2 waren es ebenfalls 97 % und Qualität gesenkt, aber **keine abgeschnittenen Stimmen** mehr. Einmal stürzte das Gerät kurz nach dem Einschalten des CPU-Monitors ab. Die Ursache ist offen. Wenn es wieder passiert, bitte Version (l2i oder l2d) und Anzeige notieren: eingefroren, Neustart oder eine Meldung wie «E…».
+**First measurement on the device (with v14):** Without L2 the CPU monitor showed 97%, 13 voices, quality lowered and voices cut. With L2 it was also 97% and quality lowered, but **no voices cut** any more. Once the device crashed shortly after the CPU monitor was switched on. The cause is open. If it happens again, please note the version (l2i or l2d) and the display: frozen, restart or a message like "E…".
 
-| Datei | Was | Risiko |
+| File | What | Risk |
 |---|---|---|
-| `deluge-1.2.1-mastertune-v17-l2i-e476310e.bin` | L2 **nur für Code**. Stand der Community von 12/2024, dort seither in Nightly und Beta. | gering |
-| `../deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin` (Hauptordner) | L2 **für Code und Daten**, mit Prefetch. Stand der Community von 04/2026 mit den Korrekturen danach. | mittel, mit v16 am Gerät ohne Absturz |
+| `deluge-1.2.1-mastertune-v17-l2i-e476310e.bin` | L2 **for code only**. The community's state of 12/2024, there since in nightly and beta. | low |
+| `../deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin` (main folder) | L2 **for code and data**, with prefetch. The community's state of 04/2026 with the fixes after it. | medium, without a crash with v16 on the device |
 
-SHA-256: l2i `571646a9…2122370c`, l2d `aad4d080…5ec32c4b`. Patches auf v17: `0001-…` und `0002-…` (nur Code), `0003-…` (Daten).
+SHA-256: l2i `571646a9…2122370c`, l2d `aad4d080…5ec32c4b`. Patches on v17: `0001-…` and `0002-…` (code only), `0003-…` (data).
 
-## Worum es geht
+## What it's about
 
-Der RZ/A1L hat vor dem Speicher 128 KB L2-Cache, den 1.2.1 nie einschaltet. Genutzt wird nur der L1-Cache (je 32 KB für Code und Daten).
-- **Nur Code:** Der Code, den ein voller Song dauernd braucht, passt nicht in 32 KB und fällt ständig aus dem L1-Cache. Der L2 hält ihn näher an der CPU. Daten dürfen nicht hinein.
-- **Code und Daten:** Zusätzlich kommen die Daten im langsamen externen SDRAM in den L2: Delay- und Chorus-Puffer, Wellentabellen und Samples. Hier liegt vermutlich der grössere Gewinn.
-- **In beiden Versionen:** Vor jeder DMA-Übertragung schreibt die Firmware den Puffer auch im L2 zurück und leert ihn, nach dem Lesen von der Karte noch einmal.
-  - Das betrifft die SD-Karte (Lesen und Schreiben) und das OLED.
-  - Audio, MIDI und der LED-Controller laufen über Adressen ohne Cache, USB ganz ohne DMA.
-  - Auch die Code-Version braucht das: Der Prozessor darf auf Verdacht Befehle aus jedem Speicher holen, so kann eine Zeile eines Puffers im L2 landen.
-  - Ein vergessener Pfad würde seltene Fehler geben, im schlimmsten Fall falsche Bytes in Dateien auf der Karte.
+The RZ/A1L has 128 KB of L2 cache in front of the memory, which 1.2.1 never switches on. Only the L1 cache is used (32 KB each for code and data).
+- **Code only:** The code a full song needs all the time doesn't fit into 32 KB and keeps falling out of the L1 cache. The L2 keeps it closer to the CPU. Data must not go into it.
+- **Code and data:** In addition, the data in the slow external SDRAM go into the L2: delay and chorus buffers, wave tables and samples. That's probably where the bigger gain is.
+- **In both versions:** Before every DMA transfer the firmware writes the buffer back in the L2 too and cleans it, and once more after reading from the card.
+  - This concerns the SD card (reading and writing) and the OLED.
+  - Audio, MIDI and the LED controller run over uncached addresses, USB without any DMA.
+  - The code version needs this too: the processor may speculatively fetch instructions from any memory, so a line of a buffer can end up in the L2.
+  - A forgotten path would give rare errors, in the worst case wrong bytes in files on the card.
 
-Wie viel es bringt, weiss niemand: Die Community nennt keine Zahl, und der Emulator bildet keine Caches ab. Das zeigt nur die Messung am Gerät.
+Nobody knows how much it brings: the community gives no number, and the emulator doesn't model caches. Only the measurement on the device shows it.
 
-## Messen
+## Measuring
 
-1. Den Test-Song `diag/loadtest-card.zip` auf die Karte kopieren (siehe `diag/README.md`).
-2. Mit **v17 ohne L2** (`deluge-1.2.1-mastertune-v17-2cb5e31b.bin`) starten, `MT_LOADTEST` laden, **Settings → CPU monitor → On**, **Play**. Nach etwa 30 Sekunden die Anzeige oben links notieren (`CPU 61% 24V`), am besten dreimal im Abstand von einigen Sekunden.
-3. Dasselbe mit **l2i** und mit **l2d**.
-4. Genauer geht es mit `tools/cpu_monitor.html` (eine Minute, CSV exportieren).
+1. Copy the test song `diag/loadtest-card.zip` onto the card (see `diag/README.md`).
+2. Start with **v17 without L2** (`deluge-1.2.1-mastertune-v17-2cb5e31b.bin`), load `MT_LOADTEST`, **Settings → CPU monitor → On**, **Play**. After about 30 seconds note the display at the top left (`CPU 61% 24V`), ideally three times a few seconds apart.
+3. The same with **l2i** and with **l2d**.
+4. It's more exact with `tools/cpu_monitor.html` (one minute, export the CSV).
 
-Weniger CPU % bei gleich vielen Stimmen heisst: Der L2 bringt so viel. Erscheinen ohne L2 `QL` (Qualität gesenkt) oder `VC` (Stimmen abgeschnitten), sollten sie mit dem L2 seltener werden.
+Less CPU % with as many voices means: that's how much the L2 brings. If `QL` (quality lowered) or `VC` (voices cut) appear without L2, they should get rarer with the L2.
 
-## Testen, vor allem die Daten-Version
+## Testing, above all the data version
 
-**Vorher die SD-Karte sichern** oder mit einer Kopie arbeiten.
+**Back up the SD card first**, or work with a copy.
 
-- **Speichern:** Einen Song zweimal unter neuem Namen speichern, einmal gestoppt und einmal während er spielt. Am Computer vergleichen: Die Dateien müssen gleich sein.
-- **Samples:** Einen Song mit vielen langen Samples spielen und auf Knackser in regelmässigen Abständen hören (Streaming von der Karte).
-- **Aufnehmen:** Eine Minute resamplen oder vom Eingang aufnehmen und die Aufnahme auf Knackser anhören.
-- **OLED:** Schnell durch Presets blättern und auf Pixelfehler oder verschobene Zeilen achten.
-- **USB:** Mit DEx oder deluge-editor eine Datei auf die Karte kopieren und zurück, dann vergleichen.
+- **Saving:** Save a song twice under a new name, once stopped and once while it plays. Compare on the computer: the files must be the same.
+- **Samples:** Play a song with many long samples and listen for clicks at regular intervals (streaming from the card).
+- **Recording:** Resample or record from the input for a minute and listen to the recording for clicks.
+- **OLED:** Scroll quickly through presets and look for pixel errors or shifted lines.
+- **USB:** Copy a file onto the card and back with DEx or deluge-editor, then compare.
 
-Wenn etwas auffällt: zurück zu v17 ohne L2 und mir beschreiben, was passiert ist.
+If something seems off: go back to v17 without L2 and describe to me what happened.
 
-## Zurück zu v17 ohne L2
+## Back to v17 without L2
 
-Wie jedes Firmware-Update: `deluge-1.2.1-mastertune-v17-2cb5e31b.bin` aus dem Hauptordner auf die Karte und neu starten.
+Like any firmware update: `deluge-1.2.1-mastertune-v17-2cb5e31b.bin` from the main folder onto the card, and restart.
 
-## Geprüft
+## Checked
 
-- **Build:** ohne neue Warnungen. Je zwei komplette Neubauten ergeben dieselbe SHA-256.
-- **Emulator** (`tests/l2`, mit einem Modell des L2-Controllers):
-  - Beim Start wird der L2 ausgeschaltet, geleert, für Daten gesperrt und dann eingeschaltet.
-  - Code-Version: Daten bleiben gesperrt.
-  - Daten-Version: Prefetch an. Die Daten werden am Ende des Starts einmal freigegeben, direkt nachdem alles zurückgeschrieben und geleert ist.
-  - Jedes OLED-Bild wird vor dem DMA in L1 und L2 zurückgeschrieben (alle 25 Cache-Zeilen) und synchronisiert.
-  - Die Cache-Pflege trifft auch bei krummen Adressen jede Zeile genau einmal.
-- **Song:** Der Volllast-Song klingt mit beiden Versionen Bit für Bit wie ohne L2, in allen drei Läufen. Mutable und Digital klingen zudem wie v14 und v15. Der dritte Lauf, mit Culling wie auf dem Gerät, hängt von der Rechenzeit ab und unterscheidet sich darum von v14.
-- **Gegenprüfer** (Code, jede DMA-Übertragung der Firmware):
-  - In den L2-Änderungen selbst fand er keinen Fehler.
-  - Umgesetzt sind seine Vorschläge für die Code-Version (L2-Pflege auch dort) und für die Freigabe der Daten (Interrupts aus, zurückschreiben statt nur leeren).
-  - Zwei ältere Fehler, die er dabei fand, sind seit v14 behoben (siehe README, v14).
-- **Auf v15 übertragen:** Die drei L2-Änderungen liessen sich ohne Konflikt auf v15 setzen. Alle Prüfungen oben liefen erneut mit den v15-Versionen.
-- **Auf v17 übertragen:** ebenso ohne Konflikt. Alle Prüfungen oben liefen erneut mit den v17-Versionen, dazu die ganze Testreihe von v17 auf l2d.
-- **Auf v16 übertragen:** ebenso ohne Konflikt. Alle Prüfungen oben liefen erneut mit den v16-Versionen, dazu der Profiler mit l2i (21 Prüfungen).
-- **Nicht prüfbar im Emulator:**
-  - das echte Cache-Verhalten und die Geschwindigkeit
-  - die SD-Übertragungen, weil der Emulator die Karte unterhalb des Dateisystems liest. Ihre Cache-Pflege ist dieselbe Funktion wie beim OLED und im Code geprüft.
-- Das Laden von Firmware per USB-SysEx (Entwickler-Funktion) ist in diesen Builds nicht enthalten. In Builds mit dieser Funktion schaltet sie den L2 vor dem Sprung sauber aus.
+- **Build:** without new warnings. Two complete rebuilds each give the same SHA-256.
+- **Emulator** (`tests/l2`, with a model of the L2 controller):
+  - At startup the L2 is switched off, cleaned, locked for data and then switched on.
+  - Code version: data stay locked.
+  - Data version: prefetch on. The data are released once at the end of the startup, right after everything is written back and cleaned.
+  - Every OLED image is written back in L1 and L2 (all 25 cache lines) and synchronised before the DMA.
+  - The cache maintenance hits every line exactly once, also at odd addresses.
+- **Song:** The full-load song sounds bit for bit the same with both versions as without L2, in all three runs. Mutable and Digital also sound like v14 and v15. The third run, with culling as on the device, depends on the computing time and therefore differs from v14.
+- **Checker** (code, every DMA transfer of the firmware):
+  - He found no error in the L2 changes themselves.
+  - His suggestions for the code version (L2 maintenance there too) and for the release of the data (interrupts off, write back instead of only clean) are implemented.
+  - Two older bugs he found along the way are fixed since v14 (see the README, v14).
+- **Carried over to v15:** The three L2 changes went onto v15 without a conflict. All checks above ran again with the v15 versions.
+- **Carried over to v17:** likewise without a conflict. All checks above ran again with the v17 versions, plus v17's whole test series on l2d.
+- **Carried over to v16:** likewise without a conflict. All checks above ran again with the v16 versions, plus the profiler with l2i (21 checks).
+- **Not checkable in the emulator:**
+  - the real cache behaviour and the speed
+  - the SD transfers, because the emulator reads the card below the file system. Their cache maintenance is the same function as for the OLED and is checked in the code.
+- Loading firmware over USB SysEx (a developer function) is not in these builds. In builds with this function, it switches the L2 off cleanly before the jump.

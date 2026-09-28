@@ -1,0 +1,140 @@
+From c617c71bb6ff47244eec27f6e5b58adfbfc3a0cd Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 13:54:25 +0000
+Subject: [PATCH 116/116] Drive LPF: 2x oversampled where 1.2.1 did (high up
+ with resonance), with v18's half-band filters
+
+v18 ran the drive ladder 2x oversampled at every cutoff and resonance until the CPU was at its limit (cpuDireness
+14). A song with many drive filters then needed 3.5 times real time at a bar's start (1.2.1: 1.7) and lost nearly all
+its voices before the guard could act (tests/stress/audio, all LPFs on drive). It now oversamples where 1.2.1 did:
+the cutoff above logFreq 51 << 24 with the resonance above 1.2.1's table there (from about 5 kHz at resonance 25,
+13 kHz at 20, never below 15), where the resonance and the saturation alias audibly; lower down the ladder takes the
+aliases away itself. Where it oversamples it does so as v18 (real half-band filters, images -88 dB). Switching stays
+crossfaded; a quarter of an octave and a tenth of the threshold of hysteresis keep a cutoff or resonance moving
+around it from switching back and forth.
+
+tests/filters drive: where (0 of 10,251 settings differ from 1.2.1's condition; a sweep across the threshold and back
+switches twice, a wobble around it once), alias at resonance 30 % (2x 3.7 to 21 dB better), toggle at cutoff 45. Below
+the threshold the ladder sings as in 1.2.1: -56 cents at 2 kHz (v18 -30; the limit is now 60 cents there).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter_set.cpp | 14 ++++++---
+ src/deluge/dsp/filter/lpladder.cpp   | 47 ++++++++++++++++++++++++----
+ src/deluge/dsp/filter/lpladder.h     |  5 +++
+ 3 files changed, 56 insertions(+), 10 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/filter_set.cpp b/src/deluge/dsp/filter/filter_set.cpp
+index ebb1e6cf..c363775d 100644
+--- a/src/deluge/dsp/filter/filter_set.cpp
++++ b/src/deluge/dsp/filter/filter_set.cpp
+@@ -471,12 +471,18 @@ int32_t FilterSet::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMode
+                              q31_t filterGain, FilterRoute routing, bool adjustVolumeForHPFResonance,
+                              q31_t* overallOscAmplitude) {
+ 	const q31_t filterGainIn = filterGain;
+-	// mastertune v18: the drive ladder runs 2x oversampled unless the CPU is at its limit (1.2.1's condition,
+-	// AudioEngine::cpuDireness < 14). Where that changes on a drive ladder that keeps running, the half-bands' delay
+-	// and the coefficients change: crossfaded (below), and while a crossfade runs, it stays as it is
+-	bool oversample = AudioEngine::cpuDireness < 14;
++	// mastertune v18.3: the drive ladder runs 2x oversampled where 1.2.1 did, high up with resonance
++	// (LpLadderFilter::driveWantsOversampling()), unless the CPU is at its limit (AudioEngine::cpuDireness < 14): there
++	// its resonance and saturation alias audibly, lower down the ladder takes the aliases away itself. v18 oversampled
++	// at every setting: a song with many drive filters then needed 3.5 times real time at a bar's start (1.2.1: 1.7)
++	// and lost its voices (tests/stress/audio). Where it oversamples, it does so as v18 (real half-band filters). Where
++	// that changes on a drive ladder that keeps running, the half-bands' delay and the coefficients change: crossfaded
++	// (below), and while a crossfade runs, it stays as it is
+ 	const bool driveStays = configured_ && lpfmode == FilterMode::TRANSISTOR_24DB_DRIVE
+ 	                        && lpfMode_ == FilterMode::TRANSISTOR_24DB_DRIVE;
++	bool oversample = AudioEngine::cpuDireness < 14 && lpfmode == FilterMode::TRANSISTOR_24DB_DRIVE
++	                  && LpLadderFilter::driveWantsOversampling(lpfFrequency, lpfResonance,
++	                                                            driveStays && lpfilter.ladder.isOversampling());
+ 	if (configured_) {
+ 		if (fadeSlot() != 0) {
+ 			if (lpfMode_ == FilterMode::TRANSISTOR_24DB_DRIVE) {
+diff --git a/src/deluge/dsp/filter/lpladder.cpp b/src/deluge/dsp/filter/lpladder.cpp
+index 922717b1..6d39c769 100644
+--- a/src/deluge/dsp/filter/lpladder.cpp
++++ b/src/deluge/dsp/filter/lpladder.cpp
+@@ -16,8 +16,44 @@
+  */
+ #include "dsp/filter/lpladder.h"
+ #include "processing/engines/audio_engine.h"
++#include <algorithm>
+ 
+ namespace deluge::dsp::filter {
++// 1.2.1's: above this resonance (processedResonance, 1 = 1073741824, from the table's value << 16), the drive ladder
++// runs oversampled, by the cutoff's logFreq >> 24 (only above 51 at all; see driveWantsOversampling())
++const int16_t resonanceThresholdsForOversampling[] = {
++    16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384,
++    16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384,
++    16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384,
++    16384, // 48
++    16384, // 49
++    16384, // 50
++    16384,
++    15500, // 52
++    20735, // 14848,
++    17000, // 12800, // 54
++    9000,  // 4300,
++    9000,  // 56
++    9000,  9000,  9000,  9000,  9000,  9000,  9000,  9000,
++};
++
++bool LpLadderFilter::driveWantsOversampling(q31_t lpfFrequency, q31_t lpfResonance, bool keep) {
++	// (as setConfig() works them out; the resonance in 64 bits: a patch cable can take it past what << 2 holds)
++	int32_t logFreq = std::min(quickLog(lpfFrequency), (int32_t)63 << 24);
++	int64_t processedResonance = std::clamp((int64_t)lpfResonance << 2, (int64_t)0, (int64_t)INT32_MAX);
++	if (keep) {
++		logFreq = std::min(logFreq + (1 << 23), (int32_t)63 << 24); // a quarter of an octave (2^25 per octave)
++	}
++	if ((logFreq >> 24) <= 51) {
++		return false;
++	}
++	int32_t threshold = interpolateTableSigned(logFreq, 30, resonanceThresholdsForOversampling, 6);
++	if (keep) {
++		threshold -= threshold / 10;
++	}
++	return processedResonance > threshold;
++}
++
+ // The knots of the ramp being rendered (one filter at a time renders; not on the stack: kMaxKnots of them)
+ LpLadderFilter::Knot<LpLadderFilter::Coefficients> LpLadderFilter::rampKnots_[LpLadderFilter::kMaxKnots];
+ const int16_t resonanceLimitTable[] = {
+@@ -50,12 +86,11 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ 
+ 		logFreq = std::min(logFreq, (int32_t)63 << 24);
+ 
+-		// mastertune v18: 2x oversampled at every cutoff and resonance, with real half-band filters (halfband.h,
+-		// renderDriveOversampled()), unless the CPU is at its limit (FilterSet: AudioEngine::cpuDireness < 14, as
+-		// 1.2.1's condition). 1.2.1 oversampled only above logFreq 51 << 24 with some resonance, by running the
+-		// ladder twice on the same input without any filter, and lowered the cutoff by up to about half a semitone
+-		// for how that shifted it. The ladder at 88.2 kHz with half the normalised cutoff is the same filter (the
+-		// TPT stages' prewarp: tan(pi f / 2 fs)), so the cutoff stays where it is set
++		// mastertune v18: 2x oversampled with real half-band filters (halfband.h, renderDriveOversampled()) where
++		// FilterSet wants it (v18.3: where 1.2.1 oversampled, see driveWantsOversampling(); v18 did at every
++		// setting). 1.2.1 ran the ladder twice on the same input without any filter, and lowered the cutoff by up to
++		// about half a semitone for how that shifted it. The ladder at 88.2 kHz with half the normalised cutoff is
++		// the same filter (the TPT stages' prewarp: tan(pi f / 2 fs)), so the cutoff stays where it is set
+ 		if (!keepOversampling_) {
+ 			doOversampling = oversamplingWanted_;
+ 		}
+diff --git a/src/deluge/dsp/filter/lpladder.h b/src/deluge/dsp/filter/lpladder.h
+index 4760733a..0717a2ef 100644
+--- a/src/deluge/dsp/filter/lpladder.h
++++ b/src/deluge/dsp/filter/lpladder.h
+@@ -52,6 +52,11 @@ public:
+ 	// configure(): unless the CPU is at its limit), and whether it does now
+ 	void setOversamplingWanted(bool wanted) { oversamplingWanted_ = wanted; }
+ 	[[nodiscard]] bool isOversampling() const { return doOversampling; }
++	/// mastertune v18.3: whether the drive ladder is to run oversampled at these params: where 1.2.1 did, the cutoff
++	/// above logFreq 51 << 24 and the resonance above resonanceThresholdsForOversampling[] there. keep: it does now;
++	/// then a quarter of an octave and a tenth of the threshold below still count, so a cutoff or resonance moving
++	/// around the threshold doesn't switch it back and forth
++	[[nodiscard]] static bool driveWantsOversampling(q31_t lpfFrequency, q31_t lpfResonance, bool keep);
+ 
+ private:
+ 	struct LpLadderState {
+-- 
+2.43.0
+

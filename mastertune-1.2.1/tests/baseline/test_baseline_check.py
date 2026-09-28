@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for tools/baseline_check.py: a made-up card with every case, and the card copy in geraet/karte.
+"""Tests for tools/baseline_check.py: a made-up card with every case, and the card copy in device/card.
 
 - Levels: song and kit above 35.4 (0 dB), synth and row above 40, 40 itself allowed, values between the knob's steps
   as they are (mastertune v18 steps by 0.5 dB) and in dB as the Deluge shows them, automation's loudest point, the
@@ -11,7 +11,7 @@
 - Stages after the knobs: SATURATION, compressor, analog delay with feedback, LPF drive, resonance of an active filter,
   on a kit, an audio track, a synth, a row and the song, and what doesn't count (a digital delay, open filters).
 - Files: songs in subfolders, lower-case .xml, "._" files, a broken XML, --out, --card.
-- The card copy: «New Sitar Grii 10» and «Rescue», as checked by hand (geraet/analyse/2026-09-27-baseline-master.md).
+- The card copy: «New Sitar Grii 10» and «Rescue», as checked by hand (device/analysis/2026-09-27-baseline-master.md).
 
 Usage: python3 test_baseline_check.py   (stdlib only)
 """
@@ -28,7 +28,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "tools"))
 import baseline_check as bc  # noqa: E402
 
-KARTE = os.path.join(HERE, "..", "..", "geraet", "karte")
+KARTE = os.path.join(HERE, "..", "..", "device", "card")
 LIVE = ", ohne Noten: klingt nur live gespielt"
 V40, V45, V50, DEFAULT35 = "0x4CCCCCA8", "0x66666662", "0x7FFFFFFF", "0x3504F334"
 
@@ -380,7 +380,7 @@ class Files(Case):
         self.assertIn("wirkt wie 50,0", bc.report(bc.song_files([away], self.root)))
 
 
-@unittest.skipUnless(os.path.isdir(os.path.join(KARTE, "SONGS")), "no card copy in geraet/karte")
+@unittest.skipUnless(os.path.isdir(os.path.join(KARTE, "SONGS")), "no card copy in device/card")
 class CardCopy(unittest.TestCase):
     def test_songs(self):
         text = bc.report(bc.song_files([KARTE]))

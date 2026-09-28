@@ -1,0 +1,38 @@
+From 02f2db62e70b4a72f4ffbb265426648fc6e7b394 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 13:46:52 +0000
+Subject: [PATCH 115/116] Song: the reverb sidechain's sync level loads as it
+ was saved
+
+Song::writeToFile() writes AudioEngine::reverbSidechain.syncLevel as it is (the internal value), as every firmware
+since 1.2.1 and the community's main do, but reading converted it as a file value, which moves it by the tick
+magnitude: at the default, one step down at every save and load. It is now read as written, so existing songs load
+with the value they were saved with, and saving and loading again keeps it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/model/song/song.cpp | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/deluge/model/song/song.cpp b/src/deluge/model/song/song.cpp
+index bf1e25db..201d6935 100644
+--- a/src/deluge/model/song/song.cpp
++++ b/src/deluge/model/song/song.cpp
+@@ -1442,8 +1442,11 @@ Error Song::readFromFile(Deserializer& reader) {
+ 								reader.exitTag("shape");
+ 							}
+ 							else if (!strcmp(tagName, "syncLevel")) {
+-								reverbSidechainSync = (SyncLevel)convertSyncLevelFromFileValueToInternalValue(
+-								    reader.readTagOrAttributeValueInt());
++								// mastertune v18.3: as written, the internal value (writeToFile() writes
++								// AudioEngine::reverbSidechain.syncLevel as it is, as every firmware since 1.2.1
++								// and still the community's main do). Converted as a file value, it went down one
++								// step at every save and load (at the default tick magnitude)
++								reverbSidechainSync = (SyncLevel)reader.readTagOrAttributeValueInt();
+ 								reverbSidechainSync = (SyncLevel)std::min((uint8_t)reverbSidechainSync, (uint8_t)9);
+ 								reader.exitTag("syncLevel");
+ 							}
+-- 
+2.43.0
+

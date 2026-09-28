@@ -376,7 +376,14 @@ int zipper() {
 	};
 	add("LP24 cutoff", Ctx::SYNTH, FilterMode::TRANSISTOR_24DB, FilterMode::OFF, &Settings::cut, 8, 45, 0, 25);
 	add("LP12 cutoff", Ctx::SYNTH, FilterMode::TRANSISTOR_12DB, FilterMode::OFF, &Settings::cut, 8, 45, 0, 25);
+#ifdef DRIVE_WHERE_121
+	// (v18.3 oversamples the drive ladder only high up with resonance, as 1.2.1: at resonance 15 from cutoff 39.5, at 20
+	// from 38.75. Each sweep stays on one side of that, 1x and 2x; switching across it is drive_test's toggle and where)
+	add("Drive cutoff", Ctx::SYNTH, FilterMode::TRANSISTOR_24DB_DRIVE, FilterMode::OFF, &Settings::cut, 8, 38, 0, 15);
+	add("Drive 2x cutoff", Ctx::SYNTH, FilterMode::TRANSISTOR_24DB_DRIVE, FilterMode::OFF, &Settings::cut, 41, 47, 0, 20);
+#else
 	add("Drive cutoff", Ctx::SYNTH, FilterMode::TRANSISTOR_24DB_DRIVE, FilterMode::OFF, &Settings::cut, 8, 40, 0, 15);
+#endif
 	add("SVF cutoff", Ctx::SYNTH, FilterMode::SVF_BAND, FilterMode::OFF, &Settings::cut, 8, 45, 0, 25);
 	add("LP24 cutoff", Ctx::KIT, FilterMode::TRANSISTOR_24DB, FilterMode::OFF, &Settings::cut, 8, 45, 0, 25);
 	add("LP24 reso", Ctx::KIT, FilterMode::TRANSISTOR_24DB, FilterMode::OFF, &Settings::res, 0, 45, 25, 0);
