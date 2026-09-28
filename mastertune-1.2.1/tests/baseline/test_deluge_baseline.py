@@ -12,7 +12,7 @@
   it, in FM, or with an unreadable XML on the card the samples stay; without compensation all are raised and no XML
   changes.
 - Restore gives back the files byte for byte. The command line, the window's Markdown, the self-test (with tkinter).
-- The card copy in geraet/karte: normalizing keeps every row's level, levels leave no notes but the missing sample.
+- The card copy in device/card: normalizing keeps every row's level, levels leave no notes but the missing sample.
 
 Usage: python3 test_deluge_baseline.py   Needs numpy (and tkinter for the self-test, else it is skipped)
 """
@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "..", "tools"))
 import baseline_check as bc  # noqa: E402
 import deluge_baseline as db  # noqa: E402
 
-KARTE = Path(HERE, "..", "..", "geraet", "karte").resolve()
+KARTE = Path(HERE, "..", "..", "device", "card").resolve()
 try:
     import tkinter  # noqa: F401
     HAS_TK = bool(os.environ.get("DISPLAY")) or sys.platform.startswith("win")
@@ -733,7 +733,7 @@ class SelfTest(unittest.TestCase):
                 "english: ok"])
 
 
-@unittest.skipUnless((KARTE / "SONGS").is_dir(), "no card copy in geraet/karte")
+@unittest.skipUnless((KARTE / "SONGS").is_dir(), "no card copy in device/card")
 class CardCopy(unittest.TestCase):
     def test_card(self):
         with tempfile.TemporaryDirectory() as tmp:

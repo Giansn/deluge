@@ -1,73 +1,73 @@
-# Profiler-Messversion (v15-prof)
+# Profiler measurement version (v15-prof)
 
-**v15 mit einem Profiler**, sonst unverändert. Sie zeigt am Gerät, wofür der Deluge seine Rechenzeit braucht: pro Spur, pro Task und pro Funktion, mit den echten Caches, die der Emulator nicht kennt. Gedacht für die Fragen «87 % CPU, obwohl nichts spielt» und «warum werden Stimmen abgeschnitten».
+**v15 with a profiler**, otherwise unchanged. It shows on the device what the Deluge spends its computing time on: per track, per task and per function, with the real caches, which the emulator doesn't know. Meant for the questions "87% CPU although nothing plays" and "why are voices cut".
 
-| Datei | Was |
+| File | What |
 |---|---|
-| `deluge-1.2.1-mastertune-v15-prof-d8ff0108.bin` | v15 + Profiler |
-| `deluge-1.2.1-mastertune-v15-l2i-prof-76fd3515.bin` | v15 mit L2-Cache für Code (wie `l2test/`) + Profiler |
-| `*.symbols.json` | die Funktionsnamen genau dieser Firmware, je eine pro Datei |
+| `deluge-1.2.1-mastertune-v15-prof-d8ff0108.bin` | v15 + profiler |
+| `deluge-1.2.1-mastertune-v15-l2i-prof-76fd3515.bin` | v15 with L2 cache for code (as `l2test/`) + profiler |
+| `*.symbols.json` | the function names of exactly this firmware, one per file |
 
-SHA-256: v15-prof `76e608b3…5b3ef1e2`, v15-l2i-prof `65141b9e…4c854404`. Quellcode: v15 plus `prof/patches/0001-…` und `0002-…`, für l2i dazu die Patches aus `l2test/`.
+SHA-256: v15-prof `76e608b3…5b3ef1e2`, v15-l2i-prof `65141b9e…4c854404`. Source: v15 plus `prof/patches/0001-…` and `0002-…`, for l2i also the patches from `l2test/`.
 
-## Messen
+## Measuring
 
-1. Eine der beiden Firmware-Dateien aufspielen, wie jedes Update.
-2. Den Deluge per USB mit dem Computer verbinden.
-3. `tools/profiler.html` in **Chrome oder Edge** öffnen (nichts zu installieren), **Verbinden** klicken, dann **Symbole laden** und die `.symbols.json` wählen, die zur aufgespielten Firmware gehört.
-4. Am Deluge: **Settings → CPU monitor → Profile**. Oben links steht die gewohnte Zeile, dazu schickt er die Messwerte an den Computer.
-5. Den grossen Song laden.
-   - Etwa 30 s **nichts spielen**.
-   - Dann etwa 30 s **spielen**, am besten die Stelle, an der QL oder VC erscheint.
-   - Mit **Zurücksetzen** zwischen den beiden Teilen bekommst du getrennte Zahlen.
-6. Die Tabellen lesen, oder **Aufnahme speichern** und mir die `.jsonl`-Datei schicken, dann werte ich sie aus.
+1. Flash one of the two firmware files, like any update.
+2. Connect the Deluge to the computer by USB.
+3. Open `tools/profiler.html` in **Chrome or Edge** (nothing to install), click **Connect**, then **Load symbols** and choose the `.symbols.json` that belongs to the flashed firmware.
+4. On the Deluge: **Settings → CPU monitor → Profile**. Top left shows the usual line, and it sends the measurements to the computer.
+5. Load the big song.
+   - **Play nothing** for about 30 s.
+   - Then **play** for about 30 s, ideally the passage where QL or VC appears.
+   - With **Reset** between the two parts you get separate numbers.
+6. Read the tables, or **Save recording** and send me the `.jsonl` file, and I'll evaluate it.
 
-Mit Claude Code auf dem Computer, an dem der Deluge hängt, geht es auch ohne Browser:
+With Claude Code on the computer the Deluge is connected to, it also works without a browser:
 
 ```sh
 pip install mido python-rtmidi
-python3 tools/deluge_profiler.py record -s 60 -o profil.jsonl
-python3 tools/deluge_profiler.py report profil.jsonl --symbols prof/deluge-1.2.1-mastertune-v15-prof-d8ff0108.symbols.json
+python3 tools/deluge_profiler.py record -s 60 -o profile.jsonl
+python3 tools/deluge_profiler.py report profile.jsonl --symbols prof/deluge-1.2.1-mastertune-v15-prof-d8ff0108.symbols.json
 ```
 
-## Was die Zahlen zeigen
+## What the numbers show
 
-- **Nach Spur:** die Rechenzeit jeder Spur, auf dem Gerät genau gemessen (Zeitgeber um jede Spur), als Anteil der Zeit. So sieht man, welche Spur wie viel kostet, auch wenn sie still ist.
-- **Nach Task:** Audio-Routine, Laden von der Karte, Anzeige, Scheduler usw.
-- **Nach Funktion:** 1000-mal pro Sekunde schaut der Deluge nach, wo im Code er gerade steht.
-  - Während eine Spur rechnet, sind die Interrupts gesperrt. Diese Zeit erscheint gesammelt als `Song::renderAudio`, welche Spur es war, steht unter «Nach Spur».
-  - Welche Funktionen innerhalb einer Spur arbeiten, zeigt das Profil im Emulator (`tests/song`, `tests/sdload`).
-- **Audio-Routine:** ihr Anteil an der Zeit. Im Stillstand füllt sie die freie Zeit mit sehr kleinen Blöcken (siehe unten): Beschäftigung, keine Überlast.
+- **By track:** the computing time of every track, measured exactly on the device (a timer around every track), as a share of the time. So you see which track costs how much, even when it is silent.
+- **By task:** audio routine, loading from the card, display, scheduler and so on.
+- **By function:** 1000 times a second the Deluge looks where in the code it is.
+  - While a track computes, the interrupts are disabled. That time shows up collected as `Song::renderAudio`; which track it was is under "By track".
+  - Which functions work inside a track shows the profile in the emulator (`tests/song`, `tests/sdload`).
+- **Audio routine:** its share of the time. When idle it fills the free time with very small blocks (see below): busy waiting, not overload.
 
-## Was der Emulator schon zeigt (und die Messung am Gerät bestätigen soll)
+## What the emulator already shows (and the measurement on the device should confirm)
 
-- **Die 87 % im Stillstand sind keine Überlast.**
-  - Ein Rechenfehler in der Aufgabenplanung (`16 / 44100` als ganze Zahl ergibt 0) lässt die Audio-Routine etwa alle 12 µs von Neuem laufen, mit je 4–8 Samples.
-  - Jeder Durchgang geht alle Spuren durch. Stille Kits und Audiospuren richten dabei ihre ganze Effektkette ein, bevor sie merken, dass nichts klingt. Das kostet pro Spur rund 550 Befehle, und das jede 12 µs.
-  - Im Emulator sind das 90 % Beschäftigung bei nur etwa 12 % echter Last.
-  - Auf dem Gerät kommt dazu: Jeder Durchgang liest rund 99 KB Daten, dreimal mehr als in den L1-Cache passt. Deshalb hilft der L2-Cache so deutlich.
-- **Unnötig abgeschnittene Stimmen (VC) beim Streamen von Samples.**
-  - Wartet der Deluge auf die Karte, rechnet er das Audio innerhalb des Lade-Tasks.
-  - Das Culling beurteilt die Last dann nach der mittleren Dauer des Lade-Tasks, samt Wartezeit auf die Karte, und schneidet Stimmen ab, obwohl der Audio-Puffer kaum im Rückstand ist.
-  - Im Emulator mit einer langsamen Karte: 17 solche Schnitte, der Puffer höchstens 6 Samples im Rückstand.
-- Beides behebe ich in der nächsten Version. Mit dieser Messversion lässt sich vorher und nachher auf dem Gerät vergleichen.
+- **The 87% when idle is not overload.**
+  - A calculation error in the task scheduling (`16 / 44100` as an integer gives 0) makes the audio routine run again about every 12 µs, with 4–8 samples each time.
+  - Every pass goes through all tracks. Silent kits and audio tracks set up their whole effect chain before they notice that nothing sounds. That costs about 550 instructions per track, every 12 µs.
+  - In the emulator that is 90% busy waiting at only about 12% real load.
+  - On the device there's more: every pass reads about 99 KB of data, three times what fits into the L1 cache. That's why the L2 cache helps so clearly.
+- **Voices cut needlessly (VC) while samples stream.**
+  - When the Deluge waits for the card, it computes the audio inside the loading task.
+  - The culling then judges the load by the mean duration of the loading task, including the wait for the card, and cuts voices although the audio buffer is hardly behind.
+  - In the emulator with a slow card: 17 such cuts, the buffer at most 6 samples behind.
+- I fix both in the next version. With this measurement version you can compare before and after on the device.
 
-## Geprüft
+## Checked
 
-- **Build:** ohne neue Warnungen. Je zwei komplette Neubauten ergeben dieselbe SHA-256.
+- **Build:** without new warnings. Two complete rebuilds each give the same SHA-256.
 - **PC** (`tests/profiler/run.sh`):
-  - Ringpuffer und Kodierung der Firmware: 1175 Prüfungen.
-  - Die Dekoder der Browser-Seite und des Python-Skripts lesen dieselben Meldungen exakt: 47 und 48 Prüfungen.
-- **Emulator** (`tests/profiler/profiler_emu.py`, die echte Firmware, der Timer-Interrupt so, wie ihn die CPU nimmt): 21 Prüfungen, mit beiden ausgelieferten Builds alle bestanden.
-  - Keine Meldung verloren. Die Gewichte der Stichproben ergeben die Zeit (4365 von 4400 ms, der Rest noch im Puffer).
-  - Der Anteil der Audio-Routine stimmt mit dem CPU-Monitor überein: im Stillstand 60,4 zu 59,8 %, beim Abspielen 97,4 zu 99,2 %.
-  - Reverb, Drone und Kompressor stimmen mit den gezählten Befehlen überein.
-  - Die Spurzeiten stimmen mit den Stichproben überein: beim Abspielen 89,9 zu 87,3 %.
-- **Auf dem Gerät nicht getestet.**
-  - Den Timer-Interrupt (OS-Timer 1, bisher unbenutzt) bildet der Emulator nur nach.
-  - Kommen keine Daten, oder stürzt der Deluge beim Einschalten von Profile ab, bitte zurück zu v15 und mir Bescheid geben.
-  - Solange Profile aus ist, läuft der Profiler nicht.
+  - The firmware's ring buffer and encoding: 1175 checks.
+  - The decoders of the browser page and of the Python script read the same messages exactly: 47 and 48 checks.
+- **Emulator** (`tests/profiler/profiler_emu.py`, the real firmware, the timer interrupt as the CPU takes it): 21 checks, all passed with both delivered builds.
+  - No message lost. The samples' weights add up to the time (4365 of 4400 ms, the rest still in the buffer).
+  - The audio routine's share agrees with the CPU monitor: idle 60.4 to 59.8%, playing 97.4 to 99.2%.
+  - Reverb, drone and compressor agree with the counted instructions.
+  - The track times agree with the samples: while playing 89.9 to 87.3%.
+- **Not tested on the device.**
+  - The emulator only models the timer interrupt (OS timer 1, unused so far).
+  - If no data comes, or the Deluge crashes when switching Profile on, please go back to v15 and tell me.
+  - As long as Profile is off, the profiler doesn't run.
 
-## Kosten
+## Cost
 
-Mit Profile an: etwa 0,04 % CPU für die Stichproben, zwei Zeitmessungen pro Spur und Audio-Block, rund 8 KB/s über USB-MIDI (Port 3). Der Puffer lässt immer 1 KB frei, damit Noten und Clock nicht warten müssen.
+With Profile on: about 0.04% CPU for the samples, two time measurements per track and audio block, about 8 KB/s over USB MIDI (port 3). The buffer always leaves 1 KB free, so notes and clock don't have to wait.
