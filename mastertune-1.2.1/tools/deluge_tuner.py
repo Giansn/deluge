@@ -9,7 +9,8 @@ sample is resampled once from its own tuning to the one chosen (and to 44.1 kHz,
 with the tuning in its mtun chunk; AIFF becomes WAV; the positions in the songs, kits and synths are scaled to match;
 audio clips and time-stretched samples are pitch-shifted keeping their length (Rubber Band); wavetables and everything
 else are copied as they are. Peaks that resampling puts over full scale: the file as 32-bit float, or a little
-quieter; never clipped.
+quieter; never clipped. A file without mtun that already sounds in the chosen tuning (a 432 Hz library), and so do
+most pitched files in its folder, is only tagged, not lowered a second time (retune_library's check by ear).
 
 Its window: CARD chooses the card, OUTPUT the folder for the new card (that folder if it is empty, else a new folder
 in it, "Deluge 432 Hz", numbered if taken; beside it if it is a card itself), the gold knob the tuning (415.3 to
@@ -26,6 +27,7 @@ retune_library.py's). Needs numpy and soxr (pip install numpy soxr), pylibrb for
 Versions:
   1  the first build: read or retune a card into a new folder, 415.3 to 466.2 Hz, stop and continue, German and English
   2  the computer's language to start with (Windows: its display language; macOS, Linux: the locale); code in English
+  3  files already in the chosen tuning by ear (a 432 Hz library without mtun) only tagged, not lowered a second time
 """
 import argparse
 import json
@@ -46,7 +48,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import retune_library as rl  # noqa: E402
 
-VERSION = 2
+VERSION = 3
 START_TENTHS = 4320  # The gold knob at the first start: 432 Hz
 GROWTH = 1.05  # The new card's size to the card's, about: longer files at a lower tuning (440/432 = 1.0185), headroom
 REPORT = "RETUNE_REPORT.txt"
@@ -61,6 +63,8 @@ GREEN, AMBER, RED, CYAN, WHITE, BLUE = "#2fdc6e", "#ffae1c", "#ff2d2d", "#35d4e8
 CATEGORIES = (("converted", ("WERDEN UMGESTIMMT", "TO RETUNE"), ("UMGESTIMMT", "RETUNED"), CYAN),
               ("already native", ("SCHON IN DER STIMMUNG", "ALREADY IN TUNE"),
                ("SCHON IN DER STIMMUNG", "ALREADY IN TUNE"), GREEN),
+              ("heard in tune", ("KLINGEN SCHON SO: NUR MARKIEREN", "SOUND IN TUNE: TAG ONLY"),
+               ("KLANGEN SCHON SO: NUR MARKIERT", "SOUNDED IN TUNE: TAGGED ONLY"), BLUE),
               ("left as it is", ("BLEIBEN, WIE SIE SIND", "LEFT AS THEY ARE"),
                ("BLIEBEN, WIE SIE SIND", "LEFT AS THEY WERE"), WHITE),
               ("missing", ("FEHLEN AUF DER KARTE", "MISSING ON THE CARD"),
@@ -228,7 +232,8 @@ def result_items(result, dry_run, tenths, out):
         n = result["counts"].get(key, 0)
         if n:
             label = t(*(read if dry_run else written))
-            items.append((f"{n} {label}" + (f" ({hz(tenths)})" if key == "already native" else ""), False))
+            items.append((f"{n} {label}" + (f" ({hz(tenths)})" if key in ("already native", "heard in tune") else ""),
+                          False))
     items.append((f"{result['xml']} SONGS/KITS/SYNTHS, {result['values']} " + t("WERTE", "VALUES"), False))
     items.append((f"{size_text(result['size_old'])} -> {'~' if dry_run else ''}{size_text(result['size_new'])}",
                   False))
@@ -413,6 +418,31 @@ def selftest(out):
         def processes():  # The frozen program starts itself as the worker processes
             assert "converting 4 files with 2 process(es) ..." in said, said
 
+        def ear():  # Two tones of a 432 Hz library without mtun only tagged, a 440 Hz one retuned
+            import numpy as np
+            lib = tmp / "ear"
+            tone = {"SAMPLES/LIB432/A.WAV": 432.0, "SAMPLES/LIB432/E.WAV": 432 * 2 ** (7 / 12), "SAMPLES/C.WAV": 440.0}
+            for rel, freq in tone.items():
+                (lib / rel).parent.mkdir(parents=True, exist_ok=True)
+                (lib / rel).write_bytes(wav_bytes(0.5 * np.sin(2 * np.pi * freq * np.arange(44100) / 44100), 44100))
+            result = rl.convert(run_args(lib, None, dry_run=True), echo=lambda s: None)
+            assert result["counts"] == {"heard in tune": 2, "converted": 1}, result["counts"]
+            args = run_args(lib, None, dry_run=True)
+            args.no_tuning_check = True
+            assert rl.convert(args, echo=lambda s: None)["counts"] == {"converted": 3}
+            rl.convert(run_args(lib, tmp / "ear-new", jobs=1), echo=lambda s: None)
+            for rel in tone:
+                with open(lib / rel, "rb") as fh:
+                    old = rl.read_audio_info(fh)
+                    fh.seek(old.data_pos)
+                    old_data = fh.read(old.data_len)
+                with open(tmp / "ear-new" / rel, "rb") as fh:
+                    new = rl.read_audio_info(fh)
+                    fh.seek(new.data_pos)
+                    same = fh.read(new.data_len) == old_data
+                assert new.mtun == 4320, (rel, new.mtun)
+                assert same == ("LIB432" in rel), (rel, same)  # Tagged only: the audio byte for byte
+
         def resume():
             count = []
 
@@ -464,7 +494,8 @@ def selftest(out):
                 LANG = "de"
 
         for name, fn in (("soxr", soxr), ("rubberband", rubberband), ("read", read), ("convert", convert),
-                         ("processes", processes), ("resume", resume), ("window", window), ("english", english)):
+                         ("processes", processes), ("ear", ear), ("resume", resume), ("window", window),
+                         ("english", english)):
             step(name, fn)
     (out / "selftest.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return ok

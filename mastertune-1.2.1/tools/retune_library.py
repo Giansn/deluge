@@ -26,6 +26,12 @@ unshifted when the master tune is the same. This tool makes a converted copy of 
   whose length is a multiple of 2048 samples, which may be single-cycle wavetables), files already in the target
   tuning at 44.1 kHz, files the firmware can't read (AIFC, RF64, other formats), and everything else on the card
   (copied unchanged).
+- Already in the target tuning by ear: a file without mtun counts as 440 Hz, but may come from a library made at
+  432 Hz; lowered again, it would sound 31.8 cents flat. So each such file is listened to (YIN, the loud part of up to
+  three stretches of 2 s): when its pitch sits within 6 cents of the target tuning's semitones, and so does at least
+  half of the pitched files in its folder (a lone tom or 808 among drums tuned freely doesn't count), it is only
+  tagged with the target's mtun, its audio unchanged. Only for a target at least 20 cents from 440 Hz's semitones
+  (432 Hz: 31.8); the report lists each file with its pitch. --no-tuning-check: every file without mtun is 440 Hz.
 
 At master tune 440 Hz (or any other) the converted card still plays in tune: the firmware shifts by the difference
 between the master tune and the file's mtun. A loop shorter than about 0.2 s gets a length rounded to whole samples,
@@ -45,7 +51,7 @@ continues: it keeps those, removes the temporary files, converts the rest and th
 It never writes into the card folder. DelugeTuner (deluge_tuner.py, DelugeTuner-vN.exe for Windows) is this tool in a
 window: convert() does the same run, with its progress and a stop. Usage (Windows: py instead of python3):
   python3 retune_library.py --card CARD_COPY --out NEW_CARD --tuning 432 [--rate 44100] [--dry-run] [--jobs N]
-                            [--no-float] [--max-memory 4G] [--resume]
+                            [--no-float] [--no-tuning-check] [--max-memory 4G] [--resume]
   --rate 0 keeps each file's sample rate. The report goes to the console and, unless --dry-run, to
   NEW_CARD/RETUNE_REPORT.txt (and .json).
 
@@ -78,6 +84,11 @@ TMP_SUFFIX = ".retune-tmp"  # A file being written; renamed when complete
 PROGRESS = "RETUNE_PROGRESS.jsonl"  # In the new card's folder while converting: the files finished (for --resume)
 MEMORY_SHARE = 0.5  # Of the memory available at the start, the conversions use at most this share (--max-memory)
 MEMORY_UNKNOWN = 2 << 30  # Assumed available where it can't be read
+HEAR_TOLERANCE = 6.0  # Cents: a file's pitch this close to the target tuning's semitones sounds in that tuning
+HEAR_MIN_APART = 20.0  # Cents: the check only for a target at least this far from 440 Hz's semitones (432 Hz: 31.8)
+HEAR_RATE = 22050  # Listened to at this rate: YIN frames of 2048 samples (93 ms), pitches 30 to 1000 Hz (higher
+HEAR_FRAME, HEAR_HOP = 2048, 512  # ones as a subharmonic: an octave or a fifth off doesn't change the tuning)
+HEAR_SPAN = 2.0  # Seconds per stretch listened to: the start, 40 % and 70 % in (a short file whole)
 
 try:
     import soxr
@@ -316,6 +327,95 @@ def chunk(cid, body):
 
 def mtun_chunk(tenths):
     return chunk(b"mtun", struct.pack("<i", tenths))
+
+
+# --------------------------------------------------------------------------------------------------------------------
+# Listening: is a file without mtun already in the target tuning?
+
+
+def semitone_cents(f):
+    """Cents from the nearest semitone at A = 440 Hz, -50 to 50: a pitch an octave or a fifth off hardly changes it."""
+    return (1200 * np.log2(f / 440.0) + 50) % 100 - 50
+
+
+def cents_apart(a, b):
+    """The distance of two such values, round the circle of 100 cents."""
+    d = abs(a - b) % 100
+    return min(d, 100 - d)
+
+
+def tuning_cents(tenths):
+    """A tuning's cents from 440 Hz's semitones (432 Hz: -31.8)."""
+    return float(semitone_cents(tenths / 10))
+
+
+def frame_cents(y):
+    """YIN (de Cheveigné and Kawahara, 2002) on mono audio at HEAR_RATE: per frame its RMS and the tuning of its
+    period in cents (semitone_cents), or None where it has no clear period."""
+    tau_min, tau_max = HEAR_RATE // 1000, HEAR_RATE // 30
+    n = HEAR_FRAME - tau_max  # The window the difference function sums over
+    if len(y) < HEAR_FRAME:
+        return []
+    frames = np.lib.stride_tricks.sliding_window_view(y, HEAR_FRAME)[::HEAR_HOP]
+    size = 1 << (HEAR_FRAME + n - 1).bit_length()
+    # d(tau) = sum over j < n of (x[j] - x[j + tau])^2 = e0 + e(tau) - 2 r(tau), r by FFT
+    r = np.fft.irfft(np.conj(np.fft.rfft(frames[:, :n], size)) * np.fft.rfft(frames, size), size)[:, :tau_max + 1]
+    sq = np.concatenate([np.zeros((len(frames), 1)), np.cumsum(frames ** 2, axis=1)], axis=1)
+    taus = np.arange(tau_max + 1)
+    d = sq[:, n:n + 1] + sq[:, n + taus] - sq[:, taus] - 2 * r
+    d[:, 0] = 0
+    cmnd = np.ones_like(d)  # The cumulative mean normalized difference
+    cmnd[:, 1:] = d[:, 1:] * taus[1:] / np.maximum(np.cumsum(d[:, 1:], axis=1), 1e-20)
+    out = []
+    for row, e in zip(cmnd, sq[:, n]):
+        rms, cents = math.sqrt(e / n), None
+        below = np.flatnonzero(row[tau_min:tau_max] < 0.1)
+        if len(below):
+            tau = tau_min + int(below[0])
+            while tau + 1 < tau_max and row[tau + 1] < row[tau]:  # To the bottom of the dip
+                tau += 1
+            a, b, c = row[tau - 1], row[tau], row[tau + 1]
+            shift = 0.5 * (a - c) / (a - 2 * b + c) if a - 2 * b + c > 0 else 0.0
+            cents = float(semitone_cents(HEAR_RATE / (tau + shift)))
+        out.append((rms, cents))
+    return out
+
+
+def heard_cents(parts, rate):
+    """The tuning of mono stretches of audio in cents from 440 Hz's semitones, or None if they have no clear pitch:
+    the frames louder than a tenth of the loudest (and -60 dBFS), pitched when at least half of them and at least 5
+    have a period and their tunings agree (the length of their mean round the circle at least 0.9)."""
+    frames = []
+    for x in parts:
+        y = soxr.resample(np.ascontiguousarray(x, dtype=np.float64), rate, HEAR_RATE, quality="HQ")
+        frames += frame_cents(y)
+    loudest = max((rms for rms, _ in frames), default=0.0)
+    loud = [c for rms, c in frames if rms > max(0.1 * loudest, 1e-3)]
+    cents = [c for c in loud if c is not None]
+    if len(cents) < 5 or 2 * len(cents) < len(loud):
+        return None
+    z = np.mean(np.exp(2j * np.pi * np.array(cents) / 100))
+    return float(np.angle(z) * 100 / (2 * np.pi)) if abs(z) >= 0.9 else None
+
+
+def listening(args):
+    """Whether plan() listens for files already in the target tuning: (yes or no, as the report says it)."""
+    if getattr(args, "no_tuning_check", False):
+        return False, "off (--no-tuning-check)"
+    if abs(tuning_cents(args.tenths)) < HEAR_MIN_APART:
+        return False, f"not at {args.tenths / 10:g} Hz (under {HEAR_MIN_APART:g} cents from 440 Hz's semitones)"
+    return True, (f"files without mtun within {HEAR_TOLERANCE:g} cents of {tuning_cents(args.tenths):+.1f} "
+                  f"(with at least half of their folder's pitched files) are only tagged")
+
+
+def hear(fh, info):
+    """The file's tuning by ear (heard_cents): the whole file, or three stretches of HEAR_SPAN of a long one."""
+    src, n, span = Source(fh, info), info.frames, int(HEAR_SPAN * info.rate)
+    if n <= 3 * span:
+        parts = [src.read(0, n)]
+    else:
+        parts = [src.read(a, a + span) for a in (0, int(n * 0.4), int(n * 0.7))]
+    return heard_cents([x.mean(axis=1) for x in parts], info.rate)
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -859,6 +959,8 @@ class FilePlan:
         self.outputs = {}  # use -> Output ("resample" / "keep_length")
         self.action = ""  # For the report
         self.category = "left as it is"
+        self.heard = None  # Without mtun: its tuning by ear in cents from 440 Hz's semitones (hear()), if pitched
+        self.by_ear = None  # Sounds in the target tuning (with its folder): (its pitched files there, of them in it)
 
 
 class Output:
@@ -954,17 +1056,39 @@ def plan(args, log, step=None):
             p.referenced = True
 
     target, rate = args.tenths, args.rate
+    listen = listening(args)[0]
+    keys = sorted(plans)
+    for i, key in enumerate(keys):  # The headers, and the files without mtun listened to
+        step(i, len(keys), "audio")
+        p = plans[key]
+        if key not in by_key:
+            continue
+        with open(os.path.join(card, p.rel), "rb") as fh:
+            p.info = info = read_audio_info(fh)  # Only the headers: the jobs read the audio
+            if (listen and info.kind and info.mtun is None and not info.clm and not p.uses & {"wavetable", "unknown"}
+                    and not (not p.uses and info.channels == 1 and info.frames % 2048 == 0)
+                    and 5000 <= (rate or info.rate) <= 96000):
+                p.heard = hear(fh, info)
+        info.chunks = []  # Not needed until the job, which reads the file again
+    near = tuning_cents(target)
+    folders = {}
+    for p in plans.values():
+        if p.heard is not None:
+            folders.setdefault(path_key(p.rel).rpartition("/")[0], []).append(p)
+    for ps in folders.values():  # In the target tuning by ear: the file, and at least half of its folder's pitched ones
+        there = [p for p in ps if cents_apart(p.heard, near) <= HEAR_TOLERANCE]
+        if there and 2 * len(there) >= len(ps):
+            for p in there:
+                p.by_ear = (len(ps), len(there))
+
     jobs = []
-    for i, key in enumerate(sorted(plans)):
-        step(i, len(plans), "audio")
+    for key in keys:
         p = plans[key]
         if key not in by_key:
             p.action = p.category = "missing"
             warnings.append(f"{p.rel}: referenced but not on the card")
             continue
-        with open(os.path.join(card, p.rel), "rb") as fh:
-            p.info = info = read_audio_info(fh)  # Only the headers: the jobs read the audio
-        info.chunks = []  # Not needed until the job, which reads the file again
+        info = p.info
         p.size = info.file_size
         if info.kind is None:
             p.action = f"left as it is: {info.error}"
@@ -982,7 +1106,7 @@ def plan(args, log, step=None):
                 warnings.append(f"{p.rel}: used as a wavetable and as a sample; left as it is (the sample uses keep "
                                 f"being shifted at run time)")
             continue
-        src = info.tuning
+        src = target if p.by_ear else info.tuning  # By ear: only tagged, the audio as it is
         rate_new = rate or info.rate
         if not 5000 <= rate_new <= 96000:
             p.action = "left as it is: sample rate out of range"
@@ -992,7 +1116,7 @@ def plan(args, log, step=None):
         mtun = None if target == DEFAULT_TENTHS else target
         frames = info.frames
         rounded = lambda f: math.floor(frames * f + Fraction(1, 2))  # noqa: E731
-        if src == target and rate_new == info.rate:
+        if src == target and rate_new == info.rate and not p.by_ear:
             p.category = "already native"
             p.action = "already in the target tuning" + (" at 44.1 kHz" if rate_new == 44100 else "")
             for use in p.uses:
@@ -1041,6 +1165,16 @@ def plan(args, log, step=None):
                                 f"(Rubber Band) it stays as it is for that use and the firmware keeps shifting it")
         p.category = "converted" if any(o.convert for o in p.outputs.values()) else "left as it is"
         p.action = ", ".join(actions) + (f" -> {', '.join(wav_names)}" if wav_names else "")
+        if p.by_ear:
+            pitched, there = p.by_ear
+            p.category = "heard in tune"
+            p.action = (f"sounds in the target tuning already, by ear {p.heard:+.1f} cents from 440 Hz's semitones "
+                        f"({there} of the {pitched} pitched files in its folder): only tagged, the audio as it is"
+                        + (f" at {rate_new} Hz" if rate_new != info.rate else "")
+                        + (f" -> {', '.join(wav_names)}" if wav_names else ""))
+        elif p.heard is not None and cents_apart(p.heard, near) <= HEAR_TOLERANCE:
+            p.action += (f" (by ear {p.heard:+.1f} cents from 440 Hz's semitones, near the target tuning, but most "
+                         f"pitched files in its folder aren't: counted as 440 Hz)")
         for use, o in p.outputs.items():
             if o.convert and (use == "resample" or o is not p.outputs.get("resample")):
                 jobs.append(dict(index=len(jobs), src=os.path.join(card, p.rel), rel=p.rel, out_rel=o.rel,
@@ -1332,7 +1466,8 @@ def run_jobs(todo, args, done, echo=to_console, stop=None):
 
 
 def progress_header(args):
-    return dict(retune_progress=1, tuning=args.tenths, rate=args.rate, no_float=args.no_float)
+    return dict(retune_progress=1, tuning=args.tenths, rate=args.rate, no_float=args.no_float,
+                tuning_check=listening(args)[0])
 
 
 def job_key(job):
@@ -1445,6 +1580,9 @@ def parser():
     ap.add_argument("--no-float", action="store_true",
                     help="an integer file whose resampled peaks go over full scale is written a little quieter, "
                          "just enough (the report gives the dB), instead of as 32-bit float")
+    ap.add_argument("--no-tuning-check", action="store_true",
+                    help="don't listen for files already in the target tuning (a 432 Hz library without mtun): every "
+                         "file without mtun counts as 440 Hz")
     ap.add_argument("--dry-run", action="store_true", help="only report what would be done")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
                     help="files converted at once (processes) at most; fewer if the memory needs it (see "
@@ -1580,6 +1718,7 @@ def convert(args, echo=to_console, step=None, stop=None):
         f"rate {args.rate or 'kept'}, {'DRY RUN' if args.dry_run else 'written'}")
     log(f"Rubber Band (pylibrb) for audio clips and time-stretched samples: "
         f"{'yes' if pylibrb is not None else 'not installed'}")
+    log(f"Listening for files already in the target tuning: {listening(args)[1]}")
     log("")
     log("Audio files:", console=not args.quiet)
     counts, size_old, size_new, as_float, quieter = {}, 0, 0, [], []

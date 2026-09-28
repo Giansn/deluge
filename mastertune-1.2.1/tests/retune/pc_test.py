@@ -13,6 +13,9 @@ Checks:
 - the way back: the converted card converted to 440 Hz sounds like the original (pitch);
 - peaks over full scale after resampling: an integer file written as 32-bit float with its samples unclipped, or with
   --no-float just as much quieter as needed, never clipped (test_peaks());
+- the check by ear: a 432 Hz library without mtun only tagged (the audio byte for byte, or only its sample rate
+  converted), a lone 432 Hz tone among 440 Hz ones, noise and --no-tuning-check converted as 440 Hz, no listening at
+  440 and 415.3 Hz (test_ear());
 - memory: a dry run over 300 MB of songs (many large XML files) keeps only their references and positions, not the
   texts and parse trees (test_xml_memory(); the peak memory is measured with VmHWM on Linux, resource/wait4 on
   other Unix, psutil on Windows if installed, else that part is skipped).
@@ -479,6 +482,76 @@ def test_peaks(work):
 # --- memory of a dry run over a card with many large songs
 
 
+def harmonic(freq, rate, seconds, vibrato=0.0):
+    """An instrument's note: 6 harmonics (1/k), with a vibrato of that many cents at 5 Hz."""
+    t = np.arange(int(rate * seconds)) / rate
+    phase = 2 * np.pi * np.cumsum(freq * 2 ** (vibrato * np.sin(2 * np.pi * 5 * t) / 1200)) / rate
+    x = sum(np.sin(k * phase) / k for k in range(1, 7))
+    return 0.4 * x / np.max(np.abs(x)) * np.minimum(1, np.minimum(t, t[::-1]) / 0.01)
+
+
+def test_ear(work):
+    """A 432 Hz library without mtun (4 pitched files and noise in a folder): only tagged, the audio byte for byte (a
+    48 kHz file only resampled to 44.1 kHz, its pitch kept), not lowered a second time. Converted as 440 Hz: the noise,
+    a lone 432 Hz tone among 440 Hz ones (its folder's pitched files aren't in the tuning), everything with
+    --no-tuning-check. No listening at 440 Hz and at 415.3 Hz (a semitone below 440: the same semitones)."""
+    card, out = os.path.join(work, "card"), os.path.join(work, "out")
+    rng = np.random.default_rng(7)
+
+    def at(a):
+        return lambda note: a * 2 ** (note / 12)  # note: semitones from A
+
+    at432, at440 = at(432), at(440)
+    files = {
+        "SAMPLES/LIB/A2.WAV": wav(harmonic(at432(-12), 44100, 1.5, 8), 44100, 16),
+        "SAMPLES/LIB/C3.WAV": wav(harmonic(at432(-9), 44100, 1.5), 44100, 24),
+        "SAMPLES/LIB/E3.WAV": wav(harmonic(at432(-5), 44100, 1.5, 8), 44100, 16),
+        "SAMPLES/LIB/G3_48K.WAV": wav(harmonic(at432(-2), 48000, 1.5), 48000, 16),
+        "SAMPLES/LIB/NOISE.WAV": wav(np.clip(rng.normal(0, 0.1, 44100), -1, 1), 44100, 16),
+        "SAMPLES/DRUMS/TOM432.WAV": wav(harmonic(at432(-17), 44100, 1.0), 44100, 16),
+        "SAMPLES/DRUMS/BASS1.WAV": wav(harmonic(at440(-24), 44100, 1.0), 44100, 16),
+        "SAMPLES/DRUMS/BASS2.WAV": wav(harmonic(at440(-21), 44100, 1.0), 44100, 16),
+        "SAMPLES/DRUMS/BASS3.WAV": wav(harmonic(at440(-19), 44100, 1.0), 44100, 16),
+    }
+    tagged = {"SAMPLES/LIB/A2.WAV", "SAMPLES/LIB/C3.WAV", "SAMPLES/LIB/E3.WAV", "SAMPLES/LIB/G3_48K.WAV"}
+    for rel, data in files.items():
+        os.makedirs(os.path.dirname(os.path.join(card, rel)), exist_ok=True)
+        open(os.path.join(card, rel), "wb").write(data)
+    code, text = run_tool("--card", card, "--out", out, "--tuning", "432")
+    if not check(code == 0, f"ear: tool failed: {text[-1500:]}"):
+        return
+    for rel, data in files.items():
+        new = open(os.path.join(out, rel), "rb").read()
+        v0, v = firmware_wav_view(data), firmware_wav_view(new)
+        n0 = v0["data_length"] // (v0["byte_depth"] * v0["channels"])
+        n = v["data_length"] // (v["byte_depth"] * v["channels"])
+        audio0 = data[v0["data_start"]:v0["data_start"] + v0["data_length"]]
+        audio = new[v["data_start"]:v["data_start"] + v["data_length"]]
+        check(v["mtun"] == TARGET and v["rate"] == 44100, f"ear: {rel}: mtun {v['mtun']}, rate {v['rate']}")
+        if rel in tagged and v0["rate"] == 44100:
+            check(audio == audio0, f"ear: {rel}: tagged, but its audio changed")
+        elif rel in tagged:
+            x, _ = soundfile.read(io.BytesIO(new))
+            f, _ = tone_frequency(x, 44100, at432(-2))
+            check(n == math.floor(n0 * Fraction(44100, 48000) + Fraction(1, 2)) and abs(cents(f, at432(-2))) < 0.01,
+                  f"ear: {rel}: {n0} -> {n} frames, {cents(f, at432(-2)):+.4f} cents")
+        else:
+            check(n == math.floor(n0 * Fraction(4400, TARGET) + Fraction(1, 2)), f"ear: {rel} not converted ({n})")
+    rep = open(os.path.join(out, "RETUNE_REPORT.txt"), encoding="utf-8").read()
+    heard = re.findall(r"(\S+\.WAV): sounds in the target tuning already, by ear ([+-]\d+\.\d) cents", rep)
+    check(sorted(r for r, _ in heard) == sorted(tagged) and all(abs(float(c) + 31.8) < 1.0 for _, c in heard),
+          f"ear: heard {heard}")
+    check(re.search(r"TOM432\.WAV: .*but most pitched files in its folder aren't", rep) is not None,
+          "ear: the lone 432 Hz tone isn't reported as such")
+    code, text = run_tool("--card", card, "--tuning", "432", "--dry-run", "--no-tuning-check")
+    check(code == 0 and "off (--no-tuning-check)" in text and "sounds in the target tuning" not in text,
+          f"ear: --no-tuning-check: {text[-800:]}")
+    for tuning in ("440", "415.3"):
+        code, text = run_tool("--card", card, "--tuning", tuning, "--dry-run")
+        check(code == 0 and f"not at {tuning} Hz" in text and "sounds in the target tuning" not in text,
+              f"ear: {tuning} Hz: {text[-800:]}")
+
+
 def big_song(n_kits, rows=16, clips=4):
     """A song as the Deluge writes them: kits with sample rows (each with its zone positions, many parameters) and
     clips with long note data (about 8 KB of XML per sample row, as on a real card: 295 MB with about 30 000
@@ -806,6 +879,7 @@ def main():
           + ("" if sox else " (sox not installed)") + ("" if ffmpeg else " (ffmpeg not installed)"))
 
     test_peaks(os.path.join(work, "peaks"))
+    test_ear(os.path.join(work, "ear"))
     test_xml_memory(os.path.join(work, "xml_memory"))
     print(f"{failures} FAILURES" if failures else "all checks passed")
 

@@ -18,6 +18,7 @@
 Usage: python3 test_deluge_tuner.py   Needs numpy and soxr (pylibrb for the self-test; tkinter and a display for
 the window, else those are skipped). retune_library.py's own tests: tests/retune/run.sh.
 """
+import argparse
 import json
 import multiprocessing
 import ntpath
@@ -53,8 +54,8 @@ def progress_file(folder, tenths=4320, rate=44100, no_float=False):
     folder = Path(folder)
     (folder / "SAMPLES").mkdir(parents=True, exist_ok=True)
     (folder / "SAMPLES" / "A.WAV").write_bytes(b"RIFF")
-    (folder / rl.PROGRESS).write_text(json.dumps(dict(retune_progress=1, tuning=tenths, rate=rate,
-                                                      no_float=no_float)) + "\n", encoding="utf-8")
+    header = rl.progress_header(argparse.Namespace(tenths=tenths, rate=rate, no_float=no_float))
+    (folder / rl.PROGRESS).write_text(json.dumps(header) + "\n", encoding="utf-8")
 
 
 class Destination(unittest.TestCase):
@@ -186,6 +187,18 @@ class Card(unittest.TestCase):
         self.assertEqual(pads, sorted(pads, key=[k for k, *_ in dt.CATEGORIES].index))
         self.assertEqual(dt.pads_of({"converted": 1}, 32), ["converted"] * 32)
         self.assertEqual(dt.pads_of({}, 32), [])
+
+    def test_items_heard_in_tune(self):
+        """Files already in the tuning by ear: their own line with the tuning, in both languages, and their pads."""
+        result = dict(counts={"converted": 3, "heard in tune": 2}, xml=0, values=0, size_old=1 << 20,
+                      size_new=1 << 20, as_float=[], quieter=[], warnings=[])
+        with mock.patch.object(dt.rl, "pylibrb", object()):
+            self.assertIn(("2 KLANGEN SCHON SO: NUR MARKIERT (432,0 HZ)", False),
+                          dt.result_items(result, False, 4320, "/new"))
+            with mock.patch.object(dt, "LANG", "en"):
+                self.assertIn(("2 SOUND IN TUNE: TAG ONLY (432.0 HZ)", False),
+                              dt.result_items(result, True, 4320, None))
+        self.assertEqual(dt.pads_of(result["counts"], 5), ["converted"] * 3 + ["heard in tune"] * 2)
 
     def test_items(self):
         result = dict(counts={"converted": 3, "already native": 1}, xml=2, values=12, size_old=3 << 20,
@@ -414,7 +427,7 @@ class SelfTest(unittest.TestCase):
             self.assertTrue(dt.selftest(tmp), Path(tmp, "selftest.txt").read_text())
             self.assertEqual(Path(tmp, "selftest.txt").read_text().splitlines(), [
                 f"version: v{dt.VERSION}", "soxr: ok", "rubberband: ok", "read: ok", "convert: ok", "processes: ok",
-                "resume: ok", "window: ok", "english: ok"])
+                "ear: ok", "resume: ok", "window: ok", "english: ok"])
 
 
 if __name__ == "__main__":
