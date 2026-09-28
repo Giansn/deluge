@@ -32,6 +32,7 @@
   <tr><td>ARM</td><td>Starts as soon as the signal exceeds a threshold (THRESH), with 0.3 s of pre-roll.</td></tr>
   <tr><td>STOP</td><td>Ends the take.</td></tr>
   <tr><td>MON</td><td>The monitor on the headphones.</td></tr>
+  <tr><td>OUT</td><td>Chooses the monitor's output: up/down, mouse wheel or the knob, then Enter. The Deluge itself is never offered.</td></tr>
   <tr><td>FOLDER</td><td>Opens the folder with the recordings.</td></tr>
   <tr><td>VOL</td><td>Leave it at 0 dB: then the recording is bit-exact. Turning it down doesn't repair clipping that already happens in the Deluge.</td></tr>
   <tr><td>Pads</td><td>The level. For the baseline in §5.8 the pad at −3 should stay dark.</td></tr>
@@ -92,7 +93,7 @@
   <li><b>Buttons:</b> FUNCTION LEVELS (L) or NORM (N), MODE READ (R) or APPLY (A), START (Enter), CARD (C), REPORT (T) opens the whole report as text, RESTORE (B) shows the backups.</li>
   <li><b>APPLY</b> first shows what would change, and the pads of the songs concerned blink. START again writes, Esc cancels.</li>
   <li><b>WRITE TO:</b> SD CARD DIRECTLY, with the old files in <code>BASELINE-BACKUP/</code>, or COPY FOLDER, with only the changed files in the card's layout. RESTORE plays a backup back.</li>
-  <li><b>The report</b> lists songs, kits or audio tracks above 35, a master compressor that is on, synths and kit rows above 40 ("without notes" if the row has no notes), and stages that distort more with level: saturation, compressor, analog delay with feedback, low-pass with drive, filters with resonance from 25. Every level is shown as the value and in dB as on the Deluge, for example "40.0 (+8.16 dB)".</li>
+  <li><b>The report</b> lists songs, kits or audio tracks above 35, a master compressor that is on, synths and kit rows above 40 (marked "no notes" if the row has no notes), and stages that distort more with level: saturation, compressor, analog delay with feedback, low-pass with drive, filters with resonance from 25. Every level is shown as the value and in dB as on the Deluge, for example "40.0 (+8.16 dB)".</li>
   <li><b>Its limit:</b> it doesn't tell you whether a song clips. Only measuring shows that, for example with DelugeRec.</li>
 </ul>
 <p class="small">Without a window: <code>py tools/deluge_baseline.py [--lang en] check|levels|normalize E:\ [--yes]</code>. Without <code>--yes</code> it only shows what it would do.</p>

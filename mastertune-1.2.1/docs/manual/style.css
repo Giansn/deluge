@@ -42,7 +42,7 @@ code, .key { font-family: "DejaVu Sans Mono", "Liberation Mono", monospace; font
 .cover { border-bottom: 3pt solid var(--ink); padding-bottom: 10pt; margin-bottom: 10pt; }
 .cover .kicker { font-size: 10pt; color: var(--muted); letter-spacing: 1pt; text-transform: uppercase; }
 .toc { list-style: none; padding: 0; margin: 6pt 0; font-size: 10pt; }
-.toc li { display: flex; align-items: baseline; margin: 0 0 1.5pt; }
+.toc li { display: flex; align-items: baseline; margin: 0 0 0.6pt; }
 .toc li .t { flex: none; }
 .toc li .dots { flex: 1; border-bottom: 0.8pt dotted #9aa0a6; margin: 0 4pt; position: relative; top: -2pt; }
 .toc li .pg { flex: none; min-width: 14pt; text-align: right; }

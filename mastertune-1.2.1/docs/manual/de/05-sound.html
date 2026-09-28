@@ -54,12 +54,12 @@
   <tr><th style="width:27%">Änderung</th><th>Was du hörst</th></tr>
   <tr><td>Kein Rauschen bei tiefem Cutoff</td><td>Die Ladder-Filter (12 dB, 24 dB, Drive) trugen auf ihrem Cutoff ein absichtliches «analoges Rauschen», schon in der Original-Firmware: 0,44 % Schwankung, hörbar als Rauschband um jede Note. Es ist weg.</td></tr>
   <tr><td>Stille nach der Musik</td><td>Unter 4,5 kHz rechnet das Ladder-Filter genauer. Wenn die Musik aufhört, wird das Filter wirklich still.</td></tr>
-  <tr><td>Resonanz in der Tiefe wie im Original</td><td>Unter etwa 310 Hz senken die 12- und 24-dB-Ladder ihre Resonanz wieder um bis zu 9 %, und Song-, Kit- und Spurfilter sättigen wie im Original. Die Selbstoszillation ist dort 6 dB leiser, und das Brummen bei 32 Hz (zum Beispiel in «New Sitar Grii 10») verschwindet.</td></tr>
-  <tr><td>Pro Sample, nicht pro Block</td><td>Cutoff, Resonanz, Morph und der Pegelausgleich bewegen sich von Sample zu Sample. Grosse Sprünge laufen durch echte Zwischenstellungen. Die Zipper-Geräusche sinken um 7 bis 72 dB, je nach Filter. Ein Filter, das stillsteht, rechnet Bit für Bit wie in v17.</td></tr>
+  <tr><td>Resonanz in der Tiefe wie im Original</td><td>Unter etwa 310 Hz senken die 12- und 24-dB-Ladder die Resonanz wieder um bis zu 9 %, und Song-, Kit- und Spurfilter sättigen wie im Original. Die Selbstoszillation ist dort 6 dB leiser, das Brummen bei 32 Hz (etwa in «New Sitar Grii 10») ist weg.</td></tr>
+  <tr><td>Pro Sample, nicht pro Block</td><td>Cutoff, Resonanz, Morph und Pegelausgleich bewegen sich von Sample zu Sample. Grosse Sprünge laufen durch echte Zwischenwerte. Die Zipper-Geräusche sinken um 7 bis 72 dB, je nach Filter. Ein ruhendes Filter rechnet Bit für Bit wie in v17.</td></tr>
   <tr><td>10 ms Gleiten</td><td>Jeder neue Filterwert gleitet über 10 ms, egal woher er kommt: Knopf, Automation, MIDI oder Patchkabel, in Stimmen und in Song-, Kit- und Spurfiltern. Vorher glitt nur der Knopf in Synths.</td></tr>
   <tr><td>Überblendungen</td><td>7 ms, wenn du Modus oder Routing wechselst und wenn du ein Filter ausschaltest; ein lineares Einblenden, wenn du es einschaltest. Die Knackser sinken vom bis zu 254-Fachen auf das 1,7-Fache des normalen Schritts zwischen zwei Samples.</td></tr>
   <tr><td>Frischer Stimmzustand</td><td>Eine neue Note erbt nichts von der vorigen.</td></tr>
-  <tr><td>Nach einer Stille <span class="tag">v18.2</span></td><td>Ein Kit oder eine Audio-Spur setzt nach einer Pause sofort mit dem aktuellen Filter, EQ und der aktuellen Lautstärke wieder ein. v18 liess in den ersten Millisekunden noch alte Bewegungen ablaufen: ein kurzes Ticken oder ein hellerer Anschlag. Wenn du v18 installiert hast, nimm v18.3.</td></tr>
+  <tr><td>Nach einer Stille <span class="tag">v18.2</span></td><td>Kommt ein Kit oder eine Audio-Spur nach einer Pause wieder, klingen Filter, EQ und Lautstärke sofort wie eingestellt. v18 liess in den ersten Millisekunden noch alte Bewegungen laufen: ein kurzes Ticken oder ein hellerer Anschlag. Hast du v18 installiert, nimm v18.3.</td></tr>
 </table>
 <div class="box warn"><b>Routing Parallel ist 6 dB leiser.</b> Mit dem Routing <b>Parallel</b> fügt ein ausgeschaltetes Filter kein Trockensignal mehr hinzu, und die Summe beider Filter hat die halbe Lautstärke (−6 dB). Songs mit diesem Routing spielen darum 6 dB leiser als vor v18. Erhöhe ihre Lautstärke, wenn dir der Pegel fehlt.</div>
 
@@ -136,7 +136,7 @@
 <p>Settings → Community features → <b>Filter crossing guard</b> (7-Segment <code>CROS</code>), standardmässig aus. Kommen sich HPF und LPF nahe oder kreuzen sie sich, senkt er beide Resonanzen sanft, damit sich ihre Spitzen nicht zu einem schmerzhaften Pegelsprung addieren.</p>
 <table>
   <tr><th>HPF-Position</th><th>Gemeinsame Spitze, mit Guard</th><th>Ohne</th></tr>
-  <tr><td>weniger als eine halbe Oktave unter dem LPF oder darüber</td><td>höchstens 0,7 dB über der grösseren Einzelspitze</td><td>bis 39 dB</td></tr>
+  <tr><td>weniger als eine halbe Oktave unter dem LPF oder darüber</td><td>höchstens 0,7 dB über der grösseren Einzelspitze</td><td>bis 39 dB</td></tr>
   <tr><td>eine halbe bis anderthalb Oktaven darunter</td><td>höchstens 1,7 dB</td><td></td></tr>
 </table>
 <ul>

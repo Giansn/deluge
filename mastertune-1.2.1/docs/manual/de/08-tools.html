@@ -15,7 +15,7 @@
 <ul>
   <li><b>Die Windows-Programme</b> sind je eine <code>.exe</code>, ohne Installation. Die neueste Version liegt immer in ihrem Release unter <code>github.com/Giansn/deluge/releases</code>. Windows fragt einmal nach, weil sie nicht signiert sind: Klicke auf <b>Weitere Informationen</b> (More info), dann auf <b>Trotzdem ausführen</b> (Run anyway).</li>
   <li><b>Als Python-Skripte</b> liegen sie in <code>mastertune-1.2.1/tools/</code>.</li>
-  <li><b>Alle drei</b> haben den Look des Deluge, und jeder Knopf zeigt darunter seine Taste auf der Tastatur. DelugeTuner und DelugeBaseline wechseln zwischen Deutsch und Englisch (SPRACHE / LANGUAGE) und starten in der Sprache des Computers. DelugeRec gibt es nur auf Englisch. Die Bilder zeigen die englische Oberfläche; die englischen Beschriftungen stehen hier in Klammern.</li>
+  <li><b>Alle drei</b> haben den Look des Deluge, und unter jedem Knopf steht seine Taste auf der Tastatur. DelugeTuner und DelugeBaseline starten in der Sprache des Computers und wechseln mit SPRACHE / LANGUAGE zwischen Deutsch und Englisch.</li>
 </ul>
 
 <h3 id="tools-rec">8.2 DelugeRec</h3>
@@ -32,6 +32,7 @@
   <tr><td>ARM</td><td>Startet, sobald das Signal eine Schwelle (THRESH) überschreitet, mit 0,3 s Vorlauf.</td></tr>
   <tr><td>STOP</td><td>Beendet den Take.</td></tr>
   <tr><td>MON</td><td>Das Mithören über Kopfhörer.</td></tr>
+  <tr><td>OUT</td><td>Wählt den Ausgang fürs Mithören: auf/ab, Mausrad oder Drehknopf, dann Enter. Der Deluge selbst wird nie angeboten.</td></tr>
   <tr><td>FOLDER</td><td>Öffnet den Ordner mit den Aufnahmen.</td></tr>
   <tr><td>VOL</td><td>Lass ihn auf 0 dB: Dann ist die Aufnahme bitgenau. Herunterdrehen repariert kein Übersteuern, das schon im Deluge passiert.</td></tr>
   <tr><td>Pads</td><td>Der Pegel. Für die Baseline in §5.8 sollte das Pad bei −3 dunkel bleiben.</td></tr>
@@ -92,7 +93,7 @@
   <li><b>Knöpfe:</b> FUNKTION (FUNCTION) wählt PEGEL (LEVELS, Taste P) oder NORM (Taste N), MODUS (MODE) wählt LESEN (READ, Taste L) oder ANPASSEN (APPLY, Taste A). Dazu START (Enter), KARTE (CARD, Taste K), BERICHT (REPORT, Taste B) öffnet den ganzen Bericht als Text, ZURÜCK (RESTORE, Taste Z) zeigt die Sicherungen. Im englischen Fenster sind die Tasten L, N, R, A, C, T und B.</li>
   <li><b>ANPASSEN</b> (APPLY) zeigt zuerst, was sich ändern würde, und die Pads der betroffenen Songs blinken. Ein zweites START schreibt, Esc bricht ab.</li>
   <li><b>SCHREIBEN NACH (WRITE TO):</b> SD-KARTE DIREKT (SD CARD DIRECTLY), mit den alten Dateien in <code>BASELINE-BACKUP/</code>, oder KOPIE-ORDNER (COPY FOLDER), mit nur den geänderten Dateien im Aufbau der Karte. ZURÜCK (RESTORE) spielt eine Sicherung zurück.</li>
-  <li><b>Der Bericht</b> listet Songs, Kits oder Audio-Spuren über 35, einen eingeschalteten Master-Kompressor, Synths und Kit-Reihen über 40 («ohne Noten», wenn die Reihe keine Noten hat) und Stufen, die mit mehr Pegel stärker verzerren: Sättigung, Kompressor, Analog-Delay mit Feedback, Tiefpass mit Drive, Filter mit Resonanz ab 25. Jeder Pegel steht als Wert und in dB wie am Deluge, zum Beispiel «40,0 (+8,16 dB)».</li>
+  <li><b>Der Bericht</b> listet Songs, Kits oder Audio-Spuren über 35, einen eingeschalteten Master-Kompressor, Synths und Kit-Reihen über 40 (mit dem Vermerk «ohne Noten», wenn die Reihe keine Noten hat) und Stufen, die mit mehr Pegel stärker verzerren: Sättigung, Kompressor, Analog-Delay mit Feedback, Tiefpass mit Drive, Filter mit Resonanz ab 25. Jeder Pegel steht als Wert und in dB wie am Deluge, zum Beispiel «40,0 (+8,16 dB)».</li>
   <li><b>Seine Grenze:</b> Es sagt dir nicht, ob ein Song übersteuert. Das zeigt nur eine Messung, zum Beispiel mit DelugeRec.</li>
 </ul>
 <p class="small">Ohne Fenster: <code>py tools/deluge_baseline.py [--lang en] check|levels|normalize E:\ [--yes]</code>. Ohne <code>--yes</code> zeigt es nur, was es tun würde.</p>

@@ -4,7 +4,7 @@
 
 **mastertune** is my fork of the official Deluge community firmware **1.2.1**: lighter on the CPU, with a CPU monitor, the Deluge as a USB audio interface, a master tune and a few tools around it. Latest: **v18.3**, [`deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin`](https://github.com/Giansn/deluge/raw/claude/wizardly-brahmagupta-nnrk07/mastertune-1.2.1/deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin). Install it like any Deluge firmware: the .bin in the SD card's root folder (only one .bin there), then switch the Deluge on while holding SHIFT. Every version, the details and the measurements are further down.
 
-**Manual:** [mastertune-manual-en.pdf](mastertune-1.2.1/docs/mastertune-manual-en.pdf), 56 pages: every change explained, where to find it on the Deluge and how to use it, with diagrams, the frequency drone in full and a reference of all menus, buttons and messages.
+**Manual:** [English](mastertune-1.2.1/docs/mastertune-manual-en.pdf) (56 pages) or [German](mastertune-1.2.1/docs/mastertune-manual-de.pdf) (59 pages): every change explained, where to find it on the Deluge and how to use it, with diagrams, the frequency drone in full and a reference of all menus, buttons and messages.
 
 **Written with Claude (AI).** This is a personal fork, not a contribution to the official firmware: please don't report its bugs to the community developers, report them in this repository's [issues](https://github.com/Giansn/deluge/issues). Every change is tested in an emulator that runs the firmware's real ARM code (below), but **v18.x has not been played on a real Deluge yet.** Keep a copy of your card.
 
