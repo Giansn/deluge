@@ -21,12 +21,12 @@ Vor jeder Arbeit `git pull`, denn die Cloud-Session liefert laufend nach.
 - **Python 3.12 nehmen.** `python-rtmidi` hat für neuere Versionen keine fertigen Pakete.
 - **Port-Namen:** Die Ports heissen `Deluge 0`, `MIDIIN2 (Deluge) 1` und `MIDIIN3 (Deluge) 2`. Ab Commit nach `0377a67` erkennt das Skript `MIDIIN3` von selbst, `-p` ist dann nicht mehr nötig.
 
-## Aufträge (Stand 28.09.2026, v18.2 ist da)
+## Aufträge (Stand 28.09.2026, v18.3 ist da)
 
-Erledigt: der Bericht zu v16, l2d, der Song für den Emulator, der Retune-Test unter Windows, «Rescue». Die Aufträge zu v17 entfallen: v18.2 enthält v17 und v18, alles gilt jetzt für v18.2. Was es bringt, steht im README in den Abschnitten «v18» und «v18.2».
+Erledigt: der Bericht zu v16, l2d, der Song für den Emulator, der Retune-Test unter Windows, «Rescue». Die Aufträge zu v17 entfallen: v18.3 enthält v17, v18 und v18.2, alles gilt jetzt für v18.3. Was es bringt, steht im README in den Abschnitten «v18», «v18.2» und «v18.3».
 
-1. **v18.2 aufspielen:** `deluge-1.2.1-mastertune-v18.2-l2d-c9c65066.bin`, die Hauptdatei mit L2 für Code und Daten (v18.2 gibt es nur so). Settings → Firmware version zeigt `1.2.1-mastertune-` / `v18.2-l2d`. Bei einem Absturz: `deluge-1.2.1-mastertune-v18-124aeaa2.bin`, v18 ohne L2 (mit dem Fehler nach Stille, siehe README).
-2. **Die wichtigste Messung: «New Sitar Grii 10» mit v18**, wie der v16-Bericht. 432 Hz, CPU monitor auf Profile, 30 s Stillstand, dann 40 s dieselbe Stelle mit denselben Clips. `live -s 70 -o 2026-..-v18.2-l2d-grosser-song.jsonl --symbols deluge-1.2.1-mastertune-v18.2-l2d-c9c65066.symbols.json`.
+1. **v18.3 aufspielen:** `deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin`, die Hauptdatei mit L2 für Code und Daten (v18.3 gibt es nur so). Settings → Firmware version zeigt `1.2.1-mastertune-` / `v18.3-l2d`. Bei einem Absturz: `deluge-1.2.1-mastertune-v18-124aeaa2.bin`, v18 ohne L2.
+2. **Die wichtigste Messung: «New Sitar Grii 10» mit v18**, wie der v16-Bericht. 432 Hz, CPU monitor auf Profile, 30 s Stillstand, dann 40 s dieselbe Stelle mit denselben Clips. `live -s 70 -o 2026-..-v18.2-l2d-grosser-song.jsonl --symbols deluge-1.2.1-mastertune-v18.3-l2d-3581f019.symbols.json`.
    - Der Emulator erwartet etwa die Last von v17 (41 statt 93 % Anzeige bei v16). Die neuen Filter kosten etwas mehr: Der Testsong braucht 91,4 statt 89,3 %.
    - Notieren: QL, abgeschnittene Stimmen, die längste Lücke, und ob Oboe und Sitar zu hören sind.
 3. **Filter und Lautstärke am Gehör**, jeweils kurz, am besten mit Kopfhörer:
@@ -34,7 +34,7 @@ Erledigt: der Bericht zu v16, l2d, der Song für den Emulator, der Retune-Test u
    - **Brummen:** In «New Sitar Grii 10» das Song-LPF ganz zu. Das Brummen bei 32 Hz muss weg sein.
    - **Übergänge:** Cutoff und Resonanz schnell drehen, Filtermodus und Routing wechseln, während ein Ton klingt. Keine Stufen, keine Klicks.
    - **Parallel-Routing:** Ein Song mit Routing «Parallel» ist 6 dB leiser als mit v17. Stört das?
-   - **Drive:** LPF-Modus Drive mit viel Resonanz. Der Bass bleibt, statt dünn zu werden.
+   - **Drive:** LPF-Modus Drive mit viel Resonanz. Der Bass bleibt, statt dünn zu werden. Neu in v18.3: Ein Song mit mehreren Drive-Filtern verliert am Taktanfang keine Stimmen mehr, und hoch oben mit Resonanz klingt Drive weiter sauber ohne Spiegeltöne.
    - **EQ:** Bass und Treble drehen, während Musik läuft. Keine Klicks.
    - **Lautstärke:** Jede Raste ändert 0,5 dB, die Anzeige zeigt dB (`-3.5`), ganz unten `OFF`. Leise eingestellte Spuren klingen sauber.
    - **Sidechain:** Ein alter Song mit hartem Pumpen setzt jetzt über mindestens 5 ms ein, etwas weicher. Stört das?
@@ -71,7 +71,8 @@ Erledigt: der Bericht zu v16, l2d, der Song für den Emulator, der Retune-Test u
 
 | Datei | Was |
 |---|---|
-| `deluge-1.2.1-mastertune-v18.2-l2d-c9c65066.bin` | **aktuelle Version**, mit L2-Cache für Code und Daten. Im README die Abschnitte «v18.2» und «v18». |
+| `deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin` | **aktuelle Version**, mit L2-Cache für Code und Daten. Im README die Abschnitte «v18.3», «v18.2» und «v18». |
+| `deluge-1.2.1-mastertune-v18.2-l2d-c9c65066.bin` | v18.2, Drive wie v18 |
 | `deluge-1.2.1-mastertune-v18-l2d-6fa0875b.bin` | v18, mit dem Fehler nach Stille |
 | `deluge-1.2.1-mastertune-v18-124aeaa2.bin` | v18 ohne L2, zum Zurückwechseln |
 | `deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin` | v17, die Version davor |

@@ -1,6 +1,6 @@
 # Deluge 1.2.1 mit Master Tune
 
-Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern, v12 einen Frequenz-Drone mit bis zu 16 Tönen, v13 mehr Leistung, einen Ping-Pong-Arp, flimmerfreies Dimmen der Pads, genaueres MIDI und einen überarbeiteten Drone, v14 ein Reverb ohne Wabbeln, ein Delay ohne Tonhöhensprung und einen Countdown beim Song-Wechsel, v15 einen lebendigen Drone (Life, FM, Pulse), einen CPU-Monitor in einer Zeile und drei Korrekturen aus der Community, v16 Drone-Spuren für Song- und Arranger-View und einen Profiler, v17 halbe Last, eine Song-Übersicht mit aufklappbaren Versionen, ein Kürzel für den CPU-Monitor und den L2-Cache in der Hauptdatei, v18 Filter ohne Rascheln und mit sauberen Übergängen, Lautstärkeregler in dB und ein lesbares OLED, v18.2 Filter, EQ und Lautstärke ohne Reste nach einer Stille.
+Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern, v12 einen Frequenz-Drone mit bis zu 16 Tönen, v13 mehr Leistung, einen Ping-Pong-Arp, flimmerfreies Dimmen der Pads, genaueres MIDI und einen überarbeiteten Drone, v14 ein Reverb ohne Wabbeln, ein Delay ohne Tonhöhensprung und einen Countdown beim Song-Wechsel, v15 einen lebendigen Drone (Life, FM, Pulse), einen CPU-Monitor in einer Zeile und drei Korrekturen aus der Community, v16 Drone-Spuren für Song- und Arranger-View und einen Profiler, v17 halbe Last, eine Song-Übersicht mit aufklappbaren Versionen, ein Kürzel für den CPU-Monitor und den L2-Cache in der Hauptdatei, v18 Filter ohne Rascheln und mit sauberen Übergängen, Lautstärkeregler in dB und ein lesbares OLED, v18.2 Filter, EQ und Lautstärke ohne Reste nach einer Stille, v18.3 Drive mit Überabtastung wie in 1.2.1 und Einstellungen, die beim Speichern erhalten bleiben.
 
 | Datei | Version (Settings → Firmware version) | Inhalt |
 |---|---|---|
@@ -24,10 +24,11 @@ Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit
 | `deluge-1.2.1-mastertune-v18-l2d-6fa0875b.bin` | `1.2.1-mastertune-v18-l2d` (ab v18 ohne Hash) | v17 + Filter ohne Rascheln, Übergänge ohne Stufen und Klicks, Lautstärke in 0,5-dB-Schritten, EQ mit echten Shelves, Output limiter, Filter crossing guard, OLED-Helligkeit, Songname für DelugeRec; **mit L2-Cache für Code und Daten** |
 | `deluge-1.2.1-mastertune-v18-124aeaa2.bin` | `1.2.1-mastertune-v18` | dasselbe ohne L2-Cache, zum Zurückwechseln |
 | `deluge-1.2.1-mastertune-v18.2-l2d-c9c65066.bin` | `1.2.1-mastertune-v18.2-l2d` | v18 + Filter, EQ und Lautstärke nach einer Stille korrigiert; **mit L2-Cache für Code und Daten**, nur in dieser Variante |
+| `deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin` | `1.2.1-mastertune-v18.3-l2d` | v18.2 + Drive überabgetastet wie 1.2.1 (keine abgeschnittenen Stimmen in Drive-lastigen Songs), unbekannte Einstellungen und das Sync-Level des Reverb-Sidechains bleiben erhalten; **mit L2-Cache für Code und Daten**, nur in dieser Variante |
 
-SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7`, v14 `cb17bbb3…8e23e6e5`, v15 `cdce07f3…da7ca652`, v16 `7eed1a77…71897f9f`, v17-l2d `aad4d080…5ec32c4b`, v17 ohne L2 `ae6aedd4…be88ae64`, v18-l2d `03f55664…75098a8c`, v18 ohne L2 `ea2d606a…220d434f`, v18.2-l2d `7f45090c…0f8c29ef` (vollständig: `sha256sum *.bin`).
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7`, v14 `cb17bbb3…8e23e6e5`, v15 `cdce07f3…da7ca652`, v16 `7eed1a77…71897f9f`, v17-l2d `aad4d080…5ec32c4b`, v17 ohne L2 `ae6aedd4…be88ae64`, v18-l2d `03f55664…75098a8c`, v18 ohne L2 `ea2d606a…220d434f`, v18.2-l2d `7f45090c…0f8c29ef`, v18.3-l2d `f41f5639…8d8af97a` (vollständig: `sha256sum *.bin`).
 Nachgeprüft am 26.09.2026: Jede Version v2–v12 wurde aus ihrem Commit in einer eigenen Arbeitskopie komplett neu gebaut, mit 441–448 neu übersetzten Dateien. Jede SHA-256 stimmt mit der ausgelieferten Datei überein.
-Quellcode: `patches/0001` bis `0113` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 sind die Leistungsversion v12-perf, gleich wie `perf/0001`–`0003`), v14 = 0001–0035, v15 = 0001–0041, v16 = 0001–0055, v17 ohne L2 = 0001–0074, die Hauptdatei v17-l2d dazu `l2test/0001`–`0003`, v18 ohne L2 = 0001–0112, die Hauptdatei v18-l2d ebenso dazu `l2test/0001`–`0003`, v18.2-l2d = 0001–0113 und `l2test/0001`–`0003`.
+Quellcode: `patches/0001` bis `0116` gegen `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 sind die Leistungsversion v12-perf, gleich wie `perf/0001`–`0003`), v14 = 0001–0035, v15 = 0001–0041, v16 = 0001–0055, v17 ohne L2 = 0001–0074, die Hauptdatei v17-l2d dazu `l2test/0001`–`0003`, v18 ohne L2 = 0001–0112, die Hauptdatei v18-l2d ebenso dazu `l2test/0001`–`0003`, v18.2-l2d = 0001–0113 und `l2test/0001`–`0003`, v18.3-l2d = 0001–0116 und `l2test/0001`–`0003`.
 
 ## v3 und v4: Unterschiede
 
@@ -651,6 +652,34 @@ v17 enthält v16. **Die Hauptdatei hat den L2-Cache für Code und Daten** (bishe
 - **Weiterhin bestanden:** Profiler 21 Prüfungen (alle drei Varianten), Song-Wechsel 131, Clock, Sections, L2 (alle drei), CPU-Monitor-Dekoder 503 Meldungen, Drone auf dem PC 150, Retune ohne Zugriff auf Adresse 0.
 - **Gegenprüfer:** je einer für die Leistungsänderungen, die stillen Spuren, die Song-Übersicht, das Kürzel, die Drone-Ansicht und den Filter. Alle ihre Befunde der Stufe «mittel» und höher sind behoben, jeder mit einem Test.
 
+## v18.3: Drive wie 1.2.1 überabgetastet, Einstellungen und Sync-Level bleiben erhalten
+
+v18.3 enthält v18.2 und korrigiert drei Befunde aus dem Stresstest im Emulator. Wie v18.2 gibt es v18.3 nur als Hauptdatei mit L2-Cache für Code und Daten. **v18.3 ist auf dem Gerät noch nicht getestet**, geprüft ist alles im Emulator mit dem Maschinencode der Firmware.
+
+- **Drive** (Patch 0116):
+  - **Das Problem:** v18 rechnete das Drive-LPF bei jeder Einstellung 2× überabgetastet. Ein Song mit vielen Drive-Filtern brauchte am Taktanfang die 3,5-fache Echtzeit (1.2.1: 1,7-fach) und verlor fast alle Stimmen, bevor der Last-Schutz eingreifen konnte.
+  - **v18.3** überabtastet wieder dort, wo 1.2.1 es tat: bei hohem Cutoff mit Resonanz, also bei Resonanz 25 ab etwa 5 kHz, bei 20 ab 13 kHz, unter 15 nie. Dort spiegeln Resonanz und Sättigung sonst hörbar. Wo es überabtastet, dann mit den echten Halbband-Filtern von v18 (Spiegel −88 dB).
+  - **Umschalten:** Es bleibt überblendet. Eine kleine Hysterese verhindert, dass ein LFO um die Schwelle ständig hin und her schaltet.
+  - **Der Preis:** Unterhalb der Schwelle schwingt Drive wieder wie in 1.2.1, bei 2 kHz 56 Cent zu tief (v18: 30).
+- **Einstellungen** (Patch 0114): Community-Einstellungen, die eine Firmware nicht kennt, etwa von einer neueren Version, schrieb sie unter falschem Namen zurück («SONGS»): Sie merkte sich den Namen nur als Verweis auf Speicher, der danach freigegeben war. Jetzt behalten sie Namen und Wert. Den Fehler haben auch 1.2.1, v17 und die aktuelle Community-Firmware. Ein Wechsel auf v17 und zurück setzt Limiter, Crossing guard und OLED-Helligkeit darum weiterhin auf den Standard.
+- **Reverb-Sidechain des Songs** (Patch 0115): Sein Sync-Level rutschte seit 1.2.1 bei jedem Speichern und Laden eine Stufe tiefer, weil es roh geschrieben und umgerechnet gelesen wurde. Jetzt wird es so gelesen, wie es geschrieben ist. Bestehende Songs laden mit dem gespeicherten Wert.
+
+**Geprüft:**
+- **Build:** 474 Dateien, ohne Warnungen. Zwei komplette Neubauten ergeben dieselbe SHA-256. `patches/0001`–`0116` mit `l2test/0001`–`0003` ergeben genau den Quellbaum von v18.3-l2d. Alle folgenden Prüfungen liefen auf genau diesem Build.
+- **Drive im Stresstest** (`tests/stress/audio`, alle LPF auf Drive, 7 Takte, Culling wie auf dem Gerät; v18.3 und v17 aus demselben Lauf, v18 aus dem ersten Stresstest):
+
+  | | v18 | v18.3 | v17 |
+  |---|---|---|---|
+  | Stimmen im Mittel | 6 | 15 | 20 |
+  | abgeschnittene Stimmen (sanft / hart) | 259 / 171 | 173 / 77 | 183 / 74 |
+  | Aussetzer im Emulator (Samples) | 3944 | 913 | 550 |
+
+- **Drive-Test** (`tests/filters` drive, Cortex-A9-Code): Die Schwelle stimmt an allen 10 251 geprüften Einstellungen mit 1.2.1 überein. Ein Sweep über die Schwelle und zurück schaltet genau zweimal, ein Pendeln um sie herum höchstens einmal, ohne Sprung. Überabgetastet nimmt Drive 3,7 bis 21 dB Spiegeltöne weg, das Halbband-Filter lässt ±0,0004 dB durch und dämpft Spiegel auf −88 dB. Der Bass bleibt innerhalb 0,53 dB. `filter_neutral`: Drive gleitet ohne Zipper, ohne Überabtastung −77 dBc, mit −126 dBc über 2 kHz.
+- **Was beim Speichern bleibt** (`tests/stress/ui/saved_state_emu.py`, ganze Firmware im Emulator): Zwei Einstellungen, die die Firmware nicht kennt, stehen nach dem Speichern mit Namen und Wert in `CommunityFeatures.XML` (v18.2: fehlen, dafür `SONGS`). Speichern, Laden und nochmals Speichern lässt das Sync-Level des Reverb-Sidechains stehen (v18.2: 6 → 5).
+- **Klang:** Der Volllast-Song (ohne Drive) klingt Bit für Bit wie v18 und v18.2 (`47053032…`, `8bdf172e…`), bei 91,5 % CPU und gleich vielen abgeschnittenen Stimmen (111). Stille Spuren: mit und ohne die Abkürzung dieselbe Ausgabe, Sample für Sample.
+- **Weiterhin bestanden** (ganze Firmware im Emulator): Song-Wechsel 131 Prüfungen, Drone 81, L2, Firmware-Version 49, OLED-Helligkeit 26, Crossing guard 7, CPU-Monitor-Kürzel 34, USB audio 2, Lautstärkeknopf, Song-Übersicht 39, Profiler 21, Clock, Sections, Retune. Auf dem Cortex-A9-Code: alle Filter-Tests, EQ und Lautstärke. Auf dem PC: CPU-Monitor-Dekoder 503 Meldungen, Profiler 1175, Drone 150.
+- **Ebenfalls bestanden:** `tests/run_all.sh` (die Tests der früheren Versionen, auf dem PC und dem Cortex-A9-Code) 16 von 16, DelugeRec 47 Tests, Baseline (8 Tests übersprungen: Sie brauchen ein Fenster).
+
 ## v18.2: Filter, EQ und Lautstärke nach Stille
 
 v18.2 enthält v18 und behebt einen Fehler, den die Prüfung «stille Spuren» nach dem Release von v18 gefunden hat. **Wer v18 aufgespielt hat, nimmt v18.2.** v18.2 gibt es nur als Hauptdatei mit L2-Cache für Code und Daten. Zum Zurückwechseln ohne L2 bleibt `deluge-1.2.1-mastertune-v18-124aeaa2.bin`, allerdings mit diesem Fehler. **v18.2 ist auf dem Gerät noch nicht getestet**, geprüft ist alles im Emulator mit dem Maschinencode der Firmware.
@@ -720,6 +749,7 @@ v18 enthält v17. Wie bei v17 hat die Hauptdatei den L2-Cache für Code und Date
 - Die Song-Lautstärke stellt weiterhin auch die Schwelle des Song-Kompressors, wie in 1.2.1; alte Songs komprimieren so gleich.
 - Der DJ-Filter kommt in v19.
 - **Nach einer Stille** (Kits und Audiospuren) laufen Reste von Filter-, EQ- und Lautstärkerampen über den Wiedereinsatz. Behoben in v18.2.
+- **Drive** überabtastet bei jeder Einstellung. In Songs mit vielen Drive-Filtern kostet das am Taktanfang Stimmen. v18.3 überabtastet wieder wie 1.2.1.
 
 **Geprüft:**
 - **Build:** 474 Dateien, ohne Warnungen. Je zwei komplette Neubauten ergeben dieselbe SHA-256, bei beiden Varianten. `patches/0001`–`0112` ergeben genau den Quellbaum von v18, dazu `l2test/0001`–`0003` genau den von v18-l2d. Alle folgenden Prüfungen liefen auf genau diesen Builds, die meisten auf der Hauptdatei v18-l2d.
@@ -867,8 +897,8 @@ Version 1 liegt weiterhin in der Git-Historie dieses Ordners.
 ```sh
 git clone https://github.com/SynthstromAudible/DelugeFirmware && cd DelugeFirmware
 git checkout release_1_2_1
-git am /pfad/zu/patches/*.patch        # alle = v18.2 ohne L2 (nicht ausgeliefert) (Stände der Versionen: siehe «Quellcode» oben); die Hauptdatei dazu: git am /pfad/zu/l2test/*.patch
-./dbt configure -DRELEASE_TYPE:STRING=mastertune-v18.2-l2d   # Name in der Versionsanzeige
+git am /pfad/zu/patches/*.patch        # alle = v18.3 ohne L2 (nicht ausgeliefert) (Stände der Versionen: siehe «Quellcode» oben); die Hauptdatei dazu: git am /pfad/zu/l2test/*.patch
+./dbt configure -DRELEASE_TYPE:STRING=mastertune-v18.3-l2d   # Name in der Versionsanzeige
 ./dbt build release                      # Ergebnis: build/Release/deluge.bin
 # Bitgleich wie die ausgelieferte Datei: Die Firmware enthält den Commit-Hash (bis v17 im Versionsnamen, immer in der Absturzanzeige), git am
 # erzeugt aber neue Hashes. Vor dem Build in build/src/deluge/version/version.cmake den execute_process mit

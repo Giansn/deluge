@@ -1,0 +1,59 @@
+From 4acabbb630335315799518548fcba08fc9a20603 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 13:46:52 +0000
+Subject: [PATCH 114/116] Community features: a setting this firmware doesn't
+ know goes back into the file under its own name
+
+RuntimeFeatureSettings kept an unknown setting's name as a string_view of the String the reader reads every name into.
+The next name overwrote it and it was freed when reading ended, so the setting was written back under whatever was
+then in that memory ("SONGS" in the emulator): a newer firmware's settings, and after v17 had rewritten the file,
+v18's output limiter, filter crossing guard and OLED brightness, were lost. The name is now a copy (up to 63
+characters). The same code is in 1.2.1 and the community's main.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ .../model/settings/runtime_feature_settings.cpp      | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/src/deluge/model/settings/runtime_feature_settings.cpp b/src/deluge/model/settings/runtime_feature_settings.cpp
+index 35b314b4..0ec041d4 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.cpp
++++ b/src/deluge/model/settings/runtime_feature_settings.cpp
+@@ -34,8 +34,13 @@
+ #define TAG_RUNTIME_FEATURE_SETTING_ATTR_VALUE "value"
+ 
+ /// Unknown Settings container
++/// mastertune v18.3: the name as a copy. It was a view of the String the reader reads every name into, which the next
++/// name overwrote and which was freed when reading ended: an unknown setting went back into the file under whatever
++/// was then in that memory ("SONGS"). So a newer firmware's settings, and v18's own after a v17 had rewritten the
++/// file, got lost. Names longer than kMaxNameLength are cut (the settings' names are far shorter)
+ struct UnknownSetting {
+-	std::string_view name;
++	static constexpr size_t kMaxNameLength = 63;
++	char name[kMaxNameLength + 1];
+ 	uint32_t value;
+ };
+ 
+@@ -289,7 +294,8 @@ void RuntimeFeatureSettings::readSettingsFromFile(StorageManager& bdsm) {
+ 				}
+ 				void* address = unknownSettings.getElementAddress(idx);
+ 				auto* unknownSetting = new (address) UnknownSetting();
+-				unknownSetting->name = currentName.get();
++				strncpy(unknownSetting->name, currentName.get(), UnknownSetting::kMaxNameLength);
++				unknownSetting->name[UnknownSetting::kMaxNameLength] = 0;
+ 				unknownSetting->value = currentValue;
+ 			}
+ 		}
+@@ -349,7 +355,7 @@ void RuntimeFeatureSettings::writeSettingsToFile(StorageManager& bdsm, bool upda
+ 	for (uint32_t idxUnknownSetting = 0; idxUnknownSetting < unknownSettings.getNumElements(); idxUnknownSetting++) {
+ 		UnknownSetting* unknownSetting = (UnknownSetting*)unknownSettings.getElementAddress(idxUnknownSetting);
+ 		writer.writeOpeningTagBeginning(TAG_RUNTIME_FEATURE_SETTING);
+-		writer.writeAttribute(TAG_RUNTIME_FEATURE_SETTING_ATTR_NAME, unknownSetting->name.data(), false);
++		writer.writeAttribute(TAG_RUNTIME_FEATURE_SETTING_ATTR_NAME, unknownSetting->name, false);
+ 		writer.writeAttribute(TAG_RUNTIME_FEATURE_SETTING_ATTR_VALUE, unknownSetting->value, false);
+ 		writer.writeOpeningTagEnd(false);
+ 		writer.writeClosingTag(TAG_RUNTIME_FEATURE_SETTING, false);
+-- 
+2.43.0
+
