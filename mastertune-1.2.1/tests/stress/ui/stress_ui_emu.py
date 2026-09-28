@@ -201,6 +201,9 @@ class Rig:
         if sd_latency and sd_latency != "instant":
             se.SdModel(emu, *(float(x) for x in sd_latency.split(",")), wait="yield")
         self.dma = LightDma(emu)
+        # Settings > CPU monitor on: its half-second windows as the firmware computes them (cpu_take())
+        self.cpu = se.CpuStats(emu) if "_ZN9cpu_stats9collectorE" in sym.by_name else None
+        self.cpu_seen = 0
         se.run_task_manager(emu, 0.001)  # Its setup (the free slot, the UART drain hook) done once
         self.task_at, self.task_slot, _ = emu.task_manager_setup
         self.a = {n: sym.find(n) for n in (
@@ -342,6 +345,24 @@ class Rig:
         return dict(internal_free=out[1]["free"], sdram_free=out[2]["free"], stealable_free=out[0]["free"],
                     internal_empty_spaces=out[1]["empty_spaces"], sdram_empty_spaces=out[2]["empty_spaces"])
 
+    def cpu_take(self):
+        """The CPU monitor's windows since the last call, as the firmware summarizes them: CPU average and peak (%),
+        voices max, direness max, voices culled, its own worst gap (us)."""
+        if not self.cpu:
+            return None
+        windows, self.cpu.windows = self.cpu.windows, self.cpu.windows[self.cpu_seen:]
+        try:
+            w = self.cpu.summaries()
+        finally:
+            self.cpu.windows = windows
+            self.cpu_seen = len(windows)
+        if not w:
+            return None
+        return dict(windows=len(w), cpu_avg=round(sum(x["dspAvgPermille"] for x in w) / len(w) / 10, 1),
+                    cpu_peak=max(x["dspPeakPermille"] for x in w) / 10, voices_max=max(x["voicesMax"] for x in w),
+                    direness_max=max(x["direMax"] for x in w), culled=sum(x["culled"] for x in w),
+                    max_gap_us=max(x["maxGapUs"] for x in w))
+
     # --- running
     def tm(self, seconds, what="task manager"):
         """The task manager for seconds of emulated time (watchdog: 3x that + 2 s)."""
@@ -431,8 +452,10 @@ class Rig:
         done_at = emu.now()
         self.button(SELECT_ENC, False)
         change = self.dma.take()
+        change["cpu"] = self.cpu_take()
         self.tm(settle_s, "playing after the change")
         after = self.dma.take()
+        after["cpu"] = self.cpu_take()
         arm = self.arms[arms0] if len(self.arms) > arms0 else None
         swap = self.swaps[swaps0] if len(self.swaps) > swaps0 else None
         ms = lambda n: round(n / se.CPU_HZ * 1e3, 2)  # noqa: E731
@@ -465,10 +488,13 @@ def heavy_songs(synths):
     return files, dict(DEFAULT=heavy, DRIVE=drive, DRONE=drone)
 
 
-def build_songchange_card(path, synths):
+def build_songchange_card(path, synths, start="DEFAULT"):
+    """SONGS/DEFAULT.XML is the song loaded at boot (start); the others under their names."""
     files, songs = heavy_songs(synths)
     for name, xml in songs.items():
         files[f"SONGS/{name}.XML"] = xml.encode()
+    if start != "DEFAULT":
+        files["SONGS/DEFAULT.XML"], files[f"SONGS/{start}.XML"] = files[f"SONGS/{start}.XML"], files["SONGS/DEFAULT.XML"]
     fat32.build(path, files)
     return {n: len(x) for n, x in songs.items()}
 
@@ -520,10 +546,13 @@ def heap_trend(rows):
 
 
 def run_songchange(a, rig, res):
-    names = ["DRIVE", "DRONE", "DEFAULT"]
+    names = a.order.split(",")
     rig.play()
     rig.tm(1.0, "warm-up")
     res["warmup"] = rig.dma.take()
+    res["warmup"]["cpu"] = rig.cpu_take()
+    log(f"  warm-up ({rig.song_name() or 'DEFAULT'}): gap {res['warmup']['max_gap']}, underruns "
+        f"{res['warmup']['underrun_samples']}, CPU monitor {res['warmup']['cpu']}")
     res["heap_start"] = rig.heap()
     rows = res["changes"] = []
     for i in range(a.changes):
@@ -533,7 +562,9 @@ def run_songchange(a, rig, res):
         rows.append(r)
         log(f"  {i + 1:2d} -> {name:7s} {'ok ' if r['ok'] else 'NOT'} load {r['load_ms']} ms, wait {r['wait_ms']} ms,"
             f" press {r['press_ms']} ms; gap {r['gap_change']['max_gap']} (underruns {r['gap_change']['underrun_samples']}"
-            f"), after {r['gap_after']['max_gap']} ({r['gap_after']['underrun_samples']}); heap free internal "
+            f"), after {r['gap_after']['max_gap']} ({r['gap_after']['underrun_samples']}), CPU "
+            f"{(r['gap_after']['cpu'] or {}).get('cpu_avg')} % culled {(r['gap_after']['cpu'] or {}).get('culled')}"
+            f"; heap free internal "
             f"{r['heap']['internal_free']:,} SDRAM {r['heap']['sdram_free']:,}"
             f"; {r['ui']}")
         if not r["ok"]:
@@ -885,6 +916,8 @@ def main():
     ap.add_argument("--sd-latency", default="1000,42.67")
     ap.add_argument("--synths", type=int, default=5, help="synths in the heavy songs (make_sd.py --synths)")
     ap.add_argument("--changes", type=int, default=30)
+    ap.add_argument("--order", default="DRIVE,DRONE,DEFAULT", help="songchange: the songs, in turn")
+    ap.add_argument("--start", default="DEFAULT", help="songchange: the song loaded at boot (DEFAULT, DRIVE, DRONE)")
     ap.add_argument("--settle", type=float, default=1.0, help="seconds of the new song after each change")
     ap.add_argument("--rounds", type=int, default=6)
     ap.add_argument("--steps", type=int, default=60)
@@ -912,7 +945,7 @@ def main():
             if a.scenario == "bigcard":
                 res["songs_on_card"] = build_bigcard(image, a.synths)
             else:
-                res["songs"] = build_songchange_card(image, a.synths)
+                res["songs"] = build_songchange_card(image, a.synths, a.start)
             rig = Rig(a.elf, tools, a.build, image, a.sd_latency)
             res["boot"] = dict(song=rig.song_name(), root=rig.ui_name(root=True), heap=rig.heap())
             log(f"{a.scenario} on {a.elf}: booted, {rig.song_name()!r} in {res['boot']['root']}, the card "

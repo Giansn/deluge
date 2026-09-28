@@ -98,9 +98,12 @@ def automate(xml, rng, song_length=32 * 4 * 96):
     return xml
 
 
+ORIGINAL_SYNTHS = make_sd.synths
+
+
 def synths16():
     """make_sd.synths() and a copy of each an octave higher, named with a 2."""
-    base = make_sd.synths()
+    base = ORIGINAL_SYNTHS()
     out = list(base)
     for instrument, clip in base:
         name = re.search(r'presetName="([^"]+)"', instrument).group(1)
@@ -141,10 +144,9 @@ def main():
     a = ap.parse_args()
     files, lengths = make_sd.samples()
     if a.song == "synths16":
-        original = make_sd.synths
         make_sd.synths = synths16
         xml = make_sd.song_xml(lengths, 1, 16)
-        make_sd.synths = original
+        make_sd.synths = ORIGINAL_SYNTHS
     else:
         xml = make_sd.song_xml(lengths, 1, 8)
     if a.song == "drive":
