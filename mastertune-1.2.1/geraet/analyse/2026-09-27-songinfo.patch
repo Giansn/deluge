@@ -1,0 +1,346 @@
+From a8210156fb2dfda00d4ec449fe29ccfb1d9ee6ae Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 21:55:13 +0000
+Subject: [PATCH] USB audio: the song's name and the firmware for a recorder on
+ the computer (SysEx 0x12 on port 3)
+
+While the computer has the USB audio stream open, the Deluge tells its song's
+name and its firmware on USB MIDI port 3, the port for SysEx that DAWs leave
+alone: F0 00 21 7B 01 12 <{"song":"...","fw":"..."}: JSON, UTF-8, packed 7
+bytes into 8 as in util/pack.c> F7. At once when the stream starts and when
+the song's name changes, else every 2 s, so a recorder that starts listening
+later learns it too. Sent only, never answered; only with room in the USB MIDI
+send buffer (as the CPU monitor's SysEx).
+
+DelugeRec (tools/deluge_rec.py, v5 and later) listens there and names its
+files "<song> <date> <time> <firmware>.WAV", with the full firmware in the
+file's RIFF INFO. The song is currentSong->name ("" for a new song not saved
+yet), converted from CP437 (FatFs's code page) to UTF-8, at most 120
+characters and 240 bytes, cut at a whole character; the firmware is
+kFirmwareVersionString.
+
+The message is built in usb_song_info_message.cpp without any hardware, so it
+can be built and tested on a computer against the recorder's parser.
+---
+ src/deluge/deluge.cpp                       |   3 +
+ src/deluge/io/usb/usb_audio.cpp             |   4 +
+ src/deluge/io/usb/usb_audio.h               |   2 +
+ src/deluge/io/usb/usb_song_info.cpp         |  68 +++++++++++
+ src/deluge/io/usb/usb_song_info.h           |  51 ++++++++
+ src/deluge/io/usb/usb_song_info_message.cpp | 122 ++++++++++++++++++++
+ 6 files changed, 250 insertions(+)
+ create mode 100644 src/deluge/io/usb/usb_song_info.cpp
+ create mode 100644 src/deluge/io/usb/usb_song_info.h
+ create mode 100644 src/deluge/io/usb/usb_song_info_message.cpp
+
+diff --git a/src/deluge/deluge.cpp b/src/deluge/deluge.cpp
+index a4f3fee1..d5c0d866 100644
+--- a/src/deluge/deluge.cpp
++++ b/src/deluge/deluge.cpp
+@@ -49,6 +49,7 @@
+ #include "io/midi/midi_engine.h"
+ #include "io/midi/midi_follow.h"
+ #include "io/usb/usb_audio.h"
++#include "io/usb/usb_song_info.h"
+ #include "lib/printf.h" // IWYU pragma: keep this over rides printf with a non allocating version
+ #include "memory/general_memory_allocator.h"
+ #include "model/clip/instrument_clip.h"
+@@ -622,6 +623,8 @@ void registerTasks() {
+ 	addRepeatingTask([]() { MasterTune::routine(); }, p++, 0.002, 0.005, 0.02, "master tune");
+ 	// Settings > CPU monitor (mastertune-diag): OLED line and SysEx; returns at once while switched off
+ 	addRepeatingTask([]() { cpu_stats::routine(); }, p++, 0.05, 0.05, 0.1, "cpu monitor");
++	// USB audio (mastertune): the song's name and the firmware for a recorder on the computer, while the stream runs
++	addRepeatingTask([]() { usb_song_info::routine(); }, p++, 0.25, 0.25, 0.5, "usb song info");
+ 	// 31-39: Idle priority (40 for dyn tasks)
+ 	p = 31;
+ 	addRepeatingTask(&(PIC::flush), p++, 0.0005, 0.001, 0.002, "PIC flush");
+diff --git a/src/deluge/io/usb/usb_audio.cpp b/src/deluge/io/usb/usb_audio.cpp
+index 9335a471..75124550 100644
+--- a/src/deluge/io/usb/usb_audio.cpp
++++ b/src/deluge/io/usb/usb_audio.cpp
+@@ -70,6 +70,10 @@ void usbAudioStart(void) {
+ 	usbAudioPipeRun();
+ }
+ 
++uint8_t usbAudioIsStreaming(void) {
++	return pipeRunning;
++}
++
+ void usbAudioStop(void) {
+ 	if (!pipeRunning && !stream.isRunning()) {
+ 		return;
+diff --git a/src/deluge/io/usb/usb_audio.h b/src/deluge/io/usb/usb_audio.h
+index 8c710c6e..2723cc38 100644
+--- a/src/deluge/io/usb/usb_audio.h
++++ b/src/deluge/io/usb/usb_audio.h
+@@ -51,6 +51,8 @@ uint16_t* usbAudioPipeTable(void);
+ // configuration change.
+ void usbAudioStart(void);
+ void usbAudioStop(void);
++// Whether the computer has the stream open (alternate setting 1): mastertune's song info goes out only then
++uint8_t usbAudioIsStreaming(void);
+ 
+ // USB interrupt: a buffer of the isochronous IN pipe is free again
+ void usbAudioInBufferReady(void);
+diff --git a/src/deluge/io/usb/usb_song_info.cpp b/src/deluge/io/usb/usb_song_info.cpp
+new file mode 100644
+index 00000000..07a86b4d
+--- /dev/null
++++ b/src/deluge/io/usb/usb_song_info.cpp
+@@ -0,0 +1,68 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "io/usb/usb_song_info.h"
++#include "io/midi/midi_device.h"
++#include "io/midi/midi_device_manager.h"
++#include "io/usb/usb_audio.h"
++#include "model/song/song.h"
++#include "processing/engines/audio_engine.h"
++#include "version.h"
++#include <cstring>
++
++namespace usb_song_info {
++
++namespace {
++
++/// Room that must stay free in the USB MIDI send buffer, so the message never crowds out notes or clock
++constexpr int32_t kMinUsbSendSpace = 1024;
++/// Again every 2 s (in samples of the audio clock)
++constexpr uint32_t kRepeatSamples = 2 * 44100;
++
++char lastSong[kMaxNameBytes + 1] = {0};
++bool told = false; // Since the stream started
++uint32_t lastTime = 0;
++
++} // namespace
++
++void routine() {
++	if (!usbAudioIsStreaming()) {
++		told = false; // Told again as soon as the computer opens the stream
++		return;
++	}
++	char const* song = currentSong ? currentSong->name.get() : "";
++	uint32_t now = AudioEngine::audioSampleTimer;
++	if (told && !strncmp(song, lastSong, kMaxNameBytes) && now - lastTime < kRepeatSamples) {
++		return;
++	}
++	MIDIDeviceUSBUpstream& port = MIDIDeviceManager::upstreamUSBMIDIDevice_port3;
++	if (port.sendBufferSpace() < kMinUsbSendSpace) {
++		return; // Next time
++	}
++	uint8_t message[kMaxMessageBytes];
++	size_t length = build(message, sizeof message, song, kFirmwareVersionString);
++	if (!length) {
++		return;
++	}
++	port.sendSysex(message, static_cast<int32_t>(length));
++	strncpy(lastSong, song, kMaxNameBytes);
++	lastSong[kMaxNameBytes] = 0;
++	told = true;
++	lastTime = now;
++}
++
++} // namespace usb_song_info
+diff --git a/src/deluge/io/usb/usb_song_info.h b/src/deluge/io/usb/usb_song_info.h
+new file mode 100644
+index 00000000..feb2b2c4
+--- /dev/null
++++ b/src/deluge/io/usb/usb_song_info.h
+@@ -0,0 +1,51 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include <cstddef>
++#include <cstdint>
++
++// mastertune: the song's name and the firmware, told to the computer while USB audio streams, so a recorder there
++// (DelugeRec, tools/deluge_rec.py) can name its files after them. Sent only, never answered, on USB MIDI port 3 (the
++// port for SysEx, which DAWs leave alone):
++//
++//   F0 00 21 7B 01 12 <{"song":"...","fw":"..."}: JSON, UTF-8, packed 7 bytes into 8 as in util/pack.c> F7
++//
++// "song" is currentSong->name ("" for a new song not saved yet), converted from CP437 (FatFs's code page) to UTF-8;
++// "fw" is kFirmwareVersionString. It goes out when the stream starts and at once when the song's name changes, else
++// again every 2 s, so a recorder that starts listening later learns it too. (If the Deluge has had SysEx with the
++// developer ID 0x7D, MIDIDeviceUSB::sendSysex sends the header as F0 7D 12 instead; the recorder takes both.)
++namespace usb_song_info {
++
++constexpr uint8_t kSysexCommand = 0x12;
++/// At most this many characters of a name (one byte each in CP437) ...
++constexpr size_t kMaxNameBytes = 120;
++/// ... and at most this many bytes of JSON for the song and for the firmware (cut before a whole character)
++constexpr size_t kMaxSongBytes = 240;
++constexpr size_t kMaxFirmwareBytes = 96;
++constexpr size_t kMaxJsonBytes = 32 + kMaxSongBytes + kMaxFirmwareBytes;
++/// Room for any message: the JSON packed 7 into 8, and the frame (far below 1 KB)
++constexpr size_t kMaxMessageBytes = 7 + (kMaxJsonBytes * 8 + 6) / 7;
++
++/// The whole SysEx for a song and a firmware in out; its length, or 0 if out is too small
++size_t build(uint8_t* out, size_t outSize, char const* song, char const* firmware);
++
++/// Main loop, every 0.25 s: sends the message when it is due
++void routine();
++
++} // namespace usb_song_info
+diff --git a/src/deluge/io/usb/usb_song_info_message.cpp b/src/deluge/io/usb/usb_song_info_message.cpp
+new file mode 100644
+index 00000000..cef0d803
+--- /dev/null
++++ b/src/deluge/io/usb/usb_song_info_message.cpp
+@@ -0,0 +1,122 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++// The message alone, without the hardware: also built on a computer, to test it against the recorder that reads it.
++
++#include "fatfs/ff.h"
++#include "io/usb/usb_song_info.h"
++#include "util/pack.h"
++
++namespace usb_song_info {
++
++namespace {
++
++/// One character of a name (CP437, as FatFs gives names with FF_CODE_PAGE 437) as JSON in UTF-8: " and \ escaped,
++/// control characters as \u00XX, anything above 0x7F converted; its length.
++size_t encode(uint8_t c, char* out) {
++	char const* hex = "0123456789abcdef";
++	if (c == '"' || c == '\\') {
++		out[0] = '\\';
++		out[1] = static_cast<char>(c);
++		return 2;
++	}
++	if (c < 0x20) {
++		char const u[6] = {'\\', 'u', '0', '0', hex[c >> 4], hex[c & 15]};
++		for (size_t k = 0; k < 6; k++) {
++			out[k] = u[k];
++		}
++		return 6;
++	}
++	if (c < 0x80) {
++		out[0] = static_cast<char>(c);
++		return 1;
++	}
++	uint32_t u = ff_oem2uni(c, FF_CODE_PAGE);
++	if (!u) {
++		out[0] = '?';
++		return 1;
++	}
++	if (u < 0x800) {
++		out[0] = static_cast<char>(0xC0 | (u >> 6));
++		out[1] = static_cast<char>(0x80 | (u & 0x3F));
++		return 2;
++	}
++	out[0] = static_cast<char>(0xE0 | (u >> 12));
++	out[1] = static_cast<char>(0x80 | ((u >> 6) & 0x3F));
++	out[2] = static_cast<char>(0x80 | (u & 0x3F));
++	return 3;
++}
++
++/// Appends s as a JSON string with its quotes: at most kMaxNameBytes characters of s and maxOut bytes between the
++/// quotes, cut before a character that would not fit. Returns the new pos, 0 if out is full.
++size_t appendString(char* out, size_t pos, size_t size, char const* s, size_t maxOut) {
++	if (pos + 2 > size) {
++		return 0;
++	}
++	out[pos++] = '"';
++	size_t used = 0;
++	for (size_t i = 0; s[i] && i < kMaxNameBytes; i++) {
++		char encoded[6];
++		size_t length = encode(static_cast<uint8_t>(s[i]), encoded);
++		if (used + length > maxOut || pos + length + 1 > size) {
++			break;
++		}
++		for (size_t k = 0; k < length; k++) {
++			out[pos++] = encoded[k];
++		}
++		used += length;
++	}
++	out[pos++] = '"';
++	return pos;
++}
++
++size_t appendText(char* out, size_t pos, size_t size, char const* text) {
++	for (; *text; text++) {
++		if (pos + 1 > size) {
++			return 0;
++		}
++		out[pos++] = *text;
++	}
++	return pos;
++}
++
++} // namespace
++
++size_t build(uint8_t* out, size_t outSize, char const* song, char const* firmware) {
++	char json[kMaxJsonBytes];
++	size_t pos = appendText(json, 0, sizeof json, "{\"song\":");
++	pos = pos ? appendString(json, pos, sizeof json, song ? song : "", kMaxSongBytes) : 0;
++	pos = pos ? appendText(json, pos, sizeof json, ",\"fw\":") : 0;
++	pos = pos ? appendString(json, pos, sizeof json, firmware ? firmware : "", kMaxFirmwareBytes) : 0;
++	pos = pos ? appendText(json, pos, sizeof json, "}") : 0;
++	uint8_t const header[] = {0xF0, 0x00, 0x21, 0x7B, 0x01, kSysexCommand};
++	if (!pos || outSize < sizeof header + 1) {
++		return 0;
++	}
++	for (size_t i = 0; i < sizeof header; i++) {
++		out[i] = header[i];
++	}
++	int32_t packed = pack_8bit_to_7bit(out + sizeof header, static_cast<int32_t>(outSize - sizeof header - 1),
++	                                   reinterpret_cast<uint8_t*>(json), static_cast<int32_t>(pos));
++	if (packed <= 0) {
++		return 0;
++	}
++	out[sizeof header + packed] = 0xF7;
++	return sizeof header + packed + 1;
++}
++
++} // namespace usb_song_info
+-- 
+2.43.0
+

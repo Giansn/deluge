@@ -1,0 +1,530 @@
+{
+ "432 Hz, alle Kits": {
+  "master_tune_hz": 432.0,
+  "window": 128,
+  "mean_window": 126.3,
+  "clips_playing": [
+   "Hihat",
+   "Guiro",
+   "170 Sitar 2",
+   "Oboe",
+   "3L3Ctr0",
+   "014 CR-78",
+   "KIT1"
+  ],
+  "samples": 302400,
+  "cpu_percent": 37.22,
+  "max_cpu_percent": 53.37,
+  "voices_max": 20,
+  "culls": {
+   "Sound::noteOnPostArpeggiator SOFT_ALWAYS": 30
+  },
+  "outputs": {
+   "K KIT1": {
+    "cpu_percent": 2.17,
+    "percent_of_routine": 5.82
+   },
+   "A AUDIO1": {
+    "cpu_percent": 0.43,
+    "percent_of_routine": 1.15
+   },
+   "S Oboe": {
+    "cpu_percent": 2.75,
+    "percent_of_routine": 7.4
+   },
+   "K Rattle V2": {
+    "cpu_percent": 0.12,
+    "percent_of_routine": 0.31
+   },
+   "K Rattle": {
+    "cpu_percent": 0.11,
+    "percent_of_routine": 0.29
+   },
+   "K Hihat": {
+    "cpu_percent": 3.5,
+    "percent_of_routine": 9.41
+   },
+   "K Guiro": {
+    "cpu_percent": 3.03,
+    "percent_of_routine": 8.14
+   },
+   "S 170 Sitar 2": {
+    "cpu_percent": 16.34,
+    "percent_of_routine": 43.9
+   },
+   "S Kbass": {
+    "cpu_percent": 0.01,
+    "percent_of_routine": 0.02
+   },
+   "M ": {
+    "cpu_percent": 0.0,
+    "percent_of_routine": 0.01
+   },
+   "K 3L3Ctr0": {
+    "cpu_percent": 1.63,
+    "percent_of_routine": 4.39
+   },
+   "K 014 CR-78": {
+    "cpu_percent": 1.25,
+    "percent_of_routine": 3.35
+   },
+   "M  (2)": {
+    "cpu_percent": 0.0,
+    "percent_of_routine": 0.01
+   }
+  },
+  "areas_cpu_percent": {
+   "sample reading / interpolation / time-stretch": 13.08,
+   "filters": 7.72,
+   "voices: rendering loop, patcher, envelopes, LFOs": 3.86,
+   "reverb": 3.5,
+   "delay": 3.24,
+   "song / master FX, output to the codec": 1.57,
+   "per-track FX (mod FX, bitcrush, volume/pan/reverb send)": 1.37,
+   "sidechain / compressors": 1.33,
+   "memory / other": 1.0,
+   "playback / sequencing (clips, notes, arpeggiator, ticks)": 0.33,
+   "oscillators": 0.27,
+   "drone": 0.01
+  }
+ },
+ "440 Hz, alle Kits": {
+  "master_tune_hz": 440.0,
+  "window": 128,
+  "mean_window": 126.3,
+  "clips_playing": [
+   "Hihat",
+   "Guiro",
+   "170 Sitar 2",
+   "Oboe",
+   "3L3Ctr0",
+   "014 CR-78",
+   "KIT1"
+  ],
+  "samples": 302400,
+  "cpu_percent": 37.01,
+  "max_cpu_percent": 51.2,
+  "voices_max": 20,
+  "culls": {
+   "Sound::noteOnPostArpeggiator SOFT_ALWAYS": 30
+  },
+  "outputs": {
+   "K KIT1": {
+    "cpu_percent": 2.19,
+    "percent_of_routine": 5.91
+   },
+   "A AUDIO1": {
+    "cpu_percent": 0.43,
+    "percent_of_routine": 1.16
+   },
+   "S Oboe": {
+    "cpu_percent": 2.58,
+    "percent_of_routine": 6.96
+   },
+   "K Rattle V2": {
+    "cpu_percent": 0.12,
+    "percent_of_routine": 0.32
+   },
+   "K Rattle": {
+    "cpu_percent": 0.11,
+    "percent_of_routine": 0.29
+   },
+   "K Hihat": {
+    "cpu_percent": 3.53,
+    "percent_of_routine": 9.53
+   },
+   "K Guiro": {
+    "cpu_percent": 2.95,
+    "percent_of_routine": 7.98
+   },
+   "S 170 Sitar 2": {
+    "cpu_percent": 16.39,
+    "percent_of_routine": 44.28
+   },
+   "S Kbass": {
+    "cpu_percent": 0.01,
+    "percent_of_routine": 0.02
+   },
+   "M ": {
+    "cpu_percent": 0.0,
+    "percent_of_routine": 0.01
+   },
+   "K 3L3Ctr0": {
+    "cpu_percent": 1.63,
+    "percent_of_routine": 4.41
+   },
+   "K 014 CR-78": {
+    "cpu_percent": 1.2,
+    "percent_of_routine": 3.25
+   },
+   "M  (2)": {
+    "cpu_percent": 0.0,
+    "percent_of_routine": 0.01
+   }
+  },
+  "areas_cpu_percent": {
+   "sample reading / interpolation / time-stretch": 13.02,
+   "filters": 7.67,
+   "voices: rendering loop, patcher, envelopes, LFOs": 3.84,
+   "reverb": 3.5,
+   "delay": 3.24,
+   "song / master FX, output to the codec": 1.57,
+   "per-track FX (mod FX, bitcrush, volume/pan/reverb send)": 1.36,
+   "sidechain / compressors": 1.33,
+   "memory / other": 0.95,
+   "playback / sequencing (clips, notes, arpeggiator, ticks)": 0.33,
+   "oscillators": 0.26,
+   "drone": 0.01
+  }
+ },
+ "432 Hz, wie gespeichert": {
+  "master_tune_hz": 432.0,
+  "window": 128,
+  "mean_window": 126.3,
+  "clips_playing": [
+   "Hihat",
+   "Guiro",
+   "170 Sitar 2",
+   "Oboe"
+  ],
+  "samples": 302400,
+  "cpu_percent": 32.48,
+  "max_cpu_percent": 42.26,
+  "voices_max": 16,
+  "culls": {
+   "Sound::noteOnPostArpeggiator SOFT_ALWAYS": 30
+  },
+  "outputs": {
+   "K KIT1": {
+    "cpu_percent": 0.08,
+    "percent_of_routine": 0.26
+   },
+   "A AUDIO1": {
+    "cpu_percent": 0.43,
+    "percent_of_routine": 1.32
+   },
+   "S Oboe": {
+    "cpu_percent": 2.75,
+    "percent_of_routine": 8.48
+   },
+   "K Rattle V2": {
+    "cpu_percent": 0.12,
+    "percent_of_routine": 0.36
+   },
+   "K Rattle": {
+    "cpu_percent": 0.11,
+    "percent_of_routine": 0.33
+   },
+   "K Hihat": {
+    "cpu_percent": 3.49,
+    "percent_of_routine": 10.75
+   },
+   "K Guiro": {
+    "cpu_percent": 3.03,
+    "percent_of_routine": 9.33
+   },
+   "S 170 Sitar 2": {
+    "cpu_percent": 16.33,
+    "percent_of_routine": 50.29
+   },
+   "S Kbass": {
+    "cpu_percent": 0.01,
+    "percent_of_routine": 0.02
+   },
+   "M ": {
+    "cpu_percent": 0.0,
+    "percent_of_routine": 0.01
+   },
+   "K 3L3Ctr0": {
+    "cpu_percent": 0.16,
+    "percent_of_routine": 0.49
+   },
+   "K 014 CR-78": {
+    "cpu_percent": 0.11,
+    "percent_of_routine": 0.33
+   },
+   "M  (2)": {
+    "cpu_percent": 0.0,
+    "percent_of_routine": 0.01
+   }
+  },
+  "areas_cpu_percent": {
+   "sample reading / interpolation / time-stretch": 12.51,
+   "filters": 5.97,
+   "reverb": 3.5,
+   "voices: rendering loop, patcher, envelopes, LFOs": 3.17,
+   "delay": 2.39,
+   "song / master FX, output to the codec": 1.44,
+   "sidechain / compressors": 1.33,
+   "memory / other": 0.88,
+   "per-track FX (mod FX, bitcrush, volume/pan/reverb send)": 0.83,
+   "playback / sequencing (clips, notes, arpeggiator, ticks)": 0.28,
+   "oscillators": 0.23,
+   "drone": 0.01
+  }
+ },
+ "440 Hz, wie gespeichert": {
+  "master_tune_hz": 440.0,
+  "window": 128,
+  "mean_window": 126.3,
+  "clips_playing": [
+   "Hihat",
+   "Guiro",
+   "170 Sitar 2",
+   "Oboe"
+  ],
+  "samples": 302400,
+  "cpu_percent": 32.3,
+  "max_cpu_percent": 41.09,
+  "voices_max": 16,
+  "culls": {
+   "Sound::noteOnPostArpeggiator SOFT_ALWAYS": 30
+  },
+  "outputs": {
+   "K KIT1": {
+    "cpu_percent": 0.08,
+    "percent_of_routine": 0.26
+   },
+   "A AUDIO1": {
+    "cpu_percent": 0.43,
+    "percent_of_routine": 1.33
+   },
+   "S Oboe": {
+    "cpu_percent": 2.58,
+    "percent_of_routine": 7.98
+   },
+   "K Rattle V2": {
+    "cpu_percent": 0.12,
+    "percent_of_routine": 0.36
+   },
+   "K Rattle": {
+    "cpu_percent": 0.11,
+    "percent_of_routine": 0.34
+   },
+   "K Hihat": {
+    "cpu_percent": 3.51,
+    "percent_of_routine": 10.88
+   },
+   "K Guiro": {
+    "cpu_percent": 2.95,
+    "percent_of_routine": 9.15
+   },
+   "S 170 Sitar 2": {
+    "cpu_percent": 16.38,
+    "percent_of_routine": 50.72
+   },
+   "S Kbass": {
+    "cpu_percent": 0.01,
+    "percent_of_routine": 0.02
+   },
+   "M ": {
+    "cpu_percent": 0.0,
+    "percent_of_routine": 0.01
+   },
+   "K 3L3Ctr0": {
+    "cpu_percent": 0.16,
+    "percent_of_routine": 0.49
+   },
+   "K 014 CR-78": {
+    "cpu_percent": 0.11,
+    "percent_of_routine": 0.33
+   },
+   "M  (2)": {
+    "cpu_percent": 0.0,
+    "percent_of_routine": 0.01
+   }
+  },
+  "areas_cpu_percent": {
+   "sample reading / interpolation / time-stretch": 12.43,
+   "filters": 5.93,
+   "reverb": 3.5,
+   "voices: rendering loop, patcher, envelopes, LFOs": 3.15,
+   "delay": 2.39,
+   "song / master FX, output to the codec": 1.44,
+   "sidechain / compressors": 1.33,
+   "memory / other": 0.85,
+   "per-track FX (mod FX, bitcrush, volume/pan/reverb send)": 0.82,
+   "playback / sequencing (clips, notes, arpeggiator, ticks)": 0.28,
+   "oscillators": 0.22,
+   "drone": 0.01
+  }
+ },
+ "432 Hz, alle Kits, Fenster 32": {
+  "master_tune_hz": 432.0,
+  "window": 32,
+  "mean_window": 55.3,
+  "clips_playing": [
+   "Hihat",
+   "Guiro",
+   "170 Sitar 2",
+   "Oboe",
+   "3L3Ctr0",
+   "014 CR-78",
+   "KIT1"
+  ],
+  "samples": 302400,
+  "cpu_percent": 43.01,
+  "max_cpu_percent": null,
+  "voices_max": 21,
+  "culls": {
+   "Sound::noteOnPostArpeggiator SOFT_ALWAYS": 31
+  },
+  "outputs": {
+   "K KIT1": {
+    "cpu_percent": 2.61,
+    "percent_of_routine": 6.07
+   },
+   "A AUDIO1": {
+    "cpu_percent": 0.54,
+    "percent_of_routine": 1.26
+   },
+   "S Oboe": {
+    "cpu_percent": 3.32,
+    "percent_of_routine": 7.73
+   },
+   "K Rattle V2": {
+    "cpu_percent": 0.25,
+    "percent_of_routine": 0.57
+   },
+   "K Rattle": {
+    "cpu_percent": 0.23,
+    "percent_of_routine": 0.53
+   },
+   "K Hihat": {
+    "cpu_percent": 4.55,
+    "percent_of_routine": 10.58
+   },
+   "K Guiro": {
+    "cpu_percent": 3.29,
+    "percent_of_routine": 7.65
+   },
+   "S 170 Sitar 2": {
+    "cpu_percent": 18.17,
+    "percent_of_routine": 42.25
+   },
+   "S Kbass": {
+    "cpu_percent": 0.02,
+    "percent_of_routine": 0.04
+   },
+   "M ": {
+    "cpu_percent": 0.01,
+    "percent_of_routine": 0.02
+   },
+   "K 3L3Ctr0": {
+    "cpu_percent": 2.11,
+    "percent_of_routine": 4.92
+   },
+   "K 014 CR-78": {
+    "cpu_percent": 1.69,
+    "percent_of_routine": 3.92
+   },
+   "M  (2)": {
+    "cpu_percent": 0.01,
+    "percent_of_routine": 0.02
+   }
+  },
+  "areas_cpu_percent": {
+   "sample reading / interpolation / time-stretch": 13.89,
+   "filters": 8.21,
+   "voices: rendering loop, patcher, envelopes, LFOs": 5.41,
+   "reverb": 3.55,
+   "delay": 3.44,
+   "song / master FX, output to the codec": 2.39,
+   "memory / other": 1.93,
+   "per-track FX (mod FX, bitcrush, volume/pan/reverb send)": 1.62,
+   "sidechain / compressors": 1.36,
+   "playback / sequencing (clips, notes, arpeggiator, ticks)": 0.65,
+   "oscillators": 0.61,
+   "drone": 0.03
+  }
+ },
+ "432 Hz, alle Kits, Fenster 8": {
+  "master_tune_hz": 432.0,
+  "window": 8,
+  "mean_window": 8.0,
+  "clips_playing": [
+   "Hihat",
+   "Guiro",
+   "170 Sitar 2",
+   "Oboe",
+   "3L3Ctr0",
+   "014 CR-78",
+   "KIT1"
+  ],
+  "samples": 302400,
+  "cpu_percent": 102.67,
+  "max_cpu_percent": null,
+  "voices_max": 21,
+  "culls": {
+   "Sound::noteOnPostArpeggiator SOFT_ALWAYS": 31
+  },
+  "outputs": {
+   "K KIT1": {
+    "cpu_percent": 7.3,
+    "percent_of_routine": 7.11
+   },
+   "A AUDIO1": {
+    "cpu_percent": 1.72,
+    "percent_of_routine": 1.68
+   },
+   "S Oboe": {
+    "cpu_percent": 8.92,
+    "percent_of_routine": 8.69
+   },
+   "K Rattle V2": {
+    "cpu_percent": 1.6,
+    "percent_of_routine": 1.56
+   },
+   "K Rattle": {
+    "cpu_percent": 1.47,
+    "percent_of_routine": 1.43
+   },
+   "K Hihat": {
+    "cpu_percent": 15.71,
+    "percent_of_routine": 15.3
+   },
+   "K Guiro": {
+    "cpu_percent": 6.07,
+    "percent_of_routine": 5.91
+   },
+   "S 170 Sitar 2": {
+    "cpu_percent": 36.26,
+    "percent_of_routine": 35.32
+   },
+   "S Kbass": {
+    "cpu_percent": 0.11,
+    "percent_of_routine": 0.1
+   },
+   "M ": {
+    "cpu_percent": 0.06,
+    "percent_of_routine": 0.06
+   },
+   "K 3L3Ctr0": {
+    "cpu_percent": 7.25,
+    "percent_of_routine": 7.06
+   },
+   "K 014 CR-78": {
+    "cpu_percent": 6.37,
+    "percent_of_routine": 6.21
+   },
+   "M  (2)": {
+    "cpu_percent": 0.06,
+    "percent_of_routine": 0.06
+   }
+  },
+  "areas_cpu_percent": {
+   "sample reading / interpolation / time-stretch": 22.34,
+   "voices: rendering loop, patcher, envelopes, LFOs": 21.78,
+   "filters": 13.56,
+   "song / master FX, output to the codec": 11.03,
+   "memory / other": 10.2,
+   "delay": 5.49,
+   "per-track FX (mod FX, bitcrush, volume/pan/reverb send)": 4.31,
+   "oscillators": 4.24,
+   "reverb": 4.03,
+   "playback / sequencing (clips, notes, arpeggiator, ticks)": 3.98,
+   "sidechain / compressors": 1.66,
+   "drone": 0.22
+  }
+ }
+}

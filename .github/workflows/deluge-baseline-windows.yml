@@ -1,0 +1,135 @@
+name: DelugeBaseline for Windows
+# Builds mastertune-1.2.1/tools/deluge_baseline.py (with baseline_check.py) into DelugeBaseline-vN.exe (N = VERSION in
+# deluge_baseline.py; PyInstaller: one file, no console) after its tests, checks the .exe on Windows with its self-test
+# (check, levels, normalize, restore on a demo card, the window, English, the version) and puts it on its own release
+# "deluge-baseline-vN". The release "deluge-baseline" always has the newest one as its only file. A released version
+# is never replaced: if the program or its icon changed since, the build stops until VERSION is raised; if not, it
+# only builds and tests, and deluge-baseline gets the released file.
+on:
+  push:
+    branches: [geraet-ergebnisse]
+    paths:
+      - mastertune-1.2.1/tools/deluge_baseline.py
+      - mastertune-1.2.1/tools/baseline_check.py
+      - mastertune-1.2.1/tools/deluge_baseline.ico
+      - mastertune-1.2.1/tests/baseline/**
+      - .github/workflows/deluge-baseline-windows.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            mastertune-1.2.1/tools
+            mastertune-1.2.1/tests/baseline
+
+      - name: Version
+        shell: bash
+        run: |
+          src=mastertune-1.2.1/tools/deluge_baseline.py
+          v=$(sed -n 's/^VERSION = \([0-9][0-9]*\).*/\1/p' "$src")
+          change=$(sed -n "s/^  $v  //p" "$src" | tr -d '\r' | head -n 1)
+          if [ -z "$v" ] || [ -z "$change" ]; then
+            echo "::error file=$src::VERSION or its line under Versions is missing"
+            exit 1
+          fi
+          release=yes built=$GITHUB_SHA
+          if git ls-remote --exit-code --tags origin "refs/tags/deluge-baseline-v$v" > /dev/null; then
+            git fetch --depth=1 origin "+refs/tags/deluge-baseline-v$v:refs/tags/deluge-baseline-v$v"
+            for f in "$src" mastertune-1.2.1/tools/baseline_check.py mastertune-1.2.1/tools/deluge_baseline.ico; do
+              if [ "$(git rev-parse "deluge-baseline-v$v:$f")" != "$(git rev-parse "HEAD:$f")" ]; then
+                echo "::error file=$src::v$v is released already and $f changed since: raise VERSION and add its line under Versions"
+                exit 1
+              fi
+            done
+            release=no built=$(git rev-parse "deluge-baseline-v$v^{commit}")
+            echo "v$v is released already and unchanged: build and test only"
+          fi
+          echo "v$v: $change (release: $release)"
+          { echo "V=$v"; echo "EXE=DelugeBaseline-v$v.exe"; echo "CHANGE=$change"; echo "RELEASE=$release"; echo "BUILT=$built"
+          } >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: python -m pip install --upgrade pip pyinstaller numpy
+
+      - name: Tests
+        run: |
+          python -B mastertune-1.2.1/tests/baseline/test_baseline_check.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          python -B mastertune-1.2.1/tests/baseline/test_deluge_baseline.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Build
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/version.txt" << EOF
+          VSVersionInfo(
+            ffi=FixedFileInfo(filevers=($V, 0, 0, 0), prodvers=($V, 0, 0, 0), mask=0x3f, flags=0x0, OS=0x40004,
+                              fileType=0x1, subtype=0x0, date=(0, 0)),
+            kids=[StringFileInfo([StringTable('040904B0', [
+                    StringStruct('FileDescription', 'DelugeBaseline'), StringStruct('FileVersion', '$V'),
+                    StringStruct('InternalName', 'DelugeBaseline'), StringStruct('OriginalFilename', '$EXE'),
+                    StringStruct('ProductName', 'DelugeBaseline'), StringStruct('ProductVersion', '$V')])]),
+                  VarFileInfo([VarStruct('Translation', [1033, 1200])])])
+          EOF
+          pyinstaller --noconfirm --onefile --windowed --name "${EXE%.exe}" --version-file "$RUNNER_TEMP/version.txt" \
+            --icon mastertune-1.2.1/tools/deluge_baseline.ico --paths mastertune-1.2.1/tools \
+            mastertune-1.2.1/tools/deluge_baseline.py
+
+      - name: Self-test of the .exe
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "selftest"
+          $p = Start-Process -FilePath "dist\$env:EXE" -ArgumentList "--selftest", "--out", $out -Wait -PassThru
+          $txt = Get-Content (Join-Path $out "selftest.txt")
+          $txt
+          $exe = Get-Item "dist\$env:EXE"
+          "$($exe.Name): $($exe.Length) bytes, version $($exe.VersionInfo.ProductVersion), SHA-256 $((Get-FileHash $exe.FullName).Hash)"
+          if ($p.ExitCode -ne 0) { throw "self-test failed (exit $($p.ExitCode))" }
+          if ($txt -notcontains "version: v$env:V") { throw "the program does not say v$env:V" }
+          foreach ($step in "check", "levels", "normalize", "restore", "window", "english") {
+            if ($txt -notcontains "${step}: ok") { throw "self-test step $step failed" }
+          }
+          if ($exe.VersionInfo.ProductVersion -ne $env:V) { throw "the file's version is not $env:V" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DelugeBaseline-v${{ env.V }}-windows
+          path: dist/${{ env.EXE }}
+
+      - name: Releases deluge-baseline-v${{ env.V }} and deluge-baseline
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes() {
+            printf '%s\n\n%s\n\n%s\n' "$1" \
+              "Checks the songs of a Deluge card against the baseline master and sets songs and samples to it, in German or English (the switch in the window). Two functions, PEGEL/LEVELS and NORM (samples raised to the target, never above full scale, the songs compensated so they sound as before), each to read (LESEN/READ: only shows) or to apply (ANPASSEN/APPLY: shows, then writes on the second START), onto the SD card directly (with a backup, ZURÜCK/RESTORE brings it back) or into a copy folder. Download $EXE and run it, nothing to install. Windows asks at the first start because the file is not signed: More info, then Run anyway." \
+              "Built from ${BUILT:0:8}. Source: mastertune-1.2.1/tools/deluge_baseline.py, its list Versions says what changed."
+          }
+          if [ "$RELEASE" = yes ]; then
+            gh release create "deluge-baseline-v$V" "dist/$EXE" --prerelease --target "$GITHUB_SHA" \
+              --title "DelugeBaseline v$V" --notes "$(notes "v$V: $CHANGE.")"
+          else  # deluge-baseline gets the released file, not this build's: no two builds are the same byte for byte
+            rm -f "dist/$EXE"
+            gh release download "deluge-baseline-v$V" --pattern "$EXE" --dir dist
+          fi
+          # deluge-baseline: always the newest version, as its only file
+          gh release view deluge-baseline > /dev/null 2>&1 || gh release create deluge-baseline --prerelease \
+            --target "$GITHUB_SHA" --title "DelugeBaseline for Windows" --notes "DelugeBaseline for Windows"
+          gh release upload deluge-baseline "dist/$EXE" --clobber
+          for old in $(gh release view deluge-baseline --json assets --jq '.assets[].name'); do
+            [ "$old" = "$EXE" ] || gh release delete-asset deluge-baseline "$old" --yes
+          done
+          gh release edit deluge-baseline --title "DelugeBaseline for Windows (v$V)" \
+            --notes "$(notes "Always the newest version, now v$V: $CHANGE. Every version also keeps its own release: deluge-baseline-v1, deluge-baseline-v2 ...")"

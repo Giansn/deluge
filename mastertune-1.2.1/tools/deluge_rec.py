@@ -1,30 +1,58 @@
 #!/usr/bin/env python3
-"""DELUGE USB REC: nimmt den USB-Audio-Ausgang des Deluge auf, im Look des Deluge.
+"""DELUGE USB REC: records the Deluge's USB audio output, in the Deluge's look.
 
-Der Deluge (mastertune ab v8: Settings > Community features > USB audio an, neu starten) erscheint am Computer als
-Audio-Eingang «Deluge», Stereo, 24 Bit, 44,1 kHz. Dieses Programm nimmt genau das auf und schreibt WAV-Dateien mit
-24 Bit, ohne Umrechnung. Es öffnet nur diesen Eingang und sendet nichts an den Deluge.
+The Deluge (mastertune v8 or later: Settings > Community features > USB audio on, then restart) appears on the
+computer as an audio input called "Deluge": stereo, 24 bits, 44.1 kHz. This program records exactly that into WAV
+files of 24 bits, without any conversion. It never sends anything to the Deluge.
 
-Installieren:  pip install sounddevice numpy        (tkinter gehört zu Python)
-Starten:       python deluge_rec.py                 (--out ORDNER, --list, --demo ohne Deluge, --help)
+Install:  pip install sounddevice numpy python-rtmidi   (tkinter comes with Python; rtmidi only for the song name)
+Run:      python deluge_rec.py                 (--out FOLDER, --list, --demo without a Deluge, --help)
 
-Bedienung (Maus oder Tasten):
-  REC     R, Leertaste   Aufnahme starten oder beenden
-  ARM     A              Aufnahme startet von selbst, sobald das Signal über die Schwelle steigt (0,3 s Vorlauf)
-  STOP    S, Esc         Aufnahme beenden, die Datei ist dann fertig
-  FOLDER  F, O           Aufnahme-Ordner öffnen
-  Knopf   Mausrad, ziehen, Pfeil auf/ab, + -   Schwelle für ARM, -60 bis -12 dBFS
-Die Dateien heissen USB00001.WAV, USB00002.WAV ... wie die Aufnahmen am Deluge (REC00001.WAV). Standardordner:
-Musik/Deluge USB im Benutzerordner.
+Controls (mouse or keys):
+  REC     R, space       start or end a take
+  ARM     A              the take starts by itself once the signal rises over the threshold (0.3 s pre-roll)
+  STOP    S, Esc         end the take: the file is complete
+  MON     M              monitor on or off: the Deluge's input on the computer's headphones or speakers
+  OUT     O              choose the monitor's output: up/down, mouse wheel or the knob, then Enter (or OUT, or a
+                         click on the knob); Esc leaves the list as it was
+  FOLDER  F              open the recordings folder
+  VOL     up/down, mouse wheel or drag on the fader: the level of the take, the pads and the monitor, 0 dB
+          (bit-exact) down to -30 dB; a double-click on the fader: back to 0 dB
+  THRESH  + -, mouse wheel or drag on the knob: the ARM threshold, -60 to -12 dBFS
+The files are called by the song, the date and the firmware: "Rescue 3, 28.09.2026 - 1.2.1 v17.WAV", and " (2)",
+" (3)" ... for more takes that day. The Deluge tells its song and firmware over USB MIDI port 3 (a firmware that sends
+SysEx 0x12, see DelugeInfo; the program only listens there); without that, the name is the date and the time:
+"28.09.2026 00-17-26.WAV". Each file also carries them inside (RIFF
+INFO: title, date, software, and a comment with the full firmware and VOL). Default folder: Music/Deluge USB in the
+user's folder. The output, monitor on or off, the threshold and VOL are remembered.
 
-Oben rechts steht der Weg: WASAPI EXCL (Windows, exklusiv, bitgenau), WASAPI SHARED, CORE AUDIO, ALSA ... Das Display
-zeigt die Bittiefe, die wirklich ankommt: 24B heisst bitgenau. 16B oder 32B deuten auf eine Umrechnung, unter Windows
-meist ein Eingangspegel unter 100 % oder Audio-Verbesserungen: den Pegel des Eingangs «Deluge» auf 100 % stellen oder
-ohne --shared starten. Die Pads zeigen den Pegel links und rechts in 3-dB-Schritten ab -45 dBFS, das letzte blinkt rot
-bei Vollaussteuerung.
+Monitoring plays what arrives, about 50 ms later, on the chosen output (or the system's default output); a device
+with "Deluge" in its name is never offered. The recording is not affected by it. The monitor fades in and out
+(10 ms) where it starts, runs dry or skips ahead, so it does not click; its output is open while the Deluge's input
+is. Its loudness is the computer's volume.
+
+The Deluge's VOLUME knob is analog, after its converter: like resampling, the USB signal does not follow it. To keep
+the pads out of the red, turn down the song's volume on the Deluge, or VOL here (below 0 dB the take is no longer
+bit-exact). VOL cannot undo what the Deluge itself clipped: the last pad blinks red whenever the Deluge's own output
+reaches full scale, whatever VOL is.
+
+Top right shows the audio path: WASAPI EXCL (Windows, exclusive, bit-exact), WASAPI SHARED, CORE AUDIO, ALSA ...
+The display shows the bit depth that actually arrives: 24B means bit-exact. 16B or 32B point to a conversion, on
+Windows mostly an input level below 100 % or audio enhancements: set the level of the input "Deluge" to 100 % or run
+without --shared. The pads show the level of the left and right channel in 3 dB steps from -45 dBFS, the last one
+blinks red at full scale.
+
+Versions (the number is in the window's title and on the display at start, --version prints it):
+  1  the first build: REC, ARM with pre-roll, the pads, the bit depth that arrives
+  2  reviewed (7 fixes): no take lost on STOP, quit, a disk error or at 4 GB; the pre-roll exact to the frame
+  3  the monitor with a choice of output, everything in English, the version number, the Deluge's rain as icon
+  4  VOL, a fader against the red; a box around each control; the monitor without clicks (fades in and out)
+  5  the files named by song, date and time and firmware, which the Deluge tells on MIDI port 3; RIFF INFO inside
+  6  the file name as "Rescue 3, 28.09.2026 - 1.2.1 v17" ((2), (3) ... for more takes that day)
 """
 import argparse
 import collections
+import json
 import math
 import os
 import queue
@@ -40,6 +68,7 @@ from pathlib import Path
 
 import numpy as np
 
+VERSION = 6                     # One more with every change of the program, and a line under Versions above
 RATE = 44100
 CHANNELS = 2
 FULL_SCALE = 2 ** 31            # The 24-bit samples arrive left-justified in int32
@@ -47,20 +76,33 @@ PREROLL = round(0.3 * RATE)     # ARM: the frames kept before the first sample o
 MAX_DATA_BYTES = 4_000_000_000  # WAV sizes are 32-bit: after 4 GB (about 4 h 11 min) a take goes on in the next file
 HEADER_EVERY = 2 * RATE         # The WAV header is brought up to date every 2 s: a crash leaves a readable file
 THRESH_MIN, THRESH_MAX = -60, -12
+VOL_MIN = -30                   # VOL: the fader goes from 0 dB (the take bit-exact) down to this
+CLIP = FULL_SCALE * 10 ** (-0.1 / 20)  # From here the last pad blinks: full scale
+MONITOR_TARGET = 2048           # Monitor: frames buffered before it plays (46 ms), and again after it ran dry
+MONITOR_LIMIT = 6144            # More than this (139 ms, the two clocks drifting apart): back to MONITOR_TARGET
+MONITOR_FADE = 441              # Monitor: 10 ms fades where it starts, runs dry or skips ahead, so it does not click
+NOT_OUTPUTS = ("microsoft sound mapper", "primary sound driver")  # Windows' aliases of the default output
+SONG_INFO = bytes([0xF0, 0x00, 0x21, 0x7B, 0x01, 0x12])  # The Deluge's SysEx with its song and firmware (port 3)
+SONG_INFO_7D = bytes([0xF0, 0x7D, 0x12])  # The same after the Deluge got SysEx with the developer ID 0x7D
 
 # --- the look: panel, OLED, pads (the Deluge's colours), lettering
 
 PANEL, PLATE, EDGE, BEZEL, LABEL, SMALL = "#0e0e10", "#18181b", "#26262b", "#050506", "#d8d8de", "#8c8c96"
+BOX, BOX_EDGE = "#1d1d21", "#35353d"  # The box around each control
 OLED_ON, OLED_OFF = (226, 238, 255), (7, 9, 13)
 PAD_COLOURS = ["#2fdc6e"] * 9 + ["#b8e636", "#f2d22e", "#f2d22e", "#ff9f1c", "#ff7a1c", "#ff5a1f", "#ff2d2d"]
-ICON_PNG = ("iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAB8klEQVR4nO2bsVLCQBCG/2SsGbVEwZ7KwtoH4BXw8fQVeADH0oIq"
-            "vUTT6vAAaOEsXC6Xu4QElr3sV5HcDbP7sXNzy8wmaMBsdv/bZN+5kWWrJLTHu0Fq4jY+Ec4FO/GiWPcd00kYj6elZ5eIygszeamJ"
-            "25gibAmp+RBj8kA5F7u6U9dCTMkTdRIufBslMMe28m5ZLuwdRbGunAsJsDciKXlK/GUyqawt8hxAvQiSkGWrpFIBEphj60ycoLVF"
-            "ntdKIBJpv34oeZs6CVQFfj1nRtvkgf9qcJ0ThBgBhyRP+CQEz4DR6NK7vtn8lJ6/Jzfe/Vf5V6fv7xsxFXAsVAB3ANyoAO4AmrJE"
-            "urvhtcV3IRIjADhMQug2KEoAALyNrhtLiPIqTHRphoD9VVhkMwTsk3NVQ+hXNxErgGiTrAtxZ0Df9N4LrF9vvfunj5+d9vfdOwy+"
-            "AlQAdwDcqADuALhRAdwBcCO2F+iKyL/Fj4EK4A6Am2AvcPf+5F3/eHg+6X7tBXpGBXAHwI0K4A6AGxXAHQA32gswx8GOCuAOgBtx"
-            "vUDb/SEGXwEqgDsAblQAdwDcqACaobEHCWLGnBcQOzDRBVNASh/MhZgxkwccZ0DMEly57QSY83QxSqibHSxVQKwSfIOTOjrr+4LB"
-            "Dk/bSBXRZHz+D/TV1SQk6UmAAAAAAElFTkSuQmCC")  # 64 x 64, the pads and the REC LED
+# 64 x 64: the Deluge's rain of squares in the meter's colours and the REC dot (made by deluge_rec_icon.py)
+ICON_PNG = ("iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAADC0lEQVR42u2bTYvTUBSG8xMSS5m2aWdqGzr9mg9wJ3WjLkRdqogLra7F"
+            "lQj+AWcnggizdOM/EFyKjIyIOxfWhQt3s5KK4MYRjufEXLmNLblJk8y9mVN4oUzTcN4n9749ydxrWQqvfn97hNpB7aEOUKCpDoIaqdaR"
+            "tewLTzJGTTQ2HCWqfZzEuId6J5+s19sCz+vC2lobGo2TWopqoxqp1hAI8uJZMYb7VHy50xmC666C45TAtk8YIaqVaqbaJQjTyGkRmD8U"
+            "XyKqJhmfB4I8SBAOF0IIhv1UDPdKxTXWeFjkRZoW07nTQZ7zRTIvQ5AzYV7a/xv2RTMvFJoOYxnARASeyXNeJROkYJzIwef/kZJTZwNl"
+            "1KbtwDnUBdv2NcL3Hkr1HORRGgUjK+ia/JDQ+eoP0OR11NNaDfbbbfjU6fh62WzCw3IZLiKMquIokAJxxwpaR7+B0NX8Nhq/jya/drsA"
+            "Gxtz9QpBXMPj6grnI68BgD1L9PbURcUpKlxA2scLtVB3SyX43u8vNC/0ptWCyzgSnIhzkldx72AlTf+8AFxCQ+9xyEeZF3pUqcAwIhPk"
+            "XwOtAdSCq69qnvTB8/xwLASAHl7JJxh6cQD8HAzgah4A8gBCQ3nXdWMBIN0oCoB1BPC4Wo1l/huG5ZWiAFhB3XEc+DUcKgN4i4F5No8Q"
+            "zCsTqOujZkfF/G/UA+wX1rMA8OPj5oyiDKZ1PDU2N3EUfMauLwrA83odziu0xUYBEFlwCyHsL+gHKPmf4a8F9QzlmHeFRgAgrQZNEbXE"
+            "LxoNeI1dH7W/ZPw2wjmNkEoJbouNASDURJ1Cs2fsv6bp7nBliecCiUNQFyDLPhhhAAyAAaTTCGVZcJYPRxkAA2AA2fxDZOvLvRnF/XzZ"
+            "4xkAA2AA2QJIs6C8gTAABsAA0g/BtA1kCYQBMAAGcPSNUNahygAYAAM4WgA6A2EADGAWQKJlciYDCC+T036hZNoKL5Q0Yqlsmgumw0tl"
+            "jVksnYb+Wyx97JfL84YJ3jLDm6Z42xxvnOSts7x5+thun/8Dvi/Nm6uBEpQAAAAASUVORK5CYII=")
 
 # A 5 x 7 pixel font: 7 rows of 5 bits per glyph
 FONT = {
@@ -180,19 +222,59 @@ def pack24(block):
     return v.astype("<i4").view(np.uint8).reshape(-1, 4)[:, :3].tobytes()
 
 
-class WavFile:
-    """A WAV file, stereo, 24 bits, 44.1 kHz. Never overwrites a file. The header gets the current size every 2 s, so
-    after a crash or a closed console the file holds everything up to shortly before."""
+def unpack7(data):
+    """SysEx data packed 7 bytes into 8 (the Deluge's pack_8bit_to_7bit): each group's first byte holds the high
+    bits of the next seven."""
+    out = bytearray()
+    for i in range(0, len(data), 8):
+        high = data[i]
+        out += bytes(b | (0x80 if high >> j & 1 else 0) for j, b in enumerate(data[i + 1:i + 8]))
+    return bytes(out)
 
-    def __init__(self, path):
+
+def clean_name(text, limit=80):
+    """A song's name as part of a file name on Windows, macOS and Linux: no <>:"/\\|?* or control characters, no
+    dots or spaces at the ends."""
+    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", text)[:limit]
+    return text.strip(" .")
+
+
+def short_firmware(firmware):
+    """The firmware in a file name: "1.2.1-mastertune-v17-l2d-b3385d83" becomes "1.2.1 v17", the community's "c1.2.1"
+    "1.2.1", anything else stays (made safe). The whole name is in the file's INFO list."""
+    if not firmware:
+        return ""
+    m = re.match(r"c?(\d+\.\d+\.\d+)(?:-mastertune-(v\d+))?", firmware)
+    if m:
+        return m.group(1) + (" " + m.group(2) if m.group(2) else "")
+    return clean_name(firmware, 24)
+
+
+def info_chunk(tags):
+    """RIFF LIST/INFO with (id, text) pairs, UTF-8, each ended by a zero byte and padded to an even length."""
+    body = b"INFO"
+    for key, text in tags:
+        value = text.encode("utf-8") + b"\0"
+        body += key + struct.pack("<I", len(value)) + value + (b"\0" if len(value) % 2 else b"")
+    return b"LIST" + struct.pack("<I", len(body)) + body
+
+
+class WavFile:
+    """A WAV file, stereo, 24 bits, 44.1 kHz, with a RIFF INFO list (tags). Never overwrites a file. The header gets
+    the current size every 2 s, so after a crash or a closed console the file holds everything up to shortly
+    before."""
+
+    def __init__(self, path, tags=()):
         self.f = open(path, "xb")
+        self.info = info_chunk(tags) if tags else b""  # Between fmt and data: the header keeps its length
         self.frames, self.next_header = 0, HEADER_EVERY
         self.f.write(self.header())
 
     def header(self):
         data = self.frames * CHANNELS * 3
-        return b"RIFF%sWAVEfmt %sdata%s" % (struct.pack("<I", 36 + data), struct.pack(
-            "<IHHIIHH", 16, 1, CHANNELS, RATE, RATE * CHANNELS * 3, CHANNELS * 3, 24), struct.pack("<I", data))
+        fmt = struct.pack("<IHHIIHH", 16, 1, CHANNELS, RATE, RATE * CHANNELS * 3, CHANNELS * 3, 24)
+        return (b"RIFF" + struct.pack("<I", 36 + len(self.info) + data) + b"WAVEfmt " + fmt + self.info + b"data"
+                + struct.pack("<I", data))
 
     def write(self, block):
         self.f.write(pack24(block))
@@ -257,6 +339,328 @@ class DemoInput:
                 time.sleep(wait)
 
 
+class MonitorBuffer:
+    """The frames on their way from the Deluge's input to the monitor's output: a ring between two clocks. It plays
+    once MONITOR_TARGET frames are there, fading in; over MONITOR_LIMIT it skips ahead to the newest MONITOR_TARGET
+    frames, crossfaded; run dry, the last frame played fades to silence, which lasts until MONITOR_TARGET frames are
+    there again. Each fade is MONITOR_FADE frames long, however small the output's blocks: no clicks. Between the
+    fades, 24-bit samples stay exact in float32."""
+
+    def __init__(self, size=RATE):
+        self.buf = np.zeros((size, CHANNELS), np.float32)
+        self.size = size
+        self.lock = threading.Lock()
+        self.reset()
+
+    def reset(self):
+        with self.lock:
+            self.written = self.read = 0  # Frames so far, both ends
+            self.priming, self.faded_in = True, 0
+            self.skip_from = self.skip_to = None  # A skip ahead: from where to where, crossfaded
+            self.skipped = 0                      # ... and how much of the crossfade is done
+            self.last = np.zeros(CHANNELS, np.float32)  # The last frame the output got
+            self.decay_from, self.decay_pos = self.last, MONITOR_FADE  # Run dry: the last frame fading out
+            self.underruns = self.drops = 0
+
+    def push(self, block):
+        x = block[-self.size:].astype(np.float32) / FULL_SCALE
+        with self.lock:
+            i = self.written % self.size
+            first = min(len(x), self.size - i)
+            self.buf[i:i + first] = x[:first]
+            self.buf[:len(x) - first] = x[first:]
+            self.written += len(x)
+            behind = self.written - self.read
+            oldest = self.read if self.skip_from is None else min(self.read, self.skip_from + self.skipped)
+            if self.written - oldest > self.size - MONITOR_FADE:  # The output stalled: what it would play is gone
+                self.read, self.priming = self.written - MONITOR_TARGET, True
+                self.skip_from = self.skip_to = None
+                self.drops += 1
+            elif behind > MONITOR_LIMIT and self.skip_to is None:
+                if self.priming:
+                    self.read = self.written - MONITOR_TARGET
+                else:
+                    self.skip_to = self.written - MONITOR_TARGET  # pull() crossfades there
+                self.drops += 1
+
+    def frames(self, pos, n):
+        i = pos % self.size
+        return self.buf[i:i + n] if i + n <= self.size else np.concatenate((self.buf[i:], self.buf[:i + n - self.size]))
+
+    def decay(self, out, start):
+        """Adds the rest of the fade-out of the last frame (after running dry) to out, from start on."""
+        m = min(len(out) - start, MONITOR_FADE - self.decay_pos)
+        if m > 0:
+            g = 1 - (self.decay_pos + np.arange(1, m + 1, dtype=np.float32)) / MONITOR_FADE
+            out[start:start + m] += self.decay_from * g[:, None]
+            self.decay_pos += m
+
+    def pull(self, out):
+        n = len(out)
+        with self.lock:
+            if self.priming and self.written - self.read < MONITOR_TARGET:
+                out.fill(0)
+                self.decay(out, 0)
+                self.last = out[-1].copy()
+                return
+            if self.priming:
+                self.priming, self.faded_in = False, 0
+            done = 0
+            if self.skip_to is not None:  # Too far behind: on to the newest frames, crossfaded over MONITOR_FADE
+                if self.skip_from is None:
+                    self.skip_from, self.skipped = self.read, 0
+                done = min(MONITOR_FADE - self.skipped, n)
+                r = ((self.skipped + np.arange(done, dtype=np.float32) + 0.5) / MONITOR_FADE)[:, None]
+                out[:done] = (self.frames(self.skip_from + self.skipped, done) * (1 - r)
+                              + self.frames(self.skip_to + self.skipped, done) * r)
+                self.skipped += done
+                self.read = self.skip_to + self.skipped
+                if self.skipped >= MONITOR_FADE:
+                    self.skip_from = self.skip_to = None
+            k = min(n - done, self.written - self.read)
+            out[done:done + k] = self.frames(self.read, k)
+            self.read += k
+            played = done + k
+            if self.faded_in < MONITOR_FADE:  # Fading in after priming
+                m = min(played, MONITOR_FADE - self.faded_in)
+                gain = np.arange(self.faded_in + 1, self.faded_in + m + 1, dtype=np.float32) / MONITOR_FADE
+                out[:m] *= gain[:, None]
+                self.faded_in += m
+            self.decay(out[:played], 0)  # What is left of an earlier fade-out, under the fade-in
+            if played < n:  # Run dry: the last frame fades out, then silence until MONITOR_TARGET frames are there
+                out[played:] = 0
+                self.decay_from = (out[played - 1] if played else self.last).copy()
+                self.decay_pos = 0
+                self.decay(out, played)
+                self.underruns += 1
+                self.priming = True
+                self.skip_from = self.skip_to = None
+            self.last = out[-1].copy()
+
+
+class Monitor:
+    """Plays the Deluge's input on one of the computer's outputs (headphones, speakers). Never on the Deluge: a
+    device with "Deluge" in its name is not an output here."""
+
+    RANK = {"Windows WASAPI": 0, "Core Audio": 0, "ALSA": 0, "JACK Audio Connection Kit": 1,
+            "Windows DirectSound": 2, "MME": 3, "Windows WDM-KS": 4}
+
+    def __init__(self, output=None):
+        self.output = output  # The chosen output's name; None: the system's default output
+        self.on, self.stream, self.name, self.api, self.error = False, None, "", "", ""
+        self.buffer = MonitorBuffer()
+
+    @staticmethod
+    def usable(d):
+        return d["max_output_channels"] >= 1 and "deluge" not in d["name"].lower()
+
+    @staticmethod
+    def alias(d):
+        return d["name"].lower().startswith(NOT_OUTPUTS)
+
+    @staticmethod
+    def same(a, b):
+        """The same device under two host APIs: MME cuts names after 31 characters."""
+        short, long = sorted((a.rstrip(), b.rstrip()), key=len)
+        return short == long or (len(short) >= 30 and long.startswith(short))
+
+    def outputs(self):
+        """The outputs to choose from, the system's default first (None), then each device once (Windows lists one
+        device per host API) under its longest name."""
+        import sounddevice as sd
+        names = []
+        for d in sd.query_devices():
+            if self.usable(d) and not self.alias(d):
+                same = [k for k, n in enumerate(names) if self.same(n, d["name"])]
+                if not same:
+                    names.append(d["name"])
+                elif len(d["name"]) > len(names[same[0]]):
+                    names[same[0]] = d["name"]
+        return [None] + names
+
+    def candidates(self):
+        """(rank, device index, host API) for the chosen output, the best way first. The system's default: each host
+        API's default output, Windows' aliases of it too, but none at all if a host API names the Deluge as the
+        default (an alias would lead there)."""
+        import sounddevice as sd
+        devices, apis = sd.query_devices(), sd.query_hostapis()
+        found = []
+        for i, d in enumerate(devices):
+            api = apis[d["hostapi"]]
+            if self.output is None:
+                if i != api.get("default_output_device", -1):
+                    continue
+                if d["max_output_channels"] >= 1 and not self.alias(d) and "deluge" in d["name"].lower():
+                    return []
+            elif self.alias(d) or not self.same(d["name"], self.output):
+                continue
+            if self.usable(d):
+                found.append((self.RANK.get(api["name"], 5), i, api["name"]))
+        return sorted(found)
+
+    def start(self):
+        """Opens the chosen output; True once it plays."""
+        import sounddevice as sd
+        self.stop()
+        self.buffer.reset()
+        devices = sd.query_devices()
+        for _, index, api in self.candidates():
+            stream = None
+            try:
+                extra = sd.WasapiSettings(auto_convert=True) if api == "Windows WASAPI" else None
+                stream = sd.OutputStream(device=index, channels=min(CHANNELS, devices[index]["max_output_channels"]),
+                                         samplerate=RATE, dtype="float32", latency="low", callback=self.play,
+                                         extra_settings=extra)
+                stream.start()
+            except Exception:
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
+                continue
+            self.stream, self.on, self.error = stream, True, ""
+            self.name = devices[index]["name"]
+            self.api = {"Windows WASAPI": "WASAPI", "Windows DirectSound": "DSOUND",
+                        "Windows WDM-KS": "WDM-KS"}.get(api, api.upper())
+            return True
+        self.error = "NO OUTPUT DEVICE"
+        return False
+
+    def close(self):
+        """Closes the output but leaves MON on: it opens again with the Deluge's input (Engine.open_monitor)."""
+        stream, self.stream = self.stream, None
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+    def stop(self):
+        self.close()
+        self.on = False
+
+    def feed(self, block):
+        """From the input's callback."""
+        if self.stream is not None:
+            self.buffer.push(block)
+
+    def play(self, outdata, frames, time_info, status):
+        """The output's callback."""
+        if outdata.shape[1] == CHANNELS:
+            self.buffer.pull(outdata)
+        else:  # A mono output: both channels
+            both = np.empty((frames, CHANNELS), np.float32)
+            self.buffer.pull(both)
+            outdata[:, 0] = both.mean(axis=1)
+
+    def lost(self):
+        """True if the output stopped by itself (headphones unplugged): then it is off."""
+        if self.on and self.stream is not None and not getattr(self.stream, "active", True):
+            self.stop()
+            self.error = "OUTPUT LOST"
+            return True
+        return False
+
+
+class DelugeInfo:
+    """What the Deluge tells about itself: its song's name and its firmware, in SysEx F0 00 21 7B 01 12 <JSON
+    {"song": ..., "fw": ...}, UTF-8, packed 7 into 8> F7 on its USB MIDI port 3, while USB audio streams (a firmware
+    that sends it). Only listens: it opens port 3 as an input and never sends anything. Port 1, the one a DAW uses,
+    stays free. poll() takes what arrived, from the window's loop: no second thread, so closing never waits on one."""
+
+    def __init__(self):
+        self.song = self.firmware = None  # None: not told (yet); "" for the song: a new song, not saved yet
+        self.midi, self.port, self.busy = None, "", False  # busy: port 3 is there, but another program has it
+
+    @staticmethod
+    def pick(names):
+        """The Deluge's port 3 among the MIDI inputs, or None: never another of its ports."""
+        deluge = [(i, n) for i, n in enumerate(names) if "deluge" in n.lower()]
+        for i, n in deluge:
+            if re.search(r"(midiin|port|midi) ?3\b", n.lower()):
+                return i
+        return deluge[2][0] if len(deluge) == 3 else None
+
+    @staticmethod
+    def parse(message):
+        """(song, firmware) from one SysEx, or None if it is not the Deluge's song info. UTF-8; CP437 (the Deluge's
+        card) if it is not."""
+        message = bytes(message)
+        head = next((h for h in (SONG_INFO, SONG_INFO_7D) if message.startswith(h)), None)
+        if head is None or message[-1:] != b"\xf7":
+            return None
+        raw = unpack7(message[len(head):-1])
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = raw.decode("cp437")
+        try:
+            info = json.loads(text)
+        except ValueError:
+            return None
+        if not isinstance(info, dict):
+            return None
+        song, firmware = info.get("song"), info.get("fw")
+        return (song, firmware) if isinstance(song, str) and isinstance(firmware, str) else None
+
+    def poll(self):
+        """Takes the messages that arrived; True if the song or the firmware changed."""
+        changed = False
+        while self.midi is not None:
+            try:
+                event = self.midi.get_message()
+            except Exception:
+                return changed
+            if not event:
+                return changed
+            info = self.parse(event[0])
+            if info and info != (self.song, self.firmware):
+                self.song, self.firmware = info
+                changed = True
+        return changed
+
+    def open(self):
+        """Listens on the Deluge's port 3 if python-rtmidi is there and the port is free; True if it does."""
+        if self.midi is not None:
+            return True
+        self.busy = False
+        try:
+            import rtmidi
+            midi = rtmidi.MidiIn()
+        except Exception:
+            return False
+        try:
+            names = midi.get_ports()
+            i = self.pick(names)
+            if i is None:
+                raise LookupError("no port 3 of a Deluge")
+            midi.ignore_types(sysex=False)
+            try:
+                midi.open_port(i)
+            except Exception:
+                self.busy = True  # Another program has it (Windows lets only one)
+                raise
+        except Exception:
+            self.close_midi(midi)
+            return False
+        self.midi, self.port = midi, names[i]
+        return True
+
+    def close(self):
+        midi, self.midi, self.song, self.firmware = self.midi, None, None, None
+        if midi is not None:
+            self.close_midi(midi)
+
+    @staticmethod
+    def close_midi(midi):
+        try:
+            midi.close_port()
+            midi.delete()
+        except Exception:
+            pass
+
+
 class Engine:
     """Opens the Deluge's input and records it. The audio callback only measures and queues the blocks; a writer
     thread keeps the pre-roll and writes the file."""
@@ -264,6 +668,9 @@ class Engine:
     def __init__(self, out_dir, device=None, shared=False, demo=False, threshold=-40):
         self.out_dir, self.device, self.shared, self.demo = Path(out_dir), device, shared, demo
         self.threshold_db = threshold
+        self.volume_db = 0             # VOL; below 0 dB the take, the pads, ARM and the monitor get the lower level
+        self.gain = 1.0                # The gain the last block ended with: a change ramps over the next block
+        self.clipped = False           # The Deluge's own output reached full scale (VOL cannot undo that)
         self.stream, self.api, self.connected, self.last_cb = None, "", False, 0.0
         self.state = "idle"            # idle, armed, rec
         self.q, self.cmd = queue.SimpleQueue(), queue.SimpleQueue()
@@ -272,8 +679,13 @@ class Engine:
         self.overflows, self.gaps = 0, 0  # Overflows: for the display; gaps: all, for the take's line in the console
         self.take_gaps = 0
         self.wav, self.name, self.frames = None, "", 0
-        self.last_take = None          # (name, seconds, bytes)
+        self.base, self.part = "", 1   # The take's name without .WAV, and which of its files (a new one every 4 GB)
+        self.label = ""                # The take on the display: the song, or the time it began
+        self.last_take = None          # (name, seconds, bytes, label)
+        self.info = DelugeInfo()       # The Deluge's song and firmware, for the file's name and its INFO list
+        self.now = time.time
         self.events = collections.deque(maxlen=8)
+        self.monitor = Monitor()
         self.stop_writer = False
         self.writer = threading.Thread(target=self.write_loop, daemon=True)
         self.writer.start()
@@ -295,15 +707,19 @@ class Engine:
         return sorted(found)
 
     def connect(self):
-        """Tries to open the Deluge's input; True once it is open."""
+        """Tries to open the Deluge's input; True once it is open. The monitor's output opens with it (if MON is on)
+        and closes with it: PortAudio restarts here, and no stream may be open then."""
         if self.connected:
             return True
         if self.demo:
             self.stream, self.api = DemoInput(self.callback), "DEMO"
             self.stream.start()
             self.connected, self.last_cb = True, time.monotonic()
+            self.open_monitor()
             return True
         import sounddevice as sd
+        self.monitor.close()
+        self.info.open()  # Port 3 first: the Deluge tells its song and firmware once its audio streams
         try:
             sd._terminate()  # PortAudio lists the devices only when it starts: a Deluge plugged in later shows up so
             sd._initialize()
@@ -330,13 +746,31 @@ class Engine:
                 self.api = {"Windows WASAPI": "WASAPI " + ("EXCL" if exclusive else "SHARED"),
                             "Windows DirectSound": "DSOUND", "Windows WDM-KS": "WDM-KS"}.get(api, api.upper())
                 self.connected, self.last_cb = True, time.monotonic()
+                self.open_monitor()
                 return True
+        self.info.close()  # No audio: port 3 free for other programs
         return False
 
+    def open_monitor(self):
+        """MON on: its output opens once the Deluge's input is there."""
+        m = self.monitor
+        if not (m.on and self.connected) or m.stream is not None:
+            return
+        try:
+            ok = m.start()
+        except Exception:
+            ok, m.on, m.error = False, False, "OUTPUT FAILED"
+        self.events.append("MON " + m.name.upper() if ok else m.error or "OUTPUT FAILED")
+        if ok:
+            print(f"monitor: {m.name} ({m.api})", flush=True)
+
     def disconnect(self):
-        """The Deluge went away, or the program ends: a take in progress is finished and saved."""
+        """The Deluge went away, or the program ends: a take in progress is finished and saved. The monitor's output
+        closes too (MON stays on)."""
         if self.state != "idle":
             self.command("stop")
+        self.monitor.close()
+        self.info.close()
         stream, self.stream, self.connected = self.stream, None, False
         if stream is not None:
             try:
@@ -350,13 +784,37 @@ class Engine:
         if status is not None and status.input_overflow:  # PortAudio lost samples before this block
             self.overflows += 1
             self.gaps += 1
-        block = np.array(indata, dtype=np.int32, copy=True)
-        self.peak = np.maximum(self.peak, np.abs(block.astype(np.int64)).max(axis=0))
-        self.or_bits |= int(np.bitwise_or.reduce(block, axis=None)) & 0xFFFFFFFF
+        raw = np.array(indata, dtype=np.int32, copy=True)
+        self.or_bits |= int(np.bitwise_or.reduce(raw, axis=None)) & 0xFFFFFFFF  # What arrives, before VOL
+        peak = np.abs(raw.astype(np.int64)).max(axis=0)
+        if peak.max() >= CLIP:
+            self.clipped = True
+        block = self.apply_volume(raw)
+        if block is not raw:
+            peak = np.abs(block.astype(np.int64)).max(axis=0)
+        self.peak = np.maximum(self.peak, peak)
         self.last_cb = time.monotonic()
+        self.monitor.feed(block)
         self.q.put(block)
 
+    def apply_volume(self, raw):
+        """VOL on a block: at 0 dB the block itself (bit-exact); below, the 24-bit samples scaled and rounded, a change
+        ramped over the block so it does not click."""
+        g = 10 ** (self.volume_db / 20) if self.volume_db < 0 else 1.0
+        g0, self.gain = self.gain, g
+        if g == 1.0 and g0 == 1.0:
+            return raw
+        n = len(raw)
+        gains = np.full(n, g) if g == g0 else g0 + (g - g0) * np.arange(1, n + 1) / n
+        y = np.rint((raw.astype(np.int64) >> 8) * gains[:, None])
+        return (np.clip(y, -2 ** 23, 2 ** 23 - 1).astype(np.int64) << 8).astype(np.int32)
+
     # --- for the display
+
+    def take_clipped(self):
+        """Whether the Deluge's own output reached full scale since the last call."""
+        clipped, self.clipped = self.clipped, False
+        return clipped
 
     def take_levels(self):
         peak, self.peak = self.peak, np.zeros(CHANNELS, np.int64)
@@ -375,22 +833,42 @@ class Engine:
 
     # --- the writer thread
 
-    def next_number(self):
-        used = [int(m.group(1)) for p in self.out_dir.iterdir()
-                if (m := re.fullmatch(r"USB(\d{5,})\.WAV", p.name, re.I))]
-        return max(used, default=0) + 1
+    def take_name(self, when):
+        """"Rescue 3, 28.09.2026 - 1.2.1 v17": the song as the Deluge told it, the date, the firmware. A new song not
+        saved yet: "New song, ..."; nothing told (a firmware without it): the date and the time."""
+        date = time.strftime("%d.%m.%Y", time.localtime(when))
+        song, firmware = self.info.song, short_firmware(self.info.firmware)
+        if song is None and not firmware:
+            return f"{date} {time.strftime('%H-%M-%S', time.localtime(when))}"
+        name = f"{clean_name(song or '') or 'New song'}, {date}"
+        return f"{name} - {firmware}" if firmware else name
 
-    def open_file(self):
+    def tags(self, when):
+        song, firmware = self.info.song, self.info.firmware
+        level = "0 dB (bit-exact)" if self.volume_db == 0 else f"{self.volume_db} dB"
+        return [(b"INAM", song or "Deluge USB audio"), (b"ICRD", time.strftime("%Y-%m-%d", time.localtime(when))),
+                (b"ISFT", f"DelugeRec v{VERSION}"),
+                (b"ICMT", f"Recorded {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(when))} from the Deluge's USB "
+                          f"audio. Song: {song if song else 'not told'}. Deluge firmware: {firmware or 'not told'}. "
+                          f"VOL {level}.")]
+
+    def open_file(self, part=1):
+        """A new take (part 1), or its next file after 4 GB. A file of the same name is never overwritten: then
+        " (2)", " (3)" ..."""
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        n = self.next_number()
-        while True:  # A file of the same name (another program, another case) is never overwritten
-            name = f"USB{n:05d}.WAV"
+        when = self.now()
+        if part == 1:
+            self.base = self.take_name(when)
+            self.label = clean_name(self.info.song or "") or time.strftime("%H:%M:%S", time.localtime(when))
+        stem, n = self.base + (f" part {part}" if part > 1 else ""), 1
+        while True:
+            name = stem + (f" ({n})" if n > 1 else "") + ".WAV"
             try:
-                self.wav = WavFile(self.out_dir / name)
+                self.wav = WavFile(self.out_dir / name, self.tags(when))
                 break
             except FileExistsError:
                 n += 1
-        self.name, self.frames, self.take_gaps, self.state = name, 0, self.gaps, "rec"
+        self.name, self.part, self.frames, self.take_gaps, self.state = name, part, 0, self.gaps, "rec"
 
     def write(self, block):
         if self.wav is None or not len(block):
@@ -399,18 +877,18 @@ class Engine:
         self.frames += len(block)
         if self.frames * CHANNELS * 3 >= MAX_DATA_BYTES:  # The take goes on without a gap in the next file
             self.close_file()
-            self.open_file()
+            self.open_file(self.part + 1)
             self.events.append("4GB: NEXT FILE")
 
     def close_file(self):
         wav, self.wav = self.wav, None
         if wav is not None:
             wav.close()
-            self.last_take = (self.name, self.seconds(), self.frames * CHANNELS * 3)
-            self.events.append("SAVED " + self.name[:-4])
+            self.last_take = (self.name, self.seconds(), self.frames * CHANNELS * 3, self.label)
+            self.events.append(("SAVED " + self.label)[:21])
             gaps = self.gaps - self.take_gaps
-            print(f"gespeichert: {self.out_dir / self.name} ({self.seconds():.1f} s"
-                  + (f", {gaps} Lücken: der Computer war zu langsam)" if gaps else ")"), flush=True)
+            print(f"saved: {self.out_dir / self.name} ({self.seconds():.1f} s"
+                  + (f", {gaps} gaps: the computer was too slow)" if gaps else ")"), flush=True)
         self.state = "idle"
 
     def drain(self):
@@ -474,10 +952,11 @@ class Engine:
                 except Exception:
                     self.wav, self.state = None, "idle"
                 self.events.append("DISK ERROR")
-                print(f"Fehler beim Schreiben: {e}", flush=True)
+                print(f"error writing: {e}", flush=True)
         self.close_file()
 
     def shutdown(self):
+        self.monitor.stop()
         self.disconnect()
         self.command("stop")
         deadline = time.monotonic() + 3
@@ -490,9 +969,9 @@ class Engine:
 # --- the window
 
 class App:
-    def __init__(self, root, engine, z):
+    def __init__(self, root, engine, z, settings=None):
         import tkinter as tk
-        self.root, self.engine, self.z = root, engine, z
+        self.root, self.engine, self.z, self.settings = root, engine, z, settings
         self.oled = Oled(max(3, round(3 * z)))
         s = self.oled.scale / 3  # Everything follows the OLED's size
         Z = self.Z = lambda v: int(round(v * s))  # noqa: E731
@@ -503,10 +982,12 @@ class App:
         self.message, self.message_until = "", 0.0
         self.next_connect = 0.0
         self.pad_fill, self.api_text, self.drag_y = {}, None, None
+        self.song_shown, self.next_info, self.info_busy = None, 0.0, False
         self.warned_import = False
+        self.menu = None  # The output list on the OLED: {"items": [...], "sel": i}
 
-        self.W, self.H = Z(440), Z(366)
-        root.title("DELUGE USB REC")
+        self.W, self.H = Z(572), Z(390)  # The Deluge's own proportions: 305 x 208 mm
+        root.title(f"DELUGE USB REC v{VERSION}")
         self.icon = tk.PhotoImage(data=ICON_PNG)
         root.iconphoto(True, self.icon)
         root.configure(bg=PANEL)
@@ -517,28 +998,32 @@ class App:
         self.label(Z(26), Z(16), "DELUGE", Z(3))
         self.label(Z(26) + self.label_width("DELUGE", Z(3)) + Z(12), Z(23), "USB REC", Z(2))
         # The OLED in its bezel
-        ox, oy = Z(28), Z(52)
+        ox, oy = Z(68), Z(52)
         c.create_rectangle(ox - Z(6), oy - Z(6), ox + Z(384) + Z(6), oy + Z(144) + Z(6), fill=BEZEL, outline=EDGE)
         self.img = tk.PhotoImage(width=self.oled.W * self.oled.scale, height=self.oled.H * self.oled.scale)
         c.create_image(ox, oy, image=self.img, anchor="nw")
         # Pads: the level of the left and right channel
         self.pads = []
-        py = Z(214)
+        py = Z(222)
         for ch, name in enumerate("LR"):
-            self.label(Z(12), py + ch * Z(26) + Z(3), name, Z(2))
+            self.label(Z(50), py + ch * Z(26) + Z(3), name, Z(2))
             row = []
             for i in range(16):
-                x, y = Z(30) + i * Z(24), py + ch * Z(26)
+                x, y = Z(70) + i * Z(24), py + ch * Z(26)
                 row.append(c.create_rectangle(x, y, x + Z(20), y + Z(20), fill=self.dim(PAD_COLOURS[i]),
                                               outline="#0a0a0c", width=Z(1)))
             self.pads.append(row)
-        # Round buttons with their LEDs, and the gold knob
-        by = Z(304)
+        # Round buttons with their LEDs, each in its box
+        top, bottom = Z(284), Z(368)
+        by = top + Z(28)
         self.buttons = {}
-        for key, x, colour, text, letter in (("rec", 56, "#ff2d2d", "REC", "R"), ("arm", 124, "#ffae1c", "ARM", "A"),
-                                             ("stop", 192, "#e8e8f0", "STOP", "S"),
-                                             ("folder", 266, "#3d8bff", "FOLDER", "F")):
-            cx = Z(x)
+        x = Z(26)
+        for key, colour, text, letter in (("rec", "#ff2d2d", "REC", "R"), ("arm", "#ffae1c", "ARM", "A"),
+                                          ("stop", "#e8e8f0", "STOP", "S"), ("mon", "#2fdc6e", "MON", "M"),
+                                          ("out", "#35d4e8", "OUT", "O"), ("folder", "#3d8bff", "FOLDER", "F")):
+            w = max(self.label_width(text, Z(2)), Z(44)) + Z(14)
+            self.box(x, top, x + w, bottom)
+            cx, x = x + w // 2, x + w + Z(8)
             ring = c.create_oval(cx - Z(17), by - Z(17), cx + Z(17), by + Z(17), fill="#26262a", outline="#3c3c42",
                                  width=Z(2))
             led = c.create_oval(cx - Z(6), by - Z(6), cx + Z(6), by + Z(6), fill=self.dim(colour, 0.22), outline="")
@@ -550,7 +1035,29 @@ class App:
                 c.tag_bind(item, "<Enter>", lambda e: c.configure(cursor="hand2"))
                 c.tag_bind(item, "<Leave>", lambda e: c.configure(cursor=""))
             self.buttons[key] = (led, colour)
-        kx = Z(374)
+        # On the right, one above the other: the VOL fader and the gold THRESH knob, each in its box
+        cx = self.W - Z(58)
+        self.vol_box = (cx - Z(41), Z(46), cx + Z(41), top - Z(8))
+        self.box(*self.vol_box)
+        self.box(cx - Z(41), top, cx + Z(41), bottom)
+        self.label(cx - self.label_width("VOL", Z(2)) // 2, Z(56), "VOL", Z(2))
+        self.fader_x, self.fader_top, self.fader_bottom = cx, Z(86), top - Z(46)
+        fader_items = [c.create_rectangle(cx - Z(3), self.fader_top - Z(6), cx + Z(3), self.fader_bottom + Z(6),
+                                          fill=BEZEL, outline=EDGE, width=Z(1))]
+        for db in range(0, VOL_MIN - 1, -6):  # A tick every 6 dB
+            y = self.fader_y(db)
+            fader_items += [c.create_line(cx + d * Z(9), y, cx + d * Z(14), y, fill=SMALL, width=Z(1)) for d in (-1, 1)]
+        self.fader_cap = c.create_rectangle(0, 0, 0, 0, fill="#c8c8d0", outline="#f0f0f4", width=Z(1))
+        self.fader_mark = c.create_line(0, 0, 0, 0, fill="#18181b", width=Z(2))
+        fader_items += [self.fader_cap, self.fader_mark]
+        for item in fader_items:
+            c.tag_bind(item, "<Button-1>", self.grab_fader)
+            c.tag_bind(item, "<B1-Motion>", self.grab_fader)
+            c.tag_bind(item, "<Double-Button-1>", lambda e: self.set_volume(0))
+            c.tag_bind(item, "<Enter>", lambda e: c.configure(cursor="sb_v_double_arrow"))
+            c.tag_bind(item, "<Leave>", lambda e: c.configure(cursor=""))
+        self.update_fader()
+        kx = cx
         self.knob = (kx, by)
         knob_items = [c.create_oval(kx - Z(22), by - Z(22), kx + Z(22), by + Z(22), fill="#8a6a28", outline="#4e3b14",
                                     width=Z(2)),
@@ -566,19 +1073,25 @@ class App:
             c.tag_bind(item, "<Leave>", lambda e: c.configure(cursor=""))
         self.update_knob()
 
-        for keys, action in ((("r", "R", "<space>"), "rec"), (("a", "A"), "arm"), (("s", "S", "<Escape>"), "stop"),
-                             (("f", "F", "o", "O"), "folder")):
+        for keys, action in ((("r", "R", "<space>"), "rec"), (("a", "A"), "arm"), (("s", "S"), "stop"),
+                             (("m", "M"), "mon"), (("o", "O"), "out"), (("f", "F"), "folder")):
             for k in keys:
                 root.bind(k, lambda e, a=action: self.press(a))
-        for k in ("<plus>", "<KP_Add>", "<Up>"):
+        root.bind("<Escape>", lambda e: self.escape())
+        for k in ("<Return>", "<KP_Enter>"):
+            root.bind(k, lambda e: self.choose() if self.menu else None)
+        for k in ("<plus>", "<KP_Add>"):
             root.bind(k, lambda e: self.turn(1))
-        for k in ("<minus>", "<KP_Subtract>", "<Down>"):
+        for k in ("<minus>", "<KP_Subtract>"):
             root.bind(k, lambda e: self.turn(-1))
+        for k, step in (("<Up>", 1), ("<Down>", -1)):  # VOL, or through the output list while it is open
+            root.bind(k, lambda e, s=step: self.turn(s) if self.menu else self.set_volume(self.engine.volume_db + s))
         root.bind("<MouseWheel>", lambda e: self.wheel(e, 1 if e.delta > 0 else -1))
         root.bind("<Button-4>", lambda e: self.wheel(e, 1))
         root.bind("<Button-5>", lambda e: self.wheel(e, -1))
         root.protocol("WM_DELETE_WINDOW", self.quit)
-        print(f"Aufnahmen: {engine.out_dir}", flush=True)
+        print(f"recordings: {engine.out_dir}", flush=True)
+        engine.open_monitor()  # MON on from the settings or --monitor: its output opens with the Deluge's input
         self.tick()
 
     # --- drawing helpers
@@ -591,6 +1104,21 @@ class App:
                 self.c.create_rectangle(x + col * p, y + r * p, x + (col + 1) * p, y + (r + 1) * p, fill=fill,
                                         width=0, tags=tag)
             x += 6 * p
+
+    def box(self, x0, y0, x1, y1):
+        """The box around one control on the panel."""
+        self.c.create_rectangle(x0, y0, x1, y1, fill=BOX, outline=BOX_EDGE, width=self.Z(1))
+
+    def fader_y(self, db):
+        return self.fader_top + (self.fader_bottom - self.fader_top) * db / VOL_MIN
+
+    def update_fader(self):
+        x, y, Z = self.fader_x, self.fader_y(self.engine.volume_db), self.Z
+        self.c.coords(self.fader_cap, x - Z(15), y - Z(6), x + Z(15), y + Z(6))
+        self.c.coords(self.fader_mark, x - Z(11), y, x + Z(11), y)
+        self.c.delete("vol")
+        text = f"{self.engine.volume_db} DB"
+        self.label(x - self.label_width(text, Z(1)) // 2, self.vol_box[3] - Z(18), text, Z(1), SMALL, "vol")
 
     @staticmethod
     def label_width(s, p):
@@ -614,6 +1142,17 @@ class App:
 
     def press(self, key):
         e = self.engine
+        if key == "mon":
+            if e.monitor.on:
+                e.monitor.stop()
+                self.say("MONITOR OFF")
+                self.save()
+            else:
+                self.start_monitor()
+            return
+        if key == "out":
+            self.choose() if self.menu else self.open_menu()
+            return
         if key == "folder":
             e.out_dir.mkdir(parents=True, exist_ok=True)
             try:
@@ -636,16 +1175,100 @@ class App:
 
     def turn(self, step):
         e = self.engine
+        if self.menu:  # The knob, the wheel and up/down move through the output list
+            self.menu["sel"] = min(len(self.menu["items"]) - 1, max(0, self.menu["sel"] - step))
+            return
         e.threshold_db = int(min(THRESH_MAX, max(THRESH_MIN, e.threshold_db + 2 * step)))
         self.update_knob()
         self.say(f"ARM LEVEL {e.threshold_db} DB")
+        self.save()
+
+    def set_volume(self, db):
+        """VOL, 0 dB (bit-exact) down to VOL_MIN."""
+        e = self.engine
+        db = int(min(0, max(VOL_MIN, db)))
+        if db == e.volume_db:
+            return
+        e.volume_db = db
+        self.update_fader()
+        self.say("VOL 0 DB: BIT-EXACT" if db == 0 else f"VOL {db} DB")
+        self.save()
+
+    def grab_fader(self, event):
+        self.set_volume(round(VOL_MIN * (event.y - self.fader_top) / (self.fader_bottom - self.fader_top)))
+
+    def escape(self):
+        if self.menu:
+            self.menu = None
+        else:
+            self.press("stop")
+
+    def open_menu(self):
+        m = self.engine.monitor
+        try:
+            items = m.outputs()
+        except ImportError:
+            self.say("PIP INSTALL SOUNDDEVICE", 2.2)
+            return
+        except Exception:
+            self.say("AUDIO ERROR", 2.2)
+            return
+        sel = items.index(m.output) if m.output in items else 0
+        self.menu = {"items": items, "sel": sel}
+
+    def choose(self):
+        """The output under the bar becomes the monitor's output, and the monitor plays on it."""
+        item = self.menu["items"][self.menu["sel"]]
+        self.menu = None
+        self.engine.monitor.output = item
+        self.start_monitor()
+
+    def start_monitor(self):
+        m = self.engine.monitor
+        if not self.engine.connected:  # Its output opens with the Deluge's input
+            m.on = True
+            self.say("MONITOR ON", 2.2)
+            self.save()
+            return
+        try:
+            ok = m.start()
+        except ImportError:
+            self.say("PIP INSTALL SOUNDDEVICE", 2.2)
+            return
+        except Exception:
+            ok, m.error = False, "OUTPUT FAILED"
+        if ok:
+            self.say("MON " + m.name.upper(), 2.2)
+            print(f"monitor: {m.name} ({m.api})", flush=True)
+        else:
+            self.say(m.error or "OUTPUT FAILED", 2.2)
+        self.save()
+
+    def save(self):
+        """The output, monitor on or off, the threshold and VOL, for the next start."""
+        if self.settings is None:
+            return
+        m = self.engine.monitor
+        try:
+            self.settings.parent.mkdir(parents=True, exist_ok=True)
+            self.settings.write_text(json.dumps({"output": m.output, "monitor": m.on,
+                                                 "threshold": self.engine.threshold_db,
+                                                 "volume": self.engine.volume_db}))
+        except Exception:
+            pass
 
     def wheel(self, event, step):
         kx, ky = self.knob
         if (event.x - kx) ** 2 + (event.y - ky) ** 2 <= self.Z(30) ** 2:
             self.turn(step)
+        elif self.vol_box[0] <= event.x <= self.vol_box[2] and self.vol_box[1] <= event.y <= self.vol_box[3]:
+            self.set_volume(self.engine.volume_db + step)
 
     def grab_knob(self, event):
+        if self.menu:  # A click on the knob chooses, as its press does on the Deluge
+            self.choose()
+            self.drag_y = None
+            return
         self.drag_y = event.y
 
     def drag_knob(self, event):
@@ -678,12 +1301,29 @@ class App:
             self.say("DELUGE LOST", 3)
         while e.events:
             self.say(e.events.popleft(), 2.5)
+        if e.connected and not e.demo:  # Port 3: what the Deluge told; opened again if it was taken or gone
+            if e.info.midi is None and now >= self.next_info:
+                self.next_info = now + 5.0
+                e.info.open()
+            if e.info.busy != self.info_busy:  # Another program has port 3: no song in the names until it lets go
+                self.info_busy = e.info.busy
+                if self.info_busy:
+                    self.say("PORT 3 BUSY: NO SONG", 2.5)
+            e.info.poll()
+        if e.info.song != self.song_shown:  # The Deluge told another song
+            self.song_shown = e.info.song
+            if self.song_shown:
+                self.say(("SONG " + self.song_shown)[:21], 2.5)
         if e.overflows:
             e.overflows = 0
             self.say("OVERFLOW: PC TOO SLOW", 2)
+        if e.monitor.lost():
+            self.say("MONITOR OUTPUT LOST", 2.5)
 
         # Levels: fast attack, 24 dB/s release, the peak held for 1.5 s
         new = e.take_levels() if e.connected else [-math.inf] * CHANNELS
+        if e.take_clipped():  # The Deluge's own output at full scale, whatever VOL is
+            self.clip_until = now + 1.0
         for ch in range(CHANNELS):
             self.levels[ch] = max(new[ch], self.levels[ch] - 24 * 0.04)
             hold, at = self.holds[ch]
@@ -715,7 +1355,8 @@ class App:
 
         blink = int(now * 2.5) % 2 == 0
         leds = {"rec": e.state == "rec", "arm": e.state == "armed" and blink,
-                "stop": e.connected and e.state == "idle", "folder": False}
+                "stop": e.connected and e.state == "idle", "mon": e.monitor.on, "out": self.menu is not None,
+                "folder": False}
         for key, (led, colour) in self.buttons.items():
             self.c.itemconfigure(led, fill=colour if leds[key] else self.dim(colour, 0.22))
         api = e.api if e.connected else "SEARCHING"
@@ -733,9 +1374,12 @@ class App:
         o, e = self.oled, self.engine
         o.clear()
         message = self.message[:21] if self.message and now < self.message_until else ""
-        if now < self.boot_until:  # At start the name, as the Deluge shows its version
+        if now < self.boot_until:  # At start the name and the version, as the Deluge shows its own
             o.text((o.W - o.width("DELUGE", 2)) // 2, 9, "DELUGE", 2)
-            o.text((o.W - o.width("USB REC")) // 2, 30, "USB REC")
+            o.text((o.W - o.width(f"USB REC V{VERSION}")) // 2, 30, f"USB REC V{VERSION}")
+            return
+        if self.menu:
+            self.draw_menu(o)
             return
         if not e.connected:
             o.text((o.W - o.width("NO DELUGE", 2)) // 2, 3, "NO DELUGE", 2)
@@ -747,6 +1391,8 @@ class App:
             return
         # Top line: the rate and the bit depth that arrives, the state on the right
         o.text(0, 0, "44.1K " + ("--B" if self.bits is None else f"{self.bits}B"))
+        if e.monitor.on:
+            o.text(63, 0, "MON")
         state = {"rec": "REC", "armed": "ARM", "idle": "READY"}[e.state]
         if e.state != "armed" or blink:
             x = o.W - o.width(state)
@@ -763,13 +1409,45 @@ class App:
             o.rect(0, 39, o.W, 9)
             o.text(1, 40, message, invert=True)
         elif e.state == "rec":
-            o.text(0, 40, f"{e.name[:8]} {e.frames * CHANNELS * 3 / 1e6:7.1f}MB")
+            o.text(0, 40, f"{e.label[:11]:11} {e.frames * CHANNELS * 3 / 1e6:6.1f}MB")
         elif e.state == "armed":
             o.text(0, 40, f"WAIT FOR > {e.threshold_db} DB")
         elif e.last_take:
-            o.text(0, 40, f"{e.last_take[0][:8]} {e.last_take[2] / 1e6:7.1f}MB")
+            o.text(0, 40, f"{e.last_take[3][:11]:11} {e.last_take[2] / 1e6:6.1f}MB")
+        elif e.info.song:
+            o.text(0, 40, e.info.song[:21])
         else:
             o.text(0, 40, "R: REC   A: ARM")
+
+
+    def draw_menu(self, o):
+        """The output list as a Deluge menu: its title, four lines, the chosen one inverted, * the one in use."""
+        o.text(0, 0, "MONITOR OUTPUT")
+        o.rect(0, 9, o.W, 1)
+        items, sel = self.menu["items"], self.menu["sel"]
+        top = min(max(0, sel - 1), max(0, len(items) - 4))
+        m = self.engine.monitor
+        for row, item in enumerate(items[top:top + 4]):
+            y = 12 + row * 9
+            name = "SYSTEM DEFAULT" if item is None else item
+            text = ("*" if item == m.output and m.on else " ") + name.upper()[:20]
+            if top + row == sel:
+                o.rect(0, y - 1, o.W, 9)
+                o.text(0, y, text, invert=True)
+            else:
+                o.text(0, y, text)
+
+
+def settings_path():
+    base = os.environ.get("APPDATA") if sys.platform.startswith("win") else None
+    return (Path(base) / "DelugeRec" if base else Path.home() / ".config" / "deluge_rec") / "settings.json"
+
+
+def load_settings(path):
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return {}
 
 
 def output_dir(arg):
@@ -780,21 +1458,37 @@ def output_dir(arg):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Nimmt den USB-Audio-Ausgang des Deluge auf (WAV, 24 Bit, 44,1 kHz).")
-    ap.add_argument("--out", help="Ordner für die Aufnahmen (Standard: Musik/Deluge USB)")
-    ap.add_argument("--device", help="Eingang, falls er nicht «Deluge» heisst: Nummer oder Teil des Namens (--list)")
-    ap.add_argument("--shared", action="store_true", help="Windows: WASAPI nicht exklusiv öffnen")
-    ap.add_argument("--threshold", type=int, default=-40, help="Schwelle für ARM in dBFS (Standard -40)")
-    ap.add_argument("--list", action="store_true", help="Audio-Eingänge auflisten und beenden")
-    ap.add_argument("--demo", action="store_true", help="ohne Deluge ausprobieren: ein Testsignal statt des Eingangs")
+    ap = argparse.ArgumentParser(description="Records the Deluge's USB audio output (WAV, 24 bits, 44.1 kHz).")
+    ap.add_argument("--out", help="folder for the recordings (default: Music/Deluge USB)")
+    ap.add_argument("--device", help="the input, if it is not called Deluge: its number or part of its name (--list)")
+    ap.add_argument("--shared", action="store_true", help="Windows: do not open WASAPI exclusively")
+    ap.add_argument("--threshold", type=int, help="ARM threshold in dBFS (default -40)")
+    ap.add_argument("--monitor", action="store_true", help="start with the monitor on")
+    ap.add_argument("--output", help="the monitor's output: part of its name (--list); default: the system's output")
+    ap.add_argument("--list", action="store_true", help="list the audio inputs and outputs, then quit")
+    ap.add_argument("--demo", action="store_true", help="try it without a Deluge: a test signal instead of the input")
+    ap.add_argument("--version", action="version", version=f"DelugeRec v{VERSION}")
     ap.add_argument("--selftest", type=float, metavar="S", help=argparse.SUPPRESS)  # For the build: see selftest()
     args = ap.parse_args()
     if args.list:
         import sounddevice as sd
         apis = sd.query_hostapis()
-        for i, d in enumerate(sd.query_devices()):
-            if d["max_input_channels"] > 0:
-                print(f"{i:3d}  {d['name']}  ({apis[d['hostapi']]['name']}, {d['max_input_channels']} Kanäle)")
+        for title, key in (("inputs", "max_input_channels"), ("outputs", "max_output_channels")):
+            print(title + ":")
+            for i, d in enumerate(sd.query_devices()):
+                if d[key] > 0:
+                    print(f"{i:4d}  {d['name']}  ({apis[d['hostapi']]['name']}, {d[key]} channels)")
+        try:
+            import rtmidi
+            names = rtmidi.MidiIn().get_ports()
+            port3 = DelugeInfo.pick(names)
+            print("midi inputs (only listens, on the Deluge's port 3: the song and the firmware):")
+            for i, name in enumerate(names):
+                print(f"{i:4d}  {name}" + ("  <- port 3 of the Deluge" if i == port3 else ""))
+        except ImportError:
+            print("midi: pip install python-rtmidi, for the song and the firmware in the file names")
+        except Exception as ex:
+            print(f"midi: none here ({ex})")
         return
     if sys.platform.startswith("win"):
         try:  # Sharp pixels on scaled Windows displays
@@ -803,10 +1497,26 @@ def main():
         except Exception:
             pass
     import tkinter as tk
+    settings = None if args.selftest else settings_path()
+    saved = load_settings(settings) if settings else {}
+    threshold = args.threshold if args.threshold is not None else saved.get("threshold", -40)
+    try:
+        volume = int(min(0, max(VOL_MIN, saved.get("volume", 0))))
+    except (TypeError, ValueError):
+        volume = 0
     engine = Engine(output_dir(args.out), args.device, args.shared, args.demo or bool(args.selftest),
-                    min(THRESH_MAX, max(THRESH_MIN, args.threshold)))
+                    min(THRESH_MAX, max(THRESH_MIN, int(threshold))))
+    engine.volume_db, engine.gain = volume, 10 ** (volume / 20) if volume < 0 else 1.0  # No ramp from 0 dB at start
+    m = engine.monitor
+    m.output = saved.get("output")
+    if args.output:  # Part of a name: the first output that has it
+        try:
+            m.output = next((n for n in m.outputs()[1:] if args.output.lower() in n.lower()), None)
+        except Exception:
+            pass
+    m.on = bool(args.monitor or saved.get("monitor"))  # App opens it once the window is there
     root = tk.Tk()
-    app = App(root, engine, min(3.0, max(1.0, root.winfo_fpixels("1i") / 96)))
+    app = App(root, engine, min(3.0, max(1.0, root.winfo_fpixels("1i") / 96)), settings)
     for sig in (signal.SIGINT, signal.SIGTERM):  # Ctrl+C in the console: the take is saved, the window closes
         signal.signal(sig, lambda *a: root.after(0, app.quit))
     result = [0]
@@ -821,15 +1531,29 @@ def main():
 
 def selftest(root, app, engine, seconds, result):
     """The build's check of the finished program (also the .exe): the window with the demo signal, a take from 1 s
-    to the end, PortAudio loaded. Writes selftest.txt into the output folder; exit status 1 if something failed."""
+    to the end, the monitor switched on (the build machine may have no output: no failure), PortAudio and rtmidi
+    loaded. Writes
+    selftest.txt into the output folder; exit status 1 if something failed."""
     def check():
-        lines, ok = [], True
+        lines, ok = [f"version: v{VERSION}"], True
         try:
             import sounddevice as sd
             lines.append(f"portaudio: {sd.get_portaudio_version()[1]}, {len(sd.query_devices())} devices")
         except Exception as ex:
             ok = False
             lines.append(f"portaudio: FAILED {ex!r}")
+        try:  # The build must have rtmidi; a machine without any MIDI system is no failure
+            import rtmidi
+            try:
+                names = rtmidi.MidiIn().get_ports()
+                port3 = DelugeInfo.pick(names)
+                lines.append(f"midi: rtmidi {rtmidi.get_rtmidi_version()}, {len(names)} inputs, port 3 of a Deluge: "
+                             + ("none" if port3 is None else names[port3]))
+            except Exception as ex:
+                lines.append(f"midi: rtmidi {rtmidi.get_rtmidi_version()}, no MIDI system here ({ex})")
+        except Exception as ex:
+            ok = False
+            lines.append(f"midi: FAILED {ex!r}")
         take = engine.last_take
         try:
             with wave.open(str(engine.out_dir / take[0]), "rb") as w:
@@ -841,11 +1565,15 @@ def selftest(root, app, engine, seconds, result):
         except Exception as ex:
             ok = False
             lines.append(f"take: FAILED {ex!r}")
+        m = engine.monitor
+        lines.append(f"monitor: on, {m.name} ({m.api}), {m.buffer.written} frames in" if m.on
+                     else f"monitor: off ({m.error or 'not started'})")
         lines.append("selftest: " + ("ok" if ok else "FAILED"))
         (engine.out_dir / "selftest.txt").write_text("\n".join(lines) + "\n")
         result[0] = 0 if ok else 1
         app.quit()
     root.after(1000, lambda: app.press("rec"))
+    root.after(1500, lambda: app.press("mon"))
     root.after(int(seconds * 1000) - 600, lambda: app.press("stop"))
     root.after(int(seconds * 1000), check)
 
