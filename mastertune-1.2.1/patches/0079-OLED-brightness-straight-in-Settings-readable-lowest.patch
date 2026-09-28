@@ -1,0 +1,133 @@
+From 982173ee1e52fce5d26abbdc6b8eb48f54b8e11a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 20:23:35 +0000
+Subject: [PATCH 079/112] OLED brightness straight in Settings, readable lowest
+ level; no commit hash in the version shown
+
+- Settings > OLED brightness (was Settings > Defaults > OLED brightness), right after Pads, easy to find
+- The levels 1-10 give the contrast 8, 11, 20, 35, 57, 84, 118, 157, 203, 255 (8 + 247 * ((level - 1) / 9)^2):
+  level 1 was 1, maybe unreadable
+- Settings > Firmware version shows "1.2.1-mastertune-v18-l2d" without the commit hash (BUILD_VERSION_STRING); the
+  file names and kCommitShort keep it
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/l10n/strings.h                          | 2 +-
+ src/deluge/gui/menu_item/oled_brightness.h             | 2 +-
+ src/deluge/gui/ui/menus.cpp                            | 2 +-
+ src/deluge/hid/display/oled_brightness.cpp             | 9 +++++----
+ src/deluge/hid/display/oled_brightness.h               | 2 +-
+ src/deluge/model/settings/runtime_feature_settings.cpp | 2 +-
+ src/deluge/version/CMakeLists.txt                      | 3 ++-
+ 7 files changed, 12 insertions(+), 10 deletions(-)
+
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index 68bfef27..a19ed44c 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -1014,7 +1014,7 @@ enum class String : size_t {
+ 	STRING_FOR_FADE,
+ 	STRING_FOR_TAPE,
+ 
+-	// mastertune-v18: Settings > Defaults > OLED brightness
++	// mastertune-v18: Settings > OLED brightness
+ 	STRING_FOR_OLED_BRIGHTNESS,
+ 
+ 	STRING_LAST
+diff --git a/src/deluge/gui/menu_item/oled_brightness.h b/src/deluge/gui/menu_item/oled_brightness.h
+index e2ccd7d4..e31726da 100644
+--- a/src/deluge/gui/menu_item/oled_brightness.h
++++ b/src/deluge/gui/menu_item/oled_brightness.h
+@@ -20,7 +20,7 @@
+ #include "hid/display/oled_brightness.h"
+ 
+ namespace deluge::gui::menu_item {
+-/// mastertune-v18: Settings > Defaults > OLED brightness, 1-10 (10: as bright as before); each turn goes to the OLED at
++/// mastertune-v18: Settings > OLED brightness, 1-10 (10: as bright as before); each turn goes to the OLED at
+ /// once, the card gets it when the menu is left. Only on a Deluge with the OLED.
+ class OledBrightness final : public Integer {
+ public:
+diff --git a/src/deluge/gui/ui/menus.cpp b/src/deluge/gui/ui/menus.cpp
+index 336b7537..ae66d83f 100644
+--- a/src/deluge/gui/ui/menus.cpp
++++ b/src/deluge/gui/ui/menus.cpp
+@@ -1249,7 +1249,6 @@ Submenu defaultsSubmenu{
+         &defaultMetronomeVolumeMenu,
+         &defaultStartupSongMenu,
+         &defaultPadBrightness,
+-        &oledBrightnessMenu,
+         &defaultSliceMode,
+         &defaultHoldTimeMenu,
+     },
+@@ -1556,6 +1555,7 @@ Submenu settingsRootMenu{
+         &tuningSubmenu,
+         &defaultsSubmenu,
+         &padsSubmenu,
++        &oledBrightnessMenu, // mastertune-v18: straight in Settings, easy to find
+         &sampleBrowserPreviewModeMenu,
+         &flashStatusMenu,
+         &recordSubmenu,
+diff --git a/src/deluge/hid/display/oled_brightness.cpp b/src/deluge/hid/display/oled_brightness.cpp
+index 426cfb4f..88683921 100644
+--- a/src/deluge/hid/display/oled_brightness.cpp
++++ b/src/deluge/hid/display/oled_brightness.cpp
+@@ -25,10 +25,11 @@ extern "C" {
+ namespace deluge::hid::display::oled_brightness {
+ 
+ namespace {
+-/// The contrast per level, 1 + 254 * ((level - 1) / 9)^2: the OLED's light goes with its current, which goes with the
+-/// contrast, and lightness as seen (CIE L*) goes roughly with the square root of that, so the steps look about even
+-/// (L* about 4, 14, 28, 41, 53, 63, 73, 82, 91, 100; the SSD1309 datasheet: segment current = contrast / 256 * IREF)
+-constexpr uint8_t kContrastForLevel[kNumLevels] = {1, 4, 14, 29, 51, 79, 114, 155, 202, 255};
++/// The contrast per level, 8 + 247 * ((level - 1) / 9)^2: the OLED's light goes with its current, which goes with the
++/// contrast, and lightness as seen goes roughly with the square root of that, so the steps look about even (about 18,
++/// 21, 28, 37, 47, 57, 68, 78, 89, 100 %; the SSD1309 datasheet: segment current = contrast / 256 * IREF). Level 1
++/// stays at 8, not 1, so the display stays readable (a hand-edited oledContrast can still go down to 1)
++constexpr uint8_t kContrastForLevel[kNumLevels] = {8, 11, 20, 35, 57, 84, 118, 157, 203, 255};
+ } // namespace
+ 
+ uint8_t contrast() {
+diff --git a/src/deluge/hid/display/oled_brightness.h b/src/deluge/hid/display/oled_brightness.h
+index 1b37a30a..9135c405 100644
+--- a/src/deluge/hid/display/oled_brightness.h
++++ b/src/deluge/hid/display/oled_brightness.h
+@@ -17,7 +17,7 @@
+ #pragma once
+ #include <cstdint>
+ 
+-/// mastertune-v18: Settings > Defaults > OLED brightness. The OLED's contrast (SSD1309 command 0x81), which used to be
++/// mastertune-v18: Settings > OLED brightness. The OLED's contrast (SSD1309 command 0x81), which used to be
+ /// 0xFF always, in ten steps; kept on the card as the entry oledContrast in CommunityFeatures.XML (the contrast
+ /// itself, 1-255; missing: 255) and sent to the OLED when it changes and at boot, once the file is read. The Deluge
+ /// with the 7-segment display has no OLED: nothing is sent there and the menu doesn't show the item.
+diff --git a/src/deluge/model/settings/runtime_feature_settings.cpp b/src/deluge/model/settings/runtime_feature_settings.cpp
+index bcfeb37c..b59863ac 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.cpp
++++ b/src/deluge/model/settings/runtime_feature_settings.cpp
+@@ -323,7 +323,7 @@ void RuntimeFeatureSettings::writeSettingsToFile(StorageManager& bdsm, bool upda
+ 	writer.writeOpeningTagEnd(false);
+ 	writer.writeClosingTag(TAG_RUNTIME_FEATURE_SETTING, false);
+ 
+-	// mastertune-v18: Settings > Defaults > OLED brightness, the OLED's contrast
++	// mastertune-v18: Settings > OLED brightness, the OLED's contrast
+ 	writer.writeOpeningTagBeginning(TAG_RUNTIME_FEATURE_SETTING);
+ 	writer.writeAttribute(TAG_RUNTIME_FEATURE_SETTING_ATTR_NAME, deluge::hid::display::oled_brightness::kSettingName,
+ 	                      false);
+diff --git a/src/deluge/version/CMakeLists.txt b/src/deluge/version/CMakeLists.txt
+index 8ada8b8b..5faf7cd6 100644
+--- a/src/deluge/version/CMakeLists.txt
++++ b/src/deluge/version/CMakeLists.txt
+@@ -28,7 +28,8 @@ if (RELEASE_TYPE STREQUAL \"release\")
+     set(BUILD_VERSION_STRING \"c${PROJECT_VERSION}\")
+ else()
+     set(BUILD_COMMIT_SHORT \"\${GIT_COMMIT_SHORT}\")
+-    set(BUILD_VERSION_STRING \"${PROJECT_VERSION}${SEMVER_PRERELEASE_ID}-\${GIT_COMMIT_SHORT}\")
++    # mastertune: no commit hash in what Settings > Firmware version shows (the file names and kCommitShort keep it)
++    set(BUILD_VERSION_STRING \"${PROJECT_VERSION}${SEMVER_PRERELEASE_ID}\")
+ endif()
+ 
+ if(NOT \"\${GIT_STATUS}\" STREQUAL \"\")
+-- 
+2.43.0
+

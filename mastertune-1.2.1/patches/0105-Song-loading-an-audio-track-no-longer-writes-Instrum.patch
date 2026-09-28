@@ -1,0 +1,39 @@
+From 8b8ab7a755145bfae6f4690dea7b8f7f9197c8f2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 07:22:33 +0000
+Subject: [PATCH 105/112] Song: loading an audio track no longer writes
+ Instrument::existsOnCard into it
+
+Song::readFromFile() set ((Instrument*)newOutput)->existsOnCard = true for every output it loaded, audio tracks
+included. An AudioOutput is no Instrument: the cast wrote a 1 into byte 0x61 of it, which is inside its
+GlobalEffectableForClip part. In v17 that was a byte of some effect member (harmless enough to go unseen); once that
+part is 8-byte aligned (at 0x60, v18's EQ state has 64-bit members) it is the part's vtable pointer, and the first
+render of an audio track jumped to nowhere (tests/song, the emulator). Now only instruments get the flag.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/model/song/song.cpp | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/src/deluge/model/song/song.cpp b/src/deluge/model/song/song.cpp
+index 9662adfd..bf1e25db 100644
+--- a/src/deluge/model/song/song.cpp
++++ b/src/deluge/model/song/song.cpp
+@@ -1952,7 +1952,12 @@ loadOutput:
+ 						if (error != Error::NONE) {
+ 							goto gotError;
+ 						}
+-						((Instrument*)newOutput)->existsOnCard = true;
++						// (Only an Instrument has existsOnCard: for an audio track (AudioOutput, no Instrument) the
++						// cast wrote a 1 into byte 0x61 of it, inside its GlobalEffectableForClip part: mastertune v18,
++						// whose EQ state made that part 8-byte aligned at 0x60, had its vtable pointer broken there)
++						if (newOutput->type != OutputType::AUDIO) {
++							((Instrument*)newOutput)->existsOnCard = true;
++						}
+ 						*lastPointer = newOutput;
+ 						lastPointer = &newOutput->next;
+ 					}
+-- 
+2.43.0
+

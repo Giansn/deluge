@@ -1,0 +1,38 @@
+From ca4b6919373d5505ab82093f64f31f3305ff7d7b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 10:25:29 +0000
+Subject: [PATCH 111/112] Filter crossing guard: no out-of-range float cast
+ where patch cables take the resonance to 2^31 - 1
+
+The guarded resonance (up to 200 display steps with cables) rounded to 2^31 in float; its cast to q31_t was
+undefined (x86: INT32_MIN, a negative resonance). Now the knob's value is kept where the guard wouldn't lower it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter_set.cpp | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/filter_set.cpp b/src/deluge/dsp/filter/filter_set.cpp
+index 4071d32a..7e8c2db7 100644
+--- a/src/deluge/dsp/filter/filter_set.cpp
++++ b/src/deluge/dsp/filter/filter_set.cpp
+@@ -434,8 +434,13 @@ q31_t FilterSet::guardResonance(q31_t resonance, float strength, const float* pe
+ 	const float steps = (float)resonance * (1.0f / (float)kResonancePerStep);
+ 	const float h = peakAt(peaks, steps);
+ 	const float full = std::min(resonanceForPeak(peaks, 0.5f * (h + 0.6f)), steps);
+-	const float guarded = steps - strength * (steps - full);
+-	return std::min(resonance, (q31_t)(guarded * (float)kResonancePerStep));
++	const float guarded = (steps - strength * (steps - full)) * (float)kResonancePerStep;
++	// Patch cables can take the resonance up to 2^31 - 1 (4 times the knob's full): there the float rounds to 2^31,
++	// which doesn't fit a q31_t (the cast would be undefined; x86 gives INT32_MIN). guarded <= resonance anyway
++	if (guarded >= (float)resonance) {
++		return resonance;
++	}
++	return (q31_t)guarded;
+ }
+ 
+ int32_t FilterSet::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMode lpfmode, q31_t lpfMorph,
+-- 
+2.43.0
+

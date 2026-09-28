@@ -1,0 +1,471 @@
+From e97ed44c4f201f5bc05fabcb2467b973938ad077 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 04:49:08 +0000
+Subject: [PATCH 101/112] Volume knobs: 0.5 dB per detent, shown in dB (menus
+ and gold knobs)
+
+A sound's and a kit row's level, a kit's, an audio track's and the song's volume, in their menus and on the gold
+knob (LEVEL), step by 0.5 dB per detent and show dB (OLED "-3.5 dB", "+12.0 dB", "-inf dB"; 7-segment "-3.5",
+"12.0", "OFF"). Below -60 dB comes off. The stored value and the x^2 gain law stay (modulation/params/
+volume_steps.h), so saved songs keep their exact level and files load both ways; automation, MIDI and cables keep
+the stored domain. A value between the steps (old songs, automation) shows to 0.1 dB, and the first detent takes it
+to the 0.5 dB grid in the direction turned. Sound/kit row: 0 dB at the old 25, up to +12.0; kit/audio track/song:
+0 dB at the old 35.4 (their >> 1), up to +6.0 (the kit's x1.25 and the audio track's x1.2196 headroom factors are
+not counted).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/menu_item/volume_level.h       | 101 ++++++++++++++
+ src/deluge/gui/ui/menus.cpp                   |   6 +-
+ src/deluge/gui/views/view.cpp                 |  37 ++++-
+ src/deluge/gui/views/view.h                   |   3 +
+ src/deluge/modulation/params/volume_steps.cpp | 129 ++++++++++++++++++
+ src/deluge/modulation/params/volume_steps.h   |  61 +++++++++
+ 6 files changed, 332 insertions(+), 5 deletions(-)
+ create mode 100644 src/deluge/gui/menu_item/volume_level.h
+ create mode 100644 src/deluge/modulation/params/volume_steps.cpp
+ create mode 100644 src/deluge/modulation/params/volume_steps.h
+
+diff --git a/src/deluge/gui/menu_item/volume_level.h b/src/deluge/gui/menu_item/volume_level.h
+new file mode 100644
+index 00000000..44aac72b
+--- /dev/null
++++ b/src/deluge/gui/menu_item/volume_level.h
+@@ -0,0 +1,101 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++// mastertune v18: the volume menu items (a sound's / kit row's level, a kit's / audio track's / the song's volume) in
++// dB, 0.5 dB per detent (modulation/params/volume_steps.h). They keep the stored value itself (value_ only feeds the
++// bar, in the menu's 0-50), so a value between the steps stays as it is until turned.
++
++#pragma once
++
++#include "gui/menu_item/patched_param/integer.h"
++#include "gui/menu_item/unpatched_param.h"
++#include "gui/menu_item/value_scaling.h"
++#include "gui/ui/sound_editor.h"
++#include "hid/display/display.h"
++#include "hid/display/oled.h"
++#include "modulation/params/param_set.h"
++#include "modulation/params/volume_steps.h"
++
++namespace deluge::gui::menu_item {
++
++namespace volume_level {
++inline void drawOled(int32_t stored, modulation::params::volume::Scale scale, int32_t textWidth, int32_t textHeight,
++                     int32_t yPixel) {
++	char buffer[12];
++	modulation::params::volume::toText(stored, scale, buffer, true);
++	deluge::hid::display::OLED::main.drawStringCentred(buffer, yPixel + OLED_MAIN_TOPMOST_PIXEL, textWidth, textHeight);
++}
++inline void draw7Seg(int32_t stored, modulation::params::volume::Scale scale) {
++	char buffer[12];
++	modulation::params::volume::toText(stored, scale, buffer, false);
++	display->setText(buffer, true);
++}
++} // namespace volume_level
++
++namespace patched_param {
++// A sound's / kit row's level (GLOBAL_VOLUME_POST_FX)
++class VolumeLevel final : public Integer {
++public:
++	using Integer::Integer;
++	void selectEncoderAction(int32_t offset) override {
++		stored_ = modulation::params::volume::step(stored_, offset, modulation::params::volume::Scale::SOUND);
++		setValue(computeCurrentValueForStandardMenuItem(stored_));
++		Number::selectEncoderAction(offset);
++	}
++	void drawValue() override { volume_level::draw7Seg(stored_, modulation::params::volume::Scale::SOUND); }
++
++protected:
++	void readCurrentValue() override {
++		stored_ = soundEditor.currentParamManager->getPatchedParamSet()->getValue(getP());
++		setValue(computeCurrentValueForStandardMenuItem(stored_));
++	}
++	int32_t getFinalValue() override { return stored_; }
++	void drawInteger(int32_t textWidth, int32_t textHeight, int32_t yPixel) override {
++		volume_level::drawOled(stored_, modulation::params::volume::Scale::SOUND, textWidth, textHeight, yPixel);
++	}
++
++private:
++	int32_t stored_ = 0;
++};
++} // namespace patched_param
++
++// A kit's / audio track's / the song's volume (UNPATCHED_VOLUME)
++class GlobalVolumeLevel final : public UnpatchedParam {
++public:
++	using UnpatchedParam::UnpatchedParam;
++	void readCurrentValue() override {
++		stored_ = soundEditor.currentParamManager->getUnpatchedParamSet()->getValue(getP());
++		setValue(computeCurrentValueForStandardMenuItem(stored_));
++	}
++	void selectEncoderAction(int32_t offset) override {
++		stored_ = modulation::params::volume::step(stored_, offset, modulation::params::volume::Scale::GLOBAL);
++		setValue(computeCurrentValueForStandardMenuItem(stored_));
++		Number::selectEncoderAction(offset);
++	}
++	void drawValue() override { volume_level::draw7Seg(stored_, modulation::params::volume::Scale::GLOBAL); }
++
++protected:
++	int32_t getFinalValue() override { return stored_; }
++	void drawInteger(int32_t textWidth, int32_t textHeight, int32_t yPixel) override {
++		volume_level::drawOled(stored_, modulation::params::volume::Scale::GLOBAL, textWidth, textHeight, yPixel);
++	}
++
++private:
++	int32_t stored_ = 0;
++};
++
++} // namespace deluge::gui::menu_item
+diff --git a/src/deluge/gui/ui/menus.cpp b/src/deluge/gui/ui/menus.cpp
+index ae66d83f..8e330fe9 100644
+--- a/src/deluge/gui/ui/menus.cpp
++++ b/src/deluge/gui/ui/menus.cpp
+@@ -198,6 +198,7 @@
+ #include "gui/menu_item/unpatched_param/updating_reverb_params.h"
+ #include "gui/menu_item/voice/polyphony.h"
+ #include "gui/menu_item/voice/priority.h"
++#include "gui/menu_item/volume_level.h"
+ #include "io/midi/midi_device_manager.h"
+ #include "io/midi/midi_engine.h"
+ #include "model/song/song.h"
+@@ -607,7 +608,7 @@ sequence::Direction sequenceDirectionMenu{STRING_FOR_PLAY_DIRECTION};
+ // Global FX Menu
+ 
+ // Volume
+-UnpatchedParam globalLevelMenu{STRING_FOR_VOLUME_LEVEL, params::UNPATCHED_VOLUME};
++GlobalVolumeLevel globalLevelMenu{STRING_FOR_VOLUME_LEVEL, params::UNPATCHED_VOLUME}; // (in dB, mastertune v18)
+ 
+ // Pitch
+ UnpatchedParam globalPitchMenu{STRING_FOR_PITCH, params::UNPATCHED_PITCH_ADJUST};
+@@ -1285,7 +1286,8 @@ menu_item::DrumName drumNameMenu{STRING_FOR_NAME};
+ // Synth only
+ menu_item::SynthMode synthModeMenu{STRING_FOR_SYNTH_MODE};
+ bend_range::PerFinger drumBendRangeMenu{STRING_FOR_BEND_RANGE}; // The single option available for Drums
+-patched_param::Integer volumeMenu{STRING_FOR_VOLUME_LEVEL, STRING_FOR_MASTER_LEVEL, params::GLOBAL_VOLUME_POST_FX};
++patched_param::VolumeLevel volumeMenu{STRING_FOR_VOLUME_LEVEL, STRING_FOR_MASTER_LEVEL,
++                                      params::GLOBAL_VOLUME_POST_FX}; // (in dB, mastertune v18)
+ patched_param::Pan panMenu{STRING_FOR_PAN, params::LOCAL_PAN};
+ 
+ PatchCables patchCablesMenu{STRING_FOR_MOD_MATRIX};
+diff --git a/src/deluge/gui/views/view.cpp b/src/deluge/gui/views/view.cpp
+index 96e64013..0780fc3a 100644
+--- a/src/deluge/gui/views/view.cpp
++++ b/src/deluge/gui/views/view.cpp
+@@ -72,6 +72,7 @@
+ #include "modulation/params/param.h"
+ #include "modulation/params/param_collection.h"
+ #include "modulation/params/param_set.h"
++#include "modulation/params/volume_steps.h"
+ #include "playback/mode/arrangement.h"
+ #include "playback/mode/session.h"
+ #include "processing/audio_output.h"
+@@ -818,6 +819,16 @@ void View::modEncoderAction(int32_t whichModEncoder, int32_t offset) {
+ 			int32_t newKnobPos = knobPos + offset;
+ 			newKnobPos = std::clamp(newKnobPos, lowerLimit, 64_i32);
+ 
++			// mastertune v18: a volume knob steps by 0.5 dB and shows dB (modulation/params/volume_steps.h)
++			modulation::params::volume::Scale volumeScale;
++			bool isVolume = modulation::params::volume::isVolumeParam(kind, modelStackWithParam->paramId, &volumeScale);
++			int32_t newVolumeValue = value;
++			if (isVolume) {
++				newVolumeValue = modulation::params::volume::step(value, offset, volumeScale);
++				newKnobPos =
++				    modelStackWithParam->paramCollection->paramValueToKnobPos(newVolumeValue, modelStackWithParam);
++			}
++
+ 			// ignore modEncoderTurn for Midi CC if current or new knobPos exceeds 127
+ 			// if current knobPos exceeds 127, e.g. it's 128, then it needs to drop to 126 before a value change
+ 			// gets recorded if newKnobPos exceeds 127, then it means current knobPos was 127 and it was increased
+@@ -860,10 +871,15 @@ void View::modEncoderAction(int32_t whichModEncoder, int32_t offset) {
+ 						source2 = paramDescriptor.getTopLevelSource();
+ 					}
+ 				}
+-				displayModEncoderValuePopup(kind, modelStackWithParam->paramId, newKnobPos, source1, source2);
++				if (isVolume) {
++					displayVolumePopup(kind, modelStackWithParam->paramId, newVolumeValue, volumeScale);
++				}
++				else {
++					displayModEncoderValuePopup(kind, modelStackWithParam->paramId, newKnobPos, source1, source2);
++				}
+ 			}
+ 
+-			if (newKnobPos == knobPos) {
++			if (isVolume ? (newVolumeValue == value) : (newKnobPos == knobPos)) {
+ 				return;
+ 			}
+ 
+@@ -882,7 +898,8 @@ void View::modEncoderAction(int32_t whichModEncoder, int32_t offset) {
+ 			}
+ 
+ 			int32_t newValue =
+-			    modelStackWithParam->paramCollection->knobPosToParamValue(newKnobPos, modelStackWithParam);
++			    isVolume ? newVolumeValue
++			             : modelStackWithParam->paramCollection->knobPosToParamValue(newKnobPos, modelStackWithParam);
+ 
+ 			// Perform the actual change
+ 			modelStackWithParam->autoParam->setValuePossiblyForRegion(newValue, modelStackWithParam, modPos, modLength);
+@@ -1105,6 +1122,20 @@ void View::displayModEncoderValuePopup(params::Kind kind, int32_t paramID, int32
+ 	display->displayPopup(popupMsg.c_str());
+ }
+ 
++// mastertune v18: a volume knob's popup, in dB (modulation/params/volume_steps.h)
++void View::displayVolumePopup(params::Kind kind, int32_t paramID, int32_t value,
++                              modulation::params::volume::Scale scale) {
++	DEF_STACK_STRING_BUF(popupMsg, 40);
++	if (display->haveOLED()) {
++		popupMsg.append(getParamDisplayName(kind, paramID));
++		popupMsg.append(": ");
++	}
++	char text[12];
++	modulation::params::volume::toText(value, scale, text, display->haveOLED());
++	popupMsg.append(text);
++	display->displayPopup(popupMsg.c_str());
++}
++
+ // convert deluge internal knobPos range to same range as used by menu's.
+ int32_t View::calculateKnobPosForDisplay(params::Kind kind, int32_t paramID, int32_t knobPos) {
+ 	if (kind == params::Kind::MIDI) {
+diff --git a/src/deluge/gui/views/view.h b/src/deluge/gui/views/view.h
+index b54c6d6c..18d16c98 100644
+--- a/src/deluge/gui/views/view.h
++++ b/src/deluge/gui/views/view.h
+@@ -22,6 +22,7 @@
+ #include "hid/button.h"
+ #include "model/model_stack.h"
+ #include "modulation/params/param.h"
++#include "modulation/params/volume_steps.h"
+ #include <cstdint>
+ 
+ class InstrumentClip;
+@@ -138,6 +139,8 @@ public:
+ 	int32_t calculateKnobPosForDisplay(deluge::modulation::params::Kind kind, int32_t paramID, int32_t knobPos);
+ 	void displayModEncoderValuePopup(deluge::modulation::params::Kind kind, int32_t paramID, int32_t newKnobPos,
+ 	                                 PatchSource source1 = PatchSource::NONE, PatchSource source2 = PatchSource::NONE);
++	void displayVolumePopup(deluge::modulation::params::Kind kind, int32_t paramID, int32_t value,
++	                        deluge::modulation::params::volume::Scale scale);
+ 	void potentiallyMakeItHarderToTurnKnob(int32_t whichModEncoder, ModelStackWithAutoParam* modelStackWithParam,
+ 	                                       int32_t newKnobPos);
+ 	void sendMidiFollowFeedback(ModelStackWithAutoParam* modelStackWithParam = nullptr, int32_t knobPos = kNoSelection,
+diff --git a/src/deluge/modulation/params/volume_steps.cpp b/src/deluge/modulation/params/volume_steps.cpp
+new file mode 100644
+index 00000000..d8a10753
+--- /dev/null
++++ b/src/deluge/modulation/params/volume_steps.cpp
+@@ -0,0 +1,129 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "modulation/params/volume_steps.h"
++#include "util/cfunctions.h"
++#include <cmath>
++#include <cstring>
++
++namespace deluge::modulation::params::volume {
++
++namespace {
++// 20 log10(2): the kit's / audio track's / song's >> 1
++constexpr double kHalfDb = 6.020599913279624;
++
++double scaleOffsetDb(Scale scale) {
++	return scale == Scale::GLOBAL ? -kHalfDb : 0.0;
++}
++} // namespace
++
++bool isVolumeParam(Kind kind, int32_t paramID, Scale* scale) {
++	Scale s;
++	if (kind == Kind::PATCHED && paramID == GLOBAL_VOLUME_POST_FX) {
++		s = Scale::SOUND;
++	}
++	else if (kind == Kind::UNPATCHED_GLOBAL && paramID == UNPATCHED_VOLUME) {
++		s = Scale::GLOBAL;
++	}
++	else {
++		return false;
++	}
++	if (scale) {
++		*scale = s;
++	}
++	return true;
++}
++
++double storedToDb(int32_t stored, Scale scale) {
++	double x = ((double)stored + 2147483648.0) / 2147483648.0;
++	if (x <= 0.0) {
++		return -INFINITY;
++	}
++	// (40 log10 x, through log(): newlib's log10() would pull in a malloc the firmware doesn't have)
++	return (40.0 / 2.302585092994046) * std::log(x) + scaleOffsetDb(scale);
++}
++
++int32_t dbToStored(double db, Scale scale) {
++	double x = std::pow(10.0, (db - scaleOffsetDb(scale)) / 40.0);
++	double v = std::round((x - 1.0) * 2147483648.0);
++	if (v >= 2147483647.0) {
++		return INT32_MAX;
++	}
++	if (v <= -2147483648.0) {
++		return INT32_MIN;
++	}
++	return (int32_t)v;
++}
++
++int32_t step(int32_t stored, int32_t offset, Scale scale) {
++	if (offset == 0) {
++		return stored;
++	}
++	double h = storedToDb(stored, scale) * kGridPerDb; // in grid steps
++	int32_t k;
++	if (!(h >= kFloorGrid - 0.02)) { // off, or below the floor (-inf included)
++		if (offset < 0) {
++			return kOff;
++		}
++		k = kFloorGrid + offset - 1;
++	}
++	else {
++		double nearest = std::round(h);
++		if (std::fabs(h - nearest) < 0.02) { // on the grid (within 0.01 dB)
++			k = (int32_t)nearest + offset;
++		}
++		else { // between: the first detent takes it to the grid point in the direction turned
++			k = (offset > 0) ? (int32_t)std::ceil(h) + offset - 1 : (int32_t)std::floor(h) + offset + 1;
++		}
++	}
++	if (k < kFloorGrid) {
++		return kOff;
++	}
++	double maxDb = storedToDb(INT32_MAX, scale);
++	if ((double)k / kGridPerDb >= maxDb - 0.005) {
++		return INT32_MAX;
++	}
++	return dbToStored((double)k / kGridPerDb, scale);
++}
++
++void toText(int32_t stored, Scale scale, char* buffer, bool oled) {
++	double db = storedToDb(stored, scale);
++	int32_t tenths = std::isfinite(db) ? (int32_t)std::lround(db * 10.0) : INT32_MIN;
++	if (tenths <= -1000) { // off, or at -100 dB and below
++		strcpy(buffer, oled ? "-inf dB" : "OFF");
++		return;
++	}
++	// (No snprintf: the firmware doesn't link newlib's printf)
++	int32_t a = tenths < 0 ? -tenths : tenths;
++	char* p = buffer;
++	if (tenths < 0) {
++		*p++ = '-';
++	}
++	else if (tenths > 0 && oled) {
++		*p++ = '+';
++	}
++	intToString(a / 10, p, 1);
++	p += strlen(p);
++	*p++ = '.';
++	*p++ = (char)('0' + a % 10);
++	*p = 0;
++	if (oled) {
++		strcpy(p, " dB");
++	}
++}
++
++} // namespace deluge::modulation::params::volume
+diff --git a/src/deluge/modulation/params/volume_steps.h b/src/deluge/modulation/params/volume_steps.h
+new file mode 100644
+index 00000000..f83d9899
+--- /dev/null
++++ b/src/deluge/modulation/params/volume_steps.h
+@@ -0,0 +1,61 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++// mastertune v18: the volume knobs (a sound's and a kit row's level, a kit's, an audio track's and the song's volume,
++// in the menus and on the gold knobs) step by 0.5 dB per detent and show dB.
++//
++// Only the steps and the display change: the stored value and its gain law stay as in v17 (so a saved song keeps its
++// level exactly, and files load both ways), and automation, MIDI and patch cables work on the stored value as before.
++// The law: a stored value v gives x = (v + 2^31) / 2^31 (0 to 2, menu value n = 25 x) and the gain x^2, i.e.
++// 40 log10(x) dB. A sound's and a kit row's volume have 0 dB at x = 1 (n = 25, up to +12.0 dB); a kit's, an audio
++// track's and the song's halve it (their >> 1): 0 dB at x = sqrt 2 (n = 35.4, up to +6.0 dB). (A kit's and an audio
++// track's fixed factors, x1.25 and x1.2196, headroom for their filters, aren't counted: the knob's dB is what the
++// knob does.)
++// The steps: a value on the 0.5 dB grid moves by 0.5 dB per detent; one between (loaded, automated, set by MIDI) is
++// shown to 0.1 dB and the first detent takes it to the grid point in the direction turned. Below -60 dB comes off
++// (gain 0): the value v17 has at the knob's bottom, shown as -inf ("OFF" on the 7-segment display).
++
++#pragma once
++
++#include "modulation/params/param.h"
++#include <cstdint>
++
++namespace deluge::modulation::params::volume {
++
++enum class Scale : uint8_t {
++	SOUND,  // a sound's / kit row's level (GLOBAL_VOLUME_POST_FX): 0 dB at n = 25
++	GLOBAL, // a kit's, audio track's, the song's volume (UNPATCHED_VOLUME): 0 dB at n = 35.4
++};
++
++constexpr int32_t kGridPerDb = 2;    // 0.5 dB per detent
++constexpr int32_t kFloorGrid = -120; // -60 dB: the lowest step before off
++constexpr int32_t kOff = INT32_MIN;  // stored value for off (gain 0)
++
++// Whether this param is a volume knob's, and its scale
++bool isVolumeParam(Kind kind, int32_t paramID, Scale* scale = nullptr);
++
++// The stored value's dB (-inf for off)
++double storedToDb(int32_t stored, Scale scale);
++// The stored value nearest to this many dB (clamped to the knob's range)
++int32_t dbToStored(double db, Scale scale);
++// The stored value offset detents on (see above)
++int32_t step(int32_t stored, int32_t offset, Scale scale);
++// Its text: OLED "-3.5 dB", "+12.0 dB", "0.0 dB", "-inf dB"; 7-segment (oled false) "-3.5", "12.0", "0.0", "OFF".
++// buffer: at least 12 chars
++void toText(int32_t stored, Scale scale, char* buffer, bool oled);
++
++} // namespace deluge::modulation::params::volume
+-- 
+2.43.0
+

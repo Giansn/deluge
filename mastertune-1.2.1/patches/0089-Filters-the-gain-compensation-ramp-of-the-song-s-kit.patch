@@ -1,0 +1,44 @@
+From cbbeef0bdb9519418b20571ae40aa84e21bd281c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 23:22:49 +0000
+Subject: [PATCH 089/112] Filters: the gain compensation ramp of the song's /
+ kits' filters lands exactly on its target
+
+rampGainCompensation() stepped by (1 - start) / frames, truncated, so the last
+frame of a block missed the target by up to frames LSB and the next block
+jumped the rest. Frame k now takes start + (1 - start) * k / frames in 32.32
+fixed point, rounded: the last frame is exactly 1 (gain spec 1).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter_set.cpp | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/filter_set.cpp b/src/deluge/dsp/filter/filter_set.cpp
+index 64507488..e0b2e526 100644
+--- a/src/deluge/dsp/filter/filter_set.cpp
++++ b/src/deluge/dsp/filter/filter_set.cpp
+@@ -151,11 +151,16 @@ void FilterSet::rampGainCompensation(q31_t* startSample, q31_t* endSample) {
+ 	if (frames <= 0) {
+ 		return;
+ 	}
+-	q31_t factor = (q31_t)(ratio * (float)kOne);
+-	q31_t step = (kOne - factor) / frames;
++	// Frame k (from 1) takes start + (1 - start) * k / frames, in 32.32 fixed point rounded: the last frame exactly 1
++	const q31_t start = (q31_t)(ratio * (float)kOne);
++	// (step * frames is within frames of the difference * 2^32, so with the half added for the rounding the last frame
++	// lands on the difference exactly)
++	const int64_t step = (int64_t)(kOne - start) * ((int64_t)1 << 32) / frames;
++	int64_t moved = (int64_t)1 << 31;
+ 	q31_t* sample = startSample;
+ 	do {
+-		factor += step;
++		moved += step;
++		q31_t factor = start + (q31_t)(moved >> 32);
+ 		sample[0] = lshiftAndSaturate<3>(multiply_32x32_rshift32_rounded(sample[0], factor));
+ 		sample[1] = lshiftAndSaturate<3>(multiply_32x32_rshift32_rounded(sample[1], factor));
+ 		sample += 2;
+-- 
+2.43.0
+

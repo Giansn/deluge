@@ -1,0 +1,617 @@
+From 44328a396f15a858d7cc5032032a1c0dc07ffab3 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 00:00:10 +0000
+Subject: [PATCH 090/112] Filters: a ramp that moves far goes through real
+ configurations, a third of an octave at a time
+
+A filter's coefficients are nonlinear in its cutoff and resonance, so the straight per-sample line from the last
+block's set to this one's passed through sets that belong to no configuration: 30 Hz -> 18 kHz in one block strayed
+4 dB from the real ladder at 13 % resonance, and near self-oscillation mid-ramp sets sang where neither end does.
+The ramp is now cut into pieces (Filter::rampKnots()): at the knots the filter's own setConfig() gives the
+coefficients of a real configuration (cutoff in log frequency, resonance and morph in equal steps; one piece per
+third of an octave, 1/16 of the resonance's range, 1/8 of morph's, at most 32 per block), in between the straight
+line as before. Where the ramp crosses the cutoff at which the 12 / 24 dB ladders' extra feedback changes
+(tannedFrequency 304587486, ~11.8 kHz), it jumps there between the two real configurations (a knot with two sets).
+The drive ladder's knots keep the block's oversampling. The usual small change (envelope, LFO, knob) stays one piece
+and costs nothing more; a configuration that doesn't change renders bit-exactly as before (filter_neutral static
+hash unchanged against 80b6060c).
+
+tests/filters lpf_ramp_math: every mid-ramp set within 0.39 dB of the real ladder where it is linear (was 4.4 dB),
+none unstable where the real ladder at its moveability is stable; filter_neutral jumps (28 Hz <-> 16 kHz every
+block): peak at most +0.2 dB over the held filters.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter.h     | 154 ++++++++++++++++++++++++++++-
+ src/deluge/dsp/filter/hpladder.cpp |  43 ++++----
+ src/deluge/dsp/filter/hpladder.h   |   8 +-
+ src/deluge/dsp/filter/lpladder.cpp | 111 ++++++++++++++-------
+ src/deluge/dsp/filter/lpladder.h   |  15 ++-
+ src/deluge/dsp/filter/svf.cpp      |  38 +++----
+ src/deluge/dsp/filter/svf.h        |   8 +-
+ 7 files changed, 296 insertions(+), 81 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/filter.h b/src/deluge/dsp/filter/filter.h
+index f539f1d1..46237a77 100644
+--- a/src/deluge/dsp/filter/filter.h
++++ b/src/deluge/dsp/filter/filter.h
+@@ -21,6 +21,7 @@
+ #include "util/fixedpoint.h"
+ #include "util/functions.h"
+ #include <algorithm>
++#include <cmath>
+ #include <cstdint>
+ 
+ namespace deluge::dsp::filter {
+@@ -48,8 +49,9 @@ public:
+ 	q31_t configure(q31_t frequency, q31_t resonance, FilterMode lpfMode, q31_t lpfMorph, q31_t filterGain) {
+ 
+ 		// lpfmorph comes in q28 but we want q31
+-		return static_cast<T*>(this)->setConfig(frequency, resonance, lpfMode, lshiftAndSaturate<2>(lpfMorph),
+-		                                        filterGain);
++		q31_t morph = lshiftAndSaturate<2>(lpfMorph);
++		params_ = RampParams{frequency, resonance, morph, lpfMode};
++		return static_cast<T*>(this)->setConfig(frequency, resonance, lpfMode, morph, filterGain);
+ 	}
+ 	/**
+ 	 * Filter a buffer of mono samples from startSample to endSample incrememnting by the increment
+@@ -154,6 +156,154 @@ protected:
+ 	[[gnu::always_inline]] static inline q31_t rampStep(q31_t from, q31_t to, int32_t n) {
+ 		return (q31_t)(((int64_t)to - (int64_t)from) / n);
+ 	}
++
++	// A filter's coefficients are nonlinear in its cutoff and resonance (the ladders' feedbacks go with moveability^1..3
++	// and 1 / (1 + k moveability^4)), so a straight line between two far-apart sets passes through sets that belong to
++	// no configuration: the ladder's response strays from the real one in the middle (30 Hz -> 18 kHz in one block:
++	// 4 dB at 13 % resonance, 30 dB and unstable sets near self-oscillation; tests/filters lpf_ramp_math). So a ramp is
++	// cut into pieces: at their ends (the knots) the filter's own setConfig() gives the coefficients of a real
++	// configuration, the cutoff moving in equal ratios (log frequency, as a knob or an envelope moves it), resonance
++	// and morph in equal steps; within a piece the coefficients move in a straight line per sample, as before. One
++	// piece per third of an octave, per 1/16 of the resonance's range and per 1/8 of morph's, at most kMaxPieces (4
++	// samples each in a block of 128): 30 Hz -> 18 kHz in one block then stays within 0.5 dB of the real ladder
++	// (lpf_ramp_math). A small change (the usual one: an envelope, an LFO, a knob turned) stays one piece and costs
++	// nothing more.
++	// params_: what configure() last got (setConfig()'s arguments), lastParams_: the last block's (endBlock())
++	struct RampParams {
++		q31_t frequency;
++		q31_t resonance;
++		q31_t morph;
++		FilterMode mode;
++	};
++	RampParams params_{};
++	RampParams lastParams_{};
++
++public:
++	static constexpr int32_t kMaxPieces = 32;
++	// How many pieces a ramp from lastParams_ to params_ over n samples takes (1 to min(kMaxPieces, n))
++	[[nodiscard]] int32_t rampPieces(int32_t n) const {
++		int64_t pieces = 1;
++		if (params_.frequency > 0 && lastParams_.frequency > 0) {
++			// quickLog: 2^25 per octave
++			constexpr int64_t kThirdOctave = (1 << 25) / 3;
++			int64_t logs = std::abs((int64_t)quickLog(params_.frequency) - (int64_t)quickLog(lastParams_.frequency));
++			pieces = std::max(pieces, (logs + kThirdOctave - 1) / kThirdOctave);
++		}
++		// The resonance's range is 2^29 (the knob's), morph's 2^31
++		int64_t res = std::abs((int64_t)params_.resonance - (int64_t)lastParams_.resonance);
++		pieces = std::max(pieces, (res + (1 << 25) - 1) >> 25);
++		int64_t morph = std::abs((int64_t)params_.morph - (int64_t)lastParams_.morph);
++		pieces = std::max(pieces, (morph + (1 << 28) - 1) >> 28);
++		return (int32_t)std::clamp(pieces, (int64_t)1, (int64_t)std::max(std::min(kMaxPieces, n), (int32_t)1));
++	}
++	// The configuration at knot j of `pieces` (0: lastParams_, pieces: params_)
++	[[nodiscard]] RampParams pieceParams(int32_t j, int32_t pieces) const {
++		auto linear = [&](q31_t a, q31_t b) {
++			return (q31_t)((int64_t)a + ((int64_t)b - (int64_t)a) * j / pieces);
++		};
++		RampParams p{linear(lastParams_.frequency, params_.frequency),
++		             linear(lastParams_.resonance, params_.resonance), linear(lastParams_.morph, params_.morph),
++		             params_.mode};
++		if (params_.frequency > 0 && lastParams_.frequency > 0) {
++			float octaves = std::log2((float)params_.frequency / (float)lastParams_.frequency);
++			float f = (float)lastParams_.frequency * std::exp2(octaves * (float)j / (float)pieces);
++			p.frequency = (q31_t)std::clamp(f, 1.0f, 2147483520.0f);
++		}
++		return p;
++	}
++	// A knot of a ramp: the sample where it is, the coefficients the piece before it ends at (in) and the ones the piece
++	// after it starts from (out). The same, except where the coefficients jump (T::rampBreak(): a setConfig() that
++	// changes its formula at some cutoff), where the ramp jumps from one to the other between two samples
++	template <typename C>
++	struct Knot {
++		int32_t sample;
++		C in;
++		C out;
++	};
++	static constexpr int32_t kMaxKnots = kMaxPieces + 2; // the ends, the knots between, one break
++	// The knots of this block's ramp over n samples from `from` (the last block's coefficients) to `to` (this one's):
++	// knots[0] at sample 0 (from), the last at sample n (to), the ones between from T::rampKnot() (setConfig() at
++	// pieceParams(), the configuration put back after), at samples n * j / pieces, and where the ramp crosses a cutoff
++	// at which T's coefficients jump (T::rampBreak()), a knot there with the coefficients just below and just above it
++	// (the resonance and morph where the ramp has got to). knots: kMaxKnots of them. Returns how many. Piece k runs
++	// from knots[k].sample to knots[k + 1].sample, from knots[k].out to knots[k + 1].in (none where they're the same
++	// sample)
++	template <typename C>
++	int32_t rampKnots(int32_t n, const C& from, const C& to, Knot<C>* knots) {
++		T& self = *static_cast<T*>(this);
++		const int32_t pieces = rampPieces(n);
++		const q31_t f0 = lastParams_.frequency;
++		const q31_t f1 = params_.frequency;
++		// Where the ramp crosses T's break: the fraction of the way (-1: nowhere), the frequency just below it
++		float breakAt = -1;
++		q31_t below = 0;
++		if (f0 > 0 && f1 > 0 && f0 != f1 && self.rampBreak(params_.mode, std::min(f0, f1), std::max(f0, f1), &below)) {
++			breakAt = std::clamp(std::log2((float)below / (float)f0) / std::log2((float)f1 / (float)f0), 0.0f, 1.0f);
++		}
++		int32_t count = 0;
++		knots[count++] = Knot<C>{0, from, from};
++		if (pieces == 1 && breakAt < 0) {
++			knots[count++] = Knot<C>{n, to, to};
++			return count;
++		}
++		const T saved = self;
++		for (int32_t j = 1; j <= pieces; j++) {
++			if (breakAt >= 0 && (breakAt * (float)pieces < (float)j || j == pieces)) {
++				// Before this knot: the break
++				const int32_t sample = std::max(std::min((int32_t)(breakAt * (float)n), n), knots[count - 1].sample);
++				RampParams p = paramsAt(breakAt);
++				p.frequency = below;
++				const C lower = self.rampKnot(p);
++				p.frequency = below + 1;
++				const C upper = self.rampKnot(p);
++				knots[count++] = f1 > f0 ? Knot<C>{sample, lower, upper} : Knot<C>{sample, upper, lower};
++				breakAt = -1;
++			}
++			const int32_t sample = std::max(n * j / pieces, knots[count - 1].sample);
++			if (j == pieces) {
++				knots[count++] = Knot<C>{n, to, to};
++			}
++			else {
++				const C c = self.rampKnot(pieceParams(j, pieces));
++				knots[count++] = Knot<C>{sample, c, c};
++			}
++		}
++		self = saved;
++		return count;
++	}
++	// The configuration a fraction t of the way from lastParams_ to params_ (the cutoff in log frequency)
++	[[nodiscard]] RampParams paramsAt(float t) const {
++		auto linear = [&](q31_t a, q31_t b) { return (q31_t)((float)a + ((float)b - (float)a) * t); };
++		RampParams p{linear(lastParams_.frequency, params_.frequency),
++		             linear(lastParams_.resonance, params_.resonance), linear(lastParams_.morph, params_.morph),
++		             params_.mode};
++		if (params_.frequency > 0 && lastParams_.frequency > 0) {
++			float f = (float)lastParams_.frequency * std::exp2(std::log2((float)params_.frequency / (float)lastParams_.frequency) * t);
++			p.frequency = (q31_t)std::clamp(f, 1.0f, 2147483520.0f);
++		}
++		return p;
++	}
++	// A filter without a break: the coefficients follow the cutoff continuously
++	[[nodiscard]] bool rampBreak(FilterMode, q31_t, q31_t, q31_t*) const { return false; }
++	// Piece by piece, as rampKnots() gave them: render(begin, end, start, steps) for each that has samples, the
++	// coefficients from `start` moving by `steps` per sample (sample begin + k, k from 1, takes start + k * steps)
++	template <typename C, typename Render>
++	[[gnu::always_inline]] static inline void forEachPiece(const Knot<C>* knots, int32_t count, Render render) {
++		for (int32_t k = 0; k + 1 < count; k++) {
++			const int32_t begin = knots[k].sample;
++			const int32_t end = knots[k + 1].sample;
++			if (end > begin) {
++				render(begin, end, knots[k].out, knots[k].out.steps(knots[k + 1].in, end - begin));
++			}
++		}
++	}
++
++protected:
++	// After a block: its configuration is the next one's last
++	void rampEndBlock() {
++		lastParams_ = params_;
++		haveLast_ = true;
++	}
+ };
+ 
+ } // namespace deluge::dsp::filter
+diff --git a/src/deluge/dsp/filter/hpladder.cpp b/src/deluge/dsp/filter/hpladder.cpp
+index 10e81b3d..4978a000 100644
+--- a/src/deluge/dsp/filter/hpladder.cpp
++++ b/src/deluge/dsp/filter/hpladder.cpp
+@@ -17,6 +17,8 @@
+ #include "dsp/filter/hpladder.h"
+ 
+ namespace deluge::dsp::filter {
++// The knots of the ramp being rendered (one filter at a time renders; not on the stack: kMaxKnots of them)
++HpLadderFilter::Knot<HpLadderFilter::Coefficients> HpLadderFilter::rampKnots_[HpLadderFilter::kMaxKnots];
+ 
+ q31_t HpLadderFilter::setConfig(q31_t hpfFrequency, q31_t hpfResonance, FilterMode lpfMode, q31_t lpfMorph,
+                                 q31_t filterGain) {
+@@ -140,29 +142,30 @@ template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Lay
+ [[gnu::hot]] void HpLadderFilter::renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
+ 	const Coefficients c = coefficients();
+ 	if (ramping_) {
++		// From the last block's configuration to this one's, per sample, in pieces between real configurations (see
++		// Filter::rampKnots()), each channel through all of them in turn
+ 		int32_t n = (int32_t)(endSample - startSample);
+ 		if constexpr (layout == Layout::STEREO) {
+ 			n >>= 1;
+ 		}
++		n = std::max(n, (int32_t)1);
+ 		Coefficients from = last_;
+ 		from.saturationAmount = c.saturationAmount;
+-		const Coefficients d = from.steps(c, std::max(n, (int32_t)1));
+-		renderChannels<morph, saturation, layout, amount, true>(startSample, endSample, sampleIncrement, from, d);
+-	}
+-	else {
+-		renderChannels<morph, saturation, layout, amount, false>(startSample, endSample, sampleIncrement, c, c);
+-	}
+-}
+-
+-template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Layout layout, int32_t amount, bool ramp>
+-[[gnu::always_inline]] inline void HpLadderFilter::renderChannels(q31_t* startSample, q31_t* endSample,
+-                                                                  int32_t sampleIncrement, const Coefficients& c,
+-                                                                  const Coefficients& d) {
+-	if constexpr (ramp) {
+-		const int32_t stride = layout == Layout::STEREO ? 2 : layout == Layout::MONO ? 1 : sampleIncrement;
+-		renderChannelRamp<morph, saturation, amount>(startSample, endSample, stride, l, c, d);
+-		if constexpr (layout == Layout::STEREO) {
+-			renderChannelRamp<morph, saturation, amount>(startSample + 1, endSample, stride, r, c, d);
++		Knot<Coefficients>* knots = rampKnots_;
++		const int32_t count = rampKnots(n, from, c, knots);
++		for (int32_t k = 1; k < count; k++) {
++			knots[k].in.saturationAmount = c.saturationAmount;
++			knots[k].out.saturationAmount = c.saturationAmount;
++		}
++		const int32_t stride = layout == Layout::STEREO ? 2 : 1;
++		for (int32_t channel = 0; channel < (layout == Layout::STEREO ? 2 : 1); channel++) {
++			HPLadderState& state = channel == 0 ? l : r;
++			forEachPiece(knots, count,
++			             [&](int32_t begin, int32_t end, const Coefficients& start, const Coefficients& steps) {
++				             renderChannelRamp<morph, saturation, amount>(startSample + begin * stride + channel,
++				                                                          startSample + end * stride, stride, state,
++				                                                          start, steps);
++			             });
+ 		}
+ 	}
+ 	else {
+@@ -174,6 +177,12 @@ template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Lay
+ 	}
+ }
+ 
++// A knot of a ramp (Filter::rampKnots()): the coefficients setConfig() gives for p
++HpLadderFilter::Coefficients HpLadderFilter::rampKnot(const RampParams& p) {
++	setConfig(p.frequency, p.resonance, p.mode, p.morph, ONE_Q31 >> 4);
++	return coefficients();
++}
++
+ // Without antialiasing, hpfLastWorkingValue is written on every sample and read by none of this block's (only the
+ // antialiased tanh reads it), so only the last sample's value matters. It's the antialiased tanh's own working value of
+ // that sample (the same shift as its saturation amount; 1.2.1 shifted by 2 whatever the amount)
+diff --git a/src/deluge/dsp/filter/hpladder.h b/src/deluge/dsp/filter/hpladder.h
+index 17217e62..ffa19ded 100644
+--- a/src/deluge/dsp/filter/hpladder.h
++++ b/src/deluge/dsp/filter/hpladder.h
+@@ -112,8 +112,11 @@ private:
+ 	void startBlock() { ramping_ = haveLast_ && !last_.sameRamp(coefficients()); }
+ 	void endBlock() {
+ 		last_ = coefficients();
+-		haveLast_ = true;
++		rampEndBlock();
+ 	}
++	friend class Filter<HpLadderFilter>;
++	static Knot<Coefficients> rampKnots_[kMaxKnots];
++	Coefficients rampKnot(const RampParams& p);
+ 	// The saturation branch, which depends on the configuration only: antialiased tanh, tanh, none, or decided per
+ 	// sample as before (only for the mono loop with a sampleIncrement other than 1, which nothing uses)
+ 	enum class Saturation { ANTIALIASED, TANH, NONE, PER_SAMPLE };
+@@ -123,9 +126,6 @@ private:
+ 	// Coefficients::saturationAmount)
+ 	template <bool morph, Saturation saturation, Layout layout, int32_t amount>
+ 	void renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+-	template <bool morph, Saturation saturation, Layout layout, int32_t amount, bool ramp>
+-	void renderChannels(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, const Coefficients& c,
+-	                    const Coefficients& d);
+ 	template <Layout layout, int32_t amount>
+ 	void render(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+ 	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or the left or right of each frame (STEREO,
+diff --git a/src/deluge/dsp/filter/lpladder.cpp b/src/deluge/dsp/filter/lpladder.cpp
+index 4cb98897..eb0e05ab 100644
+--- a/src/deluge/dsp/filter/lpladder.cpp
++++ b/src/deluge/dsp/filter/lpladder.cpp
+@@ -18,6 +18,8 @@
+ #include "processing/engines/audio_engine.h"
+ 
+ namespace deluge::dsp::filter {
++// The knots of the ramp being rendered (one filter at a time renders; not on the stack: kMaxKnots of them)
++LpLadderFilter::Knot<LpLadderFilter::Coefficients> LpLadderFilter::rampKnots_[LpLadderFilter::kMaxKnots];
+ const int16_t resonanceThresholdsForOversampling[] = {
+     16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384,
+     16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384,
+@@ -62,13 +64,15 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ 
+ 		int32_t logFreq = quickLog(lpfFrequency);
+ 
+-		doOversampling = false; // storageManager.devVarA;
+-
+ 		logFreq = std::min(logFreq, (int32_t)63 << 24);
+ 
+-		if (AudioEngine::cpuDireness < 14 && (logFreq >> 24) > 51) {
+-			int32_t resonanceThreshold = interpolateTableSigned(logFreq, 30, resonanceThresholdsForOversampling, 6);
+-			doOversampling = (processedResonance > resonanceThreshold);
++		if (!keepOversampling_) {
++			doOversampling = false; // storageManager.devVarA;
++			if (AudioEngine::cpuDireness < 14 && (logFreq >> 24) > 51) {
++				int32_t resonanceThreshold =
++				    interpolateTableSigned(logFreq, 30, resonanceThresholdsForOversampling, 6);
++				doOversampling = (processedResonance > resonanceThreshold);
++			}
+ 		}
+ 
+ 		if (doOversampling) {
+@@ -235,7 +239,16 @@ void LpLadderFilter::startBlock() {
+ void LpLadderFilter::endBlock() {
+ 	last_ = coefficients<FilterMode::TRANSISTOR_24DB>();
+ 	lastOversampling_ = doOversampling;
+-	haveLast_ = true;
++	rampEndBlock();
++}
++
++// A knot of a ramp (Filter::rampKnots()): the coefficients setConfig() gives for p, with this block's oversampling
++// (the ramp only runs where the last block had the same; the cutoff means half as much with it)
++LpLadderFilter::Coefficients LpLadderFilter::rampKnot(const RampParams& p) {
++	keepOversampling_ = true;
++	setConfig(p.frequency, p.resonance, p.mode, p.morph, ONE_Q31 >> 4);
++	keepOversampling_ = false;
++	return coefficients<FilterMode::TRANSISTOR_24DB>();
+ }
+ 
+ // A constant sampleIncrement of 1 frees a register in the loop
+@@ -303,54 +316,86 @@ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversampl
+ 	// (The strided mono loop, which nothing uses, doesn't move them)
+ 	constexpr bool canRamp = saturation != Saturation::PER_SAMPLE;
+ 	if (canRamp && ramping_) {
+-		// From the last block's configuration to this one's, per sample. The precise stages where both are below their
+-		// limit (they share the state with the others, so the choice can change from block to block)
++		// From the last block's configuration to this one's, per sample, in pieces between real configurations (see
++		// Filter::rampKnots()). The precise stages where both ends are below their limit (they share the state with
++		// the others, so the choice can change from block to block; the knots lie between the ends)
+ 		int32_t n = (int32_t)(endSample - startSample);
+ 		if constexpr (layout == Layout::STEREO) {
+ 			n >>= 1;
+ 		}
++		n = std::max(n, (int32_t)1);
+ 		Coefficients from = last_;
+ 		from.saturationAmount = c.saturationAmount;
+-		const Coefficients d = from.steps(c, std::max(n, (int32_t)1));
++		Knot<Coefficients>* knots = rampKnots_;
++		const int32_t count = rampKnots(n, from, c, knots);
++		for (int32_t k = 1; k < count; k++) {
++			knots[k].in.saturationAmount = c.saturationAmount;
++			knots[k].out.saturationAmount = c.saturationAmount;
++		}
++		const int32_t stride = layout == Layout::STEREO ? 2 : 1;
+ 		if (moveability < kPreciseMoveabilityLimit && last_.moveability < kPreciseMoveabilityLimit) {
+-			renderStates<mode, saturation, oversample, layout, true, canRamp>(startSample, endSample, sampleIncrement,
+-			                                                                  from, d);
++			renderRamp<mode, saturation, oversample, true>(startSample, stride, knots, count, layout == Layout::STEREO);
+ 		}
+ 		else {
+-			renderStates<mode, saturation, oversample, layout, false, canRamp>(startSample, endSample, sampleIncrement,
+-			                                                                   from, d);
++			renderRamp<mode, saturation, oversample, false>(startSample, stride, knots, count, layout == Layout::STEREO);
+ 		}
+ 		return;
+ 	}
+ 	// The precise stages where they make a difference (see kPreciseMoveabilityLimit), per block
+ 	if (moveability < kPreciseMoveabilityLimit) {
+-		renderStates<mode, saturation, oversample, layout, true, false>(startSample, endSample, sampleIncrement, c, c);
++		renderStates<mode, saturation, oversample, layout, true>(startSample, endSample, sampleIncrement, c);
+ 	}
+ 	else {
+-		renderStates<mode, saturation, oversample, layout, false, false>(startSample, endSample, sampleIncrement, c, c);
++		renderStates<mode, saturation, oversample, layout, false>(startSample, endSample, sampleIncrement, c);
++	}
++}
++
++// Each channel through the pieces of the ramp, in turn (the state carries on from piece to piece)
++template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, bool precise>
++void LpLadderFilter::renderRamp(q31_t* startSample, int32_t stride, const Knot<Coefficients>* knots, int32_t count,
++                                bool stereo) {
++	for (int32_t channel = 0; channel < (stereo ? 2 : 1); channel++) {
++		LpLadderState& state = channel == 0 ? l : r;
++		forEachPiece(knots, count,
++		             [&](int32_t begin, int32_t end, const Coefficients& start, const Coefficients& steps) {
++			             renderChannelRamp<mode, saturation, oversample, precise>(
++			                 startSample + begin * stride + channel, startSample + end * stride, stride, state, start,
++			                 steps);
++		             });
+ 	}
+ }
+ 
++// Where the ramp crosses the cutoff at which the 12 and 24 dB ladders' extra feedback changes (setConfig():
++// tannedFrequency 304587486, about 11.8 kHz, where processedResonance falls to less than half), the frequency just
++// below it (the largest whose tannedFrequency is at most that): the ramp jumps there, between two real configurations,
++// instead of moving the resonance across a piece in a straight line (mid-piece sets that sing where neither end does)
++bool LpLadderFilter::rampBreak(FilterMode mode, q31_t lo, q31_t hi, q31_t* below) const {
++	constexpr int32_t kBreak = 304587486;
++	if (mode == FilterMode::TRANSISTOR_24DB_DRIVE) {
++		return false;
++	}
++	auto tanned = [](q31_t f) { return instantTan(lshiftAndSaturate<5>(f)); };
++	if (!(tanned(lo) <= kBreak && tanned(hi) > kBreak)) {
++		return false;
++	}
++	// tannedFrequency grows with the frequency: bisection between lo (at most) and hi (above)
++	while (hi - lo > 1) {
++		q31_t mid = lo + (hi - lo) / 2;
++		(tanned(mid) <= kBreak ? lo : hi) = mid;
++	}
++	*below = lo;
++	return true;
++}
++
+ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, LpLadderFilter::Layout layout,
+-          bool precise, bool ramp>
++          bool precise>
+ [[gnu::always_inline]] inline void LpLadderFilter::renderStates(q31_t* startSample, q31_t* endSample,
+-                                                                int32_t sampleIncrement, const Coefficients& c,
+-                                                                const Coefficients& d) {
+-	if constexpr (ramp) {
+-		const int32_t stride = layout == Layout::STEREO ? 2 : layout == Layout::MONO ? 1 : sampleIncrement;
+-		renderChannelRamp<mode, saturation, oversample, precise>(startSample, endSample, stride, l, c, d);
+-		if constexpr (layout == Layout::STEREO) {
+-			renderChannelRamp<mode, saturation, oversample, precise>(startSample + 1, endSample, stride, r, c, d);
+-		}
+-	}
+-	else {
+-		renderChannel<mode, saturation, oversample, layout, 0, precise>(startSample, endSample, sampleIncrement, l, c);
+-		if constexpr (layout == Layout::STEREO) {
+-			// The channels don't depend on each other, so each gets its own pass (a loop over both needs more registers
+-			// than there are, for the two states)
+-			renderChannel<mode, saturation, oversample, layout, 1, precise>(startSample, endSample, sampleIncrement, r,
+-			                                                                c);
+-		}
++                                                                int32_t sampleIncrement, const Coefficients& c) {
++	renderChannel<mode, saturation, oversample, layout, 0, precise>(startSample, endSample, sampleIncrement, l, c);
++	if constexpr (layout == Layout::STEREO) {
++		// The channels don't depend on each other, so each gets its own pass (a loop over both needs more registers
++		// than there are, for the two states)
++		renderChannel<mode, saturation, oversample, layout, 1, precise>(startSample, endSample, sampleIncrement, r, c);
+ 	}
+ }
+ 
+diff --git a/src/deluge/dsp/filter/lpladder.h b/src/deluge/dsp/filter/lpladder.h
+index 84a58cdb..76159491 100644
+--- a/src/deluge/dsp/filter/lpladder.h
++++ b/src/deluge/dsp/filter/lpladder.h
+@@ -125,6 +125,10 @@ private:
+ 	// switches on or off the coefficients jump as before
+ 	void startBlock();
+ 	void endBlock();
++	friend class Filter<LpLadderFilter>;
++	static Knot<Coefficients> rampKnots_[kMaxKnots];
++	Coefficients rampKnot(const RampParams& p);
++	[[nodiscard]] bool rampBreak(FilterMode mode, q31_t lo, q31_t hi, q31_t* below) const;
+ 	// Below this moveability (0.25, a cutoff of about 4.5 kHz; twice it stays below 2^31) the stages run precise
+ 	// (LadderStage::doFilterPrecise()): that's where their rounding shows, the dead band being 2^31 / moveability LSB
+ 	// wide and the rounding noise amplified by 1 / moveability. Above it, bit-exact as before
+@@ -137,10 +141,12 @@ private:
+ 	enum class Layout { MONO, MONO_STRIDED, STEREO };
+ 	template <FilterMode mode, Saturation saturation, bool oversample, Layout layout>
+ 	void renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+-	// ramp: the coefficients move per sample from c by d
+-	template <FilterMode mode, Saturation saturation, bool oversample, Layout layout, bool precise, bool ramp>
+-	void renderStates(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, const Coefficients& c,
+-	                  const Coefficients& d);
++	template <FilterMode mode, Saturation saturation, bool oversample, Layout layout, bool precise>
++	void renderStates(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, const Coefficients& c);
++	// The coefficients moving per sample through knots[0..pieces] over n frames (Filter::rampKnots()), the one
++	// channel of a mono block or both of a stereo one (interleaved, stride 2)
++	template <FilterMode mode, Saturation saturation, bool oversample, bool precise>
++	void renderRamp(q31_t* startSample, int32_t stride, const Knot<Coefficients>* knots, int32_t count, bool stereo);
+ 	template <FilterMode mode, bool oversample, Layout layout>
+ 	void renderSaturation(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+ 	template <FilterMode mode, bool oversample, Layout layout, Saturation voice, Saturation global>
+@@ -213,6 +219,7 @@ private:
+ 	bool doOversampling;
+ 	uint8_t saturationAmount_; // in the padding after the bool: a voice's FilterSet stays the same size
+ 	bool lastOversampling_;    // the last block's doOversampling
++	bool keepOversampling_;    // setConfig() keeps doOversampling as it is (rampKnot())
+ 	bool ramping_;             // this block moves from last_ to this configuration (startBlock())
+ 	Coefficients last_;        // the last block's configuration
+ };
+diff --git a/src/deluge/dsp/filter/svf.cpp b/src/deluge/dsp/filter/svf.cpp
+index 5b606ca7..5a2d9890 100644
+--- a/src/deluge/dsp/filter/svf.cpp
++++ b/src/deluge/dsp/filter/svf.cpp
+@@ -17,6 +17,8 @@
+ #include "dsp/filter/svf.h"
+ 
+ namespace deluge::dsp::filter {
++// The knots of the ramp being rendered (one filter at a time renders; not on the stack: kMaxKnots of them)
++SVFilter::Knot<SVFilter::Coefficients> SVFilter::rampKnots_[SVFilter::kMaxKnots];
+ // The filter runs on a copy of its configuration and its state in local variables, written back after the block. The
+ // output store (a q31_t) could alias all of them as far as the compiler knows, so the loops used to load and store
+ // them all again on every sample. Nothing else touches them during a block: the buffers are render buffers (Voice's
+@@ -67,27 +69,23 @@ template <SVFilter::Mix mix, SVFilter::Layout layout>
+ [[gnu::hot]] void SVFilter::renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
+ 	const Coefficients c = coefficients();
+ 	if (ramping_) {
++		// From the last block's configuration to this one's, per sample, in pieces between real configurations (see
++		// Filter::rampKnots()), each channel through all of them in turn
+ 		int32_t n = (int32_t)(endSample - startSample);
+ 		if constexpr (layout == Layout::STEREO) {
+ 			n >>= 1;
+ 		}
+-		const Coefficients d = last_.steps(c, std::max(n, (int32_t)1));
+-		renderChannels<mix, layout, true>(startSample, endSample, sampleIncrement, last_, d);
+-	}
+-	else {
+-		renderChannels<mix, layout, false>(startSample, endSample, sampleIncrement, c, c);
+-	}
+-}
+-
+-template <SVFilter::Mix mix, SVFilter::Layout layout, bool ramp>
+-[[gnu::always_inline]] inline void SVFilter::renderChannels(q31_t* startSample, q31_t* endSample,
+-                                                            int32_t sampleIncrement, const Coefficients& c,
+-                                                            const Coefficients& d) {
+-	if constexpr (ramp) {
+-		const int32_t stride = layout == Layout::STEREO ? 2 : layout == Layout::MONO ? 1 : sampleIncrement;
+-		renderChannelRamp<mix>(startSample, endSample, stride, l, c, d);
+-		if constexpr (layout == Layout::STEREO) {
+-			renderChannelRamp<mix>(startSample + 1, endSample, stride, r, c, d);
++		n = std::max(n, (int32_t)1);
++		Knot<Coefficients>* knots = rampKnots_;
++		const int32_t count = rampKnots(n, last_, c, knots);
++		const int32_t stride = layout == Layout::STEREO ? 2 : 1;
++		for (int32_t channel = 0; channel < (layout == Layout::STEREO ? 2 : 1); channel++) {
++			SVFState& state = channel == 0 ? l : r;
++			forEachPiece(knots, count,
++			             [&](int32_t begin, int32_t end, const Coefficients& start, const Coefficients& steps) {
++				             renderChannelRamp<mix>(startSample + begin * stride + channel, startSample + end * stride,
++				                                    stride, state, start, steps);
++			             });
+ 		}
+ 	}
+ 	else {
+@@ -99,6 +97,12 @@ template <SVFilter::Mix mix, SVFilter::Layout layout, bool ramp>
+ 	}
+ }
+ 
++// A knot of a ramp (Filter::rampKnots()): the coefficients setConfig() gives for p
++SVFilter::Coefficients SVFilter::rampKnot(const RampParams& p) {
++	setConfig(p.frequency, p.resonance, p.mode, p.morph, ONE_Q31 >> 4);
++	return coefficients();
++}
++
+ template <SVFilter::Mix mix, SVFilter::Layout layout, int channel>
+ [[gnu::always_inline]] inline void SVFilter::renderChannel(q31_t* startSample, q31_t* endSample,
+                                                            int32_t sampleIncrement, SVFState& channelState,
+diff --git a/src/deluge/dsp/filter/svf.h b/src/deluge/dsp/filter/svf.h
+index c77dfb64..ad8c4fe9 100644
+--- a/src/deluge/dsp/filter/svf.h
++++ b/src/deluge/dsp/filter/svf.h
+@@ -81,8 +81,11 @@ private:
+ 	void startBlock() { ramping_ = haveLast_ && !last_.sameRamp(coefficients()); }
+ 	void endBlock() {
+ 		last_ = coefficients();
+-		haveLast_ = true;
++		rampEndBlock();
+ 	}
++	friend class Filter<SVFilter>;
++	static Knot<Coefficients> rampKnots_[kMaxKnots];
++	Coefficients rampKnot(const RampParams& p);
+ 	// MONO: sampleIncrement 1 (all callers), MONO_STRIDED: any sampleIncrement, STEREO: interleaved
+ 	enum class Layout { MONO, MONO_STRIDED, STEREO };
+ 	// Which of the high and band terms of the output mix are there. With a coefficient of 0 a term adds exactly 0:
+@@ -105,9 +108,6 @@ private:
+ 	[[gnu::noinline]] static void renderChannelRamp(q31_t* startSample, q31_t* endSample, int32_t stride,
+ 	                                                SVFState& channelState, const Coefficients& c,
+ 	                                                const Coefficients& d);
+-	template <Mix mix, Layout layout, bool ramp>
+-	void renderChannels(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, const Coefficients& c,
+-	                    const Coefficients& d);
+ 	template <Mix mix>
+ 	[[gnu::always_inline]] static inline q31_t doSVF(q31_t input, SVFState& state, const Coefficients& c);
+ 	SVFState l;
+-- 
+2.43.0
+

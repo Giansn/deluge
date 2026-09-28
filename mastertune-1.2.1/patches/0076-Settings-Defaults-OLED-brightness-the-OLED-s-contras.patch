@@ -1,0 +1,525 @@
+From a361cef25f5fb62a55d5630d1a7ca8a7887cb0a4 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 19:46:52 +0000
+Subject: [PATCH 076/112] Settings > Defaults > OLED brightness: the OLED's
+ contrast in ten steps
+
+The OLED's contrast was set once at boot to 0xFF (oledMainInit(), SSD1309
+command 0x81) with no way to lower it. Now OLED brightness (7-segment
+name "OLED"), right after Pad brightness, has levels 1-10 for the contrast
+1, 4, 14, 29, 51, 79, 114, 155, 202, 255 (1 + 254 * ((level - 1) / 9)^2:
+the light goes with the segment current, i.e. the contrast, and lightness
+as seen roughly with its square root, so the steps look about even);
+10 is as bright as before.
+
+Sending it at runtime: the OLED shares RSPI0 with the CV DAC, its image
+goes by DMA and its D/C line and chip select are set by the PIC. The
+command goes through the SPI transfer queue as a third destination
+(OLED_CODE_FOR_COMMAND, its two bytes in dataAddress), so it never meets
+an image transfer or a CV message: oledRoutine() sends D/C low to the PIC
+before the selection; once the PIC has answered the selection,
+oledSelectingComplete() writes 0x81 and the value with
+R_RSPI_SendBasic8() (as oledMainInit() does), waits for the end, sends
+D/C high and deselects; oledDeselectionComplete() goes on with the
+queue. oledTransferComplete() still chains images only, so a command
+waits for the deselection. OLED::freezeWithError() sets D/C high before
+it selects the OLED, in case a command was cut short.
+
+Each turn of the encoder goes to the OLED at once; the value is saved
+when the menu is left, as the hidden entry oledContrast of
+CommunityFeatures.XML (the contrast, 1-255; missing: 255), read at boot
+(oledMainInit() sends 255 first, the file's value follows through the
+queue). The Deluge with the 7-segment display has no OLED: the item isn't
+shown and nothing is sent (have_oled_screen).
+
+Tested in the emulator with the OLED's side modelled (the PIC's D/C and
+select, echoes, the image DMA's and the CV DAC's interrupts;
+tests/settings/oled_brightness_emu.py): 23 of 23 checks: the command bytes
+with D/C low and the OLED selected, never during an image's DMA (also
+when turned while one runs), images always with D/C high, the file entry,
+the value at boot after a restart, nothing on the 7-segment Deluge.
+tests/song demand 87a7df292189e341, digital 4473b3155dcfa0e8 (unchanged);
+USB audio setting 2 of 2, CPU monitor shortcut 34 of 34.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/RZA1/oled/oled_low_level.c                | 37 ++++++++--
+ src/deluge/drivers/oled/oled.c                | 12 ++-
+ src/deluge/drivers/oled/oled.h                | 11 +++
+ src/deluge/gui/l10n/english.json              |  3 +-
+ src/deluge/gui/l10n/g_english.cpp             |  1 +
+ src/deluge/gui/l10n/g_seven_segment.cpp       |  1 +
+ src/deluge/gui/l10n/seven_segment.json        |  3 +-
+ src/deluge/gui/l10n/strings.h                 |  3 +
+ src/deluge/gui/menu_item/oled_brightness.h    | 36 +++++++++
+ src/deluge/gui/ui/menus.cpp                   |  4 +
+ src/deluge/hid/display/oled.cpp               |  3 +-
+ src/deluge/hid/display/oled_brightness.cpp    | 73 +++++++++++++++++++
+ src/deluge/hid/display/oled_brightness.h      | 39 ++++++++++
+ .../settings/runtime_feature_settings.cpp     | 13 +++-
+ 14 files changed, 229 insertions(+), 10 deletions(-)
+ create mode 100644 src/deluge/gui/menu_item/oled_brightness.h
+ create mode 100644 src/deluge/hid/display/oled_brightness.cpp
+ create mode 100644 src/deluge/hid/display/oled_brightness.h
+
+diff --git a/src/RZA1/oled/oled_low_level.c b/src/RZA1/oled/oled_low_level.c
+index 670dc2c1..19f058dd 100644
+--- a/src/RZA1/oled/oled_low_level.c
++++ b/src/RZA1/oled/oled_low_level.c
+@@ -29,8 +29,6 @@
+ #include "deluge/processing/engines/cv_engine_c_interface.h"
+ #include "deluge/util/cfunctions.h"
+ 
+-#define OLED_CODE_FOR_CV 1
+-
+ void setupSPIInterrupts()
+ {
+     setupAndEnableInterrupt(cvSPITransferComplete, INTC_ID_SPRI0 + SPI_CHANNEL_CV * 3, 5);
+@@ -53,6 +51,14 @@ void oledRoutine()
+     {
+         oledWaitingForMessage    = oledPendingMessageToSend; // We'll wait to hear back from the PIC.
+         oledPendingMessageToSend = 0;
++        // mastertune-v18: a command for the OLED (its contrast) goes with D/C low. The PIC sets it before it selects
++        // the OLED, and answers the selection after that; sendOledCommand() sets it high again. The queue's position
++        // stays on the item until the selection is done, so it's the one this selection is for.
++        if (oledWaitingForMessage == 248
++            && spiTransferQueue[spiTransferQueueReadPos].destinationId == OLED_CODE_FOR_COMMAND)
++        {
++            bufferPICUart(250); // D/C low
++        }
+ sendMessageToPIC:
+         oledMessageTimeoutTime = *TCNT[TIMER_SYSTEM_SLOW] + msToSlowTimerCount(50);
+         bufferPICUart(oledWaitingForMessage);
+@@ -70,12 +76,33 @@ sendMessageToPIC:
+     }
+ }
+ 
++// mastertune-v18: the command's two bytes (the OLED selected, D/C low), without the DMA, as oledMainInit() sends its
++// commands; then D/C high again and the OLED deselected, after which oledDeselectionComplete() goes on with the queue.
++// Only ever from the task that answers the PIC (oledLowLevelTimerCallback()): oledTransferComplete() goes straight on
++// with image data only, a command waits for the deselection and a selection with D/C low.
++static void sendOledCommand()
++{
++    uint32_t command        = (uint32_t)spiTransferQueue[spiTransferQueueReadPos].dataAddress;
++    spiTransferQueueReadPos = (spiTransferQueueReadPos + 1) & (SPI_TRANSFER_QUEUE_SIZE - 1);
++    R_RSPI_SendBasic8(SPI_CHANNEL_OLED_MAIN, command & 0xFF);
++    R_RSPI_SendBasic8(SPI_CHANNEL_OLED_MAIN, (command >> 8) & 0xFF);
++    R_RSPI_WaitEnd(SPI_CHANNEL_OLED_MAIN);
++    bufferPICUart(251);             // D/C high: what the OLED gets next is image data
++    oledPendingMessageToSend = 249; // Deselect
++}
++
+ void oledSelectingComplete()
+ {
+     oledWaitingForMessage                   = 256;
+     RSPI(SPI_CHANNEL_OLED_MAIN).SPDCR       = 0x20u;              // 8-bit
+     RSPI(SPI_CHANNEL_OLED_MAIN).SPCMD0      = 0b0000011100000010; // 8-bit
+     RSPI(SPI_CHANNEL_OLED_MAIN).SPBFCR.BYTE = 0b01100000;         // 0b00100000;
++
++    if (spiTransferQueue[spiTransferQueueReadPos].destinationId == OLED_CODE_FOR_COMMAND)
++    {
++        sendOledCommand();
++        return;
++    }
+     // DMACn(OLED_SPI_DMA_CHANNEL).CHCFG_n = 0b00000000001000000000001001101000 | (OLED_SPI_DMA_CHANNEL & 7);
+ 
+     int transferSize                   = (OLED_MAIN_HEIGHT_PIXELS >> 3) * OLED_MAIN_WIDTH_PIXELS;
+@@ -125,8 +152,8 @@ void sendSPITransferFromQueue()
+ 
+     spiDestinationSendingTo = spiTransferQueue[spiTransferQueueReadPos].destinationId;
+ 
+-    // If it's OLED data...
+-    if (spiDestinationSendingTo == 0)
++    // If it's OLED data (or, mastertune-v18, a command for the OLED)...
++    if (spiDestinationSendingTo != OLED_CODE_FOR_CV)
+     {
+         initiateSelectingOled();
+     }
+@@ -180,7 +207,7 @@ void cvSPITransferComplete(uint32_t sense)
+     // Otherwise...
+     else
+     {
+-        // And, if there's some OLED data waiting to send, do that.
++        // And, if there's some OLED data (or a command for the OLED) waiting to send, do that.
+         if (spiTransferQueueWritePos != spiTransferQueueReadPos)
+         {
+             spiDestinationSendingTo = 0;
+diff --git a/src/deluge/drivers/oled/oled.c b/src/deluge/drivers/oled/oled.c
+index 335d9731..8fc3493c 100644
+--- a/src/deluge/drivers/oled/oled.c
++++ b/src/deluge/drivers/oled/oled.c
+@@ -24,6 +24,8 @@
+ #include "drivers/oled/oled.h"
+ #include "drivers/rspi/rspi.h"
+ 
++uint8_t oledContrast = 0xFF;
++
+ void MainOLED_WCom(char data) {
+ 	R_RSPI_SendBasic8(SPI_CHANNEL_OLED_MAIN, data);
+ }
+@@ -37,7 +39,7 @@ void oledMainInit() {
+ 	MainOLED_WCom(0xAE); // DOT MARTIX DISPLAY OFF
+ 
+ 	MainOLED_WCom(0x81); // CONTARST CONTROL(00H-0FFH)
+-	MainOLED_WCom(0xFF);
++	MainOLED_WCom(oledContrast);
+ 
+ 	MainOLED_WCom(0xA4); // ENTIRE DISPLAY OFF(0A4H-0A5H)
+ 
+@@ -122,6 +124,14 @@ void enqueueSPITransfer(int32_t destinationId, uint8_t const* image) {
+ 	}
+ }
+ 
++void oledSetContrast(uint8_t contrast) {
++	if (contrast == oledContrast) {
++		return;
++	}
++	oledContrast = contrast;
++	enqueueSPITransfer(OLED_CODE_FOR_COMMAND, (uint8_t const*)(uintptr_t)(0x81 | ((uint32_t)contrast << 8)));
++}
++
+ void oledDMAInit() {
+ 
+ 	// ---- DMA Control Register Setting ----
+diff --git a/src/deluge/drivers/oled/oled.h b/src/deluge/drivers/oled/oled.h
+index 3a2ab7b6..467bae89 100644
+--- a/src/deluge/drivers/oled/oled.h
++++ b/src/deluge/drivers/oled/oled.h
+@@ -21,11 +21,22 @@
+ 
+ #define SPI_TRANSFER_QUEUE_SIZE 32
+ 
++// Destinations of the SPI transfer queue: 0 the OLED's image (dataAddress points to it), 1 the CV DAC (dataAddress is
++// the message), and (mastertune-v18) a command for the OLED: dataAddress holds its two bytes, the first in bits 0-7
++#define OLED_CODE_FOR_CV 1
++#define OLED_CODE_FOR_COMMAND 2
++
+ void oledMainInit();
+ void oledDMAInit();
+ void enqueueSPITransfer(int32_t whichOled, uint8_t const* image);
+ void oledTransferComplete(uint32_t int_sense);
+ 
++/// mastertune-v18: the OLED's contrast (SSD1309 command 0x81, 0x00-0xFF; oledMainInit() sets it at power-up). Sent
++/// through the SPI transfer queue, between two images, with D/C low while it goes (oledRoutine(),
++/// oledSelectingComplete()). Only for a Deluge with the OLED.
++void oledSetContrast(uint8_t contrast);
++extern uint8_t oledContrast;
++
+ extern volatile bool spiTransferQueueCurrentlySending;
+ extern volatile uint8_t spiTransferQueueReadPos;
+ extern uint8_t spiTransferQueueWritePos;
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index 21b58cc2..ad3729e0 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -959,6 +959,7 @@
+         "STRING_FOR_TIME_CHANGE": "Time change",
+         "STRING_FOR_DELAY_TIME_CHANGE": "Delay time change",
+         "STRING_FOR_FADE": "Fade",
+-        "STRING_FOR_TAPE": "Tape"
++        "STRING_FOR_TAPE": "Tape",
++        "STRING_FOR_OLED_BRIGHTNESS": "OLED brightness"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index ac054f24..ca986244 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -888,6 +888,7 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_DELAY_TIME_CHANGE, "Delay time change"},
+         {STRING_FOR_FADE, "Fade"},
+         {STRING_FOR_TAPE, "Tape"},
++        {STRING_FOR_OLED_BRIGHTNESS, "OLED brightness"},
+     },
+ };
+ } // namespace deluge::l10n::built_in
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index dd04ca80..04b2ca59 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -528,6 +528,7 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_TIME_CHANGE, "TIME"},
+         {STRING_FOR_FADE, "FADE"},
+         {STRING_FOR_TAPE, "TAPE"},
++        {STRING_FOR_OLED_BRIGHTNESS, "OLED"},
+     },
+     &built_in::english,
+ };
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index 834a7d9f..cbdf74a4 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -562,6 +562,7 @@
+         "STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING": "DIMM",
+         "STRING_FOR_TIME_CHANGE": "TIME",
+         "STRING_FOR_FADE": "FADE",
+-        "STRING_FOR_TAPE": "TAPE"
++        "STRING_FOR_TAPE": "TAPE",
++        "STRING_FOR_OLED_BRIGHTNESS": "OLED"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index b290d06a..68bfef27 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -1014,6 +1014,9 @@ enum class String : size_t {
+ 	STRING_FOR_FADE,
+ 	STRING_FOR_TAPE,
+ 
++	// mastertune-v18: Settings > Defaults > OLED brightness
++	STRING_FOR_OLED_BRIGHTNESS,
++
+ 	STRING_LAST
+ };
+ 
+diff --git a/src/deluge/gui/menu_item/oled_brightness.h b/src/deluge/gui/menu_item/oled_brightness.h
+new file mode 100644
+index 00000000..e2ccd7d4
+--- /dev/null
++++ b/src/deluge/gui/menu_item/oled_brightness.h
+@@ -0,0 +1,36 @@
++/*
++ * Copyright (c) 2014-2023 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include "gui/menu_item/integer.h"
++#include "hid/display/display.h"
++#include "hid/display/oled_brightness.h"
++
++namespace deluge::gui::menu_item {
++/// mastertune-v18: Settings > Defaults > OLED brightness, 1-10 (10: as bright as before); each turn goes to the OLED at
++/// once, the card gets it when the menu is left. Only on a Deluge with the OLED.
++class OledBrightness final : public Integer {
++public:
++	using Integer::Integer;
++	[[nodiscard]] int32_t getMinValue() const override { return 1; }
++	[[nodiscard]] int32_t getMaxValue() const override { return hid::display::oled_brightness::kNumLevels; }
++	bool isRelevant(ModControllableAudio* modControllable, int32_t whichThing) override {
++		return hid::display::have_oled_screen;
++	}
++	void readCurrentValue() override { this->setValue(hid::display::oled_brightness::level()); }
++	void writeCurrentValue() override { hid::display::oled_brightness::setLevel(this->getValue()); }
++};
++} // namespace deluge::gui::menu_item
+diff --git a/src/deluge/gui/ui/menus.cpp b/src/deluge/gui/ui/menus.cpp
+index 8ddd6525..336b7537 100644
+--- a/src/deluge/gui/ui/menus.cpp
++++ b/src/deluge/gui/ui/menus.cpp
+@@ -114,6 +114,7 @@
+ #include "gui/menu_item/modulator/transpose.h"
+ #include "gui/menu_item/monitor/mode.h"
+ #include "gui/menu_item/mpe/direction_selector.h"
++#include "gui/menu_item/oled_brightness.h"
+ #include "gui/menu_item/osc/audio_recorder.h"
+ #include "gui/menu_item/osc/pulse_width.h"
+ #include "gui/menu_item/osc/retrigger_phase.h"
+@@ -1216,6 +1217,8 @@ defaults::StartupSongModeMenu defaultStartupSongMenu{STRING_FOR_DEFAULT_UI_DEFAU
+                                                      STRING_FOR_DEFAULT_UI_DEFAULT_STARTUP_SONG_MODE};
+ defaults::PadBrightness defaultPadBrightness{STRING_FOR_DEFAULT_PAD_BRIGHTNESS,
+                                              STRING_FOR_DEFAULT_PAD_BRIGHTNESS_MENU_TITLE};
++// mastertune-v18: the OLED's contrast, 1-10 (only with the OLED)
++OledBrightness oledBrightnessMenu{STRING_FOR_OLED_BRIGHTNESS, STRING_FOR_OLED_BRIGHTNESS};
+ defaults::SliceMode defaultSliceMode{STRING_FOR_DEFAULT_SLICE_MODE, STRING_FOR_DEFAULT_SLICE_MODE_MENU_TITLE};
+ ToggleBool defaultHighCPUUsageIndicatorMode{STRING_FOR_DEFAULT_HIGH_CPU_USAGE_INDICATOR,
+                                             STRING_FOR_DEFAULT_HIGH_CPU_USAGE_INDICATOR,
+@@ -1246,6 +1249,7 @@ Submenu defaultsSubmenu{
+         &defaultMetronomeVolumeMenu,
+         &defaultStartupSongMenu,
+         &defaultPadBrightness,
++        &oledBrightnessMenu,
+         &defaultSliceMode,
+         &defaultHoldTimeMenu,
+     },
+diff --git a/src/deluge/hid/display/oled.cpp b/src/deluge/hid/display/oled.cpp
+index e460b685..e6676a0f 100644
+--- a/src/deluge/hid/display/oled.cpp
++++ b/src/deluge/hid/display/oled.cpp
+@@ -1288,7 +1288,8 @@ void OLED::freezeWithError(char const* text) {
+ 	}
+ 	spiTransferQueueCurrentlySending = false;
+ 
+-	// Select OLED
++	// Select OLED; D/C high, in case a command for the OLED (its contrast, mastertune-v18) was cut short
++	PIC::setDCHigh();
+ 	PIC::selectOLED();
+ 	PIC::flush();
+ 	oledWaitingForMessage = 248;
+diff --git a/src/deluge/hid/display/oled_brightness.cpp b/src/deluge/hid/display/oled_brightness.cpp
+new file mode 100644
+index 00000000..8a79f562
+--- /dev/null
++++ b/src/deluge/hid/display/oled_brightness.cpp
+@@ -0,0 +1,73 @@
++/*
++ * Copyright (c) 2014-2023 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#include "hid/display/oled_brightness.h"
++#include "hid/display/display.h"
++#include <cstring>
++
++extern "C" {
++#include "drivers/oled/oled.h"
++}
++
++namespace deluge::hid::display::oled_brightness {
++
++namespace {
++/// The contrast per level, 1 + 254 * ((level - 1) / 9)^2: the OLED's light goes with its current, which goes with the
++/// contrast, and lightness as seen (CIE L*) goes roughly with the square root of that, so the steps look about even
++/// (L* about 4, 14, 28, 41, 53, 63, 73, 82, 91, 100; the SSD1309 datasheet: segment current = contrast / 256 * IREF)
++constexpr uint8_t kContrastForLevel[kNumLevels] = {1, 4, 14, 29, 51, 79, 114, 155, 202, 255};
++} // namespace
++
++uint8_t contrast() {
++	return oledContrast;
++}
++
++int32_t level() {
++	int32_t best = 1;
++	for (int32_t l = 2; l <= kNumLevels; l++) {
++		int32_t difference = kContrastForLevel[l - 1] - (int32_t)oledContrast;
++		int32_t bestDifference = kContrastForLevel[best - 1] - (int32_t)oledContrast;
++		if ((difference < 0 ? -difference : difference) < (bestDifference < 0 ? -bestDifference : bestDifference)) {
++			best = l;
++		}
++	}
++	return best;
++}
++
++void setLevel(int32_t level) {
++	level = (level < 1) ? 1 : (level > kNumLevels) ? kNumLevels : level;
++	setContrast(kContrastForLevel[level - 1]);
++}
++
++void setContrast(int32_t newContrast) {
++	newContrast = (newContrast < 1) ? 1 : (newContrast > 255) ? 255 : newContrast;
++	if (have_oled_screen) {
++		oledSetContrast((uint8_t)newContrast); // Sent only if it's new
++	}
++	else {
++		oledContrast = (uint8_t)newContrast; // Nothing to send it to; kept for the file
++	}
++}
++
++bool readSetting(char const* name, int32_t value) {
++	if (strcmp(name, kSettingName) != 0) {
++		return false;
++	}
++	setContrast(value);
++	return true;
++}
++
++} // namespace deluge::hid::display::oled_brightness
+diff --git a/src/deluge/hid/display/oled_brightness.h b/src/deluge/hid/display/oled_brightness.h
+new file mode 100644
+index 00000000..f4b312e5
+--- /dev/null
++++ b/src/deluge/hid/display/oled_brightness.h
+@@ -0,0 +1,39 @@
++/*
++ * Copyright (c) 2014-2023 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include <cstdint>
++
++/// mastertune-v18: Settings > Defaults > OLED brightness. The OLED's contrast (SSD1309 command 0x81), which used to be
++/// 0xFF always, in ten steps; kept on the card as the entry oledContrast in CommunityFeatures.XML (the contrast
++/// itself, 1-255; missing: 255) and sent to the OLED when it changes and at boot, once the file is read. The Deluge
++/// with the 7-segment display has no OLED: nothing is sent there and the menu doesn't show the item.
++namespace deluge::hid::display::oled_brightness {
++
++constexpr char const* kSettingName = "oledContrast";
++constexpr int32_t kNumLevels = 10;
++
++/// The contrast now (1-255)
++uint8_t contrast();
++/// The level (1-kNumLevels) whose contrast is nearest to the contrast now
++int32_t level();
++void setLevel(int32_t level);
++/// Clamped to 1-255; sent to the OLED if the Deluge has one and it's new
++void setContrast(int32_t contrast);
++/// From CommunityFeatures.XML: true if it's this setting's entry (and then it's applied)
++bool readSetting(char const* name, int32_t value);
++
++} // namespace deluge::hid::display::oled_brightness
+diff --git a/src/deluge/model/settings/runtime_feature_settings.cpp b/src/deluge/model/settings/runtime_feature_settings.cpp
+index f9315a3e..bcfeb37c 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.cpp
++++ b/src/deluge/model/settings/runtime_feature_settings.cpp
+@@ -18,6 +18,7 @@
+ #include "runtime_feature_settings.h"
+ #include "gui/l10n/l10n.h"
+ #include "hid/display/display.h"
++#include "hid/display/oled_brightness.h"
+ #include "model/song/song.h"
+ #include "model/tuning/master_tune.h"
+ #include "processing/engines/cpu_stats.h"
+@@ -257,7 +258,8 @@ void RuntimeFeatureSettings::readSettingsFromFile(StorageManager& bdsm) {
+ 			reader.exitTag();
+ 
+ 			bool found = MasterTune::readSetting(currentName.get(), currentValue)
+-			             || cpu_stats::readSetting(currentName.get(), currentValue);
++			             || cpu_stats::readSetting(currentName.get(), currentValue)
++			             || deluge::hid::display::oled_brightness::readSetting(currentName.get(), currentValue);
+ 			for (auto& setting : settings) {
+ 				if (strcmp(setting.xmlName.data(), currentName.get()) == 0) {
+ 					found = true;
+@@ -321,6 +323,15 @@ void RuntimeFeatureSettings::writeSettingsToFile(StorageManager& bdsm, bool upda
+ 	writer.writeOpeningTagEnd(false);
+ 	writer.writeClosingTag(TAG_RUNTIME_FEATURE_SETTING, false);
+ 
++	// mastertune-v18: Settings > Defaults > OLED brightness, the OLED's contrast
++	writer.writeOpeningTagBeginning(TAG_RUNTIME_FEATURE_SETTING);
++	writer.writeAttribute(TAG_RUNTIME_FEATURE_SETTING_ATTR_NAME, deluge::hid::display::oled_brightness::kSettingName,
++	                      false);
++	writer.writeAttribute(TAG_RUNTIME_FEATURE_SETTING_ATTR_VALUE, deluge::hid::display::oled_brightness::contrast(),
++	                      false);
++	writer.writeOpeningTagEnd(false);
++	writer.writeClosingTag(TAG_RUNTIME_FEATURE_SETTING, false);
++
+ 	// Write unknown elements
+ 	for (uint32_t idxUnknownSetting = 0; idxUnknownSetting < unknownSettings.getNumElements(); idxUnknownSetting++) {
+ 		UnknownSetting* unknownSetting = (UnknownSetting*)unknownSettings.getElementAddress(idxUnknownSetting);
+-- 
+2.43.0
+

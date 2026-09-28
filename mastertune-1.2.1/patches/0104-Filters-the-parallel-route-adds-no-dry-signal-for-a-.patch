@@ -1,0 +1,126 @@
+From cfae8dd0187e55a52168c69830a2c66691f90ecc Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 05:49:29 +0000
+Subject: [PATCH 104/112] Filters: the parallel route adds no dry signal for a
+ filter that is off, and sums two filters at half level
+
+v17's parallel route added the dry input in place of a filter that was off (the other filter's output plus the
+input; both off: the input twice, +6 dB) and summed two filters at full level with a wrapping add. Now one filter on
+is that filter alone, none on is the input, both on is (LPF + HPF) / 2, rounded, with NEON's halving add (vrhaddq_s32:
+the full 33-bit sum, no overflow, no wrap). Split-band use (LPF low, HPF high) is 6.02 dB quieter than in v17, two
+filters wide open give their input back (v17: +6 dB). A filter switched on beside one that is on crossfades like a
+route change (the one that was on drops by 6 dB).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter_set.cpp | 61 +++++++++++++++++++---------
+ 1 file changed, 42 insertions(+), 19 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/filter_set.cpp b/src/deluge/dsp/filter/filter_set.cpp
+index a09fb5a3..fd41ecbd 100644
+--- a/src/deluge/dsp/filter/filter_set.cpp
++++ b/src/deluge/dsp/filter/filter_set.cpp
+@@ -27,17 +27,19 @@ namespace deluge::dsp::filter {
+ 
+ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate stereo samples
+ 
+-// Parallel routing: startSample[i] += tempRenderBuffer[i], four at a time. vaddq_s32 wraps like the add instruction of
+-// the plain loop; the two buffers never overlap (tempRenderBuffer is this file's own)
++// Parallel routing, both filters on (mastertune v18): startSample[i] = (startSample[i] + tempRenderBuffer[i]) / 2,
++// rounded (vrhaddq_s32: the halving add of the full 33-bit sum, which can't overflow), four at a time. The sum of the
++// two filters' outputs at half level (-6 dB): two filters wide open give their input back, where v17 doubled it (+6 dB)
++// and wrapped the sum at full scale. The two buffers never overlap (tempRenderBuffer is this file's own)
+ [[gnu::always_inline]] static inline void addTempRenderBuffer(q31_t* startSample, int32_t length) {
+ 	int32_t i = 0;
+ #if defined(__ARM_NEON)
+ 	for (; i + 4 <= length; i += 4) {
+-		vst1q_s32(&startSample[i], vaddq_s32(vld1q_s32(&startSample[i]), vld1q_s32(&tempRenderBuffer[i])));
++		vst1q_s32(&startSample[i], vrhaddq_s32(vld1q_s32(&startSample[i]), vld1q_s32(&tempRenderBuffer[i])));
+ 	}
+ #endif
+ 	for (; i < length; i++) {
+-		startSample[i] += tempRenderBuffer[i];
++		startSample[i] = (q31_t)(((int64_t)startSample[i] + tempRenderBuffer[i] + 1) >> 1);
+ 	}
+ }
+ 
+@@ -117,15 +119,23 @@ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate ster
+ 		break;
+ 
+ 	case FilterRoute::PARALLEL:
+-		// render one filter in the temp buffer so we can add
+-		// them together
+-		int32_t length = endSample - startSample;
+-		memcpy(tempRenderBuffer, startSample, length * sizeof(q31_t));
+-
+-		renderHPFLong(tempRenderBuffer, tempRenderBuffer + length, sampleIncrememt, hpfSaturation);
+-		renderLPFLong(startSample, endSample, sampleIncrememt, lpfSaturation);
+-
+-		addTempRenderBuffer(startSample, length);
++		// mastertune v18: a filter that is off adds nothing (v17 added the dry input in its place: the other filter's
++		// output plus the dry signal, and with both off the input twice). One filter on: its output alone; both: the
++		// sum of their outputs at half level (addTempRenderBuffer()); none: the input as it is
++		if (LPFOn && HPFOn) {
++			// render one filter in the temp buffer so we can add them together
++			int32_t length = endSample - startSample;
++			memcpy(tempRenderBuffer, startSample, length * sizeof(q31_t));
++
++			renderHPFLong(tempRenderBuffer, tempRenderBuffer + length, sampleIncrememt, hpfSaturation);
++			renderLPFLong(startSample, endSample, sampleIncrememt, lpfSaturation);
++
++			addTempRenderBuffer(startSample, length);
++		}
++		else {
++			renderHPFLong(startSample, endSample, sampleIncrememt, hpfSaturation);
++			renderLPFLong(startSample, endSample, sampleIncrememt, lpfSaturation);
++		}
+ 		break;
+ 	}
+ }
+@@ -207,15 +217,22 @@ void FilterSet::rampGainCompensation(q31_t* startSample, q31_t* endSample) {
+ 
+ 		break;
+ 	case FilterRoute::PARALLEL:
+-		int32_t length = endSample - startSample;
++		// (See renderLongInner())
++		if (LPFOn && HPFOn) {
++			int32_t length = endSample - startSample;
+ 
+-		memcpy(tempRenderBuffer, startSample, length * sizeof(q31_t));
++			memcpy(tempRenderBuffer, startSample, length * sizeof(q31_t));
+ 
+-		renderHPFLongStereo(tempRenderBuffer, tempRenderBuffer + length, hpfSaturation);
++			renderHPFLongStereo(tempRenderBuffer, tempRenderBuffer + length, hpfSaturation);
+ 
+-		renderLPFLongStereo(startSample, endSample, lpfSaturation);
++			renderLPFLongStereo(startSample, endSample, lpfSaturation);
+ 
+-		addTempRenderBuffer(startSample, length);
++			addTempRenderBuffer(startSample, length);
++		}
++		else {
++			renderHPFLongStereo(startSample, endSample, hpfSaturation);
++			renderLPFLongStereo(startSample, endSample, lpfSaturation);
++		}
+ 		break;
+ 	}
+ }
+@@ -345,7 +362,13 @@ int32_t FilterSet::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMode
+ 			bool lpfChange = lpfMode_ != FilterMode::OFF && lpfmode != lpfMode_;
+ 			bool hpfChange = hpfMode_ != FilterMode::OFF && hpfmode != hpfMode_;
+ 			bool routeChange = routing != routing_ && (LPFOn || HPFOn);
+-			if (lpfChange || hpfChange || routeChange) {
++			// In parallel, a filter switched on beside one that is on: the sum goes to half level (the one that was on
++			// drops by 6 dB), crossfaded like a route change. (Switched on alone it fades in from its input, which is
++			// what the route gave with none on)
++			bool parallelSwitchOn = routing == FilterRoute::PARALLEL && routing_ == FilterRoute::PARALLEL
++			                        && ((lpfmode != FilterMode::OFF && !LPFOn && HPFOn)
++			                            || (hpfmode != FilterMode::OFF && !HPFOn && LPFOn));
++			if (lpfChange || hpfChange || routeChange || parallelSwitchOn) {
+ 				startFade();
+ 			}
+ 		}
+-- 
+2.43.0
+

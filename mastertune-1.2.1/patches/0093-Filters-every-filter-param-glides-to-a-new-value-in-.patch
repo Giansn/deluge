@@ -1,0 +1,445 @@
+From ea4d39eda19e411b530391212a6ead89d2c57aa7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 00:24:22 +0000
+Subject: [PATCH 093/112] Filters: every filter param glides to a new value in
+ 10 ms, whatever sets it, in voices and in the song, kits, tracks
+
+Spec point 8. The LPF's and HPF's cutoff, resonance and morph take a new value through a one-pole on the param's value
+(the cutoffs' is their log frequency), time constant 10 ms, advanced once per block by exactly the block's share
+(dsp/filter/param_glide.h), so a knob click, a step of automation or a MIDI CC step (~94 cents on the cutoff) becomes
+a smooth curve that the per-sample coefficient ramps carry through each block. Voices: Sound::filterGlide, fed by
+notifyValueChangeViaLPF() for all six params (knob, automation, MIDI alike, several at once; the cutoffs no longer
+take the one-at-a-time param LPF), read by the patcher through getSmoothedPatchedParamValue(), moved on in
+doFilterGlide() after each render, ended in startSkippingRendering(). Song, kits, audio tracks:
+GlobalEffectable::setupFilterSetConfig() glides the unpatched params (it now gets the block's length); the filter modes
+follow the glide (a filter opened all the way switches off when it gets there); renderWithNothingToRender() ends it.
+Modulation (envelopes, LFOs, velocity, cables' sources) doesn't go through it. A param that stays put renders exactly
+as before (the glide lands on the value, within 2^-20 of the range then exactly, and stops).
+
+tests/filters filter_neutral glide: 63 % after 441 samples (+ up to one block) for blocks of 32 / 60 / 128, exact
+landing, no overshoot; a CC step every 10 ms on a kit's LPF: 13 dB less above 2 kHz than taking each step at once.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/param_glide.h           | 71 +++++++++++++++++++
+ .../global_effectable/global_effectable.cpp   | 69 +++++++++++-------
+ .../global_effectable/global_effectable.h     | 16 ++++-
+ .../global_effectable_for_clip.cpp            |  9 ++-
+ .../processing/engines/audio_engine.cpp       |  3 +-
+ src/deluge/processing/sound/sound.cpp         | 47 ++++++++++++
+ src/deluge/processing/sound/sound.h           | 38 +++++++++-
+ 7 files changed, 222 insertions(+), 31 deletions(-)
+ create mode 100644 src/deluge/dsp/filter/param_glide.h
+
+diff --git a/src/deluge/dsp/filter/param_glide.h b/src/deluge/dsp/filter/param_glide.h
+new file mode 100644
+index 00000000..abdd5f3e
+--- /dev/null
++++ b/src/deluge/dsp/filter/param_glide.h
+@@ -0,0 +1,71 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include <cmath>
++#include <cstdint>
++#include <cstdlib>
++
++namespace deluge::dsp::filter {
++
++// mastertune v18: the filters' params (the LPF's and the HPF's cutoff, resonance and morph) glide to a new value
++// instead of taking it at once, whatever set it: a knob, automation (stepped or interpolated) or a MIDI CC (about 94
++// cents per step on the cutoff), in a synth or kit row (Sound) as in the song, a kit or an audio track
++// (GlobalEffectable). A one-pole on the param's value (the cutoffs' is their log frequency) with a time constant of
++// 10 ms, advanced once per block (exactly: the factor from the block's length), so a step becomes a smooth curve over
++// some 30 ms and the per-sample coefficient ramps (Filter) take it through the block. Modulation (envelopes, LFOs,
++// velocity...) doesn't go through it and stays as fast as it is. A value that stays put renders exactly as before: the
++// glide reaches the param's own value (within kSnap, then exactly) and stops.
++// 1.2.1 smoothed only the cutoffs, only while a knob was turned by hand (Sound's param LPF, one param at a time, a
++// one-pole of 5.8 ms), and took everything else as a step once per block
++struct FilterParamGlide {
++	// LPF cutoff, resonance, morph, HPF cutoff, resonance, morph
++	static constexpr int32_t kNumParams = 6;
++	static constexpr float kTauSamples = 441.0f; // 10 ms
++	static constexpr int64_t kSnap = 1 << 12;    // 2^-20 of the param's range: there
++	int32_t value[kNumParams];
++	uint8_t active; // bit i: value[i] is on its way to the param's own value
++
++	[[nodiscard]] bool isActive(int32_t i) const { return (active >> i) & 1; }
++	// Start gliding param i from `from` (where it is now), unless it already glides
++	void start(int32_t i, int32_t from) {
++		if (!isActive(i)) {
++			value[i] = from;
++			active |= (uint8_t)(1 << i);
++		}
++	}
++	// The factor a block of numSamples moves the value by, of what's left
++	[[nodiscard]] static float blockFactor(int32_t numSamples) {
++		return 1.0f - std::exp(-(float)numSamples / kTauSamples);
++	}
++	// Moves value[i] towards target by the block's factor k; at the target (within kSnap) it stops there. Returns
++	// the new value
++	int32_t advance(int32_t i, int32_t target, float k) {
++		int64_t diff = (int64_t)target - (int64_t)value[i];
++		if (std::llabs(diff) <= kSnap) {
++			value[i] = target;
++			active &= (uint8_t)~(1 << i);
++		}
++		else {
++			value[i] = (int32_t)((int64_t)value[i] + (int64_t)((float)diff * k));
++		}
++		return value[i];
++	}
++};
++
++} // namespace deluge::dsp::filter
+diff --git a/src/deluge/model/global_effectable/global_effectable.cpp b/src/deluge/model/global_effectable/global_effectable.cpp
+index ba11c641..a86a71ca 100644
+--- a/src/deluge/model/global_effectable/global_effectable.cpp
++++ b/src/deluge/model/global_effectable/global_effectable.cpp
+@@ -775,41 +775,60 @@ ohNo:
+ 	}
+ }
+ 
++int32_t GlobalEffectable::filterParamForRender(UnpatchedParamSet* unpatchedParams, int32_t i) {
++	return filterGlideStarted_ ? filterGlide_.value[i] : unpatchedParams->getValue(kFilterGlideParams[i]);
++}
++
++void GlobalEffectable::endFilterGlide(UnpatchedParamSet* unpatchedParams) {
++	for (int32_t i = 0; i < deluge::dsp::filter::FilterParamGlide::kNumParams; i++) {
++		filterGlide_.value[i] = unpatchedParams->getValue(kFilterGlideParams[i]);
++	}
++	filterGlide_.active = 0;
++	filterGlideStarted_ = true;
++}
++
+ // The filters' modes as setupFilterSetConfig() gives them to FilterSet::setConfig(): off where the params leave a
+-// filter open
++// filter open (the params as the filters take them: while one glides, where it has got to)
+ void GlobalEffectable::getFilterModesForRender(UnpatchedParamSet* unpatchedParams, FilterMode* lpfModeForRender,
+                                                FilterMode* hpfModeForRender) {
+-	bool doLPF = (lpfMode == FilterMode::TRANSISTOR_24DB_DRIVE
+-	              || unpatchedParams->getValue(params::UNPATCHED_LPF_FREQ) < 2147483602
+-	              || unpatchedParams->getValue(params::UNPATCHED_LPF_MORPH) > NEGATIVE_ONE_Q31);
+-	bool doHPF = unpatchedParams->getValue(params::UNPATCHED_HPF_FREQ) > NEGATIVE_ONE_Q31
+-	             || unpatchedParams->getValue(params::UNPATCHED_HPF_MORPH) > NEGATIVE_ONE_Q31;
++	bool doLPF = (lpfMode == FilterMode::TRANSISTOR_24DB_DRIVE || filterParamForRender(unpatchedParams, 0) < 2147483602
++	              || filterParamForRender(unpatchedParams, 2) > NEGATIVE_ONE_Q31);
++	bool doHPF = filterParamForRender(unpatchedParams, 3) > NEGATIVE_ONE_Q31
++	             || filterParamForRender(unpatchedParams, 5) > NEGATIVE_ONE_Q31;
+ 	*lpfModeForRender = doLPF ? lpfMode : FilterMode::OFF;
+ 	*hpfModeForRender = doHPF ? hpfMode : FilterMode::OFF;
+ }
+ 
+-void GlobalEffectable::setupFilterSetConfig(int32_t* postFXVolume, ParamManager* paramManager) {
++void GlobalEffectable::setupFilterSetConfig(int32_t* postFXVolume, ParamManager* paramManager, int32_t numSamples) {
+ 
+ 	UnpatchedParamSet* unpatchedParams = paramManager->getUnpatchedParamSet();
+ 
+-	int32_t lpfFrequency =
+-	    getFinalParameterValueExp(paramNeutralValues[params::LOCAL_LPF_FREQ],
+-	                              cableToExpParamShortcut(unpatchedParams->getValue(params::UNPATCHED_LPF_FREQ)));
+-	int32_t lpfResonance =
+-	    getFinalParameterValueLinear(paramNeutralValues[params::LOCAL_LPF_RESONANCE],
+-	                                 cableToLinearParamShortcut(unpatchedParams->getValue(params::UNPATCHED_LPF_RES)));
+-	int32_t lpfMorph =
+-	    getFinalParameterValueLinear(paramNeutralValues[params::LOCAL_LPF_MORPH],
+-	                                 cableToExpParamShortcut(unpatchedParams->getValue(params::UNPATCHED_LPF_MORPH)));
+-	int32_t hpfFrequency =
+-	    getFinalParameterValueExp(paramNeutralValues[params::LOCAL_HPF_FREQ],
+-	                              cableToExpParamShortcut(unpatchedParams->getValue(params::UNPATCHED_HPF_FREQ)));
+-	int32_t hpfResonance =
+-	    getFinalParameterValueLinear(paramNeutralValues[params::LOCAL_HPF_RESONANCE],
+-	                                 cableToLinearParamShortcut(unpatchedParams->getValue(params::UNPATCHED_HPF_RES)));
+-	int32_t hpfMorph =
+-	    getFinalParameterValueLinear(paramNeutralValues[params::LOCAL_HPF_MORPH],
+-	                                 cableToExpParamShortcut(unpatchedParams->getValue(params::UNPATCHED_HPF_MORPH)));
++	// mastertune v18: the filter params glide to where they've been set (the first block takes them as they are)
++	if (!filterGlideStarted_) {
++		endFilterGlide(unpatchedParams);
++	}
++	else {
++		const float k = deluge::dsp::filter::FilterParamGlide::blockFactor(numSamples);
++		for (int32_t i = 0; i < deluge::dsp::filter::FilterParamGlide::kNumParams; i++) {
++			int32_t target = unpatchedParams->getValue(kFilterGlideParams[i]);
++			if (filterGlide_.value[i] != target) {
++				filterGlide_.advance(i, target, k);
++			}
++		}
++	}
++
++	int32_t lpfFrequency = getFinalParameterValueExp(paramNeutralValues[params::LOCAL_LPF_FREQ],
++	                                                 cableToExpParamShortcut(filterGlide_.value[0]));
++	int32_t lpfResonance = getFinalParameterValueLinear(paramNeutralValues[params::LOCAL_LPF_RESONANCE],
++	                                                    cableToLinearParamShortcut(filterGlide_.value[1]));
++	int32_t lpfMorph = getFinalParameterValueLinear(paramNeutralValues[params::LOCAL_LPF_MORPH],
++	                                                cableToExpParamShortcut(filterGlide_.value[2]));
++	int32_t hpfFrequency = getFinalParameterValueExp(paramNeutralValues[params::LOCAL_HPF_FREQ],
++	                                                 cableToExpParamShortcut(filterGlide_.value[3]));
++	int32_t hpfResonance = getFinalParameterValueLinear(paramNeutralValues[params::LOCAL_HPF_RESONANCE],
++	                                                    cableToLinearParamShortcut(filterGlide_.value[4]));
++	int32_t hpfMorph = getFinalParameterValueLinear(paramNeutralValues[params::LOCAL_HPF_MORPH],
++	                                                cableToExpParamShortcut(filterGlide_.value[5]));
+ 
+ 	FilterMode lpfModeForRender;
+ 	FilterMode hpfModeForRender;
+diff --git a/src/deluge/model/global_effectable/global_effectable.h b/src/deluge/model/global_effectable/global_effectable.h
+index 1a1f710d..a4c426ee 100644
+--- a/src/deluge/model/global_effectable/global_effectable.h
++++ b/src/deluge/model/global_effectable/global_effectable.h
+@@ -19,6 +19,7 @@
+ 
+ #include "definitions_cxx.hpp"
+ #include "dsp/filter/filter_set.h"
++#include "dsp/filter/param_glide.h"
+ #include "model/mod_controllable/mod_controllable_audio.h"
+ using namespace deluge;
+ class Serializer;
+@@ -34,9 +35,22 @@ public:
+ 	bool modEncoderButtonAction(uint8_t whichModEncoder, bool on, ModelStackWithThreeMainThings* modelStack);
+ 	ModelStackWithAutoParam* getParamFromModEncoder(int32_t whichModEncoder, ModelStackWithThreeMainThings* modelStack,
+ 	                                                bool allowCreation = true);
+-	void setupFilterSetConfig(int32_t* postFXVolume, ParamManager* paramManager);
++	// numSamples: the block's, which the filter params' glide moves on by
++	void setupFilterSetConfig(int32_t* postFXVolume, ParamManager* paramManager, int32_t numSamples);
+ 	void getFilterModesForRender(UnpatchedParamSet* unpatchedParams, FilterMode* lpfModeForRender,
+ 	                             FilterMode* hpfModeForRender);
++	// mastertune v18: the filter params glide to a new value (dsp/filter/param_glide.h): value[i] is filter param i
++	// (kFilterGlideParams) as the filters take it, once filterGlideStarted_ (the first block takes them as they are)
++	deluge::dsp::filter::FilterParamGlide filterGlide_;
++	bool filterGlideStarted_ = false;
++	static constexpr int32_t kFilterGlideParams[deluge::dsp::filter::FilterParamGlide::kNumParams] = {
++	    deluge::modulation::params::UNPATCHED_LPF_FREQ, deluge::modulation::params::UNPATCHED_LPF_RES,
++	    deluge::modulation::params::UNPATCHED_LPF_MORPH, deluge::modulation::params::UNPATCHED_HPF_FREQ,
++	    deluge::modulation::params::UNPATCHED_HPF_RES, deluge::modulation::params::UNPATCHED_HPF_MORPH};
++	// Filter param i as the filters take it now
++	int32_t filterParamForRender(UnpatchedParamSet* unpatchedParams, int32_t i);
++	// Every filter param at its own value at once (nothing is rendered, so there's nothing to glide)
++	void endFilterGlide(UnpatchedParamSet* unpatchedParams);
+ 	void processFilters(StereoSample* buffer, int32_t numSamples);
+ 	void compensateVolumeForResonance(ParamManagerForTimeline* paramManager);
+ 	void processFXForGlobalEffectable(StereoSample* inputBuffer, int32_t numSamples, int32_t* postFXVolume,
+diff --git a/src/deluge/model/global_effectable/global_effectable_for_clip.cpp b/src/deluge/model/global_effectable/global_effectable_for_clip.cpp
+index 701eff8f..3fbf243e 100644
+--- a/src/deluge/model/global_effectable/global_effectable_for_clip.cpp
++++ b/src/deluge/model/global_effectable/global_effectable_for_clip.cpp
+@@ -104,7 +104,7 @@ GlobalEffectableForClip::GlobalEffectableForClip() {
+ 		delayWorkingState.analog_saturation = 5;
+ 	}
+ 
+-	setupFilterSetConfig(&volumePostFX, paramManagerForClip);
++	setupFilterSetConfig(&volumePostFX, paramManagerForClip, numSamples);
+ 
+ 	int32_t reverbSendAmount = getFinalParameterValueVolume(
+ 	    reverbAmountAdjust,
+@@ -251,7 +251,9 @@ void GlobalEffectableForClip::tickParamManagerForClip(ModelStackWithTimelineCoun
+ //   coming in, which Delay::process() only reads after it has been set again. An old file's delay time change is
+ //   resolved there, the first time.
+ // - setupFilterSetConfig(): FilterSet::setConfig() resets a filter whose mode changes; otherwise it only sets what
+-//   processFilters() reads, after it has been set again.
++//   processFilters() reads, after it has been set again. The filter params' glide (v18) moves on there;
++//   renderWithNothingToRender() takes them to their own values instead (with nothing coming in, the filters give
++//   silence either way; the modes checked here are from where the glide is).
+ // - The rest reads params and settings, as the check does.
+ bool GlobalEffectableForClip::effectsStayDormant(ParamManager* paramManagerForClip, SampleRecorder* recorder) {
+ 	UnpatchedParamSet* unpatchedParams = paramManagerForClip->getUnpatchedParamSet();
+@@ -276,6 +278,9 @@ void GlobalEffectableForClip::renderWithNothingToRender(ModelStackWithTimelineCo
+                                                         bool isClipActive) {
+ 	UnpatchedParamSet* unpatchedParams = paramManagerForClip->getUnpatchedParamSet();
+ 
++	// (mastertune v18: nothing to render, nothing for the filter params to glide through)
++	endFilterGlide(unpatchedParams);
++
+ 	int32_t postReverbVolume = renderSidechain(paramManagerForClip, numSamples, sideChainHitPending);
+ 	compressor.setThreshold(unpatchedParams->getValue(params::UNPATCHED_COMPRESSOR_THRESHOLD));
+ 
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index 40165f11..56ce04bf 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -1119,7 +1119,8 @@ void renderSongFX(size_t numSamples) { // LPF and stutter for song (must happen
+ 	// 167763968 is 134217728 made a bit bigger so that default filter resonance doesn't reduce volume overall
+ 
+ 	if (currentSong) {
+-		currentSong->globalEffectable.setupFilterSetConfig(&masterVolumeAdjustmentL, &currentSong->paramManager);
++		currentSong->globalEffectable.setupFilterSetConfig(&masterVolumeAdjustmentL, &currentSong->paramManager,
++		                                                   numSamples);
+ 		currentSong->globalEffectable.processFilters(renderingBuffer.data(), numSamples);
+ 		currentSong->globalEffectable.processSRRAndBitcrushing(renderingBuffer.data(), numSamples,
+ 		                                                       &masterVolumeAdjustmentL, &currentSong->paramManager);
+diff --git a/src/deluge/processing/sound/sound.cpp b/src/deluge/processing/sound/sound.cpp
+index 37ec129d..32115ac9 100644
+--- a/src/deluge/processing/sound/sound.cpp
++++ b/src/deluge/processing/sound/sound.cpp
+@@ -156,6 +156,7 @@ Sound::Sound() : patcher(&patchableInfoForSound) {
+ 	timeStartedSkippingRenderingArp = AudioEngine::audioSampleTimer;
+ 
+ 	paramLPF.p = PARAM_LPF_OFF;
++	filterGlide.active = 0;
+ 
+ 	doneReadingFromFile();
+ }
+@@ -2130,6 +2131,17 @@ void Sound::notifyValueChangeViaLPF(int32_t p, bool shouldDoParamLPF, ModelStack
+ 		goto dontDoLPF;
+ 	}
+ 
++	// mastertune v18: a filter param glides to its new value (doFilterGlide()), from wherever it is now; the patcher
++	// takes it from filterGlide until it's there
++	if (int32_t i = filterGlideIndex(p); i >= 0) {
++		if (paramLPF.p == p) { // (not since v18: the filter params don't take the param LPF)
++			oldValue = paramLPF.currentValue;
++			paramLPF.p = PARAM_LPF_OFF;
++		}
++		filterGlide.start(i, oldValue);
++		return;
++	}
++
+ 	if (!shouldDoParamLPF) {
+ 		// If param LPF was active for this param, stop it
+ 		if (paramLPF.p == p) {
+@@ -2195,6 +2207,39 @@ void Sound::doParamLPF(int32_t numSamples, ModelStackWithSoundFlags* modelStack)
+ 	}
+ }
+ 
++// mastertune v18: the filter params that glide move on by this block's length, and tell the patcher, as the param LPF
++// does (see dsp/filter/param_glide.h)
++void Sound::doFilterGlide(int32_t numSamples, ModelStackWithSoundFlags* modelStack) {
++	if (!filterGlide.active) {
++		return;
++	}
++	const float k = deluge::dsp::filter::FilterParamGlide::blockFactor(numSamples);
++	PatchedParamSet* patchedParams = modelStack->paramManager->getPatchedParamSet();
++	for (int32_t i = 0; i < deluge::dsp::filter::FilterParamGlide::kNumParams; i++) {
++		if (filterGlide.isActive(i)) {
++			int32_t p = kFilterGlideParams[i];
++			int32_t oldValue = filterGlide.value[i];
++			int32_t newValue = filterGlide.advance(i, patchedParams->getValue(p), k);
++			patchedParamPresetValueChanged(p, modelStack, oldValue, newValue);
++		}
++	}
++}
++
++// Every glide at its end at once (as stopParamLPF(); modelStack may be NULL)
++void Sound::stopFilterGlide(ModelStackWithSoundFlags* modelStack) {
++	uint8_t was = filterGlide.active;
++	filterGlide.active = 0; // first: the patcher reads the params' own values from here on
++	if (was && modelStack) {
++		PatchedParamSet* patchedParams = modelStack->paramManager->getPatchedParamSet();
++		for (int32_t i = 0; i < deluge::dsp::filter::FilterParamGlide::kNumParams; i++) {
++			if ((was >> i) & 1) {
++				int32_t p = kFilterGlideParams[i];
++				patchedParamPresetValueChanged(p, modelStack, filterGlide.value[i], patchedParams->getValue(p));
++			}
++		}
++	}
++}
++
+ // Unusually, modelStack may be supplied as NULL, because when unassigning all voices e.g. on song swap, we won't have
+ // it.
+ void Sound::stopParamLPF(ModelStackWithSoundFlags* modelStack) {
+@@ -2503,6 +2548,7 @@ void Sound::render(ModelStackWithThreeMainThings* modelStack, StereoSample* outp
+ 	}
+ 
+ 	doParamLPF(numSamples, modelStackWithSoundFlags);
++	doFilterGlide(numSamples, modelStackWithSoundFlags);
+ }
+ 
+ // This is virtual, and gets extended by drums!
+@@ -2522,6 +2568,7 @@ void Sound::startSkippingRendering(ModelStackWithSoundFlags* modelStack) {
+ 	setSkippingRendering(true);
+ 
+ 	stopParamLPF(modelStack);
++	stopFilterGlide(modelStack);
+ }
+ 
+ void Sound::stopSkippingRendering(ArpeggiatorSettings* arpSettings) {
+diff --git a/src/deluge/processing/sound/sound.h b/src/deluge/processing/sound/sound.h
+index efacc2d6..4eb43000 100644
+--- a/src/deluge/processing/sound/sound.h
++++ b/src/deluge/processing/sound/sound.h
+@@ -17,6 +17,8 @@
+ 
+ #pragma once
+ 
++#include "dsp/filter/param_glide.h"
++
+ #include "definitions_cxx.hpp"
+ #include "model/mod_controllable/mod_controllable_audio.h"
+ #include "model/sample/sample_recorder.h"
+@@ -72,6 +74,32 @@ public:
+ 	Patcher patcher;
+ 
+ 	ParamLPF paramLPF;
++	// mastertune v18: the filters' params glide to a new value (dsp/filter/param_glide.h); the patcher takes them from
++	// here while they do (getSmoothedPatchedParamValue())
++	deluge::dsp::filter::FilterParamGlide filterGlide;
++	// Which FilterParamGlide param p is (-1: none)
++	static int32_t filterGlideIndex(int32_t p) {
++		switch (p) {
++		case deluge::modulation::params::LOCAL_LPF_FREQ:
++			return 0;
++		case deluge::modulation::params::LOCAL_LPF_RESONANCE:
++			return 1;
++		case deluge::modulation::params::LOCAL_LPF_MORPH:
++			return 2;
++		case deluge::modulation::params::LOCAL_HPF_FREQ:
++			return 3;
++		case deluge::modulation::params::LOCAL_HPF_RESONANCE:
++			return 4;
++		case deluge::modulation::params::LOCAL_HPF_MORPH:
++			return 5;
++		default:
++			return -1;
++		}
++	}
++	static constexpr uint8_t kFilterGlideParams[deluge::dsp::filter::FilterParamGlide::kNumParams] = {
++	    deluge::modulation::params::LOCAL_LPF_FREQ,  deluge::modulation::params::LOCAL_LPF_RESONANCE,
++	    deluge::modulation::params::LOCAL_LPF_MORPH, deluge::modulation::params::LOCAL_HPF_FREQ,
++	    deluge::modulation::params::LOCAL_HPF_RESONANCE, deluge::modulation::params::LOCAL_HPF_MORPH};
+ 
+ 	Source sources[kNumSources];
+ 
+@@ -272,9 +300,13 @@ public:
+ 		if (paramLPF.p == p) {
+ 			return paramLPF.currentValue;
+ 		}
+-		else {
+-			return paramManager->getPatchedParamSet()->getValue(p);
++		if (filterGlide.active) [[unlikely]] {
++			int32_t i = filterGlideIndex(p);
++			if (i >= 0 && filterGlide.isActive(i)) {
++				return filterGlide.value[i];
++			}
+ 		}
++		return paramManager->getPatchedParamSet()->getValue(p);
+ 	}
+ 
+ 	void notifyValueChangeViaLPF(int32_t p, bool shouldDoParamLPF, ModelStackWithThreeMainThings const* modelStack,
+@@ -315,6 +347,8 @@ private:
+ 	void getArpBackInTimeAfterSkippingRendering(ArpeggiatorSettings* arpSettings);
+ 	void doParamLPF(int32_t numSamples, ModelStackWithSoundFlags* modelStack);
+ 	void stopParamLPF(ModelStackWithSoundFlags* modelStack);
++	void doFilterGlide(int32_t numSamples, ModelStackWithSoundFlags* modelStack);
++	void stopFilterGlide(ModelStackWithSoundFlags* modelStack);
+ 	bool renderingVoicesInStereo(ModelStackWithSoundFlags* modelStack);
+ 	void setupDefaultExpressionPatching(ParamManager* paramManager);
+ 	void pushSwitchActionOnEncoderForParam(int32_t p, bool on, ModelStackWithThreeMainThings* modelStack);
+-- 
+2.43.0
+

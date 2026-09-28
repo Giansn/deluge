@@ -1,0 +1,64 @@
+From 0b93e91cc1623e4b783c6a6edfb40847b480fd3d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 00:17:50 +0000
+Subject: [PATCH 092/112] HPF: the HP ladder's resonance and its level
+ normalisation to full resolution
+
+1.2.1 cut the HPF's resonance to 256 steps (FilterSet::setConfig(), against the rustle of per-block jumps, which the
+per-sample coefficient ramps now avoid) and normalised the output with 2^31 / (resonance >> 23), 1 / resonance to 8
+bits: a modulated or automated HPF resonance moved the level in steps of up to 0.77 dB (spec point 14). Now the
+resonance keeps its resolution and the normalisation is 2^31 / (x - k / x), x = resonance / 2^23, in double: k keeps
+the level at the minimum resonance (every HPF at resonance 0 or 1, 1.2.1's 1 / 8) exactly and falls away above, where
+1.2.1's steps are small: within 0.14 dB of 1.2.1 at every knob value 0..50, within half its own step in between.
+tests/filters filter_neutral hpres (level at 500 Hz, 360 resonances 0..45, step against the neighbours' slope):
+v17 0.82 dB, now 0.085 (the bend where the resonance leaves its minimum).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter_set.cpp |  6 ++++--
+ src/deluge/dsp/filter/hpladder.cpp   | 11 ++++++++++-
+ 2 files changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/filter_set.cpp b/src/deluge/dsp/filter/filter_set.cpp
+index e0b2e526..4bf4a9e7 100644
+--- a/src/deluge/dsp/filter/filter_set.cpp
++++ b/src/deluge/dsp/filter/filter_set.cpp
+@@ -349,8 +349,10 @@ int32_t FilterSet::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMode
+ 	lpfMode_ = lpfmode;
+ 	hpfMode_ = hpfmode;
+ 	routing_ = routing;
+-	// Insanely, having changes happen in the small bytes too often causes rustling
+-	hpfResonance = (hpfResonance >> 21) << 21;
++	// 1.2.1 cut the HPF's resonance to 256 steps here ("having changes happen in the small bytes too often causes
++	// rustling": each block's change jumped). mastertune v18: the coefficients move per sample from block to block, so
++	// the resonance keeps its full resolution: a modulated or automated one no longer moves in steps of up to 0.8 dB
++	// (tests/filters filter_neutral hpres)
+ 
+ 	if (LPFOn) {
+ 		if ((lpfMode_ == FilterMode::SVF_BAND) || (lpfMode_ == FilterMode::SVF_NOTCH)) {
+diff --git a/src/deluge/dsp/filter/hpladder.cpp b/src/deluge/dsp/filter/hpladder.cpp
+index 511f3653..509b6b38 100644
+--- a/src/deluge/dsp/filter/hpladder.cpp
++++ b/src/deluge/dsp/filter/hpladder.cpp
+@@ -41,7 +41,16 @@ q31_t HpLadderFilter::setConfig(q31_t hpfFrequency, q31_t hpfResonance, FilterMo
+ 	// Extra feedback
+ 	hpfProcessedResonance = multiply_32x32_rshift32(hpfProcessedResonance, extraFeedback) << 1;
+ 
+-	hpfDivideByProcessedResonance = (q31_t)(2147483648.0 / (double)(hpfProcessedResonance >> (23)));
++	// The output's normalisation, 1 / resonance. 1.2.1 divided by hpfProcessedResonance >> 23, an integer from 8 to
++	// 143: 1 / resonance to 8 bits, in steps of up to 0.8 dB as the resonance moves (a modulated or automated one steps
++	// audibly). mastertune v18: to full resolution, 2^31 / (x - k / x), x = hpfProcessedResonance / 2^23. k keeps the
++	// level at the minimum resonance (x 8.94, 1.2.1's 1 / 8: every HPF with its resonance at 0 or 1) exactly as it was,
++	// and falls away as the resonance goes up, where the steps are small: within 0.14 dB of 1.2.1's at every value
++	// the knob sets (0 to 50), within half of 1.2.1's own step in between
++	constexpr double kMinX = 75000000.0 / 8388608.0; // the minimum resonance's x (134217728 * extraFeedback)
++	constexpr double kK = (kMinX - 8.0) * kMinX;
++	const double x = (double)hpfProcessedResonance / 8388608.0;
++	hpfDivideByProcessedResonance = (q31_t)std::lround(2147483648.0 / (x - kK / x));
+ 
+ 	// 1 = 536870912
+ 	int32_t moveabilityTimesProcessedResonance = multiply_32x32_rshift32(hpfProcessedResonanceUnaltered, fc);
+-- 
+2.43.0
+

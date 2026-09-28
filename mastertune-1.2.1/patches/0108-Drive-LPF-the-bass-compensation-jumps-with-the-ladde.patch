@@ -1,0 +1,37 @@
+From 8f2ac51c8532d3329fa85684efa5478d89b078a6 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 08:29:45 +0000
+Subject: [PATCH 108/112] Drive LPF: the bass compensation jumps with the
+ ladder where the oversampling switches
+
+The compensation's coefficients (k G^4, c) ramped from the last block's even where the ladder's own coefficients jump
+(startBlock(): no last configuration, or the oversampling switched, which FilterSet crossfades). Across a switch the
+last block's values belong to the other rate's G, so for one block the compensation did not match the loop it
+compensates. Now it jumps with the ladder there. Steady output unchanged (tests/filters drive, filter_neutral static).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/lpladder.cpp | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/deluge/dsp/filter/lpladder.cpp b/src/deluge/dsp/filter/lpladder.cpp
+index d62423ca..922717b1 100644
+--- a/src/deluge/dsp/filter/lpladder.cpp
++++ b/src/deluge/dsp/filter/lpladder.cpp
+@@ -244,6 +244,12 @@ void LpLadderFilter::renderDrive(q31_t* startSample, q31_t* endSample, int32_t s
+ 	if (frames <= 0) {
+ 		return;
+ 	}
++	if (!haveLast_ || lastOversampling_ != doOversampling) {
++		// Where the ladder's own coefficients jump (startBlock(): no last configuration, or the oversampling switched,
++		// which FilterSet crossfades), the compensation jumps with them: the last block's k G^4 and c belong to the
++		// other rate's G and don't match the loop they compensate
++		compLive_ = false;
++	}
+ 	if (!doOversampling) {
+ 		halfbandsLive_ = false;
+ 		driveCompensate(startSample, frames, stereo ? 2 : stride, stereo ? 2 : 1);
+-- 
+2.43.0
+

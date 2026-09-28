@@ -1,0 +1,1062 @@
+From 63485be9f2af55425b2979a463bedf59129c8ffa Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 04:06:15 +0000
+Subject: [PATCH 099/112] Volume: every gain after the filters moves per
+ sample, rounded, the same in sounds, kit rows, kits, audio tracks and the
+ song
+
+The volume stage (ModControllableAudio::processReverbSendAndVolume(), dsp/gain_ramp.h) takes one target per side
+per block, v17's gain from the params (post-FX volume with the filters' compensation and the kit/track factor,
+times the sidechain, times the pan for kits and tracks), and ramps it per sample from where the last block ended,
+landing exactly on the target (32.32 steps from a double quotient, no 64-bit division). Knob, automation, cables
+and several params at once all only move the target. Moves of more than 6 dB (to or from 0 included) take at least
+5 ms (221 samples), across blocks. The reverb send ramps the same way.
+
+The signal times the gain is rounded once with the gain normalised: a Q31 multiplier and a headroom shift s (0 up
+to unity gain), vqrdmulh + vqshl, saturating (v17: smmul << 5, truncated to 32 LSBs, about -116 dBFS of error
+with a DC bias; now within 0.5 LSB up to unity, 2^(s-1) above: about -152 dBFS). Unity gain returns the input bit
+for bit (below 2^30). Sums saturate instead of wrapping.
+
+The sound's pan (before its effects, as in v17) ramps per sample too, rounded; centred it multiplies by nothing, as
+before. The master compressor's gain lands exactly on its target per block and multiplies rounded (smmulr with a
+normalised multiplier; v17: truncated step and product). Where the song's/kits' filters ramp their gain
+compensation themselves, the volume stage and the master compressor start from the last gain as if it had had this
+block's compensation (FilterSet::gainRampStart()), so the two ramps don't both move it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/compressor/rms_feedback.cpp    |  47 ++-
+ src/deluge/dsp/compressor/rms_feedback.h      |   5 +-
+ src/deluge/dsp/filter/filter_set.cpp          |  11 +-
+ src/deluge/dsp/filter/filter_set.h            |   7 +
+ src/deluge/dsp/gain_ramp.h                    | 322 ++++++++++++++++++
+ .../global_effectable_for_clip.cpp            |  13 +-
+ .../mod_controllable_audio.cpp                | 137 +++++---
+ .../mod_controllable/mod_controllable_audio.h |  10 +-
+ .../model/mod_controllable/track_fx_kernels.h |  87 +----
+ .../processing/engines/audio_engine.cpp       |   6 +-
+ src/deluge/processing/sound/sound.cpp         |  83 ++---
+ src/deluge/processing/sound/sound.h           |   8 +-
+ 12 files changed, 520 insertions(+), 216 deletions(-)
+ create mode 100644 src/deluge/dsp/gain_ramp.h
+
+diff --git a/src/deluge/dsp/compressor/rms_feedback.cpp b/src/deluge/dsp/compressor/rms_feedback.cpp
+index 3e0ae0c6..2875b4fb 100644
+--- a/src/deluge/dsp/compressor/rms_feedback.cpp
++++ b/src/deluge/dsp/compressor/rms_feedback.cpp
+@@ -16,7 +16,9 @@
+  */
+ 
+ #include "dsp/compressor/rms_feedback.h"
++#include "dsp/gain_ramp.h"
+ #include "util/fixedpoint.h"
++#include <algorithm>
+ StereoSample dryBuffer[SSI_TX_BUFFER_NUM_SAMPLES]{0};
+ 
+ RMSFeedbackCompressor::RMSFeedbackCompressor() {
+@@ -57,7 +59,7 @@ void RMSFeedbackCompressor::renderVolNeutral(StereoSample* buffer, uint16_t numS
+ }
+ constexpr uint8_t saturationAmount = 3;
+ void RMSFeedbackCompressor::render(StereoSample* buffer, uint16_t numSamples, q31_t volAdjustL, q31_t volAdjustR,
+-                                   q31_t finalVolume) {
++                                   q31_t finalVolume, float gainRampStart) {
+ 	// make a copy for blending if we need to
+ 	if (wet != ONE_Q31) {
+ 		memcpy(dryBuffer, buffer, numSamples * sizeof(StereoSample));
+@@ -92,23 +94,44 @@ void RMSFeedbackCompressor::render(StereoSample* buffer, uint16_t numSamples, q3
+ 	float finalVolumeL = gain * float(volAdjustL >> 9);
+ 	float finalVolumeR = gain * float(volAdjustR >> 9);
+ 
+-	// The amount we need to step the current volume so that by the end of the rendering window
+-	q31_t amplitudeIncrementL = ((int32_t)((finalVolumeL - (currentVolumeL >> 8)) / float(numSamples))) << 8;
+-	q31_t amplitudeIncrementR = ((int32_t)((finalVolumeR - (currentVolumeR >> 8)) / float(numSamples))) << 8;
++	// mastertune v18: the gain (5.26) moves per sample from where the last block left it (taken as if it had had
++	// this block's filter gain compensation in it, see FilterSet::gainRampStart()) to this block's, landing on it
++	// exactly (dsp/gain_ramp.h's RampSteps), and the signal times the gain is rounded once (v17: the step truncated,
++	// the product truncated to 16 LSBs): smmulr by the gain normalised to Q31 with a headroom shift s (the gain is at
++	// most 2^(27 + s), unity being 2^28: s = 0 up to -6 dB, rounded to 1 LSB; 1 up to 0 dB, rounded to 2 LSBs; ...),
++	// then shifted by s, saturating
++	if (gainRampStart > 0.0f && gainRampStart != 1.0f) {
++		currentVolumeL = (q31_t)std::clamp((double)currentVolumeL / (double)gainRampStart, 0.0, 2147483647.0);
++		currentVolumeR = (q31_t)std::clamp((double)currentVolumeR / (double)gainRampStart, 0.0, 2147483647.0);
++	}
++	q31_t targetL = (q31_t)std::clamp(finalVolumeL * 256.0f, 0.0f, 2147483520.0f);
++	q31_t targetR = (q31_t)std::clamp(finalVolumeR * 256.0f, 0.0f, 2147483520.0f);
++	deluge::dsp::gain::RampSteps1 rampL(currentVolumeL, targetL, numSamples);
++	deluge::dsp::gain::RampSteps1 rampR(currentVolumeR, targetR, numSamples);
++	// gains up to 2^(27 + s): gain << (4 - s) fits (at most 2^31, which saturates to 2^31 - 1)
++	const int32_t s = deluge::dsp::gain::headroomShift<27>(
++	    std::max(std::max(currentVolumeL, targetL), std::max(currentVolumeR, targetR)));
++	const int32_t toMultiplier = 4 - s;
++	currentVolumeL = targetL;
++	currentVolumeR = targetR;
+ 
+ 	StereoSample* thisSample = buffer;
+ 	StereoSample* drySample = dryBuffer;
+ 	StereoSample* bufferEnd = buffer + numSamples;
+ 
+ 	do {
+-		currentVolumeL += amplitudeIncrementL;
+-		currentVolumeR += amplitudeIncrementR;
+-		// Need to shift left by 4 because currentVolumeL is a 5.26 signed number rather than a 1.30 signed.
+-		thisSample->l = multiply_32x32_rshift32(thisSample->l, currentVolumeL) << 4;
+-		thisSample->l = getTanHAntialiased(thisSample->l, &lastSaturationTanHWorkingValue[0], saturationAmount);
+-
+-		thisSample->r = multiply_32x32_rshift32(thisSample->r, currentVolumeR) << 4;
+-		thisSample->r = getTanHAntialiased(thisSample->r, &lastSaturationTanHWorkingValue[1], saturationAmount);
++		// currentVolume is a 5.26 signed number rather than a 1.30 signed: the product shifted by 28, not 32. The
++		// multiplier: gain << (4 - s), at most 2^31 (saturating to 2^31 - 1); smmulr: round(x * gain / 2^(28 + s))
++		q31_t mL = (q31_t)std::min<uint32_t>((uint32_t)rampL.next() << toMultiplier, (uint32_t)INT32_MAX);
++		q31_t mR = (q31_t)std::min<uint32_t>((uint32_t)rampR.next() << toMultiplier, (uint32_t)INT32_MAX);
++		q31_t yL = multiply_32x32_rshift32_rounded(thisSample->l, mL);
++		q31_t yR = multiply_32x32_rshift32_rounded(thisSample->r, mR);
++		if (s) {
++			yL = lshiftAndSaturateUnknown(yL, s);
++			yR = lshiftAndSaturateUnknown(yR, s);
++		}
++		thisSample->l = getTanHAntialiased(yL, &lastSaturationTanHWorkingValue[0], saturationAmount);
++		thisSample->r = getTanHAntialiased(yR, &lastSaturationTanHWorkingValue[1], saturationAmount);
+ 		// wet/dry blend
+ 		if (wet != ONE_Q31) {
+ 			thisSample->l = multiply_32x32_rshift32(thisSample->l, wet);
+diff --git a/src/deluge/dsp/compressor/rms_feedback.h b/src/deluge/dsp/compressor/rms_feedback.h
+index 867a12bd..39bddb9f 100644
+--- a/src/deluge/dsp/compressor/rms_feedback.h
++++ b/src/deluge/dsp/compressor/rms_feedback.h
+@@ -54,7 +54,10 @@ public:
+ 	/// @param volAdjustL Linear gain to apply to the left channel as a 4.27 signed fixed point number.
+ 	/// @param volAdjustL Linear gain to apply to the right channel as a 4.27 signed fixed point number.
+ 	/// @param finalVolume Linear peak-to-peak volume scale, as a 3.29 fixed-point integer.
+-	void render(StereoSample* buffer, uint16_t numSamples, q31_t volAdjustL, q31_t volAdjustR, q31_t finalVolume);
++	/// @param gainRampStart FilterSet::gainRampStart() of filters before that ramp their gain compensation (in
++	/// volAdjust) over the block themselves (the song's), else 1 (mastertune v18)
++	void render(StereoSample* buffer, uint16_t numSamples, q31_t volAdjustL, q31_t volAdjustR, q31_t finalVolume,
++	            float gainRampStart = 1.0f);
+ 
+ 	/// Render the compressor with neutral left/right gain and with the finalVolume tweaked so the compressor applies
+ 	/// 0db gain change at theshold zero. Used by the per-clip compressors because the clip volume is applied without
+diff --git a/src/deluge/dsp/filter/filter_set.cpp b/src/deluge/dsp/filter/filter_set.cpp
+index 4bf4a9e7..a09fb5a3 100644
+--- a/src/deluge/dsp/filter/filter_set.cpp
++++ b/src/deluge/dsp/filter/filter_set.cpp
+@@ -137,8 +137,8 @@ void FilterSet::rampGainCompensation(q31_t* startSample, q31_t* endSample) {
+ 	bool had = haveRenderedGain_;
+ 	renderedGainCompensation_ = gainCompensation_;
+ 	haveRenderedGain_ = true;
+-	// (While a crossfade runs, the filters as they were keep their own gain: see renderFade())
+-	if (!had || gainCompensation_ <= 0.0f || last <= 0.0f || fadeSlot_ != 0) {
++	gainRampStart_ = 1.0f;
++	if (!had || gainCompensation_ <= 0.0f || last <= 0.0f) {
+ 		return;
+ 	}
+ 	float ratio = last / gainCompensation_;
+@@ -146,6 +146,13 @@ void FilterSet::rampGainCompensation(q31_t* startSample, q31_t* endSample) {
+ 		return;
+ 	}
+ 	ratio = std::clamp(ratio, 0.25f, 3.99f);
++	// (mastertune v18: the volume stage after the filters ramps the gain from where the last block left it, which had
++	// the last compensation in it: it takes it as if it had this one's, see gainRampStart())
++	gainRampStart_ = ratio;
++	// (While a crossfade runs, the filters as they were keep their own gain: see renderFade())
++	if (fadeSlot_ != 0) {
++		return;
++	}
+ 	constexpr q31_t kOne = 1 << 29;
+ 	int32_t frames = (int32_t)(endSample - startSample) >> 1;
+ 	if (frames <= 0) {
+diff --git a/src/deluge/dsp/filter/filter_set.h b/src/deluge/dsp/filter/filter_set.h
+index 225b0df4..4d105981 100644
+--- a/src/deluge/dsp/filter/filter_set.h
++++ b/src/deluge/dsp/filter/filter_set.h
+@@ -75,6 +75,12 @@ public:
+ 	                      int32_t hpfSaturation = HpLadderFilter::kSaturationVoice,
+ 	                      int32_t lpfSaturation = LpLadderFilter::kSaturationVoice, bool rampGain = false);
+ 
++	/// mastertune v18: after renderLongStereo() with rampGain, what the filters' output started this block at against
++	/// the compensation setConfig() gave for it (the last block's compensation over this one's, 1 if it stayed). The
++	/// volume stage after the filters applies that gain, ramped per sample from where its last block ended, which had
++	/// the last compensation in it: it divides that start by this, so the filters' ramp and its own don't both move it
++	[[nodiscard]] float gainRampStart() const { return gainRampStart_; }
++
+ 	// used to check whether the filter is used at all (isOn(): also while a filter switched off fades out)
+ 	inline bool isLPFOn() { return LPFOn; }
+ 	inline bool isHPFOn() { return HPFOn; }
+@@ -107,6 +113,7 @@ private:
+ 	float gainCompensation_;
+ 	float renderedGainCompensation_;
+ 	bool haveRenderedGain_;
++	float gainRampStart_ = 1.0f;
+ 
+ 	void rampGainCompensation(q31_t* startSample, q31_t* endSample);
+ 
+diff --git a/src/deluge/dsp/gain_ramp.h b/src/deluge/dsp/gain_ramp.h
+new file mode 100644
+index 00000000..63747438
+--- /dev/null
++++ b/src/deluge/dsp/gain_ramp.h
+@@ -0,0 +1,322 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++// mastertune v18: the gains after the filters (a sound's, a kit row's, a kit's, an audio track's and the song's
++// volume, with the pan, the sidechain ducking and the filters' gain compensation in it) move per sample.
++//
++// - One target per channel per block: whatever sets the params (knob, automation, patch cables, MIDI, several at
++//   once) only changes the target; GainRamp takes the gain there over the block, linearly in amplitude, from where the
++//   last block left it. The last sample is exactly on the target (see rampSteps()).
++// - A move by more than 6 dB (a factor 2, to or from 0 included) takes at least kMinRampSamples (5 ms), over several
++//   blocks if the blocks are shorter: the gain goes on along the straight line from where it is to the target, so a
++//   target that keeps moving (the sidechain) is followed like by a one-pole, and a jump from silence to full level
++//   doesn't click.
++// - The signal times the gain is rounded once, with the gain normalised: a Q31 multiplier m = gain * 2^(31 - unity
++//   bits - s) and a headroom shift s (0 for gains up to 1), out = round(signal * m / 2^31) << s, saturating (NEON
++//   vqrdmulh, vqshl). Up to unity gain the output is within half an LSB of the exact product; above it within 2^(s-1)
++//   (1 LSB up to +6 dB, 2 up to +12 dB: still below half an LSB of the 24-bit output). v17 truncated the product to
++//   32 LSBs (2^5) at every gain, with a DC bias of 16: about -116 dBFS of error, whatever the level. A gain of
++//   exactly 1 gives the input back (m = 2^31 - 1: exact below 2^30, 36 dB over the output's clip).
++//   The gains themselves are the ones v17 computed from the params, so a stored value gives the same level as in v17.
++
++#pragma once
++
++#include "dsp/stereo_sample.h"
++#include <algorithm>
++#include <arm_neon.h>
++#include <cmath>
++#include <cstdint>
++
++namespace deluge::dsp::gain {
++
++// 5 ms at 44.1 kHz: the shortest time in which a gain moves by more than 6 dB
++constexpr int32_t kMinRampSamples = 221;
++
++// Unity in the volume stages' gains (v17's: the product was multiply_32x32_rshift32(signal, gain) << 5)
++constexpr int32_t kVolumeShift = 27;
++// ... and in the pan's amplitudes (shouldDoPanning(): 1073741823 is the centre)
++constexpr int32_t kPanShift = 30;
++
++// Whether gains a and b (>= 0) are more than 6 dB apart: one more than twice the other, a move from or to 0 included
++[[gnu::always_inline]] inline bool isBigStep(int32_t a, int32_t b) {
++	int64_t lo = std::min(a, b);
++	int64_t hi = std::max(a, b);
++	return hi > 2 * lo;
++}
++
++// One gain moving towards its target, block by block
++class GainRamp {
++public:
++	// The gain at the end of the next block of n samples, on the way to target (which the caller sets per block).
++	// The first block after restart() takes the target at once.
++	int32_t advance(int32_t target, int32_t n) {
++		if (!started_) [[unlikely]] {
++			current_ = target_ = target;
++			left_ = 0;
++			started_ = true;
++			return current_;
++		}
++		if (target != target_) {
++			target_ = target;
++			left_ = isBigStep(current_, target) ? std::max(kMinRampSamples, n) : n;
++		}
++		if (left_ <= n) {
++			current_ = target_;
++			left_ = 0;
++		}
++		else {
++			// n / left of the way along the straight line to the target, rounded
++			int64_t d = (int64_t)(target_ - current_) * n;
++			current_ += (int32_t)((d + (d >= 0 ? left_ / 2 : -(left_ / 2))) / left_);
++			left_ -= n;
++		}
++		return current_;
++	}
++	// The next block takes its target at once (after silence: nothing to ramp from)
++	void restart() { started_ = false; }
++	// Takes the gain where the last block left it as if a factor in it had been 1 / startFactor instead: where the
++	// stage before moves its output by startFactor to 1 over the block itself (the filters' gain compensation, see
++	// FilterSet::gainRampStart()), so that the two ramps together start where the last block ended
++	void rescaleStart(float startFactor) {
++		if (started_ && startFactor > 0.0f && startFactor != 1.0f) {
++			current_ = (int32_t)std::clamp((double)current_ / (double)startFactor, 0.0, 2147483647.0);
++		}
++	}
++	[[nodiscard]] int32_t current() const { return current_; }
++	[[nodiscard]] bool started() const { return started_; }
++
++private:
++	int32_t current_ = 0;
++	int32_t target_ = 0;
++	int32_t left_ = 0; // samples left of the move to target_, 0 when there
++	bool started_ = false;
++};
++
++// The headroom shift for gains up to peak (unity 2^kShift): the smallest s >= 0 with peak <= 2^(kShift + s)
++template <int32_t kShift>
++[[gnu::always_inline]] inline int32_t headroomShift(int32_t peak) {
++	int32_t s = 0;
++	while (s < 31 - kShift && (int64_t)peak > ((int64_t)1 << (kShift + s))) {
++		s++;
++	}
++	return s;
++}
++
++// The Q31 multiplier for a gain (unity 2^kShift) with headroom shift s: gain << (31 - kShift - s), saturating (a gain
++// of exactly 2^(kShift + s) gives 2^31 - 1)
++template <int32_t kShift>
++[[gnu::always_inline]] inline int32_t multiplier(int32_t g, int32_t s) {
++	int64_t m = (int64_t)g << (31 - kShift - s);
++	return (int32_t)std::min<int64_t>(m, INT32_MAX);
++}
++
++// round(x * m / 2^31) << s, saturating: vqrdmulh's arithmetic, one sample
++[[gnu::always_inline]] inline int32_t applyMultiplier(int32_t x, int32_t m, int32_t s) {
++	int64_t r = (((int64_t)x * m + ((int64_t)1 << 30)) >> 31) << s;
++	return (int32_t)std::clamp<int64_t>(r, INT32_MIN, INT32_MAX);
++}
++
++// The same on four samples: vqrdmulh (the doubled product's high word, rounded), then vqshl by s (shiftV = s)
++[[gnu::always_inline]] inline int32x4_t applyMultiplier4(int32x4_t x, int32x4_t m, int32x4_t shiftV) {
++	return vqshlq_s32(vqrdmulhq_s32(x, m), shiftV);
++}
++
++// A gain's steps across a block of n samples, from start (the gain before the block) to end: sample i (1 to n) takes
++// start + (end - start) * i / n, rounded, so sample n takes end exactly. Kept as 32.32 fixed point, from start + 1/2:
++// the step is (end - start) * 2^32 / n to within 2^11 (in double precision: the gains are >= 0, the difference has
++// at most 31 bits, the quotient's rounding error is below 2^-21 of a unit), so n steps miss the difference * 2^32 by
++// less than n * 2^11 <= 2^18, far less than the half added for the rounding: the last sample's high word is end. (No
++// 64-bit division, which the Cortex-A9 only has as a slow library call: one double division, native conversions.) Four
++// samples at a time: the two halves of acc hold the sums for samples i, i + 1 and i + 2, i + 3.
++class RampSteps {
++public:
++	// The step: (end - start) * 2^32 / n, in 32.32 (gains are >= 0, so |q| < 2^31: its whole part fits an int32_t)
++	static int64_t stepFor(int32_t start, int32_t end, int32_t n) {
++		if (end == start) {
++			return 0;
++		}
++		double q = ((double)end - (double)start) / (double)n;
++		double whole = std::floor(q);
++		return (int64_t)((uint64_t)(uint32_t)(int32_t)whole << 32) + (uint32_t)((q - whole) * 4294967296.0);
++	}
++
++	RampSteps(int32_t start, int32_t end, int32_t n) {
++		step_ = stepFor(start, end, n);
++		int64_t base = ((int64_t)start << 32) + ((int64_t)1 << 31);
++		int64x2_t s = vdupq_n_s64(step_);
++		acc0_ = vaddq_s64(vdupq_n_s64(base),
++		                  vcombine_s64(vcreate_s64((uint64_t)step_), vcreate_s64((uint64_t)(2 * step_))));
++		acc1_ = vaddq_s64(acc0_, vaddq_s64(s, s));
++		step4_ = vshlq_n_s64(s, 2);
++		scalar_ = base;
++	}
++	// The next four samples' gains
++	[[gnu::always_inline]] int32x4_t next4() {
++		int32x4_t g = vcombine_s32(vshrn_n_s64(acc0_, 32), vshrn_n_s64(acc1_, 32));
++		acc0_ = vaddq_s64(acc0_, step4_);
++		acc1_ = vaddq_s64(acc1_, step4_);
++		scalar_ += step_ << 2;
++		return g;
++	}
++	// The next sample's gain
++	[[gnu::always_inline]] int32_t next() {
++		scalar_ += step_;
++		return (int32_t)(scalar_ >> 32);
++	}
++
++private:
++	int64x2_t acc0_;
++	int64x2_t acc1_;
++	int64x2_t step4_;
++	int64_t step_;
++	int64_t scalar_;
++};
++
++// RampSteps one sample at a time (scalar loops)
++class RampSteps1 {
++public:
++	RampSteps1(int32_t start, int32_t end, int32_t n)
++	    : step_(RampSteps::stepFor(start, end, n)), acc_(((int64_t)start << 32) + ((int64_t)1 << 31)) {}
++	[[gnu::always_inline]] int32_t next() {
++		acc_ += step_;
++		return (int32_t)(acc_ >> 32);
++	}
++
++private:
++	int64_t step_;
++	int64_t acc_;
++};
++
++// The volume stage of a sound, kit row, kit, audio track or the song (ModControllableAudio::
++// processReverbSendAndVolume()): the reverb send and the volume, both ramped from start to end over the block.
++// Per sample:
++//   reverb[i] += multiply_32x32_rshift32(in.l + in.r, send) << 1   (kReverb; as v17, the adds and shift saturating)
++//   o = in * gain / 2^27, rounded (applyMultiplier), per side; out = o (in place) or out += o (kAdd, saturating)
++// kRamp: the volume moves this block (else start == end on both sides, and the loop takes them as constants);
++// kRampSend: the same for the reverb send; kSameSides: both sides ramp the same (no pan), the left's gains serve both
++template <bool kReverb, bool kAdd, bool kRamp, bool kRampSend, bool kSameSides = false>
++[[gnu::always_inline]] inline void volumeAndSend(const StereoSample* in, StereoSample* out, int32_t numSamples,
++                                                 int32_t* reverb, int32_t sendStart, int32_t sendEnd, int32_t startL,
++                                                 int32_t endL, int32_t startR, int32_t endR) {
++	const int32_t s = headroomShift<kVolumeShift>(std::max(std::max(startL, endL), std::max(startR, endR)));
++	const int32x4_t shiftV = vdupq_n_s32(s);
++	const int32x4_t toMultiplier = vdupq_n_s32(31 - kVolumeShift - s);
++	RampSteps rampL(startL, endL, kRamp ? numSamples : 1);
++	RampSteps rampR(startR, endR, kRamp ? numSamples : 1);
++	RampSteps rampSend(sendStart, sendEnd, kRampSend ? numSamples : 1);
++	const int32x4_t constL = vdupq_n_s32(multiplier<kVolumeShift>(endL, s));
++	const int32x4_t constR = vdupq_n_s32(multiplier<kVolumeShift>(endR, s));
++	const int32x4_t constSend = vdupq_n_s32(sendEnd);
++
++	int32_t numBlocks = numSamples >> 2;
++	const int32_t* inW = &in->l;
++	int32_t* outW = &out->l;
++	for (int32_t b = 0; b < numBlocks; b++) {
++		int32x4x2_t x = vld2q_s32(inW); // val[0]: 4 x l, val[1]: 4 x r
++		inW += 8;
++		if constexpr (kReverb) {
++			int32x4_t sendV = kRampSend ? rampSend.next4() : constSend;
++			// smmul on four lanes: the high words of the 64-bit products
++			int32x4_t sum = vqaddq_s32(x.val[0], x.val[1]);
++			int32x4_t lo = vreinterpretq_s32_s64(vmull_s32(vget_low_s32(sum), vget_low_s32(sendV)));
++			int32x4_t hi = vreinterpretq_s32_s64(vmull_s32(vget_high_s32(sum), vget_high_s32(sendV)));
++			int32x4_t send = vqshlq_n_s32(vuzpq_s32(lo, hi).val[1], 1);
++			vst1q_s32(reverb, vqaddq_s32(vld1q_s32(reverb), send));
++			reverb += 4;
++		}
++		// (a ramp's gains made multipliers: shifted left, saturating, as multiplier() does)
++		int32x4_t mL = kRamp ? vqshlq_s32(rampL.next4(), toMultiplier) : constL;
++		int32x4_t mR = kRamp ? (kSameSides ? mL : vqshlq_s32(rampR.next4(), toMultiplier)) : constR;
++		int32x4_t oL = applyMultiplier4(x.val[0], mL, shiftV);
++		int32x4_t oR = applyMultiplier4(x.val[1], mR, shiftV);
++		if constexpr (kAdd) {
++			int32x4x2_t a = vld2q_s32(outW);
++			a.val[0] = vqaddq_s32(a.val[0], oL);
++			a.val[1] = vqaddq_s32(a.val[1], oR);
++			vst2q_s32(outW, a);
++		}
++		else {
++			int32x4x2_t o = {{oL, oR}};
++			vst2q_s32(outW, o);
++		}
++		outW += 8;
++	}
++
++	// The last 0 to 3 samples, one at a time
++	for (int32_t i = numBlocks << 2; i < numSamples; i++) {
++		StereoSample x = in[i];
++		if constexpr (kReverb) {
++			int32_t sendV = kRampSend ? rampSend.next() : sendEnd;
++			int32_t sum = (int32_t)std::clamp<int64_t>((int64_t)x.l + x.r, INT32_MIN, INT32_MAX);
++			int64_t send = ((int64_t)sum * sendV) >> 32;
++			*reverb = (int32_t)std::clamp<int64_t>(*reverb + (send << 1), INT32_MIN, INT32_MAX);
++			reverb++;
++		}
++		int32_t oL = applyMultiplier(x.l, multiplier<kVolumeShift>(kRamp ? rampL.next() : endL, s), s);
++		int32_t oR = applyMultiplier(x.r, multiplier<kVolumeShift>(kRamp ? rampR.next() : endR, s), s);
++		if constexpr (kAdd) {
++			out[i].l = (int32_t)std::clamp<int64_t>((int64_t)out[i].l + oL, INT32_MIN, INT32_MAX);
++			out[i].r = (int32_t)std::clamp<int64_t>((int64_t)out[i].r + oR, INT32_MIN, INT32_MAX);
++		}
++		else {
++			out[i].l = oL;
++			out[i].r = oR;
++		}
++	}
++}
++
++// A sound's pan (Sound::render(), before its effects, as in v17): an interleaved stereo buffer in place, each side
++// times its amplitude (unity 2^30, at most that: no headroom shift), ramped from start to end over the block
++[[gnu::always_inline]] inline void panInPlace(int32_t* buffer, int32_t numSamples, int32_t startL, int32_t endL,
++                                              int32_t startR, int32_t endR) {
++	RampSteps rampL(startL, endL, numSamples);
++	RampSteps rampR(startR, endR, numSamples);
++	const int32x4_t zero = vdupq_n_s32(0);
++	const int32x4_t one = vdupq_n_s32(31 - kPanShift);
++	int32_t numBlocks = numSamples >> 2;
++	int32_t* w = buffer;
++	for (int32_t b = 0; b < numBlocks; b++) {
++		int32x4x2_t x = vld2q_s32(w);
++		x.val[0] = applyMultiplier4(x.val[0], vqshlq_s32(rampL.next4(), one), zero);
++		x.val[1] = applyMultiplier4(x.val[1], vqshlq_s32(rampR.next4(), one), zero);
++		vst2q_s32(w, x);
++		w += 8;
++	}
++	for (int32_t i = numBlocks << 2; i < numSamples; i++) {
++		buffer[2 * i] = applyMultiplier(buffer[2 * i], multiplier<kPanShift>(rampL.next(), 0), 0);
++		buffer[2 * i + 1] = applyMultiplier(buffer[2 * i + 1], multiplier<kPanShift>(rampR.next(), 0), 0);
++	}
++}
++
++// The same for a mono buffer (the first numSamples values) spread to stereo in place, from the end backwards
++[[gnu::always_inline]] inline void panMonoToStereo(int32_t* buffer, int32_t numSamples, int32_t startL, int32_t endL,
++                                                   int32_t startR, int32_t endR) {
++	// Sample i's gains as RampSteps gives them, computed from the end
++	int64_t stepL = RampSteps::stepFor(startL, endL, numSamples);
++	int64_t stepR = RampSteps::stepFor(startR, endR, numSamples);
++	int64_t accL = ((int64_t)startL << 32) + ((int64_t)1 << 31) + stepL * numSamples;
++	int64_t accR = ((int64_t)startR << 32) + ((int64_t)1 << 31) + stepR * numSamples;
++	for (int32_t i = numSamples - 1; i >= 0; i--) {
++		int32_t x = buffer[i];
++		buffer[2 * i] = applyMultiplier(x, multiplier<kPanShift>((int32_t)(accL >> 32), 0), 0);
++		buffer[2 * i + 1] = applyMultiplier(x, multiplier<kPanShift>((int32_t)(accR >> 32), 0), 0);
++		accL -= stepL;
++		accR -= stepR;
++	}
++}
++
++} // namespace deluge::dsp::gain
+diff --git a/src/deluge/model/global_effectable/global_effectable_for_clip.cpp b/src/deluge/model/global_effectable/global_effectable_for_clip.cpp
+index 3fbf243e..5d6ad786 100644
+--- a/src/deluge/model/global_effectable/global_effectable_for_clip.cpp
++++ b/src/deluge/model/global_effectable/global_effectable_for_clip.cpp
+@@ -50,8 +50,6 @@ bool isSilent(StereoSample const* buffer, int32_t numSamples) {
+ } // namespace
+ 
+ GlobalEffectableForClip::GlobalEffectableForClip() {
+-	postReverbVolumeLastTime = paramNeutralValues[params::GLOBAL_VOLUME_POST_REVERB_SEND];
+-
+ 	lastSaturationTanHWorkingValue[0] = 2147483648;
+ 	lastSaturationTanHWorkingValue[1] = 2147483648;
+ 	renderedLastTime = false;
+@@ -167,7 +165,7 @@ GlobalEffectableForClip::GlobalEffectableForClip() {
+ 
+ 	if (compThreshold > 0) {
+ 		processReverbSendAndVolume(globalEffectableBuffer, numSamples, reverbBuffer, volumePostFX, postReverbVolume,
+-		                           reverbSendAmount, pan, true);
++		                           reverbSendAmount, pan, true, nullptr, filterSet.gainRampStart());
+ 		compressor.renderVolNeutral(globalEffectableBuffer, numSamples, volumePostFX);
+ 		samplesOfSilentEffects = 0;
+ 		addAudio(globalEffectableBuffer, outputBuffer, numSamples);
+@@ -178,12 +176,12 @@ GlobalEffectableForClip::GlobalEffectableForClip() {
+ 			samplesOfSilentEffects = 0;
+ 			// Nothing needs the processed buffer, so the volume stage adds straight into the output
+ 			processReverbSendAndVolume(globalEffectableBuffer, numSamples, reverbBuffer, volumePostFX, postReverbVolume,
+-			                           reverbSendAmount, pan, true, outputBuffer);
++			                           reverbSendAmount, pan, true, outputBuffer, filterSet.gainRampStart());
+ 		}
+ 		else {
+ 			// Silent input: see whether the effects gave out exact silence too
+ 			processReverbSendAndVolume(globalEffectableBuffer, numSamples, reverbBuffer, volumePostFX, postReverbVolume,
+-			                           reverbSendAmount, pan, true);
++			                           reverbSendAmount, pan, true, nullptr, filterSet.gainRampStart());
+ 			if (isSilent(globalEffectableBuffer, numSamples)) {
+ 				samplesOfSilentEffects =
+ 				    std::min<int32_t>(samplesOfSilentEffects + numSamples, kSilentSamplesBeforeSkippingEffects);
+@@ -196,8 +194,6 @@ GlobalEffectableForClip::GlobalEffectableForClip() {
+ 	}
+ 
+ effectsDone:
+-	postReverbVolumeLastTime = postReverbVolume;
+-
+ 	tickParamManagerForClip(modelStack, paramManagerForClip, numSamples, isClipActive);
+ }
+ 
+@@ -294,7 +290,8 @@ void GlobalEffectableForClip::renderWithNothingToRender(ModelStackWithTimelineCo
+ 		AudioEngine::timeThereWasLastSomeReverb = AudioEngine::audioSampleTimer; // As the volume stage would
+ 	}
+ 
+-	postReverbVolumeLastTime = postReverbVolume;
++	// Silence went out: the volume stage takes its gains at once when something sounds again
++	restartVolumeRamps();
+ 
+ 	tickParamManagerForClip(modelStack, paramManagerForClip, numSamples, isClipActive);
+ }
+diff --git a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+index 2169a0f1..b630996a 100644
+--- a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
++++ b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+@@ -18,6 +18,7 @@
+ #include "model/mod_controllable/mod_controllable_audio.h"
+ #include "definitions_cxx.hpp"
+ #include "deluge/model/settings/runtime_feature_settings.h"
++#include "dsp/gain_ramp.h"
+ #include "dsp/stereo_sample.h"
+ #include "gui/l10n/l10n.h"
+ #include "gui/views/automation_view.h"
+@@ -564,81 +565,115 @@ void ModControllableAudio::processFX(StereoSample* buffer, int32_t numSamples, M
+ 	delay.process({buffer, static_cast<size_t>(numSamples)}, delayWorkingState);
+ }
+ 
++// mastertune v18: the volume stage of a sound, kit row, kit, audio track and the song, all the same (dsp/gain_ramp.h).
++// One target per side per block, v17's gains from the params: the post-FX volume (the volume param, the filters' gain
++// compensation, the kit's / audio track's own factor), times the post-reverb-send volume (the sidechain ducking),
++// times the pan's amplitude (kits, audio tracks; a sound pans before its effects, see Sound::render()). Each side and
++// the reverb send move per sample from where the last block left them (GainRamp: exactly onto the target at the
++// block's end, at least 5 ms for more than 6 dB), whatever changed them, knob, automation or cables, one or several.
++// (doAmplitudeIncrement: no longer used, every stage ramps; v17 ramped the sidechain alone, and only where asked.)
++// gainRampStart: FilterSet::gainRampStart() of the filters before, where they ramp their gain compensation themselves
+ void ModControllableAudio::processReverbSendAndVolume(StereoSample* buffer, int32_t numSamples, int32_t* reverbBuffer,
+                                                       int32_t postFXVolume, int32_t postReverbVolume,
+                                                       int32_t reverbSendAmount, int32_t pan, bool doAmplitudeIncrement,
+-                                                      StereoSample* addToBuffer) {
+-
+-	int32_t reverbSendAmountAndPostFXVolume = multiply_32x32_rshift32(postFXVolume, reverbSendAmount) << 5;
+-
+-	int32_t postFXAndReverbVolumeL, postFXAndReverbVolumeR;
+-	// Without doAmplitudeIncrement the volume stays, as a ramp by 0
+-	int32_t amplitudeIncrementL = 0;
+-	int32_t amplitudeIncrementR = 0;
+-
+-	// The amplitude increment applies to the post-FX volume. We want to have it just so that we can respond better to
+-	// sidechain volume ducking, which is done through post-FX volume.
+-	// The ramp starts where the last buffer ended and reaches the new volume at the end of this one. (It used to start
+-	// at the new volume and overshoot it by the whole change, which clicked on strong sidechain ducking - by more than
+-	// 6 dB within one buffer, the gain even went negative.)
+-	int32_t postReverbVolumeAtStart = doAmplitudeIncrement ? postReverbVolumeLastTime : postReverbVolume;
+-	postFXAndReverbVolumeL = postFXAndReverbVolumeR =
+-	    (multiply_32x32_rshift32(postReverbVolumeAtStart, postFXVolume) << 5);
+-
+-	if (doAmplitudeIncrement) {
+-		auto postReverbSendVolumeIncrement =
+-		    (int32_t)((double)(postReverbVolume - postReverbVolumeLastTime) / (double)numSamples);
+-		amplitudeIncrementL = amplitudeIncrementR =
+-		    (multiply_32x32_rshift32(postFXVolume, postReverbSendVolumeIncrement) << 5);
+-	}
++                                                      StereoSample* addToBuffer, float gainRampStart) {
++	using namespace deluge::dsp::gain;
+ 
++	// v17's gains, as they were at the end of its blocks
++	int32_t sendTarget = multiply_32x32_rshift32(postFXVolume, reverbSendAmount) << 5;
++	int32_t targetL = multiply_32x32_rshift32(postReverbVolume, postFXVolume) << 5;
++	int32_t targetR = targetL;
+ 	if (pan != 0 && AudioEngine::renderInStereo) {
+-		// Set up panning
+ 		int32_t amplitudeL;
+ 		int32_t amplitudeR;
+ 		shouldDoPanning(pan, &amplitudeL, &amplitudeR);
+-
+-		postFXAndReverbVolumeL = multiply_32x32_rshift32(postFXAndReverbVolumeL, amplitudeL) << 2;
+-		postFXAndReverbVolumeR = multiply_32x32_rshift32(postFXAndReverbVolumeR, amplitudeR) << 2;
+-
+-		amplitudeIncrementL = multiply_32x32_rshift32(amplitudeIncrementL, amplitudeL) << 2;
+-		amplitudeIncrementR = multiply_32x32_rshift32(amplitudeIncrementR, amplitudeR) << 2;
+-	}
+-
+-	// Send to reverb, apply post-fx and post-reverb-send volume (see track_fx_kernels.h), and either add straight
+-	// into the mix (saves the separate addAudio() pass), or write back into the buffer
+-	using namespace deluge::dsp::track_fx;
++		targetL = multiply_32x32_rshift32(targetL, amplitudeL) << 2;
++		targetR = multiply_32x32_rshift32(targetR, amplitudeR) << 2;
++	}
++
++	// Where the filters before moved their gain compensation over this block themselves (the song's, kits' and audio
++	// tracks' filters: FilterSet::gainRampStart()), the volume ramps start from the last block's gains as if they had
++	// had this block's compensation in them
++	if (gainRampStart != 1.0f) {
++		volumeRampL_.rescaleStart(gainRampStart);
++		volumeRampR_.rescaleStart(gainRampStart);
++		reverbSendRamp_.rescaleStart(gainRampStart);
++	}
++
++	// (The first block after a restart takes its targets at once)
++	int32_t sendStart = reverbSendRamp_.started() ? reverbSendRamp_.current() : sendTarget;
++	int32_t startL = volumeRampL_.started() ? volumeRampL_.current() : targetL;
++	int32_t startR = volumeRampR_.started() ? volumeRampR_.current() : targetR;
++	int32_t sendEnd = reverbSendRamp_.advance(sendTarget, numSamples);
++	int32_t endL = volumeRampL_.advance(targetL, numSamples);
++	int32_t endR = volumeRampR_.advance(targetR, numSamples);
++	bool ramp = (startL != endL || startR != endR);
++	bool rampSend = (sendStart != sendEnd);
++	bool send = (sendStart != 0 || sendEnd != 0);
++
++	// Send to reverb, apply the volume, and either add straight into the mix (saves the separate addAudio() pass), or
++	// write back into the buffer
+ 	StereoSample* out = addToBuffer ? addToBuffer : buffer;
+-	if (reverbSendAmount != 0) {
++	auto render = [&]<bool kReverb, bool kAdd>() {
++		if (ramp) {
++			// (without pan both sides ramp the same: the left's steps serve both)
++			bool sameSides = (startL == startR && endL == endR);
++			if (kReverb && rampSend) {
++				if (sameSides) {
++					volumeAndSend<kReverb, kAdd, true, true, true>(buffer, out, numSamples, reverbBuffer, sendStart,
++					                                               sendEnd, startL, endL, startR, endR);
++				}
++				else {
++					volumeAndSend<kReverb, kAdd, true, true>(buffer, out, numSamples, reverbBuffer, sendStart, sendEnd,
++					                                         startL, endL, startR, endR);
++				}
++			}
++			else if (sameSides) {
++				volumeAndSend<kReverb, kAdd, true, false, true>(buffer, out, numSamples, reverbBuffer, sendEnd, sendEnd,
++				                                                startL, endL, startR, endR);
++			}
++			else {
++				volumeAndSend<kReverb, kAdd, true, false>(buffer, out, numSamples, reverbBuffer, sendEnd, sendEnd,
++				                                          startL, endL, startR, endR);
++			}
++		}
++		else if (kReverb && rampSend) {
++			volumeAndSend<kReverb, kAdd, false, true>(buffer, out, numSamples, reverbBuffer, sendStart, sendEnd, endL,
++			                                          endL, endR, endR);
++		}
++		else {
++			volumeAndSend<kReverb, kAdd, false, false>(buffer, out, numSamples, reverbBuffer, sendEnd, sendEnd, endL,
++			                                           endL, endR, endR);
++		}
++	};
++	if (send) {
+ 		if (addToBuffer) {
+-			reverbSendAndVolume<true, true>(buffer, out, numSamples, reverbBuffer, reverbSendAmountAndPostFXVolume,
+-			                                postFXAndReverbVolumeL, postFXAndReverbVolumeR, amplitudeIncrementL,
+-			                                amplitudeIncrementR);
++			render.template operator()<true, true>();
+ 		}
+ 		else {
+-			reverbSendAndVolume<true, false>(buffer, out, numSamples, reverbBuffer, reverbSendAmountAndPostFXVolume,
+-			                                 postFXAndReverbVolumeL, postFXAndReverbVolumeR, amplitudeIncrementL,
+-			                                 amplitudeIncrementR);
++			render.template operator()<true, false>();
+ 		}
+ 	}
+ 	else {
+ 		if (addToBuffer) {
+-			reverbSendAndVolume<false, true>(buffer, out, numSamples, reverbBuffer, reverbSendAmountAndPostFXVolume,
+-			                                 postFXAndReverbVolumeL, postFXAndReverbVolumeR, amplitudeIncrementL,
+-			                                 amplitudeIncrementR);
++			render.template operator()<false, true>();
+ 		}
+ 		else {
+-			reverbSendAndVolume<false, false>(buffer, out, numSamples, reverbBuffer, reverbSendAmountAndPostFXVolume,
+-			                                  postFXAndReverbVolumeL, postFXAndReverbVolumeR, amplitudeIncrementL,
+-			                                  amplitudeIncrementR);
++			render.template operator()<false, false>();
+ 		}
+ 	}
+ 
+ 	// We've generated some sound. If reverb is happening, make note
+-	if (reverbSendAmount != 0) {
++	if (send) {
+ 		AudioEngine::timeThereWasLastSomeReverb = AudioEngine::audioSampleTimer;
+ 	}
+-	postReverbVolumeLastTime = postReverbVolume;
++}
++
++// The next volume stage takes its gains at once (nothing rendered before it to ramp from)
++void ModControllableAudio::restartVolumeRamps() {
++	volumeRampL_.restart();
++	volumeRampR_.restart();
++	reverbSendRamp_.restart();
+ }
+ 
+ bool ModControllableAudio::isBitcrushingEnabled(ParamManager* paramManager) {
+diff --git a/src/deluge/model/mod_controllable/mod_controllable_audio.h b/src/deluge/model/mod_controllable/mod_controllable_audio.h
+index 1fb76235..9c20bdb5 100644
+--- a/src/deluge/model/mod_controllable/mod_controllable_audio.h
++++ b/src/deluge/model/mod_controllable/mod_controllable_audio.h
+@@ -20,6 +20,7 @@
+ #include "definitions_cxx.hpp"
+ #include "dsp/compressor/rms_feedback.h"
+ #include "dsp/delay/delay.h"
++#include "dsp/gain_ramp.h"
+ #include "hid/button.h"
+ #include "model/fx/stutterer.h"
+ #include "model/mod_controllable/filters/filter_config.h"
+@@ -62,7 +63,7 @@ public:
+ 	void processReverbSendAndVolume(StereoSample* buffer, int32_t numSamples, int32_t* reverbBuffer,
+ 	                                int32_t postFXVolume, int32_t postReverbVolume, int32_t reverbSendAmount,
+ 	                                int32_t pan = 0, bool doAmplitudeIncrement = false,
+-	                                StereoSample* addToBuffer = nullptr);
++	                                StereoSample* addToBuffer = nullptr, float gainRampStart = 1.0f);
+ 	void writeAttributesToFile(Serializer& writer);
+ 	void writeTagsToFile(Serializer& writer);
+ 	Error readTagFromFile(Deserializer& reader, char const* tagName, ParamManagerForTimeline* paramManager,
+@@ -153,7 +154,12 @@ public:
+ 	SideChain sidechain; // Song doesn't use this, despite extending this class
+ 
+ 	MidiKnobArray midiKnobArray;
+-	int32_t postReverbVolumeLastTime;
++
++	// mastertune v18: the volume stage's gains per side and its reverb send, moving per sample (dsp/gain_ramp.h)
++	void restartVolumeRamps();
++	deluge::dsp::gain::GainRamp volumeRampL_;
++	deluge::dsp::gain::GainRamp volumeRampR_;
++	deluge::dsp::gain::GainRamp reverbSendRamp_;
+ 
+ protected:
+ 	void processFX(StereoSample* buffer, int32_t numSamples, ModFXType modFXType, int32_t modFXRate, int32_t modFXDepth,
+diff --git a/src/deluge/model/mod_controllable/track_fx_kernels.h b/src/deluge/model/mod_controllable/track_fx_kernels.h
+index 24b7727a..3f435b4b 100644
+--- a/src/deluge/model/mod_controllable/track_fx_kernels.h
++++ b/src/deluge/model/mod_controllable/track_fx_kernels.h
+@@ -40,92 +40,7 @@ namespace deluge::dsp::track_fx {
+ 	return (int32_t)((uint32_t)a - (uint32_t)b);
+ }
+ 
+-// multiply_32x32_rshift32() (smmul) on four lanes: the high words of the exact 64-bit products, picked out of the two
+-// vmull results by one vuzp. (vqdmulh + shift would be one instruction less but saturates for INT32_MIN * INT32_MIN.)
+-[[gnu::always_inline]] inline int32x4_t smmul4(int32x4_t a, int32x4_t b) {
+-	int32x4_t low = vreinterpretq_s32_s64(vmull_s32(vget_low_s32(a), vget_low_s32(b)));
+-	int32x4_t high = vreinterpretq_s32_s64(vmull_s32(vget_high_s32(a), vget_high_s32(b)));
+-	return vuzpq_s32(low, high).val[1]; // little-endian: the odd 32-bit lanes are the high words
+-}
+-
+-// ModControllableAudio::processReverbSendAndVolume()'s loop. Per sample, as before:
+-//   reverb[i] += multiply_32x32_rshift32(in[i].l + in[i].r, reverbVolume) << 1   (kReverb)
+-//   volume += increment                                                         (per side, before use)
+-//   o = multiply_32x32_rshift32(in[i], volume) << 5, then out[i] += o (kAdd) or out[i] = o (in place, out == in)
+-// Four samples at a time with NEON. The sums wrap as the ARM add instructions of the old loop did (it had them as
+-// int32_t, whose overflow the compiler turned into those same instructions): here the NEON adds wrap, and the scalar
+-// ones are done in uint32_t. The volume ramp is volume + k * increment mod 2^32, the same whether added up one step or
+-// four at a time. in/out/reverb are the sound's buffer, the output (or null) and the engine's reverb buffer: separate
+-// arrays (out == in only in place, where each sample is read before it is written), so doing four at a time reads
+-// and writes the same values.
+-template <bool kReverb, bool kAdd>
+-[[gnu::always_inline]] inline void reverbSendAndVolume(const StereoSample* in, StereoSample* out, int32_t numSamples,
+-                                                       int32_t* reverb, int32_t reverbVolume, uint32_t volumeL,
+-                                                       uint32_t volumeR, uint32_t incrementL, uint32_t incrementR) {
+-	int32_t numBlocks = numSamples >> 2;
+-	if (numBlocks) {
+-		const uint32x4_t steps = {1, 2, 3, 4};
+-		uint32x4_t vL = vmlaq_n_u32(vdupq_n_u32(volumeL), steps, incrementL); // volume after 1, 2, 3, 4 steps
+-		uint32x4_t vR = vmlaq_n_u32(vdupq_n_u32(volumeR), steps, incrementR);
+-		const uint32x4_t stepL = vdupq_n_u32(incrementL << 2);
+-		const uint32x4_t stepR = vdupq_n_u32(incrementR << 2);
+-		const int32x4_t reverbV = vdupq_n_s32(reverbVolume);
+-		const int32_t* inW = &in->l;
+-		int32_t* outW = &out->l;
+-		int32_t n = numBlocks;
+-		do {
+-			int32x4x2_t s = vld2q_s32(inW); // val[0]: 4 x l, val[1]: 4 x r
+-			inW += 8;
+-			if constexpr (kReverb) {
+-				int32x4_t send = vshlq_n_s32(smmul4(vaddq_s32(s.val[0], s.val[1]), reverbV), 1);
+-				vst1q_s32(reverb, vaddq_s32(vld1q_s32(reverb), send));
+-				reverb += 4;
+-			}
+-			int32x4_t oL = vshlq_n_s32(smmul4(s.val[0], vreinterpretq_s32_u32(vL)), 5);
+-			int32x4_t oR = vshlq_n_s32(smmul4(s.val[1], vreinterpretq_s32_u32(vR)), 5);
+-			vL = vaddq_u32(vL, stepL);
+-			vR = vaddq_u32(vR, stepR);
+-			if constexpr (kAdd) {
+-				int32x4x2_t a = vld2q_s32(outW);
+-				a.val[0] = vaddq_s32(a.val[0], oL);
+-				a.val[1] = vaddq_s32(a.val[1], oR);
+-				vst2q_s32(outW, a);
+-			}
+-			else {
+-				int32x4x2_t o = {{oL, oR}};
+-				vst2q_s32(outW, o);
+-			}
+-			outW += 8;
+-		} while (--n);
+-		volumeL += (uint32_t)numBlocks * (incrementL << 2);
+-		volumeR += (uint32_t)numBlocks * (incrementR << 2);
+-	}
+-
+-	// The last 0 to 3 samples, one at a time
+-	int32_t done = numBlocks << 2;
+-	for (int32_t i = done; i < numSamples; i++) {
+-		StereoSample s = in[i];
+-		if constexpr (kReverb) {
+-			*reverb =
+-			    (int32_t)((uint32_t)*reverb
+-			              + ((uint32_t)multiply_32x32_rshift32((int32_t)((uint32_t)s.l + (uint32_t)s.r), reverbVolume)
+-			                 << 1));
+-			reverb++;
+-		}
+-		volumeL += incrementL;
+-		volumeR += incrementR;
+-		int32_t oL = multiply_32x32_rshift32(s.l, (int32_t)volumeL) << 5;
+-		int32_t oR = multiply_32x32_rshift32(s.r, (int32_t)volumeR) << 5;
+-		if constexpr (kAdd) {
+-			out[i].l = (int32_t)((uint32_t)out[i].l + (uint32_t)oL);
+-			out[i].r = (int32_t)((uint32_t)out[i].r + (uint32_t)oR);
+-		}
+-		else {
+-			out[i].l = oL;
+-			out[i].r = oR;
+-		}
+-	}
+-}
++// (ModControllableAudio::processReverbSendAndVolume()'s loop: mastertune v18, dsp/gain_ramp.h's volumeAndSend())
+ 
+ // ---- processFX() ---------------------------------------------------------------------------------------------------
+ // The old loop ran all mod FX types through one per-sample loop that checked the type each sample and kept the LFO,
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index 56ce04bf..a7637b47 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -1153,9 +1153,9 @@ void renderSongFX(size_t numSamples) { // LPF and stutter for song (must happen
+ 		    >> 1;
+ 		// there used to be a static subtraction of 2 nepers (natural log based dB), this is the multiplicative
+ 		// equivalent
+-		currentSong->globalEffectable.compressor.render(renderingBuffer.data(), numSamples,
+-		                                                masterVolumeAdjustmentL >> 1, masterVolumeAdjustmentR >> 1,
+-		                                                songVolume >> 3);
++		currentSong->globalEffectable.compressor.render(
++		    renderingBuffer.data(), numSamples, masterVolumeAdjustmentL >> 1, masterVolumeAdjustmentR >> 1,
++		    songVolume >> 3, currentSong->globalEffectable.filterSet.gainRampStart());
+ 		masterVolumeAdjustmentL = ONE_Q31;
+ 		masterVolumeAdjustmentR = ONE_Q31;
+ 		logAction("mastercomp end");
+diff --git a/src/deluge/processing/sound/sound.cpp b/src/deluge/processing/sound/sound.cpp
+index 32115ac9..473e6779 100644
+--- a/src/deluge/processing/sound/sound.cpp
++++ b/src/deluge/processing/sound/sound.cpp
+@@ -115,7 +115,7 @@ Sound::Sound() : patcher(&patchableInfoForSound) {
+ 
+ 	lpfMode = FilterMode::TRANSISTOR_24DB; // Good for samples, I think
+ 
+-	postReverbVolumeLastTime = -1; // Special state to make it grab the actual value the first time it's rendered
++	// (The volume stage's ramps take their first targets at once: GainRamp starts that way)
+ 
+ 	// LFO
+ 	modKnobs[0][1].paramDescriptor.setToHaveParamOnly(params::GLOBAL_VOLUME_POST_FX);
+@@ -2429,52 +2429,41 @@ void Sound::render(ModelStackWithThreeMainThings* modelStack, StereoSample* outp
+ 			}
+ 		}
+ 
+-		// If just rendered in mono, double that up to stereo now
+-		if (!renderingInStereo) {
++		// mastertune v18: the pan at the Sound level (unless the voices pan) moves per sample from the last block's
++		// amplitudes to this one's (dsp/gain_ramp.h), rounded; centred and staying there, it multiplies by nothing,
++		// as before
++		if (applyingPanAtVoiceLevel) {
++			panRampL_.restart();
++			panRampR_.restart();
++		}
++		else {
+ 			// We know that nothing's patched to pan, so can read it in this very basic way.
+ 			int32_t pan = paramManager->getPatchedParamSet()->getValue(params::LOCAL_PAN) >> 1;
+-
+ 			int32_t amplitudeL, amplitudeR;
+-			bool doPanning;
+-			doPanning = (AudioEngine::renderInStereo && shouldDoPanning(pan, &amplitudeL, &amplitudeR));
+-			if (doPanning) {
+-				for (int32_t i = numSamples - 1; i >= 0; i--) {
+-					int32_t sampleValue = soundBuffer[i];
+-					soundBuffer[(i << 1)] = multiply_32x32_rshift32(sampleValue, amplitudeL) << 2;
+-					soundBuffer[(i << 1) + 1] = multiply_32x32_rshift32(sampleValue, amplitudeR) << 2;
++			if (!(AudioEngine::renderInStereo && shouldDoPanning(pan, &amplitudeL, &amplitudeR))) {
++				amplitudeL = amplitudeR = 1073741823; // (the centre, as shouldDoPanning() gives it)
++			}
++			int32_t startL = panRampL_.started() ? panRampL_.current() : amplitudeL;
++			int32_t startR = panRampR_.started() ? panRampR_.current() : amplitudeR;
++			int32_t endL = panRampL_.advance(amplitudeL, numSamples);
++			int32_t endR = panRampR_.advance(amplitudeR, numSamples);
++			bool centred = (startL == 1073741823 && endL == 1073741823 && startR == 1073741823 && endR == 1073741823);
++
++			// If just rendered in mono, double that up to stereo now
++			if (!renderingInStereo) {
++				if (!centred) {
++					deluge::dsp::gain::panMonoToStereo(soundBuffer, numSamples, startL, endL, startR, endR);
+ 				}
+-			}
+-			else {
+-				for (int32_t i = numSamples - 1; i >= 0; i--) {
+-					int32_t sampleValue = soundBuffer[i];
+-					soundBuffer[(i << 1)] = sampleValue;
+-					soundBuffer[(i << 1) + 1] = sampleValue;
++				else {
++					for (int32_t i = numSamples - 1; i >= 0; i--) {
++						int32_t sampleValue = soundBuffer[i];
++						soundBuffer[(i << 1)] = sampleValue;
++						soundBuffer[(i << 1) + 1] = sampleValue;
++					}
+ 				}
+ 			}
+-		}
+-
+-		// Or if rendered in stereo...
+-		else {
+-			// And if we're only applying pan here at the Sound level...
+-			if (!applyingPanAtVoiceLevel) {
+-
+-				// We know that nothing's patched to pan, so can read it in this very basic way.
+-				int32_t pan = paramManager->getPatchedParamSet()->getValue(params::LOCAL_PAN) >> 1;
+-
+-				int32_t amplitudeL, amplitudeR;
+-				bool doPanning;
+-				doPanning = (AudioEngine::renderInStereo && shouldDoPanning(pan, &amplitudeL, &amplitudeR));
+-				if (doPanning) {
+-					int32_t* thisSample = soundBuffer;
+-					int32_t* endSamples = thisSample + (numSamples << 1);
+-					do {
+-						*thisSample = multiply_32x32_rshift32(*thisSample, amplitudeL) << 2;
+-						thisSample++;
+-
+-						*thisSample = multiply_32x32_rshift32(*thisSample, amplitudeR) << 2;
+-						thisSample++;
+-					} while (thisSample != endSamples);
+-				}
++			else if (!centred) {
++				deluge::dsp::gain::panInPlace(soundBuffer, numSamples, startL, endL, startR, endR);
+ 			}
+ 		}
+ 	}
+@@ -2491,10 +2480,6 @@ void Sound::render(ModelStackWithThreeMainThings* modelStack, StereoSample* outp
+ 	int32_t postFXVolume = paramFinalValues[params::GLOBAL_VOLUME_POST_FX - params::FIRST_GLOBAL];
+ 	int32_t postReverbVolume = paramFinalValues[params::GLOBAL_VOLUME_POST_REVERB_SEND - params::FIRST_GLOBAL];
+ 
+-	if (postReverbVolumeLastTime == -1) {
+-		postReverbVolumeLastTime = postReverbVolume;
+-	}
+-
+ 	int32_t modFXDepth = paramFinalValues[params::GLOBAL_MOD_FX_DEPTH - params::FIRST_GLOBAL];
+ 	int32_t modFXRate = paramFinalValues[params::GLOBAL_MOD_FX_RATE - params::FIRST_GLOBAL];
+ 
+@@ -2533,8 +2518,6 @@ void Sound::render(ModelStackWithThreeMainThings* modelStack, StereoSample* outp
+ 		addAudio((StereoSample*)soundBuffer, outputBuffer, numSamples);
+ 	}
+ 
+-	postReverbVolumeLastTime = postReverbVolume;
+-
+ 	sourcesChanged = 0;
+ 	whichExpressionSourcesChangedAtSynthLevel = 0;
+ 	for (int i = 0; i < kNumSources; i++) {
+@@ -2598,8 +2581,10 @@ void Sound::stopSkippingRendering(ArpeggiatorSettings* arpSettings) {
+ 				                                     AudioEngine::audioSampleTimer - AudioEngine::timeLastSideChainHit);
+ 				//}
+ 			}
+-			// Special state to make it grab the actual value the first time it's rendered
+-			postReverbVolumeLastTime = -1;
++			// The volume stage and the pan take their gains at once the first time it's rendered (as v17 did)
++			restartVolumeRamps();
++			panRampL_.restart();
++			panRampR_.restart();
+ 
+ 			// clearModFXMemory(); // No need anymore, now we wait for this to basically empty before starting skipping
+ 		}
+diff --git a/src/deluge/processing/sound/sound.h b/src/deluge/processing/sound/sound.h
+index 4eb43000..dfdb044f 100644
+--- a/src/deluge/processing/sound/sound.h
++++ b/src/deluge/processing/sound/sound.h
+@@ -97,8 +97,8 @@ public:
+ 		}
+ 	}
+ 	static constexpr uint8_t kFilterGlideParams[deluge::dsp::filter::FilterParamGlide::kNumParams] = {
+-	    deluge::modulation::params::LOCAL_LPF_FREQ,  deluge::modulation::params::LOCAL_LPF_RESONANCE,
+-	    deluge::modulation::params::LOCAL_LPF_MORPH, deluge::modulation::params::LOCAL_HPF_FREQ,
++	    deluge::modulation::params::LOCAL_LPF_FREQ,      deluge::modulation::params::LOCAL_LPF_RESONANCE,
++	    deluge::modulation::params::LOCAL_LPF_MORPH,     deluge::modulation::params::LOCAL_HPF_FREQ,
+ 	    deluge::modulation::params::LOCAL_HPF_RESONANCE, deluge::modulation::params::LOCAL_HPF_MORPH};
+ 
+ 	Source sources[kNumSources];
+@@ -164,6 +164,10 @@ public:
+ 
+ 	bool skippingRendering;
+ 
++	// mastertune v18: the pan at the Sound level, its amplitudes moving per sample (see render())
++	deluge::dsp::gain::GainRamp panRampL_;
++	deluge::dsp::gain::GainRamp panRampR_;
++
+ 	// Set by the arpeggiator's reverse probability: the next voices play their samples reversed the other way
+ 	bool invertReversed{false};
+ 
+-- 
+2.43.0
+

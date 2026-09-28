@@ -1,0 +1,373 @@
+From bd9e30b5da6852ee43a1a52701d3d952ccec6ad1 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 21:58:14 +0000
+Subject: [PATCH 083/112] LPF: no analog noise on the ladders' cutoff any more
+ (12 dB, 24 dB, drive): the rustle at low cutoff is gone
+
+The 12 / 24 dB and drive ladders moved their stages' moveability by a heavily
+lowpassed random value on every sample (about 0.44 % rms, below about 55 Hz,
+from the global jcong generator). At low cutoff that was the audible rustle
+(-21 to -42 dBc A-weighted). The stages now take the configured moveability
+as it is; everything else is unchanged. The ladders no longer draw from jcong,
+so other users of getNoise() get different (equally random) values.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/lpladder.cpp | 158 ++++++++---------------------
+ src/deluge/dsp/filter/lpladder.h   |  42 ++++----
+ 2 files changed, 64 insertions(+), 136 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/lpladder.cpp b/src/deluge/dsp/filter/lpladder.cpp
+index 19d819b8..348a9015 100644
+--- a/src/deluge/dsp/filter/lpladder.cpp
++++ b/src/deluge/dsp/filter/lpladder.cpp
+@@ -177,11 +177,11 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ 	return filterGain;
+ }
+ 
+-// The ladders run on a copy of their configuration, their state and the noise generator (jcong) in local
+-// variables, written back after the block. The output store (a q31_t) could alias all of them as far as the compiler
+-// knows, so the loops used to load and store them all again on every sample. Nothing else touches them during a
+-// block: the buffers are render buffers (Voice's spareRenderingBuffer, GlobalEffectable's, FilterSet's
+-// tempRenderBuffer), never the filter or jcong, and nothing in the loops calls out. The arithmetic is unchanged.
++// The ladders run on a copy of their configuration and their state in local variables, written back after the block.
++// The output store (a q31_t) could alias all of them as far as the compiler knows, so the loops used to load and store
++// them all again on every sample. Nothing else touches them during a block: the buffers are render buffers (Voice's
++// spareRenderingBuffer, GlobalEffectable's, FilterSet's tempRenderBuffer), never the filter, and nothing in the loops
++// calls out. The arithmetic is unchanged.
+ [[gnu::hot]] void LpLadderFilter::doFilter(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
+ 	// Half ladder
+ 	if (lpfMode == FilterMode::TRANSISTOR_12DB) {
+@@ -276,24 +276,6 @@ void LpLadderFilter::renderSaturationAmount(q31_t* startSample, q31_t* endSample
+ 	renderLoop<mode, voice, oversample, layout>(startSample, endSample, sampleIncrement);
+ }
+ 
+-// The noise generator, getNoise(): jcong = kNoiseMul * jcong + kNoiseAdd (mod 2^32). Two steps at once are
+-// jcong = kNoiseMul^2 * jcong + (kNoiseMul + 1) * kNoiseAdd, and kNoiseMul (odd) has an inverse mod 2^32, which
+-// steps back
+-constexpr uint32_t kNoiseMul = 69069;
+-constexpr uint32_t kNoiseAdd = 1234567;
+-constexpr uint32_t kNoiseMul2 = kNoiseMul * kNoiseMul;
+-constexpr uint32_t kNoiseAdd2 = (kNoiseMul + 1) * kNoiseAdd;
+-constexpr uint32_t inverseMod2To32(uint32_t a) {
+-	uint32_t x = a; // Newton's iteration, each step doubles the correct low bits (a * a = 1 mod 8 to start with)
+-	for (int i = 0; i < 5; i++) {
+-		x *= 2 - a * x;
+-	}
+-	return x;
+-}
+-constexpr uint32_t kNoiseMulInverse = inverseMod2To32(kNoiseMul);
+-static_assert(kNoiseMul * kNoiseMulInverse == 1);
+-static_assert(kNoiseMul2 * 12345u + kNoiseAdd2 == kNoiseMul * (kNoiseMul * 12345u + kNoiseAdd) + kNoiseAdd);
+-
+ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, LpLadderFilter::Layout layout>
+ [[gnu::hot]] void LpLadderFilter::renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
+ 	const Coefficients c{moveability,
+@@ -319,53 +301,24 @@ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversampl
+           bool precise>
+ [[gnu::always_inline]] inline void LpLadderFilter::renderStates(q31_t* startSample, q31_t* endSample,
+                                                                 int32_t sampleIncrement, const Coefficients& c) {
+-	if constexpr (layout != Layout::STEREO) {
+-		uint32_t noise = jcong;
+-		renderChannel<mode, saturation, oversample, layout, 0, false, precise>(startSample, endSample, sampleIncrement, l, c,
+-		                                                              noise);
+-		jcong = noise;
+-	}
+-	else if constexpr (!oversample) {
++	renderChannel<mode, saturation, oversample, layout, 0, precise>(startSample, endSample, sampleIncrement, l, c);
++	if constexpr (layout == Layout::STEREO) {
+ 		// The channels don't depend on each other, so each gets its own pass (a loop over both needs more registers
+-		// than there are, for the two states). Frame k takes the noise draws 2k + 1 (left) and 2k + 2 (right) after
+-		// jcong, so each pass steps the generator twice per sample: the left one from one step before jcong, the right
+-		// one from jcong, which leaves it where the loop over both leaves jcong
+-		uint32_t noise = (jcong - kNoiseAdd) * kNoiseMulInverse;
+-		renderChannel<mode, saturation, oversample, layout, 0, true, precise>(startSample, endSample, 2, l, c, noise);
+-		noise = jcong;
+-		renderChannel<mode, saturation, oversample, layout, 1, true, precise>(startSample, endSample, 2, r, c, noise);
+-		jcong = noise;
+-	}
+-	else {
+-		// Oversampled, each channel takes two draws per frame in turn: both channels in one loop, as before
+-		uint32_t noise = jcong;
+-		LpLadderState left = l;
+-		LpLadderState right = r;
+-		q31_t* currentSample = startSample;
+-		do {
+-			*currentSample = filterSample<mode, saturation, oversample, false, precise>(*currentSample, left, c, noise);
+-			currentSample += 1;
+-			*currentSample = filterSample<mode, saturation, oversample, false, precise>(*currentSample, right, c, noise);
+-			currentSample += 1;
+-		} while (currentSample < endSample);
+-		jcong = noise;
+-		l = left;
+-		r = right;
++		// than there are, for the two states)
++		renderChannel<mode, saturation, oversample, layout, 1, precise>(startSample, endSample, sampleIncrement, r, c);
+ 	}
+ }
+ 
+ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, LpLadderFilter::Layout layout,
+-          int channel, bool everyOtherDraw, bool precise>
++          int channel, bool precise>
+ [[gnu::always_inline]] inline void LpLadderFilter::renderChannel(q31_t* startSample, q31_t* endSample,
+                                                                  int32_t sampleIncrement, LpLadderState& channelState,
+-                                                                 const Coefficients& c, uint32_t& noise) {
++                                                                 const Coefficients& c) {
+ 	LpLadderState state = channelState;
+-	uint32_t localNoise = noise;
+ 	// For STEREO, currentSample points at the frame, as in the loop over both channels (same number of frames)
+ 	q31_t* currentSample = startSample;
+ 	do {
+-		currentSample[channel] =
+-		    filterSample<mode, saturation, oversample, everyOtherDraw, precise>(currentSample[channel], state, c, localNoise);
++		currentSample[channel] = filterSample<mode, saturation, oversample, precise>(currentSample[channel], state, c);
+ 		if constexpr (layout == Layout::MONO) {
+ 			currentSample += 1;
+ 		}
+@@ -376,18 +329,17 @@ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversampl
+ 			currentSample += sampleIncrement;
+ 		}
+ 	} while (currentSample < endSample);
+-	noise = localNoise;
+ 	channelState = state;
+ }
+ 
+-template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, bool everyOtherDraw, bool precise>
++template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, bool precise>
+ [[gnu::always_inline]] inline q31_t LpLadderFilter::filterSample(q31_t input, LpLadderState& state,
+-                                                                 const Coefficients& c, uint32_t& noise) {
++                                                                 const Coefficients& c) {
+ 	if constexpr (mode == FilterMode::TRANSISTOR_12DB) {
+-		return do12dBLPFOnSample<saturation, everyOtherDraw, precise>(input, state, c, noise);
++		return do12dBLPFOnSample<saturation, precise>(input, state, c);
+ 	}
+ 	else if constexpr (mode == FilterMode::TRANSISTOR_24DB) {
+-		return do24dBLPFOnSample<saturation, everyOtherDraw, precise>(input, state, c, noise);
++		return do24dBLPFOnSample<saturation, precise>(input, state, c);
+ 	}
+ 	else {
+ 		if constexpr (oversample) {
+@@ -406,12 +358,12 @@ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversampl
+ 			// actual sample works very nearly as well as this, but gives a little bit more aliasing on high notes
+ 			// fed in.
+ 
+-			doDriveLPFOnSample<saturation, everyOtherDraw, precise>(input, state, c, noise);
++			doDriveLPFOnSample<saturation, precise>(input, state, c);
+ 
+ 			// Crude downsampling - just take every second sample, with no anti-aliasing filter. Works fine cos the
+ 			// ladder LPF filter takes care of lots of those high harmonics!
+ 		}
+-		q31_t outputSampleToKeep = doDriveLPFOnSample<saturation, everyOtherDraw, precise>(input, state, c, noise);
++		q31_t outputSampleToKeep = doDriveLPFOnSample<saturation, precise>(input, state, c);
+ 
+ 		// Only perform the final saturation stage on this one sample, which we want to keep
+ 		return getTanHUnknown(outputSampleToKeep, 4);
+@@ -441,37 +393,18 @@ template <LpLadderFilter::Saturation saturation>
+ 	return temp;
+ }
+ 
+-template <bool everyOtherDraw, bool precise>
+-[[gnu::always_inline]] inline q31_t LpLadderFilter::noisyMoveability(LpLadderState& state, const Coefficients& c,
+-                                                                     uint32_t& noise) {
+-	// For drive filter, apply some heavily lowpassed noise to the filter frequency, to add analog-ness
+-	// getNoise(), on the local copy of jcong
+-	if constexpr (everyOtherDraw) {
+-		noise = kNoiseMul2 * noise + kNoiseAdd2;
+-	}
+-	else {
+-		noise = kNoiseMul * noise + kNoiseAdd;
+-	}
+-	q31_t distanceToGo = (static_cast<int32_t>(noise) >> 2) - state.noiseLastValue;
+-	state.noiseLastValue += distanceToGo >> 7;
+-	// moveability + multiply_32x32_rshift32(moveability, state.noiseLastValue); the precise stages take twice that, which
+-	// this works out from 2 * moveability, to one more bit
+-	if constexpr (precise) {
+-		return multiply_accumulate_32x32_rshift32(c.moveability2, c.moveability2, state.noiseLastValue);
+-	}
+-	else {
+-		return multiply_accumulate_32x32_rshift32(c.moveability, c.moveability, state.noiseLastValue);
+-	}
+-}
++// mastertune v18: no analog noise on the cutoff any more. It used to move the stages' moveability by a heavily
++// lowpassed random value (about 0.44 % rms, below about 55 Hz) on every sample, for "analog-ness": at low cutoff that
++// was the audible rustle (-21 to -42 dBc, A-weighted). The stages now take the configured moveability as it is.
+ 
+ // The feedback sums add the terms in the same order as before, with smmlar: sum + multiply_32x32_rshift32_rounded(a, b)
+ // in one instruction, exactly (sum << 32 doesn't change the rounding of the low word). A common left shift of the sum
+ // is the same as shifting each term, modulo 2^32.
+ 
+-template <LpLadderFilter::Saturation saturation, bool everyOtherDraw, bool precise>
++template <LpLadderFilter::Saturation saturation, bool precise>
+ [[gnu::always_inline]] inline q31_t LpLadderFilter::do12dBLPFOnSample(q31_t input, LpLadderState& state,
+-                                                                      const Coefficients& c, uint32_t& noise) {
+-	q31_t noisy_m = noisyMoveability<everyOtherDraw, precise>(state, c, noise);
++                                                                      const Coefficients& c) {
++	const q31_t m = stageMoveability<precise>(c);
+ 
+ 	q31_t feedbacksSum = multiply_32x32_rshift32_rounded(state.lpfLPF1.memory, c.lpf1Feedback);
+ 	feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF2.memory, c.lpf2Feedback);
+@@ -485,17 +418,16 @@ template <LpLadderFilter::Saturation saturation, bool everyOtherDraw, bool preci
+ 	// }
+ 
+ 	if constexpr (precise) {
+-		return state.lpfLPF3.doAPFPrecise(
+-		           state.lpfLPF2.doFilterPrecise(state.lpfLPF1.doFilterPrecise(x, noisy_m), noisy_m), noisy_m)
++		return state.lpfLPF3.doAPFPrecise(state.lpfLPF2.doFilterPrecise(state.lpfLPF1.doFilterPrecise(x, m), m), m)
+ 		       << 1;
+ 	}
+-	return state.lpfLPF3.doAPF(state.lpfLPF2.doFilter(state.lpfLPF1.doFilter(x, noisy_m), noisy_m), noisy_m) << 1;
++	return state.lpfLPF3.doAPF(state.lpfLPF2.doFilter(state.lpfLPF1.doFilter(x, m), m), m) << 1;
+ }
+ 
+-template <LpLadderFilter::Saturation saturation, bool everyOtherDraw, bool precise>
++template <LpLadderFilter::Saturation saturation, bool precise>
+ [[gnu::always_inline]] inline q31_t LpLadderFilter::do24dBLPFOnSample(q31_t input, LpLadderState& state,
+-                                                                      const Coefficients& c, uint32_t& noise) {
+-	q31_t noisy_m = noisyMoveability<everyOtherDraw, precise>(state, c, noise);
++                                                                      const Coefficients& c) {
++	const q31_t m = stageMoveability<precise>(c);
+ 
+ 	q31_t feedbacksSum = multiply_32x32_rshift32_rounded(state.lpfLPF1.memory, c.lpf1Feedback);
+ 	feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF2.memory, c.lpf2Feedback);
+@@ -519,21 +451,19 @@ template <LpLadderFilter::Saturation saturation, bool everyOtherDraw, bool preci
+ 
+ 	if constexpr (precise) {
+ 		return state.lpfLPF4.doFilterPrecise(
+-		           state.lpfLPF3.doFilterPrecise(
+-		               state.lpfLPF2.doFilterPrecise(state.lpfLPF1.doFilterPrecise(x, noisy_m), noisy_m), noisy_m),
+-		           noisy_m)
++		           state.lpfLPF3.doFilterPrecise(state.lpfLPF2.doFilterPrecise(state.lpfLPF1.doFilterPrecise(x, m), m),
++		                                         m),
++		           m)
+ 		       << 1;
+ 	}
+-	return state.lpfLPF4.doFilter(
+-	           state.lpfLPF3.doFilter(state.lpfLPF2.doFilter(state.lpfLPF1.doFilter(x, noisy_m), noisy_m), noisy_m),
+-	           noisy_m)
++	return state.lpfLPF4.doFilter(state.lpfLPF3.doFilter(state.lpfLPF2.doFilter(state.lpfLPF1.doFilter(x, m), m), m), m)
+ 	       << 1;
+ }
+ 
+-template <LpLadderFilter::Saturation saturation, bool everyOtherDraw, bool precise>
++template <LpLadderFilter::Saturation saturation, bool precise>
+ [[gnu::always_inline]] inline q31_t LpLadderFilter::doDriveLPFOnSample(q31_t input, LpLadderState& state,
+-                                                                       const Coefficients& c, uint32_t& noise) {
+-	q31_t noisy_m = noisyMoveability<everyOtherDraw, precise>(state, c, noise);
++                                                                       const Coefficients& c) {
++	const q31_t m = stageMoveability<precise>(c);
+ 
+ 	q31_t feedbacksSum = multiply_32x32_rshift32_rounded(state.lpfLPF1.memory, c.lpf1Feedback);
+ 	feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF2.memory, c.lpf2Feedback);
+@@ -553,19 +483,19 @@ template <LpLadderFilter::Saturation saturation, bool everyOtherDraw, bool preci
+ 	q31_t x = scaleInput<saturation>(input, feedbacksSum, c);
+ 
+ 	if constexpr (precise) {
+-		q31_t a = state.lpfLPF1.doFilterPrecise(x, noisy_m);
+-		q31_t b = state.lpfLPF2.doFilterPrecise(a, noisy_m);
+-		q31_t c3 = state.lpfLPF3.doFilterPrecise(b, noisy_m);
+-		return state.lpfLPF4.doFilterPrecise(c3, noisy_m) << 1;
++		q31_t a = state.lpfLPF1.doFilterPrecise(x, m);
++		q31_t b = state.lpfLPF2.doFilterPrecise(a, m);
++		q31_t c3 = state.lpfLPF3.doFilterPrecise(b, m);
++		return state.lpfLPF4.doFilterPrecise(c3, m) << 1;
+ 	}
+ 
+-	q31_t a = state.lpfLPF1.doFilter(x, noisy_m);
++	q31_t a = state.lpfLPF1.doFilter(x, m);
+ 
+-	q31_t b = state.lpfLPF2.doFilter(a, noisy_m);
++	q31_t b = state.lpfLPF2.doFilter(a, m);
+ 
+-	q31_t c3 = state.lpfLPF3.doFilter(b, noisy_m);
++	q31_t c3 = state.lpfLPF3.doFilter(b, m);
+ 
+-	q31_t d = state.lpfLPF4.doFilter(c3, noisy_m) << 1;
++	q31_t d = state.lpfLPF4.doFilter(c3, m) << 1;
+ 
+ 	return d;
+ }
+diff --git a/src/deluge/dsp/filter/lpladder.h b/src/deluge/dsp/filter/lpladder.h
+index 51f654ff..cd46a1a7 100644
+--- a/src/deluge/dsp/filter/lpladder.h
++++ b/src/deluge/dsp/filter/lpladder.h
+@@ -48,7 +48,6 @@ public:
+ 
+ private:
+ 	struct LpLadderState {
+-		q31_t noiseLastValue;
+ 		LadderStage lpfLPF1;
+ 		LadderStage lpfLPF2;
+ 		LadderStage lpfLPF3;
+@@ -61,7 +60,7 @@ private:
+ 		}
+ 	};
+ 	// The loops work on a copy of the configuration and the state in local variables (lpladder.cpp): the output
+-	// store could otherwise alias every member and jcong, so each sample would load and store them all again
++	// store could otherwise alias every member, so each sample would load and store them all again
+ 	struct Coefficients {
+ 		q31_t moveability;
+ 		q31_t processedResonance;
+@@ -74,10 +73,9 @@ private:
+ 		int32_t saturationAmount; // PER_SAMPLE's
+ 		q31_t moveability2;       // 2 * moveability, for the precise stages (below kPreciseMoveabilityLimit only)
+ 	};
+-	// Below this moveability (0.25, a cutoff of about 4.5 kHz; the analog noise moves it by up to 12.5 %, so twice
+-	// it stays below 2^31) the stages run precise (LadderStage::doFilterPrecise()): that's where their rounding shows,
+-	// the dead band being 2^31 / moveability LSB wide and the rounding noise amplified by 1 / moveability. Above it,
+-	// bit-exact as before
++	// Below this moveability (0.25, a cutoff of about 4.5 kHz; twice it stays below 2^31) the stages run precise
++	// (LadderStage::doFilterPrecise()): that's where their rounding shows, the dead band being 2^31 / moveability LSB
++	// wide and the rounding noise amplified by 1 / moveability. Above it, bit-exact as before
+ 	static constexpr q31_t kPreciseMoveabilityLimit = 1 << 29;
+ 	// scaleInput's branch, which is the same for the whole block: no saturation, saturation, saturation plus morph
+ 	// (each with kSaturationVoice, or _GLOBAL: kSaturationGlobal), or decided per sample as before (only for the mono
+@@ -106,29 +104,29 @@ private:
+ 	template <FilterMode mode, bool oversample>
+ 	void renderMono(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+ 	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or the left or right of each frame (STEREO,
+-	// channel 0 or 1). everyOtherDraw: the noise generator skips the other channel's draws (see renderLoop)
+-	template <FilterMode mode, Saturation saturation, bool oversample, Layout layout, int channel, bool everyOtherDraw,
+-	          bool precise>
++	// channel 0 or 1)
++	template <FilterMode mode, Saturation saturation, bool oversample, Layout layout, int channel, bool precise>
+ 	[[gnu::always_inline]] static inline void renderChannel(q31_t* startSample, q31_t* endSample,
+ 	                                                        int32_t sampleIncrement, LpLadderState& channelState,
+-	                                                        const Coefficients& c, uint32_t& noise);
+-	template <FilterMode mode, Saturation saturation, bool oversample, bool everyOtherDraw, bool precise>
+-	[[gnu::always_inline]] static inline q31_t filterSample(q31_t input, LpLadderState& state, const Coefficients& c,
+-	                                                        uint32_t& noise);
++	                                                        const Coefficients& c);
++	template <FilterMode mode, Saturation saturation, bool oversample, bool precise>
++	[[gnu::always_inline]] static inline q31_t filterSample(q31_t input, LpLadderState& state, const Coefficients& c);
+ 	template <Saturation saturation>
+ 	[[gnu::always_inline]] static inline q31_t scaleInput(q31_t input, q31_t feedbacksSum, const Coefficients& c);
+-	template <bool everyOtherDraw, bool precise>
+-	[[gnu::always_inline]] static inline q31_t noisyMoveability(LpLadderState& state, const Coefficients& c,
+-	                                                            uint32_t& noise);
+-	template <Saturation saturation, bool everyOtherDraw, bool precise>
++	// The stages' moveability: moveability, or for the precise stages twice it
++	template <bool precise>
++	[[gnu::always_inline]] static inline q31_t stageMoveability(const Coefficients& c) {
++		return precise ? c.moveability2 : c.moveability;
++	}
++	template <Saturation saturation, bool precise>
+ 	[[gnu::always_inline]] static inline q31_t do24dBLPFOnSample(q31_t input, LpLadderState& state,
+-	                                                             const Coefficients& c, uint32_t& noise);
+-	template <Saturation saturation, bool everyOtherDraw, bool precise>
++	                                                             const Coefficients& c);
++	template <Saturation saturation, bool precise>
+ 	[[gnu::always_inline]] static inline q31_t do12dBLPFOnSample(q31_t input, LpLadderState& state,
+-	                                                             const Coefficients& c, uint32_t& noise);
+-	template <Saturation saturation, bool everyOtherDraw, bool precise>
++	                                                             const Coefficients& c);
++	template <Saturation saturation, bool precise>
+ 	[[gnu::always_inline]] static inline q31_t doDriveLPFOnSample(q31_t input, LpLadderState& state,
+-	                                                              const Coefficients& c, uint32_t& noise);
++	                                                              const Coefficients& c);
+ 	// all ladders are in this class to share the basic components
+ 	// this differentiates between them
+ 	FilterMode lpfMode;
+-- 
+2.43.0
+

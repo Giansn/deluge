@@ -1,0 +1,130 @@
+From e4daff43d101110ac31df1b0711be298ff520e53 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 04:48:49 +0000
+Subject: [PATCH 100/112] Volume: the pan at the voice level (something patched
+ to it) moves per sample
+
+Where a voice pans (an LFO or envelope patched to pan), its amplitudes ramp per sample from the last block's to
+this one's (GainRamp: exactly onto the target, at least 5 ms for more than 6 dB) instead of jumping per block.
+Steady, the arithmetic is v17's (the same amplitudes every sample); centred and staying there it doesn't pan.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/model/voice/voice.cpp | 28 +++++++++++++++++++++-------
+ src/deluge/model/voice/voice.h   |  7 ++++++-
+ 2 files changed, 27 insertions(+), 8 deletions(-)
+
+diff --git a/src/deluge/model/voice/voice.cpp b/src/deluge/model/voice/voice.cpp
+index f47cf33c..1fe6a499 100644
+--- a/src/deluge/model/voice/voice.cpp
++++ b/src/deluge/model/voice/voice.cpp
+@@ -180,6 +180,8 @@ bool Voice::noteOn(ModelStackWithVoice* modelStack, int32_t newNoteCodeBeforeArp
+ 		memset(modulatorAmplitudeLastTime, 0, sizeof(modulatorAmplitudeLastTime));
+ 		overallOscAmplitudeLastTime = 0;
+ 		doneFirstRender = false;
++		panRampL_.restart();
++		panRampR_.restart();
+ 
+ 		filterSet.reset();
+ 
+@@ -1163,14 +1165,26 @@ skipAutoRelease: {}
+ 	}
+ 
+ 	// Even if first rendering into a local Voice buffer, we'll very often still just do panning at the Sound level
+-	if (!applyingPanAtVoiceLevel) {
++	// mastertune v18: where the voice pans, its amplitudes move per sample from the last block's to this one's (as
++	// the Sound's pan does, dsp/gain_ramp.h); centred and staying there, it doesn't pan, as before
++	int32_t panStartL = 1073741823, panEndL = 1073741823, panStartR = 1073741823, panEndR = 1073741823;
++	if (!applyingPanAtVoiceLevel || !AudioEngine::renderInStereo) {
+ 		doPanning = false;
++		panRampL_.restart();
++		panRampR_.restart();
+ 	}
+ 	else {
+ 		// Set up panning
+-		doPanning = (AudioEngine::renderInStereo
+-		             && shouldDoPanning(paramFinalValues[params::LOCAL_PAN], &amplitudeL, &amplitudeR));
++		shouldDoPanning(paramFinalValues[params::LOCAL_PAN], &amplitudeL, &amplitudeR);
++		panStartL = panRampL_.started() ? panRampL_.current() : amplitudeL;
++		panStartR = panRampR_.started() ? panRampR_.current() : amplitudeR;
++		panEndL = panRampL_.advance(amplitudeL, numSamples);
++		panEndR = panRampR_.advance(amplitudeR, numSamples);
++		doPanning =
++		    !(panStartL == 1073741823 && panEndL == 1073741823 && panStartR == 1073741823 && panEndR == 1073741823);
+ 	}
++	deluge::dsp::gain::RampSteps1 panStepsL(panStartL, panEndL, numSamples);
++	deluge::dsp::gain::RampSteps1 panStepsR(panStartR, panEndR, numSamples);
+ 
+ 	uint32_t sourcesToRenderInStereo = 0;
+ 
+@@ -1525,7 +1539,7 @@ skipUnisonPart: {}
+ 
+ 				// Write to the output buffer, panning or not
+ 				if (doPanning) {
+-					outputSample->addPannedStereo(outputSampleL, outputSampleR, amplitudeL, amplitudeR);
++					outputSample->addPannedStereo(outputSampleL, outputSampleR, panStepsL.next(), panStepsR.next());
+ 				}
+ 				else {
+ 					outputSample->addStereo(outputSampleL, outputSampleR);
+@@ -1557,7 +1571,7 @@ skipUnisonPart: {}
+ 
+ 				// Write to the output buffer, panning or not
+ 				if (doPanning) {
+-					outputSample->addPannedStereo(outputSampleL, outputSampleR, amplitudeL, amplitudeR);
++					outputSample->addPannedStereo(outputSampleL, outputSampleR, panStepsL.next(), panStepsR.next());
+ 				}
+ 				else {
+ 					outputSample->addStereo(outputSampleL, outputSampleR);
+@@ -1605,7 +1619,7 @@ skipUnisonPart: {}
+ 
+ 				if (soundRenderingInStereo) {
+ 					if (doPanning) {
+-						((StereoSample*)outputSample)->addPannedMono(output, amplitudeL, amplitudeR);
++						((StereoSample*)outputSample)->addPannedMono(output, panStepsL.next(), panStepsR.next());
+ 					}
+ 					else {
+ 						((StereoSample*)outputSample)->addMono(output);
+@@ -1637,7 +1651,7 @@ skipUnisonPart: {}
+ 
+ 				if (soundRenderingInStereo) {
+ 					if (doPanning) {
+-						((StereoSample*)outputSample)->addPannedMono(output, amplitudeL, amplitudeR);
++						((StereoSample*)outputSample)->addPannedMono(output, panStepsL.next(), panStepsR.next());
+ 					}
+ 					else {
+ 						((StereoSample*)outputSample)->addMono(output);
+diff --git a/src/deluge/model/voice/voice.h b/src/deluge/model/voice/voice.h
+index 42523f06..392d18c3 100644
+--- a/src/deluge/model/voice/voice.h
++++ b/src/deluge/model/voice/voice.h
+@@ -19,6 +19,7 @@
+ 
+ #include "definitions_cxx.hpp"
+ #include "dsp/filter/filter_set.h"
++#include "dsp/gain_ramp.h"
+ #include "model/voice/voice_sample_playback_guide.h"
+ #include "model/voice/voice_unison_part.h"
+ #include "modulation/envelope.h"
+@@ -69,13 +70,17 @@ public:
+ 	uint32_t lastSaturationTanHWorkingValue[2];
+ 
+ 	int32_t overallOscAmplitudeLastTime;
++	// mastertune v18: the pan at the voice level (where something is patched to it), its amplitudes moving per sample
++	deluge::dsp::gain::GainRamp panRampL_;
++	deluge::dsp::gain::GainRamp panRampR_;
+ 	int32_t sourceAmplitudesLastTime[kNumSources];
+ 	int32_t modulatorAmplitudeLastTime[kNumModulators];
+ 	uint32_t sourceWaveIndexesLastTime[kNumSources];
+ 
+ 	bool doneFirstRender;
+ 	bool previouslyIgnoredNoteOff;
+-	bool invertReversed = false; // Set by the arpeggiator's reverse probability: play this voice's samples the other way
++	bool invertReversed =
++	    false; // Set by the arpeggiator's reverse probability: play this voice's samples the other way
+ 	uint8_t whichExpressionSourcesCurrentlySmoothing;
+ 	uint8_t whichExpressionSourcesFinalValueChanged;
+ 
+-- 
+2.43.0
+

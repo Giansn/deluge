@@ -1,0 +1,57 @@
+From 99f7650b19db8b33703de638d9498168bb2a6855 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 20:04:32 +0000
+Subject: [PATCH 077/112] OLED brightness: a damaged or empty oledContrast
+ entry reads as 255, not as the darkest contrast
+
+readSetting() clamped the value from CommunityFeatures.XML to 1-255, and
+readTagOrAttributeValueInt() (stringToInt()) gives 0 for "abc" or "", so a
+damaged, empty, "0" or negative entry made the OLED as dark as it gets (1),
+and the next save wrote the 1 down for good. Now a value outside 1-255
+counts as missing: 255, as bright as before (as cpu_stats::readSetting()
+falls back to its default).
+
+Tested: tests/settings/oled_brightness_emu.py step 8 (a card whose entry
+is "abc": the contrast 255, the menu on 10, only oledMainInit()'s 0x81
+0xFF, saved as 255; entries "", "0", "-5", "-2147483648", "99999": 255;
+"1": 1): 3 checks failed before, 26 of 26 ok now.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/hid/display/oled_brightness.cpp | 4 +++-
+ src/deluge/hid/display/oled_brightness.h   | 3 ++-
+ 2 files changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/deluge/hid/display/oled_brightness.cpp b/src/deluge/hid/display/oled_brightness.cpp
+index 8a79f562..426cfb4f 100644
+--- a/src/deluge/hid/display/oled_brightness.cpp
++++ b/src/deluge/hid/display/oled_brightness.cpp
+@@ -66,7 +66,9 @@ bool readSetting(char const* name, int32_t value) {
+ 	if (strcmp(name, kSettingName) != 0) {
+ 		return false;
+ 	}
+-	setContrast(value);
++	// A damaged or empty entry ("abc", "", "0", a negative or too big number) gives a value outside 1-255: it counts
++	// as missing (255, as before), not as the darkest contrast (clamping would give 1, and that would be saved)
++	setContrast((value >= 1 && value <= 255) ? value : 255);
+ 	return true;
+ }
+ 
+diff --git a/src/deluge/hid/display/oled_brightness.h b/src/deluge/hid/display/oled_brightness.h
+index f4b312e5..1b37a30a 100644
+--- a/src/deluge/hid/display/oled_brightness.h
++++ b/src/deluge/hid/display/oled_brightness.h
+@@ -33,7 +33,8 @@ int32_t level();
+ void setLevel(int32_t level);
+ /// Clamped to 1-255; sent to the OLED if the Deluge has one and it's new
+ void setContrast(int32_t contrast);
+-/// From CommunityFeatures.XML: true if it's this setting's entry (and then it's applied)
++/// From CommunityFeatures.XML: true if it's this setting's entry (and then it's applied; a value outside 1-255, from
++/// a damaged or empty entry, counts as missing: 255)
+ bool readSetting(char const* name, int32_t value);
+ 
+ } // namespace deluge::hid::display::oled_brightness
+-- 
+2.43.0
+

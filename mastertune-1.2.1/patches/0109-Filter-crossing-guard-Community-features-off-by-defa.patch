@@ -1,0 +1,323 @@
+From 7ee316beba34c58e432dcd629de1bb9046ff5fca Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 09:30:09 +0000
+Subject: [PATCH 109/112] Filter crossing guard (Community features, off by
+ default): both resonances lowered where the HPF meets the LPF
+
+With both filters on in series and the HPF's cutoff near the LPF's or above it, their resonance peaks stack: the
+gains multiply, the peak heights in dB add (up to 24 dB above the higher single peak, tests/filters crossing_guard).
+Switched on (Community features > Filter crossing guard, 7-segment CROS, saved in CommunityFeatures.XML as
+filterCrossingGuard), FilterSet::setConfig() lowers each filter's resonance to where its own peak is half as high
+(+0.5 dB), so together they peak at most 1 dB above the higher one alone: (hL + 1) / 2 + (hH + 1) / 2 <=
+max(hL, hH) + 1. The peak heights come from measured tables per mode (12 / 24 dB, drive and HP ladders, SVF) at
+resonance 0 to 50; where a ladder sings on its own the guard takes it down to about 23 dB. Strength by the cutoffs'
+distance: 0 from 2 octaves below, full from 0.7 times the LPF's cutoff to 1.4 times, 0 at 8 times (smoothsteps).
+Monotonic in the knob's resonance at every strength. The coefficients ramp per sample from block to block, so the
+lowered resonance moves smoothly with a swept or automated cutoff. Voices and the song's, kits' and audio tracks'
+filters alike (the audio engine sets FilterSet::crossingGuard before each render). Not in the parallel route, where
+the sum at half level doesn't stack. Off: the branch isn't taken, the filters render bit for bit as before.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter_set.cpp          | 105 ++++++++++++++++++
+ src/deluge/dsp/filter/filter_set.h            |  15 +++
+ src/deluge/gui/l10n/english.json              |   1 +
+ src/deluge/gui/l10n/g_english.cpp             |   1 +
+ src/deluge/gui/l10n/g_seven_segment.cpp       |   1 +
+ src/deluge/gui/l10n/seven_segment.json        |   1 +
+ src/deluge/gui/l10n/strings.h                 |   1 +
+ .../menu_item/runtime_feature/settings.cpp    |   4 +-
+ .../settings/runtime_feature_settings.cpp     |   7 ++
+ .../model/settings/runtime_feature_settings.h |   1 +
+ .../processing/engines/audio_engine.cpp       |   6 +
+ 11 files changed, 142 insertions(+), 1 deletion(-)
+
+diff --git a/src/deluge/dsp/filter/filter_set.cpp b/src/deluge/dsp/filter/filter_set.cpp
+index 96fffae7..ba31ef07 100644
+--- a/src/deluge/dsp/filter/filter_set.cpp
++++ b/src/deluge/dsp/filter/filter_set.cpp
+@@ -344,6 +344,99 @@ void FilterSet::renderFade(q31_t* startSample, q31_t* endSample, int32_t sampleI
+ 	}
+ }
+ 
++// The crossing guard (see crossingGuard). In series, the two filters' gains multiply: where their peaks meet, the
++// combination's peak height (over the level both pass) is the sum of theirs in dB. So at the crossing each filter's
++// resonance is lowered to where its own peak is half as high (plus 0.5 dB): together they then peak at most 1 dB above
++// the higher one alone, (hL + 1) / 2 + (hH + 1) / 2 <= max(hL, hH) + 1. (In parallel the two sum at half level and
++// don't stack: no guard there.) The peak heights are the filters' own, measured (tests/filters crossing_guard
++// "heights": the impulse response at -66 dBFS, where every filter is linear and the peaks are highest; 200 Hz to 2.5
++// kHz, the voice's and the song's filters alike within 0.5 dB up to where they sing on their own) at resonance 0,
++// 2.5, ... 50 of the display's 50. Where a ladder sings on its own (the 12 /
++// 24 dB LP ladders from 37.5, the drive ladder from 25) the table goes on at 45 dB, 1 dB a step: there the guard
++// takes it down to about 23 dB, so it stops singing at the crossing. The HP ladder sings from 35 at 1 kHz, from 42.5
++// at 5 kHz, where it peaks about 5 dB lower throughout: its table rises on in 5 dB steps from 35, so the guard
++// halves it enough at every cutoff.
++namespace {
++constexpr int32_t kResonancePerStep = 10737418; // the resonance's param per step of the display's 0 to 50
++constexpr float kPeakLp12[21] = {0.0f,  0.2f,  1.0f,  2.5f,  4.2f,  6.0f,  7.9f,  9.8f,  11.9f, 14.2f, 16.7f,
++                                 19.6f, 23.1f, 27.7f, 35.3f, 45.0f, 46.0f, 47.0f, 48.0f, 49.0f, 50.0f};
++constexpr float kPeakLp24[21] = {0.0f,  0.2f,  0.9f,  2.6f,  4.4f,  6.3f,  8.3f,  10.3f, 12.5f, 14.8f, 17.3f,
++                                 20.2f, 23.8f, 28.4f, 36.2f, 45.0f, 46.0f, 47.0f, 48.0f, 49.0f, 50.0f};
++constexpr float kPeakDrive[21] = {0.0f,  0.2f,  0.9f,  2.7f,  4.7f,  7.1f,  9.7f,  12.9f, 17.0f, 23.5f, 45.0f,
++                                   46.0f, 47.0f, 48.0f, 49.0f, 50.0f, 51.0f, 52.0f, 53.0f, 54.0f, 55.0f};
++constexpr float kPeakSvf[21] = {0.9f,  1.5f,  2.2f,  3.0f,  3.9f,  4.9f,  6.0f,  7.2f,  8.5f,  10.0f, 11.6f,
++                                13.4f, 15.4f, 17.7f, 20.4f, 23.6f, 27.4f, 32.4f, 39.5f, 51.5f, 64.6f};
++constexpr float kPeakHpLadder[21] = {0.0f,  0.05f, 0.1f,  0.7f,  1.6f,  2.6f,  3.9f,  5.4f,  7.1f,  9.2f,  11.6f,
++                                     15.3f, 18.8f, 23.1f, 28.0f, 33.0f, 38.0f, 43.0f, 45.0f, 47.0f, 49.0f};
++// A table's peak height at a resonance (steps of the display, 0 to 50), linear between its values
++float peakAt(const float* peaks, float steps) {
++	float x = std::clamp(steps / 2.5f, 0.0f, 20.0f);
++	int32_t i = std::min((int32_t)x, (int32_t)19);
++	return peaks[i] + (peaks[i + 1] - peaks[i]) * (x - (float)i);
++}
++// The resonance (steps) where a table's peak height is h (the inverse of peakAt(); the tables rise throughout)
++float resonanceForPeak(const float* peaks, float h) {
++	if (h <= peaks[0]) {
++		return 0.0f;
++	}
++	int32_t i = 0;
++	while (i < 19 && peaks[i + 1] < h) {
++		i++;
++	}
++	float t = std::clamp((h - peaks[i]) / (peaks[i + 1] - peaks[i]), 0.0f, 1.0f);
++	return 2.5f * ((float)i + t);
++}
++} // namespace
++
++const float* FilterSet::guardPeaks(FilterMode mode) {
++	switch (mode) {
++	case FilterMode::TRANSISTOR_12DB:
++		return kPeakLp12;
++	case FilterMode::TRANSISTOR_24DB:
++		return kPeakLp24;
++	case FilterMode::TRANSISTOR_24DB_DRIVE:
++		return kPeakDrive;
++	case FilterMode::HPLADDER:
++		return kPeakHpLadder;
++	case FilterMode::SVF_BAND:
++	case FilterMode::SVF_NOTCH:
++		return kPeakSvf;
++	default:
++		return nullptr;
++	}
++}
++
++// Strength: 0 up to 2 octaves below the crossing (the HPF at a quarter of the LPF's cutoff), rising to 1 at half an
++// octave below (0.7 times it; a smoothstep: continuous in value and slope, so a cutoff swept through moves the
++// resonance without a kink), 1 to half an octave above, falling to 0 at 3 octaves above (there only the skirts meet)
++float FilterSet::guardStrength(float octaves) {
++	constexpr float kRiseFrom = -2.0f, kFullFrom = -0.5f, kFullTo = 0.5f, kFallTo = 3.0f;
++	auto smooth = [](float t) { return t * t * (3.0f - 2.0f * t); };
++	if (octaves <= kRiseFrom || octaves >= kFallTo) {
++		return 0.0f;
++	}
++	if (octaves < kFullFrom) {
++		return smooth((octaves - kRiseFrom) / (kFullFrom - kRiseFrom));
++	}
++	if (octaves > kFullTo) {
++		return smooth((kFallTo - octaves) / (kFallTo - kFullTo));
++	}
++	return 1.0f;
++}
++
++// At full strength the resonance where the peak is (h + 1) / 2 high; between, in a straight line from the resonance
++// as it is (monotonic in the knob's resonance at every strength: turning it up never lowers it)
++q31_t FilterSet::guardResonance(q31_t resonance, float strength, const float* peaks) {
++	if (resonance <= 0 || strength <= 0.0f || peaks == nullptr) {
++		return resonance;
++	}
++	const float steps = (float)resonance * (1.0f / (float)kResonancePerStep);
++	const float h = peakAt(peaks, steps);
++	const float full = std::min(resonanceForPeak(peaks, 0.5f * (h + 1.0f)), steps);
++	const float guarded = steps - strength * (steps - full);
++	return std::min(resonance, (q31_t)(guarded * (float)kResonancePerStep));
++}
++
+ int32_t FilterSet::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMode lpfmode, q31_t lpfMorph,
+                              q31_t hpfFrequency, q31_t hpfResonance, FilterMode hpfmode, q31_t hpfMorph,
+                              q31_t filterGain, FilterRoute routing, bool adjustVolumeForHPFResonance,
+@@ -392,6 +485,18 @@ int32_t FilterSet::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMode
+ 	lpfMode_ = lpfmode;
+ 	hpfMode_ = hpfmode;
+ 	routing_ = routing;
++	// mastertune v18: the crossing guard, where it's switched on (off: this doesn't run, nothing changes). Both
++	// resonances lowered as the cutoffs come near each other (guardStrength()); the coefficients move per sample from
++	// the last block's, so the resonance follows a cutoff swept through smoothly, without steps
++	if (crossingGuard && LPFOn && HPFOn && routing_ != FilterRoute::PARALLEL && lpfFrequency > 0
++	    && hpfFrequency > 0 && (lpfResonance > 0 || hpfResonance > 0)) {
++		// quickLog: 2^25 per octave (piecewise linear between octaves, continuous, within 0.09 of an octave)
++		const float octaves = (float)(quickLog(hpfFrequency) - quickLog(lpfFrequency)) * (1.0f / 33554432.0f);
++		const float strength = guardStrength(octaves);
++		lpfResonance = guardResonance(lpfResonance, strength, guardPeaks(lpfMode_));
++		hpfResonance = guardResonance(hpfResonance, strength, guardPeaks(hpfMode_));
++	}
++
+ 	// 1.2.1 cut the HPF's resonance to 256 steps here ("having changes happen in the small bytes too often causes
+ 	// rustling": each block's change jumped). mastertune v18: the coefficients move per sample from block to block, so
+ 	// the resonance keeps its full resolution: a modulated or automated one no longer moves in steps of up to 0.8 dB
+diff --git a/src/deluge/dsp/filter/filter_set.h b/src/deluge/dsp/filter/filter_set.h
+index 4d105981..db7c1e15 100644
+--- a/src/deluge/dsp/filter/filter_set.h
++++ b/src/deluge/dsp/filter/filter_set.h
+@@ -96,6 +96,21 @@ public:
+ 	/// Ends a crossfade at once, freeing its slot (a voice that is unassigned: it may be freed without its destructor)
+ 	void endFade();
+ 
++	/// mastertune v18: the crossing guard (Community features > Filter crossing guard, off by default; the audio
++	/// engine sets this from the setting before each render). Where both filters are on and the HPF's cutoff comes
++	/// near the LPF's or above it, their resonance peaks stack (in series their heights in dB add: up to 20 dB over the
++	/// higher one alone); on, both resonances are lowered there, smoothly with the cutoffs' distance, so the combined
++	/// peak stays within about 1 dB of the higher single one (see guardResonance(); tests/filters crossing_guard). Off:
++	/// nothing changes, bit for bit
++	static inline bool crossingGuard = false;
++	/// The guard's strength (0: none, 1: full) at the cutoffs' distance in octaves (log2 of the HPF's cutoff param over
++	/// the LPF's)
++	[[nodiscard]] static float guardStrength(float octaves);
++	/// A filter mode's peak heights (dB over its passband) at resonance 0, 2.5, ... 50, for the guard
++	[[nodiscard]] static const float* guardPeaks(FilterMode mode);
++	/// A resonance (param, 10737418 per step of the display's 0 to 50) as the guard lowers it at a strength
++	[[nodiscard]] static q31_t guardResonance(q31_t resonance, float strength, const float* peaks);
++
+ 	/// mastertune-v17: whether setConfig() with these modes would leave the filters as they are: no reset, the same
+ 	/// modes remembered. Everything else it sets is only read by the rendering, and set again before it.
+ 	[[nodiscard]] bool keepsModes(FilterMode lpfmode, FilterMode hpfmode) const {
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index 0204a944..bac3b429 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -957,6 +957,7 @@
+         "STRING_FOR_CPU_MONITOR": "CPU monitor",
+         "STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING": "Flicker-free dimming",
+         "STRING_FOR_COMMUNITY_FEATURE_OUTPUT_LIMITER": "Output limiter",
++        "STRING_FOR_COMMUNITY_FEATURE_FILTER_CROSSING_GUARD": "Filter crossing guard",
+         "STRING_FOR_TIME_CHANGE": "Time change",
+         "STRING_FOR_DELAY_TIME_CHANGE": "Delay time change",
+         "STRING_FOR_FADE": "Fade",
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index 8f3e6b40..01ea3de7 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -885,6 +885,7 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_CPU_MONITOR, "CPU monitor"},
+         {STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING, "Flicker-free dimming"},
+         {STRING_FOR_COMMUNITY_FEATURE_OUTPUT_LIMITER, "Output limiter"},
++        {STRING_FOR_COMMUNITY_FEATURE_FILTER_CROSSING_GUARD, "Filter crossing guard"},
+         {STRING_FOR_TIME_CHANGE, "Time change"},
+         {STRING_FOR_DELAY_TIME_CHANGE, "Delay time change"},
+         {STRING_FOR_FADE, "Fade"},
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index 2f64ca6c..5e086c22 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -526,6 +526,7 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_CPU_MONITOR, "CPU"},
+         {STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING, "DIMM"},
+         {STRING_FOR_COMMUNITY_FEATURE_OUTPUT_LIMITER, "LIMT"},
++        {STRING_FOR_COMMUNITY_FEATURE_FILTER_CROSSING_GUARD, "CROS"},
+         {STRING_FOR_TIME_CHANGE, "TIME"},
+         {STRING_FOR_FADE, "FADE"},
+         {STRING_FOR_TAPE, "TAPE"},
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index 14920373..7a997e85 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -561,6 +561,7 @@
+         "STRING_FOR_CPU_MONITOR": "CPU",
+         "STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING": "DIMM",
+         "STRING_FOR_COMMUNITY_FEATURE_OUTPUT_LIMITER": "LIMT",
++        "STRING_FOR_COMMUNITY_FEATURE_FILTER_CROSSING_GUARD": "CROS",
+         "STRING_FOR_TIME_CHANGE": "TIME",
+         "STRING_FOR_FADE": "FADE",
+         "STRING_FOR_TAPE": "TAPE",
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index fa4e3bab..ce25bec8 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -977,6 +977,7 @@ enum class String : size_t {
+ 	STRING_FOR_COMMUNITY_FEATURE_KIT_RAM_SAVER,
+ 	STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING,
+ 	STRING_FOR_COMMUNITY_FEATURE_OUTPUT_LIMITER,
++	STRING_FOR_COMMUNITY_FEATURE_FILTER_CROSSING_GUARD,
+ 
+ 	// drone (mastertune-v12)
+ 	STRING_FOR_DRONE,
+diff --git a/src/deluge/gui/menu_item/runtime_feature/settings.cpp b/src/deluge/gui/menu_item/runtime_feature/settings.cpp
+index afdbbfd4..3262769b 100644
+--- a/src/deluge/gui/menu_item/runtime_feature/settings.cpp
++++ b/src/deluge/gui/menu_item/runtime_feature/settings.cpp
+@@ -54,6 +54,7 @@ UsbAudioSetting menuUsbAudio(RuntimeFeatureSettingType::UsbAudio);
+ SettingToggle menuKitRamSaver(RuntimeFeatureSettingType::KitRamSaver);
+ FlickerFreeDimmingSetting menuFlickerFreeDimming(RuntimeFeatureSettingType::FlickerFreeDimming);
+ SettingToggle menuOutputLimiter(RuntimeFeatureSettingType::OutputLimiter);
++SettingToggle menuFilterCrossingGuard(RuntimeFeatureSettingType::FilterCrossingGuard);
+ 
+ std::array<MenuItem*, RuntimeFeatureSettingType::MaxElement - kNonTopLevelSettings> subMenuEntries{
+     &menuDrumRandomizer,
+@@ -82,7 +83,8 @@ std::array<MenuItem*, RuntimeFeatureSettingType::MaxElement - kNonTopLevelSettin
+     &menuUsbAudio,
+     &menuKitRamSaver,
+     &menuFlickerFreeDimming,
+-    &menuOutputLimiter};
++    &menuOutputLimiter,
++    &menuFilterCrossingGuard};
+ 
+ Settings::Settings(l10n::String name, l10n::String title) : menu_item::Submenu(name, title, subMenuEntries) {
+ }
+diff --git a/src/deluge/model/settings/runtime_feature_settings.cpp b/src/deluge/model/settings/runtime_feature_settings.cpp
+index 4b2fd921..35b314b4 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.cpp
++++ b/src/deluge/model/settings/runtime_feature_settings.cpp
+@@ -219,6 +219,13 @@ void RuntimeFeatureSettings::init() {
+ 	// the output as before, bit for bit
+ 	SetupOnOffSetting(settings[RuntimeFeatureSettingType::OutputLimiter], STRING_FOR_COMMUNITY_FEATURE_OUTPUT_LIMITER,
+ 	                  "outputLimiter", RuntimeFeatureStateToggle::Off);
++
++	// FilterCrossingGuard (mastertune v18): with both filters on and the HPF's cutoff near the LPF's or above it, both
++	// resonances lowered so their peaks don't stack (dsp/filter FilterSet::crossingGuard); off: the filters as before,
++	// bit for bit
++	SetupOnOffSetting(settings[RuntimeFeatureSettingType::FilterCrossingGuard],
++	                  STRING_FOR_COMMUNITY_FEATURE_FILTER_CROSSING_GUARD, "filterCrossingGuard",
++	                  RuntimeFeatureStateToggle::Off);
+ }
+ 
+ void RuntimeFeatureSettings::readSettingsFromFile(StorageManager& bdsm) {
+diff --git a/src/deluge/model/settings/runtime_feature_settings.h b/src/deluge/model/settings/runtime_feature_settings.h
+index 4302cc51..0cbc0760 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.h
++++ b/src/deluge/model/settings/runtime_feature_settings.h
+@@ -70,6 +70,7 @@ enum RuntimeFeatureSettingType : uint32_t {
+ 	KitRamSaver,
+ 	FlickerFreeDimming,
+ 	OutputLimiter,
++	FilterCrossingGuard,
+ 	MaxElement // Keep as boundary
+ };
+ 
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index 6bbb068f..d9c2c10f 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -40,6 +40,7 @@
+ #include "model/instrument/kit.h"
+ #include "model/mod_controllable/mod_controllable_audio.h"
+ #include "model/sample/sample_recorder.h"
++#include "dsp/filter/filter_set.h"
+ #include "model/settings/runtime_feature_settings.h"
+ #include "model/song/song.h"
+ #include "model/tuning/master_tune.h"
+@@ -744,6 +745,11 @@ void renderAudio(size_t numSamples) {
+ 
+ 	numHopsEndedThisRoutineCall = 0;
+ 
++	// mastertune v18: the filters' crossing guard, where switched on (Community features), for every FilterSet this
++	// render sets up (dsp/filter FilterSet::crossingGuard)
++	deluge::dsp::filter::FilterSet::crossingGuard =
++	    runtimeFeatureSettings.isOn(RuntimeFeatureSettingType::FilterCrossingGuard);
++
+ 	// Render audio for song
+ 	if (currentSong) {
+ 
+-- 
+2.43.0
+

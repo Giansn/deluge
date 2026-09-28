@@ -1,0 +1,77 @@
+From fa78ef21560b37948445131d0a78e43098362483 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 20:23:35 +0000
+Subject: [PATCH 080/112] Song browser: a number after '-' or '.' is part of
+ the name; only "SONG" exactly is a new song's name
+
+"TR-808" and "TR-909", "Jam 2026-09-27" and "Jam 2026-09-28", "Mix 1.5" are songs of their own now (they were the
+groups "TR", "Jam 2026-09", "Mix 1"): only a number after ' ' or '_' (how the firmware names a new version) or right
+after the name is a version number. "Song" and "Song2" are one group; "SONG1", "SONG2" (getUnusedSlot()) stay
+different songs.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/ui/load/load_song_ui.cpp | 37 +++++++++++++------------
+ 1 file changed, 20 insertions(+), 17 deletions(-)
+
+diff --git a/src/deluge/gui/ui/load/load_song_ui.cpp b/src/deluge/gui/ui/load/load_song_ui.cpp
+index 51cee0d3..f60ca776 100644
+--- a/src/deluge/gui/ui/load/load_song_ui.cpp
++++ b/src/deluge/gui/ui/load/load_song_ui.cpp
+@@ -80,20 +80,20 @@ FileItem* itemAt(int32_t i) {
+ }
+ 
+ // A file's group: its name without the extension and without the number at its end, with the separators before that
+-// number (' ', '_', '-', '.'); case doesn't matter. "New Sitar Grii.XML", "New Sitar Grii 2.XML", "New Sitar Grii
+-// 10.XML": "New Sitar Grii"; "TRACK", "TRACK 2", "track_3", "TRACK4": "TRACK". A name without a number at its end is a
+-// group of its own ("New Drum Idea", "TRACK FINAL"), and so is one that's only a number (the 7-segment display's "1"
+-// for SONG001.XML) and the firmware's name for a new song, "SONG" and a number ("SONG1", "SONG001": different songs,
+-// Browser::getUnusedSlot(); their versions "SONG1 2", ... are the group "SONG1"). The group's row shows this part of
+-// the name.
+-// The files are sorted by name (strcmpspecial(): case doesn't matter, numbers by value, '.' and '_' before any other
+-// character, then ' ', then the rest as in ASCII), so a song's versions come right after it, and a name that begins
+-// with its name but isn't one of them sorts after them ("TRACK FINAL", "TRACK LIVE", "TRACKS", the folder "TRACK
+-// DEMOS"), with a few exceptions. Sorting between two versions, these split the group into two rows (each a group of
+-// its own, or a single version shown by its name): the song's name continued with '_' ("TRACK_B"), or with a space and
+-// a character below '0' ("TRACK (old)", "TRACK - live", "TRACK #2"), between "TRACK" and "TRACK 2"; a version's name
+-// continued ("TRACK 2 FINAL", "TRACK 2b"; "TRACK 2.1", the group "TRACK 2", before "TRACK 2"), next to that version;
+-// versions with different separators or none ("TRACK 3", "TRACK_4", "TRACK5"), names that sort between those
++// number (' ', '_': how the firmware names a new version); case doesn't matter. A number after '-' or '.' is part of
++// the name ("TR-808", "Jam 2026-09-27", "Mix 1.5": songs of their own). "New Sitar Grii.XML", "New Sitar Grii 2.XML",
++// "New Sitar Grii 10.XML": "New Sitar Grii"; "TRACK", "TRACK 2", "track_3", "TRACK4": "TRACK". A name without a number
++// at its end is a group of its own ("New Drum Idea", "TRACK FINAL"), and so is one that's only a number (the 7-segment
++// display's "1" for SONG001.XML) and the firmware's name for a new song, "SONG" and a number ("SONG1", "SONG001":
++// different songs, Browser::getUnusedSlot(); their versions "SONG1 2", ... are the group "SONG1"). The group's row
++// shows this part of the name. The files are sorted by name (strcmpspecial(): case doesn't matter, numbers by value,
++// '.' and '_' before any other character, then ' ', then the rest as in ASCII), so a song's versions come right after
++// it, and a name that begins with its name but isn't one of them sorts after them ("TRACK FINAL", "TRACK LIVE",
++// "TRACKS", the folder "TRACK DEMOS"), with a few exceptions. Sorting between two versions, these split the group into
++// two rows (each a group of its own, or a single version shown by its name): the song's name continued with '_'
++// ("TRACK_B"), or with a space and a character below '0' ("TRACK (old)", "TRACK - live", "TRACK #2"), between "TRACK"
++// and "TRACK 2"; a version's name continued ("TRACK 2 FINAL", "TRACK 2b", "TRACK 2.1"), next to that version; versions
++// with different separators or none ("TRACK 3", "TRACK_4", "TRACK5"), names that sort between those
+ // ("TRACK FINAL" between "TRACK 3" and "TRACK5"); a folder named like these
+ int32_t groupKeyLength(FileItem const* item) {
+ 	char const* name = item->displayName;
+@@ -107,11 +107,14 @@ int32_t groupKeyLength(FileItem const* item) {
+ 	if (numberStart == length) {
+ 		return length; // No number at the end
+ 	}
+-	while (end > 0 && (name[end - 1] == ' ' || name[end - 1] == '_' || name[end - 1] == '-' || name[end - 1] == '.')) {
++	if (end > 0 && (name[end - 1] == '-' || name[end - 1] == '.')) {
++		return length; // "TR-808", "Jam 2026-09-27", "Mix 1.5": part of the name, not a version number
++	}
++	while (end > 0 && (name[end - 1] == ' ' || name[end - 1] == '_')) {
+ 		end--;
+ 	}
+-	if (!end || (end == numberStart && end == 4 && !memcasecmp(name, "SONG", 4))) {
+-		return length; // Only a number; a new song's name
++	if (!end || (end == numberStart && end == 4 && !memcmp(name, "SONG", 4))) {
++		return length; // Only a number; a new song's name (getUnusedSlot(): "SONG" and a number)
+ 	}
+ 	return end;
+ }
+-- 
+2.43.0
+

@@ -1,0 +1,549 @@
+From 02f74927ab675aff68675bc6ce6078bad36e625e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 03:11:56 +0000
+Subject: [PATCH 097/112] Filters: the LP ladders' ramps at about v17's cost
+ per sample
+
+The heavy test song ramps every synth's 24 dB ladder every block (envelopes, LFOs); the ramp loop cost 83
+instructions per sample (v17's plain loop about 60), mostly spills. Now 55 (precise) per sample:
+
+- The 24 dB and drive ladders take their feedback in a ramp from the moving moveability and
+  divideBy1PlusTannedFrequency (Horner: d / 4 * (2 s4 + G (s3 + G (s2 + G s1))), feedbackFromMoveability()): three
+  coefficients fewer to move, and every sample's feedback that of a real ladder for its G and d. Where the input is a
+  tanh's (bounded to 2^27) and the stages precise (G < 1/4), without the halvings.
+- The coefficients step once per pair of samples (both take the pair's second set; the last sample still lands on
+  the target): a staircase at Nyquist of two samples' change, sets on the same line (lpf_ramp_math models it,
+  0.39 dB, stable).
+- A one-piece ramp (the usual) skips the knots; its steps only for what the loop reads (stepsFor()); stride a
+  template parameter; the 12 / 24 dB break frequency found once instead of two instantTan() per block.
+- Spec 7: a change under 0.5 cent (resonance / morph under 2^-13 of their range) takes no ramp (rampAudible(), LP, HP
+  ladder, SVF): a step nobody hears, the ramp's cost only where needed.
+
+Full song (song_emu --init-sounds --seed 1): demand 102.0 % -> 90.8 % (v17 89.3 % in the same run), filters
+484k -> 352k per 128 samples (v17 338k); device: FORCE culls 7 (v17 13), SOFT 106 (98), mean voices 31.2 (31.7).
+Hashes demand 4b2736026f83707e, digital 239b71379d508cfc (the ladders' ramps and precise stages round differently).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter.h     |  28 ++++-
+ src/deluge/dsp/filter/hpladder.h   |   2 +-
+ src/deluge/dsp/filter/lpladder.cpp | 192 ++++++++++++++++++++++-------
+ src/deluge/dsp/filter/lpladder.h   |  71 +++++++++--
+ src/deluge/dsp/filter/svf.h        |   2 +-
+ 5 files changed, 233 insertions(+), 62 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/filter.h b/src/deluge/dsp/filter/filter.h
+index 485010cc..4261aec4 100644
+--- a/src/deluge/dsp/filter/filter.h
++++ b/src/deluge/dsp/filter/filter.h
+@@ -152,7 +152,7 @@ protected:
+ 	bool haveLast_ = false;
+ 	// Per-sample steps from `from` to `to` over n samples: sample k (from 1) takes from + k * step, the last one to
+ 	// within 2n LSB of `to` (under 2^-23 of the unit for a block of 128; short of it, never beyond), and the next block
+-	// starts from `to` exactly. Every change moves, however small: no threshold, no staircase. The division by n is
++	// starts from `to` exactly (a change of under 0.5 cent takes no ramp: rampAudible()). The division by n is
+ 	// a multiplication by 1 / n, taken once for all of a set's coefficients (RampDivisor): the Cortex-A9 has no divide
+ 	// instruction, and a 64-bit division per coefficient per block was 4 % of the CPU in the full song
+ 	struct RampDivisor {
+@@ -295,6 +295,32 @@ public:
+ 		}
+ 		return p;
+ 	}
++	// Whether this block's configuration is far enough from the last one's to move to it per sample (spec 7: steps of
++	// at most 0.5 cent): the cutoff by more than 0.5 cent (2^(0.5 / 1200) - 1 = 1 / 3463 of it), the resonance by
++	// more than 2^-13 of its range (2^29), morph by more than 2^-13 of its (2^31), or the mode. A smaller change takes
++	// the block's own loop with the new coefficients at once: a step of at most 0.5 cent, which nothing hears (a
++	// sweep of an octave per second moves 3.5 cents per block of 128), and a ramp's cost only where it's needed
++	[[nodiscard]] bool rampAudible() const {
++		if (params_.mode != lastParams_.mode) {
++			return true;
++		}
++		const int64_t lo = std::min(params_.frequency, lastParams_.frequency);
++		const int64_t hi = std::max(params_.frequency, lastParams_.frequency);
++		return (hi - lo) * 3463 > lo || std::abs((int64_t)params_.resonance - (int64_t)lastParams_.resonance) > (1 << 16)
++		       || std::abs((int64_t)params_.morph - (int64_t)lastParams_.morph) > (1 << 18);
++	}
++	// Whether this block's ramp over n samples is one straight line (rampKnots() would give only its two ends: one
++	// piece, no break), the usual case
++	[[nodiscard]] bool rampIsOnePiece(int32_t n) const {
++		if (rampPieces(n) != 1) {
++			return false;
++		}
++		const q31_t f0 = lastParams_.frequency;
++		const q31_t f1 = params_.frequency;
++		q31_t below;
++		return !(f0 > 0 && f1 > 0 && f0 != f1
++		         && static_cast<const T*>(this)->rampBreak(params_.mode, std::min(f0, f1), std::max(f0, f1), &below));
++	}
+ 	// A filter without a break: the coefficients follow the cutoff continuously
+ 	[[nodiscard]] bool rampBreak(FilterMode, q31_t, q31_t, q31_t*) const { return false; }
+ 	// Piece by piece, as rampKnots() gave them: render(begin, end, start, steps) for each that has samples, the
+diff --git a/src/deluge/dsp/filter/hpladder.h b/src/deluge/dsp/filter/hpladder.h
+index d6d0cbf3..fd028705 100644
+--- a/src/deluge/dsp/filter/hpladder.h
++++ b/src/deluge/dsp/filter/hpladder.h
+@@ -110,7 +110,7 @@ private:
+ 	}
+ 	// Before a block: whether it moves from the last block's configuration to this one (ramping_); after it, this one
+ 	// is the next block's last
+-	void startBlock() { ramping_ = haveLast_ && !last_.sameRamp(coefficients()); }
++	void startBlock() { ramping_ = haveLast_ && !last_.sameRamp(coefficients()) && rampAudible(); }
+ 	void endBlock() {
+ 		last_ = coefficients();
+ 		rampEndBlock();
+diff --git a/src/deluge/dsp/filter/lpladder.cpp b/src/deluge/dsp/filter/lpladder.cpp
+index 3af3087d..954ce3de 100644
+--- a/src/deluge/dsp/filter/lpladder.cpp
++++ b/src/deluge/dsp/filter/lpladder.cpp
+@@ -230,10 +230,9 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ 	endBlock();
+ }
+ 
+-// The saturation amount doesn't take part in the comparison (it's the block's), so the mode doesn't matter here
++// A ramp where the params moved audibly since the last block (rampAudible()) and the oversampling is the same
+ void LpLadderFilter::startBlock() {
+-	ramping_ = haveLast_ && lastOversampling_ == doOversampling
+-	           && !last_.sameRamp(coefficients<FilterMode::TRANSISTOR_24DB>());
++	ramping_ = haveLast_ && lastOversampling_ == doOversampling && rampAudible();
+ }
+ 
+ void LpLadderFilter::endBlock() {
+@@ -326,6 +325,16 @@ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversampl
+ 		n = std::max(n, (int32_t)1);
+ 		Coefficients from = last_;
+ 		from.saturationAmount = c.saturationAmount;
++		const bool precise = moveability < kPreciseMoveabilityLimit && last_.moveability < kPreciseMoveabilityLimit;
++		if (rampIsOnePiece(n)) {
++			if (precise) {
++				renderLine<mode, saturation, oversample, true>(startSample, from, c, n, layout == Layout::STEREO);
++			}
++			else {
++				renderLine<mode, saturation, oversample, false>(startSample, from, c, n, layout == Layout::STEREO);
++			}
++			return;
++		}
+ 		Knot<Coefficients>* knots = rampKnots_;
+ 		const int32_t count = rampKnots(n, from, c, knots);
+ 		for (int32_t k = 1; k < count; k++) {
+@@ -333,7 +342,7 @@ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversampl
+ 			knots[k].out.saturationAmount = c.saturationAmount;
+ 		}
+ 		const int32_t stride = layout == Layout::STEREO ? 2 : 1;
+-		if (moveability < kPreciseMoveabilityLimit && last_.moveability < kPreciseMoveabilityLimit) {
++		if (precise) {
+ 			renderRamp<mode, saturation, oversample, true>(startSample, stride, knots, count, layout == Layout::STEREO);
+ 		}
+ 		else {
+@@ -350,6 +359,20 @@ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversampl
+ 	}
+ }
+ 
++template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, bool precise>
++void LpLadderFilter::renderLine(q31_t* startSample, const Coefficients& from, const Coefficients& to, int32_t n,
++                                bool stereo) {
++	constexpr bool withMorph = saturation == Saturation::TANH_MORPH || saturation == Saturation::TANH_MORPH_GLOBAL;
++	const Coefficients d = from.stepsFor<mode == FilterMode::TRANSISTOR_12DB, precise, withMorph>(to, n);
++	if (stereo) {
++		renderChannelRamp<mode, saturation, oversample, precise, 2>(startSample, startSample + 2 * n, l, from, d);
++		renderChannelRamp<mode, saturation, oversample, precise, 2>(startSample + 1, startSample + 2 * n, r, from, d);
++	}
++	else {
++		renderChannelRamp<mode, saturation, oversample, precise, 1>(startSample, startSample + n, l, from, d);
++	}
++}
++
+ // Each channel through the pieces of the ramp, in turn (the state carries on from piece to piece)
+ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, bool precise>
+ void LpLadderFilter::renderRamp(q31_t* startSample, int32_t stride, const Knot<Coefficients>* knots, int32_t count,
+@@ -358,9 +381,14 @@ void LpLadderFilter::renderRamp(q31_t* startSample, int32_t stride, const Knot<C
+ 		LpLadderState& state = channel == 0 ? l : r;
+ 		forEachPiece(knots, count,
+ 		             [&](int32_t begin, int32_t end, const Coefficients& start, const Coefficients& steps) {
+-			             renderChannelRamp<mode, saturation, oversample, precise>(
+-			                 startSample + begin * stride + channel, startSample + end * stride, stride, state, start,
+-			                 steps);
++			             if (stereo) {
++				             renderChannelRamp<mode, saturation, oversample, precise, 2>(
++				                 startSample + begin * 2 + channel, startSample + end * 2, state, start, steps);
++			             }
++			             else {
++				             renderChannelRamp<mode, saturation, oversample, precise, 1>(
++				                 startSample + begin, startSample + end, state, start, steps);
++			             }
+ 		             });
+ 	}
+ }
+@@ -374,16 +402,22 @@ bool LpLadderFilter::rampBreak(FilterMode mode, q31_t lo, q31_t hi, q31_t* below
+ 	if (mode == FilterMode::TRANSISTOR_24DB_DRIVE) {
+ 		return false;
+ 	}
+-	auto tanned = [](q31_t f) { return instantTan(lshiftAndSaturate<5>(f)); };
+-	if (!(tanned(lo) <= kBreak && tanned(hi) > kBreak)) {
+-		return false;
++	// The largest frequency whose tannedFrequency is at most kBreak, found once (tannedFrequency grows with the
++	// frequency: bisection over the whole range), instead of two instantTan() per filter and block
++	static q31_t breakFrequency = -1;
++	if (breakFrequency < 0) {
++		auto tanned = [](q31_t f) { return instantTan(lshiftAndSaturate<5>(f)); };
++		q31_t a = 0, b = INT32_MAX;
++		while (b - a > 1) {
++			q31_t mid = a + (b - a) / 2;
++			(tanned(mid) <= kBreak ? a : b) = mid;
++		}
++		breakFrequency = a;
+ 	}
+-	// tannedFrequency grows with the frequency: bisection between lo (at most) and hi (above)
+-	while (hi - lo > 1) {
+-		q31_t mid = lo + (hi - lo) / 2;
+-		(tanned(mid) <= kBreak ? lo : hi) = mid;
++	if (!(lo <= breakFrequency && hi > breakFrequency)) {
++		return false;
+ 	}
+-	*below = lo;
++	*below = breakFrequency;
+ 	return true;
+ }
+ 
+@@ -422,28 +456,46 @@ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversampl
+ 	channelState = state;
+ }
+ 
+-template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, bool precise>
+-void LpLadderFilter::renderChannelRamp(q31_t* startSample, q31_t* endSample, int32_t stride,
+-                                       LpLadderState& channelState, const Coefficients& c, const Coefficients& d) {
++template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, bool precise, int32_t stride>
++void LpLadderFilter::renderChannelRamp(q31_t* startSample, q31_t* endSample, LpLadderState& channelState,
++                                       const Coefficients& c, const Coefficients& d) {
++	// The coefficients step once per pair of samples, by two steps (both samples of a pair take the set of its second:
++	// sample k from 1 takes c + k * d for even k, and k + 1's for odd k; an odd count takes the first sample alone, so
++	// the last sample still takes c + n * d). Moving the coefficients is what a ramp adds to the ladder's loop (with the
++	// precise stages' state not all the registers it needs are there), and per pair it costs half. The set is held for
++	// two samples: a staircase at the Nyquist frequency, its step two samples' change (1/64 of a piece of 128 samples,
++	// a piece at most a third of an octave), where 4-sample pieces made one at 11 kHz. Its sets are on the same
++	// straight line: as stable (tests/filters lpf_ramp_math models it)
+ 	LpLadderState state = channelState;
+ 	q31_t* currentSample = startSample;
+ 	Coefficients now = c;
+-	do {
++	// (The frames: for the right channel of a stereo block startSample is one past the frame's start)
++	if (((endSample - startSample + stride - 1) / stride) & 1) {
+ 		now.step(d);
+-		*currentSample = filterSample<mode, saturation, oversample, precise>(*currentSample, state, now);
++		*currentSample = filterSample<mode, saturation, oversample, precise, true>(*currentSample, state, now);
+ 		currentSample += stride;
+-	} while (currentSample < endSample);
++	}
++	if (currentSample < endSample) {
++		const Coefficients d2 = d.doubled();
++		do {
++			now.step(d2);
++			currentSample[0] = filterSample<mode, saturation, oversample, precise, true>(currentSample[0], state, now);
++			currentSample[stride] =
++			    filterSample<mode, saturation, oversample, precise, true>(currentSample[stride], state, now);
++			currentSample += 2 * stride;
++		} while (currentSample < endSample);
++	}
+ 	channelState = state;
+ }
+ 
+-template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, bool precise>
++template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, bool precise, bool ramp>
+ [[gnu::always_inline]] inline q31_t LpLadderFilter::filterSample(q31_t input, LpLadderState& state,
+                                                                  const Coefficients& c) {
+ 	if constexpr (mode == FilterMode::TRANSISTOR_12DB) {
+ 		return do12dBLPFOnSample<saturation, precise>(input, state, c);
+ 	}
+ 	else if constexpr (mode == FilterMode::TRANSISTOR_24DB) {
+-		return do24dBLPFOnSample<saturation, precise>(input, state, c);
++		return do24dBLPFOnSample<saturation, precise, ramp>(input, state, c);
+ 	}
+ 	else {
+ 		if constexpr (oversample) {
+@@ -462,15 +514,15 @@ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversampl
+ 			// actual sample works very nearly as well as this, but gives a little bit more aliasing on high notes
+ 			// fed in.
+ 
+-			doDriveLPFOnSample<saturation, precise>(input, state, c);
++			doDriveLPFOnSample<saturation, precise, ramp>(input, state, c);
+ 
+ 			// Crude downsampling - just take every second sample, with no anti-aliasing filter. Works fine cos the
+ 			// ladder LPF filter takes care of lots of those high harmonics!
+ 		}
+-		q31_t outputSampleToKeep = doDriveLPFOnSample<saturation, precise>(input, state, c);
++		q31_t outputSampleToKeep = doDriveLPFOnSample<saturation, precise, ramp>(input, state, c);
+ 
+ 		// Only perform the final saturation stage on this one sample, which we want to keep
+-		return getTanHUnknown(outputSampleToKeep, 4);
++		return ladderTanH<4>(outputSampleToKeep);
+ 	}
+ }
+ 
+@@ -478,16 +530,21 @@ template <LpLadderFilter::Saturation saturation>
+ [[gnu::always_inline]] inline q31_t LpLadderFilter::scaleInput(q31_t input, q31_t feedbacksSum, const Coefficients& c) {
+ 	// mastertune v18: the shifts and the difference saturate where they would exceed full scale (a loud input with
+ 	// the feedback at its limit) instead of wrapping to the other end; below that exactly as before
+-	q31_t temp = lshiftAndSaturate<2>(multiply_32x32_rshift32_rounded(
++	q31_t scaled = multiply_32x32_rshift32_rounded(
+ 	    subSaturate(input, lshiftAndSaturate<3>(multiply_32x32_rshift32_rounded(feedbacksSum, c.processedResonance))),
+-	    c.divideByTotalMoveabilityAndProcessedResonance));
++	    c.divideByTotalMoveabilityAndProcessedResonance);
++	if constexpr (saturation == Saturation::TANH || saturation == Saturation::TANH_GLOBAL) {
++		// The tanh of lshiftAndSaturate<2>(scaled) with both shifts in one (ladderTanH()'s pre: the same result)
++		return ladderTanH<saturation == Saturation::TANH_GLOBAL ? kSaturationGlobal : kSaturationVoice, 2>(scaled);
++	}
++	q31_t temp = lshiftAndSaturate<2>(scaled);
+ 	if constexpr (saturation == Saturation::TANH_MORPH || saturation == Saturation::TANH_MORPH_GLOBAL) {
+ 		q31_t extra = 2 * multiply_32x32_rshift32(input, c.morph);
+-		temp = getTanHUnknown(addSaturate(temp, extra),
+-		                      saturation == Saturation::TANH_MORPH_GLOBAL ? kSaturationGlobal : kSaturationVoice);
++		temp = ladderTanH<saturation == Saturation::TANH_MORPH_GLOBAL ? kSaturationGlobal : kSaturationVoice>(
++		    addSaturate(temp, extra));
+ 	}
+ 	else if constexpr (saturation == Saturation::TANH || saturation == Saturation::TANH_GLOBAL) {
+-		temp = getTanHUnknown(temp, saturation == Saturation::TANH_GLOBAL ? kSaturationGlobal : kSaturationVoice);
++		temp = ladderTanH<saturation == Saturation::TANH_GLOBAL ? kSaturationGlobal : kSaturationVoice>(temp);
+ 	}
+ 	else if constexpr (saturation == Saturation::PER_SAMPLE) {
+ 		if (c.morph > 0 || c.processedResonance > 510000000) {
+@@ -506,6 +563,37 @@ template <LpLadderFilter::Saturation saturation>
+ // in one instruction, exactly (sum << 32 doesn't change the rounding of the low word). A common left shift of the sum
+ // is the same as shifting each term, modulo 2^32.
+ 
++// mastertune v18: the 24 dB and drive ladders' feedback sum in a ramp. setConfig() makes the feedbacks from the
++// moveability G and d = divideBy1PlusTannedFrequency: lpf3Feedback = dG (Q30), lpf2Feedback = dG^2, lpf1Feedback = dG^3,
++// so the sum s1 dG^3 / 4 + s2 dG^2 / 4 + s3 dG / 4 + s4 d / 2 (the stages' memories s1..s4) is
++// d / 4 * (2 s4 + G (s3 + G (s2 + G s1))), Horner's rule: u = s2 / 2 + s1 G / 2 = (s2 + G s1) / 2,
++// v = s3 / 4 + u G / 2, w = s4 / 4 + v G / 2 = (2 s4 + G s3 + G^2 s2 + G^3 s1) / 8, each within full scale (G < 0.9),
++// and the sum 2 d w = 4 * smmulr(w, d); lshiftAndSaturate<2> of it as the loops take it. So a ramp moves G and d per
++// sample and the feedbacks follow them exactly (every sample a real ladder's feedback for its G and d), instead of
++// moving three more coefficients in straight lines of their own: fewer registers, fewer instructions. The same sum
++// as the three coefficients' to a few LSB (the halvings' rounding)
++// bounded: the input is a tanh's (every variant but NONE): at most 2^31 >> 4 (2^27, the tanh's output at its saturation
++// amount 2, less at 3). With the precise stages (moveability under 1/4: each stage's state within its input's range)
++// every state is then within 2^27, and the sums need no halving: u = s2 + G s1, v = s3 + G u, w = 2 s4 + G v (each
++// within 2^29), G s from smmlar by moveability2 = 2G, and the feedback sum d / 4 * w = smmulr(w, d) / 2, as the
++// loops take it (lshiftAndSaturate<2>) lshiftAndSaturate<1>(smmulr(w, d)): four instructions fewer per sample
++template <bool precise, bool bounded>
++[[gnu::always_inline]] inline q31_t LpLadderFilter::feedbackFromMoveability(const LpLadderState& state,
++                                                                           const Coefficients& c) {
++	if constexpr (precise && bounded) {
++		const q31_t m2 = c.moveability2;
++		q31_t u = multiply_accumulate_32x32_rshift32_rounded(state.lpfLPF2.memory, state.lpfLPF1.memory, m2);
++		q31_t v = multiply_accumulate_32x32_rshift32_rounded(state.lpfLPF3.memory, u, m2);
++		q31_t w = multiply_accumulate_32x32_rshift32_rounded(state.lpfLPF4.memory * 2, v, m2);
++		return doubleSaturate(multiply_32x32_rshift32_rounded(w, c.divideBy1PlusTannedFrequency));
++	}
++	const q31_t g = precise ? (c.moveability2 >> 1) : c.moveability;
++	q31_t u = multiply_accumulate_32x32_rshift32_rounded(state.lpfLPF2.memory >> 1, state.lpfLPF1.memory, g);
++	q31_t v = multiply_accumulate_32x32_rshift32_rounded(state.lpfLPF3.memory >> 2, u, g);
++	q31_t w = multiply_accumulate_32x32_rshift32_rounded(state.lpfLPF4.memory >> 2, v, g);
++	return lshiftAndSaturate<4>(multiply_32x32_rshift32_rounded(w, c.divideBy1PlusTannedFrequency));
++}
++
+ template <LpLadderFilter::Saturation saturation, bool precise>
+ [[gnu::always_inline]] inline q31_t LpLadderFilter::do12dBLPFOnSample(q31_t input, LpLadderState& state,
+                                                                       const Coefficients& c) {
+@@ -530,17 +618,23 @@ template <LpLadderFilter::Saturation saturation, bool precise>
+ 	return doubleSaturate(state.lpfLPF3.doAPF(state.lpfLPF2.doFilter(state.lpfLPF1.doFilter(x, m), m), m));
+ }
+ 
+-template <LpLadderFilter::Saturation saturation, bool precise>
++template <LpLadderFilter::Saturation saturation, bool precise, bool ramp>
+ [[gnu::always_inline]] inline q31_t LpLadderFilter::do24dBLPFOnSample(q31_t input, LpLadderState& state,
+                                                                       const Coefficients& c) {
+ 	const q31_t m = stageMoveability<precise>(c);
+ 
+-	q31_t feedbacksSum = multiply_32x32_rshift32_rounded(state.lpfLPF1.memory, c.lpf1Feedback);
+-	feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF2.memory, c.lpf2Feedback);
+-	feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF3.memory, c.lpf3Feedback);
+-	feedbacksSum =
+-	    multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF4.memory, c.divideBy1PlusTannedFrequency);
+-	feedbacksSum = lshiftAndSaturate<2>(feedbacksSum);
++	q31_t feedbacksSum;
++	if constexpr (ramp) {
++		feedbacksSum = feedbackFromMoveability<precise, saturation != Saturation::NONE>(state, c);
++	}
++	else {
++		feedbacksSum = multiply_32x32_rshift32_rounded(state.lpfLPF1.memory, c.lpf1Feedback);
++		feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF2.memory, c.lpf2Feedback);
++		feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF3.memory, c.lpf3Feedback);
++		feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF4.memory,
++		                                                          c.divideBy1PlusTannedFrequency);
++		feedbacksSum = lshiftAndSaturate<2>(feedbacksSum);
++	}
+ 
+ 	// Note: in the line above, we "should" halve filterSetConfig->divideBy1plusg to get it into the 1=1073741824 range.
+ 	// But it doesn't sound as good. Primarily it stops us getting to full resonance. But even if we allow further
+@@ -565,24 +659,30 @@ template <LpLadderFilter::Saturation saturation, bool precise>
+ 	    state.lpfLPF4.doFilter(state.lpfLPF3.doFilter(state.lpfLPF2.doFilter(state.lpfLPF1.doFilter(x, m), m), m), m));
+ }
+ 
+-template <LpLadderFilter::Saturation saturation, bool precise>
++template <LpLadderFilter::Saturation saturation, bool precise, bool ramp>
+ [[gnu::always_inline]] inline q31_t LpLadderFilter::doDriveLPFOnSample(q31_t input, LpLadderState& state,
+                                                                        const Coefficients& c) {
+ 	const q31_t m = stageMoveability<precise>(c);
+ 
+-	q31_t feedbacksSum = multiply_32x32_rshift32_rounded(state.lpfLPF1.memory, c.lpf1Feedback);
+-	feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF2.memory, c.lpf2Feedback);
+-	feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF3.memory, c.lpf3Feedback);
+-	feedbacksSum =
+-	    multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF4.memory, c.divideBy1PlusTannedFrequency);
+-	feedbacksSum = lshiftAndSaturate<2>(feedbacksSum);
++	q31_t feedbacksSum;
++	if constexpr (ramp) {
++		feedbacksSum = feedbackFromMoveability<precise, saturation != Saturation::NONE>(state, c);
++	}
++	else {
++		feedbacksSum = multiply_32x32_rshift32_rounded(state.lpfLPF1.memory, c.lpf1Feedback);
++		feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF2.memory, c.lpf2Feedback);
++		feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF3.memory, c.lpf3Feedback);
++		feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF4.memory,
++		                                                          c.divideBy1PlusTannedFrequency);
++		feedbacksSum = lshiftAndSaturate<2>(feedbacksSum);
++	}
+ 
+ 	// Note: in the line above, we "should" halve filterSetConfig->divideBy1plusg to get it into the 1=1073741824 range.
+ 	// But it doesn't sound as good. Primarily it stops us getting to full resonance. But even if we allow further
+ 	// resonance increase, the sound just doesn't quite compare. Lucky I discovered this by mistake
+ 
+ 	// Saturate feedback
+-	feedbacksSum = getTanHUnknown(feedbacksSum, 7);
++	feedbacksSum = ladderTanH<7>(feedbacksSum);
+ 
+ 	// We don't saturate the input anymore, because that's the place where we'd get the most aliasing!
+ 	q31_t x = scaleInput<saturation>(input, feedbacksSum, c);
+diff --git a/src/deluge/dsp/filter/lpladder.h b/src/deluge/dsp/filter/lpladder.h
+index 216fa9f0..07f4c861 100644
+--- a/src/deluge/dsp/filter/lpladder.h
++++ b/src/deluge/dsp/filter/lpladder.h
+@@ -72,14 +72,6 @@ private:
+ 		q31_t divideBy1PlusTannedFrequency;
+ 		int32_t saturationAmount; // PER_SAMPLE's
+ 		q31_t moveability2;       // 2 * moveability, for the precise stages (below kPreciseMoveabilityLimit only)
+-		// What the loops move per sample (all but saturationAmount, which is the block's; moveability2 follows
+-		// moveability)
+-		[[nodiscard]] bool sameRamp(const Coefficients& o) const {
+-			return moveability == o.moveability && processedResonance == o.processedResonance
+-			       && divideByTotalMoveabilityAndProcessedResonance == o.divideByTotalMoveabilityAndProcessedResonance
+-			       && morph == o.morph && lpf1Feedback == o.lpf1Feedback && lpf2Feedback == o.lpf2Feedback
+-			       && lpf3Feedback == o.lpf3Feedback && divideBy1PlusTannedFrequency == o.divideBy1PlusTannedFrequency;
+-		}
+ 		// The per-sample steps from this to `to` over n samples
+ 		[[nodiscard]] Coefficients steps(const Coefficients& to, int32_t n) const {
+ 			const RampDivisor div(n);
+@@ -95,6 +87,46 @@ private:
+ 			                    0,
+ 			                    rampStep(moveability2, to.moveability2, div)};
+ 		}
++		// The same, only the coefficients a ramp's loop reads (the others 0): the stages' moveability (moveability2
++		// for the precise ones), processedResonance, the divisor, divideBy1PlusTannedFrequency (the 24 dB and drive
++		// ladders' feedback comes from it and the moveability, feedbackFromMoveability()), the 12 dB ladder's lpf1 and
++		// lpf2Feedback, morph where the loop mixes it in
++		template <bool twelve, bool precise, bool withMorph>
++		[[nodiscard]] Coefficients stepsFor(const Coefficients& to, int32_t n) const {
++			const RampDivisor div(n);
++			Coefficients d{};
++			if constexpr (precise) {
++				d.moveability2 = rampStep(moveability2, to.moveability2, div);
++			}
++			else {
++				d.moveability = rampStep(moveability, to.moveability, div);
++			}
++			d.processedResonance = rampStep(processedResonance, to.processedResonance, div);
++			d.divideByTotalMoveabilityAndProcessedResonance = rampStep(
++			    divideByTotalMoveabilityAndProcessedResonance, to.divideByTotalMoveabilityAndProcessedResonance, div);
++			d.divideBy1PlusTannedFrequency = rampStep(divideBy1PlusTannedFrequency, to.divideBy1PlusTannedFrequency, div);
++			if constexpr (twelve) {
++				d.lpf1Feedback = rampStep(lpf1Feedback, to.lpf1Feedback, div);
++				d.lpf2Feedback = rampStep(lpf2Feedback, to.lpf2Feedback, div);
++			}
++			if constexpr (withMorph) {
++				d.morph = rampStep(morph, to.morph, div);
++			}
++			return d;
++		}
++		// Two steps at once (renderChannelRamp(): per pair of samples)
++		[[nodiscard]] Coefficients doubled() const {
++			return Coefficients{moveability * 2,
++			                    processedResonance * 2,
++			                    divideByTotalMoveabilityAndProcessedResonance * 2,
++			                    morph * 2,
++			                    lpf1Feedback * 2,
++			                    lpf2Feedback * 2,
++			                    lpf3Feedback * 2,
++			                    divideBy1PlusTannedFrequency * 2,
++			                    0,
++			                    moveability2 * 2};
++		}
+ 		[[gnu::always_inline]] inline void step(const Coefficients& d) {
+ 			moveability += d.moveability;
+ 			processedResonance += d.processedResonance;
+@@ -146,6 +178,10 @@ private:
+ 	void renderStates(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, const Coefficients& c);
+ 	// The coefficients moving per sample through knots[0..pieces] over n frames (Filter::rampKnots()), the one
+ 	// channel of a mono block or both of a stereo one (interleaved, stride 2)
++	// A ramp in one straight line from `from` to `to` over n frames (the usual one: Filter::rampIsOnePiece()), without
++	// the knots
++	template <FilterMode mode, Saturation saturation, bool oversample, bool precise>
++	void renderLine(q31_t* startSample, const Coefficients& from, const Coefficients& to, int32_t n, bool stereo);
+ 	template <FilterMode mode, Saturation saturation, bool oversample, bool precise>
+ 	void renderRamp(q31_t* startSample, int32_t stride, const Knot<Coefficients>* knots, int32_t count, bool stereo);
+ 	template <FilterMode mode, bool oversample, Layout layout>
+@@ -173,11 +209,15 @@ private:
+ 	                                                        const Coefficients& c);
+ 	// One channel, every stride-th sample from startSample on, the coefficients moving from c by d per sample. One loop
+ 	// for every layout and both channels, not inlined: the ramps cost little code
+-	template <FilterMode mode, Saturation saturation, bool oversample, bool precise>
+-	[[gnu::noinline]] static void renderChannelRamp(q31_t* startSample, q31_t* endSample, int32_t stride,
++	// (stride a template parameter: the loop steps its pointer by a constant, which frees a register)
++	template <FilterMode mode, Saturation saturation, bool oversample, bool precise, int32_t stride>
++	[[gnu::noinline]] static void renderChannelRamp(q31_t* startSample, q31_t* endSample,
+ 	                                                LpLadderState& channelState, const Coefficients& c,
+ 	                                                const Coefficients& d);
+-	template <FilterMode mode, Saturation saturation, bool oversample, bool precise>
++	// ramp: in a ramp's loop (renderChannelRamp()), where the 24 dB and drive ladders take their feedback from the
++	// moveability and divideBy1PlusTannedFrequency as they move (feedbackFromMoveability()) instead of from the three
++	// feedback coefficients: three fewer coefficients to move per sample
++	template <FilterMode mode, Saturation saturation, bool oversample, bool precise, bool ramp = false>
+ 	[[gnu::always_inline]] static inline q31_t filterSample(q31_t input, LpLadderState& state, const Coefficients& c);
+ 	template <Saturation saturation>
+ 	[[gnu::always_inline]] static inline q31_t scaleInput(q31_t input, q31_t feedbacksSum, const Coefficients& c);
+@@ -186,13 +226,18 @@ private:
+ 	[[gnu::always_inline]] static inline q31_t stageMoveability(const Coefficients& c) {
+ 		return precise ? c.moveability2 : c.moveability;
+ 	}
+-	template <Saturation saturation, bool precise>
++	template <Saturation saturation, bool precise, bool ramp>
+ 	[[gnu::always_inline]] static inline q31_t do24dBLPFOnSample(q31_t input, LpLadderState& state,
+ 	                                                             const Coefficients& c);
++	// The 24 dB and drive ladders' feedback sum (lshiftAndSaturate<2> of it, as the loops take it) from the stages'
++	// memories, by Horner's rule in the moveability (see lpladder.cpp)
++	template <bool precise, bool bounded>
++	[[gnu::always_inline]] static inline q31_t feedbackFromMoveability(const LpLadderState& state,
++	                                                                   const Coefficients& c);
+ 	template <Saturation saturation, bool precise>
+ 	[[gnu::always_inline]] static inline q31_t do12dBLPFOnSample(q31_t input, LpLadderState& state,
+ 	                                                             const Coefficients& c);
+-	template <Saturation saturation, bool precise>
++	template <Saturation saturation, bool precise, bool ramp>
+ 	[[gnu::always_inline]] static inline q31_t doDriveLPFOnSample(q31_t input, LpLadderState& state,
+ 	                                                              const Coefficients& c);
+ 	// all ladders are in this class to share the basic components
+diff --git a/src/deluge/dsp/filter/svf.h b/src/deluge/dsp/filter/svf.h
+index b42752dc..35c1f575 100644
+--- a/src/deluge/dsp/filter/svf.h
++++ b/src/deluge/dsp/filter/svf.h
+@@ -89,7 +89,7 @@ private:
+ 	}
+ 	// Before a block: whether it moves from the last block's configuration to this one (ramping_); after it, this one
+ 	// is the next block's last
+-	void startBlock() { ramping_ = haveLast_ && !last_.sameRamp(coefficients()); }
++	void startBlock() { ramping_ = haveLast_ && !last_.sameRamp(coefficients()) && rampAudible(); }
+ 	void endBlock() {
+ 		last_ = coefficients();
+ 		rampEndBlock();
+-- 
+2.43.0
+

@@ -1,0 +1,541 @@
+From f0f5efa30fe7ca59c47d957ace584b2294db4c90 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 00:16:24 +0000
+Subject: [PATCH 091/112] Filters: the SVF rounds instead of truncating and
+ keeps its state precise at low cutoff; no sum wraps any more
+
+SVF (spec points 2 and 3): every product in the recursion rounds (smmulr), the band's tanh interpolates the table to
+all 24 bits and rounds (getTanHUnknown() dropped 8 bits: the band moved in floored steps of 32 LSB), and below fc
+1/4 (~3.1 kHz) both integrators carry their state 32 bits below the LSB (smlal, as the LP ladders' precise stages);
+sums and the output's tripling saturate. Against a float64 model (tests/filters svf_precision, cutoff 5 / 15): the
+error's DC -88..-106 dBFS -> -175..-228, A-weighted error -154..-171 -> -184..-189 dBFS, the tail after the music
+stuck at -101..-133 dBFS -> -178 (a rounded half LSB, tripled).
+
+Ladders (spec point 3): the all-pass output 2b - x, the outputs' doubling, the feedback sums' and scaleInput's shifts
+and differences, the morph term and the HP ladder's normalisation (<< 7) saturate instead of wrapping to the other
+end. Bit-exact wherever nothing reached full scale: in filter_neutral's static cases only the SVF ones change (its
+rounding) and the HP ladder with morph: its cutoff modulation took input << 4, which wrapped from -24 dBFS on (the
+music there peaks above it) and now saturates.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/hpladder.cpp        |  17 +--
+ src/deluge/dsp/filter/ladder_components.h |  33 +++++-
+ src/deluge/dsp/filter/lpladder.cpp        |  45 ++++----
+ src/deluge/dsp/filter/svf.cpp             | 131 +++++++++++++++++-----
+ src/deluge/dsp/filter/svf.h               |  26 +++--
+ 5 files changed, 186 insertions(+), 66 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/hpladder.cpp b/src/deluge/dsp/filter/hpladder.cpp
+index 4978a000..511f3653 100644
+--- a/src/deluge/dsp/filter/hpladder.cpp
++++ b/src/deluge/dsp/filter/hpladder.cpp
+@@ -242,13 +242,16 @@ template <bool morph, HpLadderFilter::Saturation saturation, int32_t amount>
+                                                           q31_t fixedFc, q31_t& lastA) {
+ 	q31_t temp_fc;
+ 	if constexpr (morph) {
+-		temp_fc = std::max(multiply_accumulate_32x32_rshift32_rounded(c.fc, input << 4, c.morph), lowerLimit);
++		temp_fc = std::max(multiply_accumulate_32x32_rshift32_rounded(c.fc, lshiftAndSaturate<4>(input), c.morph),
++		                   lowerLimit);
+ 	}
+ 	else {
+ 		temp_fc = fixedFc;
+ 	}
+ 
+-	q31_t firstHPFOutput = input - state.hpfHPF1.doFilter(input, temp_fc);
++	// mastertune v18: the shifts and sums saturate where they would exceed full scale (a loud input, the feedback at its
++	// limit) instead of wrapping to the other end; below that exactly as before
++	q31_t firstHPFOutput = subSaturate(input, state.hpfHPF1.doFilter(input, temp_fc));
+ 
+ 	// (a << 2) + (b << 2) as (a + b) << 2, the same modulo 2^32, with smmlar: sum + multiply_32x32_rshift32_rounded
+ 	// in one instruction, exactly (sum << 32 doesn't change the rounding of the low word)
+@@ -256,8 +259,8 @@ template <bool morph, HpLadderFilter::Saturation saturation, int32_t amount>
+ 	    multiply_32x32_rshift32_rounded(state.hpfHPF3.memory, c.hpfHPF3Feedback), state.hpfLPF1.memory,
+ 	    c.hpfLPF1Feedback);
+ 
+-	q31_t a = multiply_32x32_rshift32_rounded(c.divideByTotalMoveability, firstHPFOutput + (feedbacksValue << 2))
+-	          << (4 + 1);
++	q31_t a = lshiftAndSaturate<4 + 1>(multiply_32x32_rshift32_rounded(
++	    c.divideByTotalMoveability, addSaturate(firstHPFOutput, lshiftAndSaturate<2>(feedbacksValue))));
+ 
+ 	// Only saturate / anti-alias if lots of resonance
+ 	if constexpr (saturation == Saturation::ANTIALIASED) {
+@@ -282,10 +285,10 @@ template <bool morph, HpLadderFilter::Saturation saturation, int32_t amount>
+ 		}
+ 	}
+ 
+-	state.hpfLPF1.doFilter(a - state.hpfHPF3.doFilter(a, temp_fc), temp_fc);
++	state.hpfLPF1.doFilter(subSaturate(a, state.hpfHPF3.doFilter(a, temp_fc)), temp_fc);
+ 
+-	// Normalization
+-	a = multiply_32x32_rshift32_rounded(a, c.hpfDivideByProcessedResonance) << (8 - 1);
++	// Normalization (the shift saturates, v18: up to about 7 times a, which can exceed full scale)
++	a = lshiftAndSaturate<8 - 1>(multiply_32x32_rshift32_rounded(a, c.hpfDivideByProcessedResonance));
+ 
+ 	return a;
+ }
+diff --git a/src/deluge/dsp/filter/ladder_components.h b/src/deluge/dsp/filter/ladder_components.h
+index a20c79e5..32b99f0a 100644
+--- a/src/deluge/dsp/filter/ladder_components.h
++++ b/src/deluge/dsp/filter/ladder_components.h
+@@ -32,6 +32,33 @@ namespace deluge::dsp::filter {
+ #endif
+ }
+ 
++// mastertune v18: saturating add and subtract (qadd / qsub; on the PC the same, exactly), where a sum can exceed full
++// scale: it clips there instead of wrapping to the other end (a full-scale click)
++[[gnu::always_inline]] inline q31_t addSaturate(q31_t a, q31_t b) {
++#if defined(__arm__)
++	q31_t out;
++	asm("qadd %0, %1, %2" : "=r"(out) : "r"(a), "r"(b));
++	return out;
++#else
++	int64_t s = (int64_t)a + b;
++	return (q31_t)(s > INT32_MAX ? INT32_MAX : s < INT32_MIN ? INT32_MIN : s);
++#endif
++}
++[[gnu::always_inline]] inline q31_t subSaturate(q31_t a, q31_t b) {
++#if defined(__arm__)
++	q31_t out;
++	asm("qsub %0, %1, %2" : "=r"(out) : "r"(a), "r"(b));
++	return out;
++#else
++	int64_t s = (int64_t)a - b;
++	return (q31_t)(s > INT32_MAX ? INT32_MAX : s < INT32_MIN ? INT32_MIN : s);
++#endif
++}
++// The all-pass output 2b - x, saturated (b and x each within full scale, 2b - x up to three times it)
++[[gnu::always_inline]] inline q31_t allPassOutput(q31_t b, q31_t input) {
++	return subSaturate(addSaturate(b, b), input);
++}
++
+ class BasicFilterComponent {
+ public:
+ 	// moveability is tan(f)/(1+tan(f))
+@@ -45,7 +72,7 @@ public:
+ 		q31_t a = multiply_32x32_rshift32_rounded(input - memory, moveability) << 1;
+ 		q31_t b = a + memory;
+ 		memory = a + b;
+-		return b * 2 - input;
++		return allPassOutput(b, input);
+ 	}
+ 	[[gnu::always_inline]] inline void affectFilter(q31_t input, int32_t moveability) {
+ 		memory += multiply_32x32_rshift32_rounded(input - memory, moveability) << 2;
+@@ -84,7 +111,7 @@ public:
+ 		q31_t a = multiply_32x32_rshift32_rounded(input - memory, moveability) << 1;
+ 		q31_t b = a + memory;
+ 		memory = a + b;
+-		return b * 2 - input;
++		return allPassOutput(b, input);
+ 	}
+ 	// moveability2: twice doFilter()'s moveability (under 2^31: the ladder runs this below kPreciseMoveabilityLimit).
+ 	// doFilter()'s a is (input - memory) * moveability2 / 2^32 here exactly: b = state + a, the new state b + a
+@@ -98,7 +125,7 @@ public:
+ 		return b;
+ 	}
+ 	[[gnu::always_inline]] inline int32_t doAPFPrecise(q31_t input, int32_t moveability2) {
+-		return doFilterPrecise(input, moveability2) * 2 - input;
++		return allPassOutput(doFilterPrecise(input, moveability2), input);
+ 	}
+ 	[[gnu::always_inline]] inline void reset() {
+ 		fraction = 0;
+diff --git a/src/deluge/dsp/filter/lpladder.cpp b/src/deluge/dsp/filter/lpladder.cpp
+index eb0e05ab..22a36d71 100644
+--- a/src/deluge/dsp/filter/lpladder.cpp
++++ b/src/deluge/dsp/filter/lpladder.cpp
+@@ -476,13 +476,14 @@ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversampl
+ 
+ template <LpLadderFilter::Saturation saturation>
+ [[gnu::always_inline]] inline q31_t LpLadderFilter::scaleInput(q31_t input, q31_t feedbacksSum, const Coefficients& c) {
+-	q31_t temp = multiply_32x32_rshift32_rounded(
+-	                 (input - (multiply_32x32_rshift32_rounded(feedbacksSum, c.processedResonance) << 3)),
+-	                 c.divideByTotalMoveabilityAndProcessedResonance)
+-	             << 2;
++	// mastertune v18: the shifts and the difference saturate where they would exceed full scale (a loud input with
++	// the feedback at its limit) instead of wrapping to the other end; below that exactly as before
++	q31_t temp = lshiftAndSaturate<2>(multiply_32x32_rshift32_rounded(
++	    subSaturate(input, lshiftAndSaturate<3>(multiply_32x32_rshift32_rounded(feedbacksSum, c.processedResonance))),
++	    c.divideByTotalMoveabilityAndProcessedResonance));
+ 	if constexpr (saturation == Saturation::TANH_MORPH || saturation == Saturation::TANH_MORPH_GLOBAL) {
+ 		q31_t extra = 2 * multiply_32x32_rshift32(input, c.morph);
+-		temp = getTanHUnknown(temp + extra,
++		temp = getTanHUnknown(addSaturate(temp, extra),
+ 		                      saturation == Saturation::TANH_MORPH_GLOBAL ? kSaturationGlobal : kSaturationVoice);
+ 	}
+ 	else if constexpr (saturation == Saturation::TANH || saturation == Saturation::TANH_GLOBAL) {
+@@ -491,7 +492,7 @@ template <LpLadderFilter::Saturation saturation>
+ 	else if constexpr (saturation == Saturation::PER_SAMPLE) {
+ 		if (c.morph > 0 || c.processedResonance > 510000000) {
+ 			q31_t extra = 2 * multiply_32x32_rshift32(input, c.morph);
+-			temp = getTanHUnknown(temp + extra, c.saturationAmount);
++			temp = getTanHUnknown(addSaturate(temp, extra), c.saturationAmount);
+ 		}
+ 	}
+ 	return temp;
+@@ -514,18 +515,19 @@ template <LpLadderFilter::Saturation saturation, bool precise>
+ 	feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF2.memory, c.lpf2Feedback);
+ 	feedbacksSum =
+ 	    multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF3.memory, c.divideBy1PlusTannedFrequency);
+-	q31_t x = scaleInput<saturation>(input, feedbacksSum << 2, c);
++	q31_t x = scaleInput<saturation>(input, lshiftAndSaturate<2>(feedbacksSum), c);
+ 
+ 	// Only saturate if resonance is high enough. Surprisingly, saturation makes no audible difference until very near
+ 	// the point of feedback if (processedResonance > 510000000) { // Re-check this? 	x = getTanHUnknown(x, 1); //
+ 	// Saturation
+ 	// }
+ 
++	// (The output's doubling saturates, v18)
+ 	if constexpr (precise) {
+-		return state.lpfLPF3.doAPFPrecise(state.lpfLPF2.doFilterPrecise(state.lpfLPF1.doFilterPrecise(x, m), m), m)
+-		       << 1;
++		return lshiftAndSaturate<1>(
++		    state.lpfLPF3.doAPFPrecise(state.lpfLPF2.doFilterPrecise(state.lpfLPF1.doFilterPrecise(x, m), m), m));
+ 	}
+-	return state.lpfLPF3.doAPF(state.lpfLPF2.doFilter(state.lpfLPF1.doFilter(x, m), m), m) << 1;
++	return lshiftAndSaturate<1>(state.lpfLPF3.doAPF(state.lpfLPF2.doFilter(state.lpfLPF1.doFilter(x, m), m), m));
+ }
+ 
+ template <LpLadderFilter::Saturation saturation, bool precise>
+@@ -538,7 +540,7 @@ template <LpLadderFilter::Saturation saturation, bool precise>
+ 	feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF3.memory, c.lpf3Feedback);
+ 	feedbacksSum =
+ 	    multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF4.memory, c.divideBy1PlusTannedFrequency);
+-	feedbacksSum <<= 2;
++	feedbacksSum = lshiftAndSaturate<2>(feedbacksSum);
+ 
+ 	// Note: in the line above, we "should" halve filterSetConfig->divideBy1plusg to get it into the 1=1073741824 range.
+ 	// But it doesn't sound as good. Primarily it stops us getting to full resonance. But even if we allow further
+@@ -553,15 +555,14 @@ template <LpLadderFilter::Saturation saturation, bool precise>
+ 	// 	x = getTanHUnknown(x, 1);
+ 	// }
+ 
++	// (The output's doubling saturates, v18)
+ 	if constexpr (precise) {
+-		return state.lpfLPF4.doFilterPrecise(
+-		           state.lpfLPF3.doFilterPrecise(state.lpfLPF2.doFilterPrecise(state.lpfLPF1.doFilterPrecise(x, m), m),
+-		                                         m),
+-		           m)
+-		       << 1;
+-	}
+-	return state.lpfLPF4.doFilter(state.lpfLPF3.doFilter(state.lpfLPF2.doFilter(state.lpfLPF1.doFilter(x, m), m), m), m)
+-	       << 1;
++		return lshiftAndSaturate<1>(state.lpfLPF4.doFilterPrecise(
++		    state.lpfLPF3.doFilterPrecise(state.lpfLPF2.doFilterPrecise(state.lpfLPF1.doFilterPrecise(x, m), m), m),
++		    m));
++	}
++	return lshiftAndSaturate<1>(
++	    state.lpfLPF4.doFilter(state.lpfLPF3.doFilter(state.lpfLPF2.doFilter(state.lpfLPF1.doFilter(x, m), m), m), m));
+ }
+ 
+ template <LpLadderFilter::Saturation saturation, bool precise>
+@@ -574,7 +575,7 @@ template <LpLadderFilter::Saturation saturation, bool precise>
+ 	feedbacksSum = multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF3.memory, c.lpf3Feedback);
+ 	feedbacksSum =
+ 	    multiply_accumulate_32x32_rshift32_rounded(feedbacksSum, state.lpfLPF4.memory, c.divideBy1PlusTannedFrequency);
+-	feedbacksSum <<= 2;
++	feedbacksSum = lshiftAndSaturate<2>(feedbacksSum);
+ 
+ 	// Note: in the line above, we "should" halve filterSetConfig->divideBy1plusg to get it into the 1=1073741824 range.
+ 	// But it doesn't sound as good. Primarily it stops us getting to full resonance. But even if we allow further
+@@ -590,7 +591,7 @@ template <LpLadderFilter::Saturation saturation, bool precise>
+ 		q31_t a = state.lpfLPF1.doFilterPrecise(x, m);
+ 		q31_t b = state.lpfLPF2.doFilterPrecise(a, m);
+ 		q31_t c3 = state.lpfLPF3.doFilterPrecise(b, m);
+-		return state.lpfLPF4.doFilterPrecise(c3, m) << 1;
++		return lshiftAndSaturate<1>(state.lpfLPF4.doFilterPrecise(c3, m));
+ 	}
+ 
+ 	q31_t a = state.lpfLPF1.doFilter(x, m);
+@@ -599,7 +600,7 @@ template <LpLadderFilter::Saturation saturation, bool precise>
+ 
+ 	q31_t c3 = state.lpfLPF3.doFilter(b, m);
+ 
+-	q31_t d = state.lpfLPF4.doFilter(c3, m) << 1;
++	q31_t d = lshiftAndSaturate<1>(state.lpfLPF4.doFilter(c3, m));
+ 
+ 	return d;
+ }
+diff --git a/src/deluge/dsp/filter/svf.cpp b/src/deluge/dsp/filter/svf.cpp
+index 5a2d9890..cf201e99 100644
+--- a/src/deluge/dsp/filter/svf.cpp
++++ b/src/deluge/dsp/filter/svf.cpp
+@@ -15,6 +15,7 @@
+  * If not, see <https://www.gnu.org/licenses/>.
+  */
+ #include "dsp/filter/svf.h"
++#include "dsp/filter/ladder_components.h"
+ 
+ namespace deluge::dsp::filter {
+ // The knots of the ramp being rendered (one filter at a time renders; not on the stack: kMaxKnots of them)
+@@ -79,21 +80,38 @@ template <SVFilter::Mix mix, SVFilter::Layout layout>
+ 		Knot<Coefficients>* knots = rampKnots_;
+ 		const int32_t count = rampKnots(n, last_, c, knots);
+ 		const int32_t stride = layout == Layout::STEREO ? 2 : 1;
++		// Precise where both ends are below the limit (the knots lie between them)
++		const bool precise = c.fc < kPreciseFcLimit && last_.fc < kPreciseFcLimit;
+ 		for (int32_t channel = 0; channel < (layout == Layout::STEREO ? 2 : 1); channel++) {
+ 			SVFState& state = channel == 0 ? l : r;
+ 			forEachPiece(knots, count,
+ 			             [&](int32_t begin, int32_t end, const Coefficients& start, const Coefficients& steps) {
+-				             renderChannelRamp<mix>(startSample + begin * stride + channel, startSample + end * stride,
+-				                                    stride, state, start, steps);
++				             if (precise) {
++					             renderChannelRamp<mix, true>(startSample + begin * stride + channel,
++					                                          startSample + end * stride, stride, state, start, steps);
++				             }
++				             else {
++					             renderChannelRamp<mix, false>(startSample + begin * stride + channel,
++					                                           startSample + end * stride, stride, state, start, steps);
++				             }
+ 			             });
+ 		}
+ 	}
++	else if (c.fc < kPreciseFcLimit) {
++		renderStates<mix, layout, true>(startSample, endSample, sampleIncrement, c);
++	}
+ 	else {
+-		renderChannel<mix, layout, 0>(startSample, endSample, sampleIncrement, l, c);
+-		if constexpr (layout == Layout::STEREO) {
+-			// The channels don't depend on each other, so each gets its own pass (fewer registers needed)
+-			renderChannel<mix, layout, 1>(startSample, endSample, sampleIncrement, r, c);
+-		}
++		renderStates<mix, layout, false>(startSample, endSample, sampleIncrement, c);
++	}
++}
++
++template <SVFilter::Mix mix, SVFilter::Layout layout, bool precise>
++[[gnu::always_inline]] inline void SVFilter::renderStates(q31_t* startSample, q31_t* endSample,
++                                                          int32_t sampleIncrement, const Coefficients& c) {
++	renderChannel<mix, layout, 0, precise>(startSample, endSample, sampleIncrement, l, c);
++	if constexpr (layout == Layout::STEREO) {
++		// The channels don't depend on each other, so each gets its own pass (fewer registers needed)
++		renderChannel<mix, layout, 1, precise>(startSample, endSample, sampleIncrement, r, c);
+ 	}
+ }
+ 
+@@ -103,7 +121,7 @@ SVFilter::Coefficients SVFilter::rampKnot(const RampParams& p) {
+ 	return coefficients();
+ }
+ 
+-template <SVFilter::Mix mix, SVFilter::Layout layout, int channel>
++template <SVFilter::Mix mix, SVFilter::Layout layout, int channel, bool precise>
+ [[gnu::always_inline]] inline void SVFilter::renderChannel(q31_t* startSample, q31_t* endSample,
+                                                            int32_t sampleIncrement, SVFState& channelState,
+                                                            const Coefficients& c) {
+@@ -111,7 +129,7 @@ template <SVFilter::Mix mix, SVFilter::Layout layout, int channel>
+ 	// For STEREO, currentSample points at the frame, as in the loop over both channels (same number of frames)
+ 	q31_t* currentSample = startSample;
+ 	do {
+-		currentSample[channel] = doSVF<mix>(currentSample[channel], state, c);
++		currentSample[channel] = doSVF<mix, precise>(currentSample[channel], state, c);
+ 		if constexpr (layout == Layout::MONO) {
+ 			currentSample += 1;
+ 		}
+@@ -125,7 +143,7 @@ template <SVFilter::Mix mix, SVFilter::Layout layout, int channel>
+ 	channelState = state;
+ }
+ 
+-template <SVFilter::Mix mix>
++template <SVFilter::Mix mix, bool precise>
+ void SVFilter::renderChannelRamp(q31_t* startSample, q31_t* endSample, int32_t stride, SVFState& channelState,
+                                  const Coefficients& c, const Coefficients& d) {
+ 	SVFState state = channelState;
+@@ -133,7 +151,7 @@ void SVFilter::renderChannelRamp(q31_t* startSample, q31_t* endSample, int32_t s
+ 	Coefficients now = c;
+ 	do {
+ 		now.step(d);
+-		*currentSample = doSVF<mix>(*currentSample, state, now);
++		*currentSample = doSVF<mix, precise>(*currentSample, state, now);
+ 		currentSample += stride;
+ 	} while (currentSample < endSample);
+ 	channelState = state;
+@@ -180,7 +198,61 @@ q31_t SVFilter::setConfig(q31_t freq, q31_t res, FilterMode lpfMode, q31_t lpfMo
+ 	return filterGain;
+ }
+ 
+-template <SVFilter::Mix mix>
++// mastertune v18: getTanHUnknown(x, 3) as the band's saturation, at full resolution and rounded. The same table and
++// straight lines between its entries, but the position between two entries to all 24 bits (getTanHUnknown() drops
++// the lowest 8: x in steps of 32 LSB, floored) and the result rounded (it floored, another -0.5 LSB on average). In
++// the band integrator, twice per sample, those steps were a dead band of 32 LSB and an offset that the low integrator
++// added up: -88 dBFS of DC and a tail stuck at -101 dBFS after the music (svf_precision). Near 0 this is exactly x.
++template <int32_t sat>
++[[gnu::always_inline]] static inline q31_t tanhRounded(q31_t x) {
++	const uint32_t w = (uint32_t)lshiftAndSaturate<sat>(x) + 2147483648u;
++	const uint32_t i = w >> 24;
++	const int32_t f = (int32_t)(w & 0xFFFFFF);
++	// getTanHUnknown(): (table[i] * (65536 - f16) + table[i + 1] * f16) >> (sat + 2), f16 = f >> 8
++	const int64_t v = (int64_t)tanHSmall[i] * (0x1000000 - f) + (int64_t)tanHSmall[i + 1] * f;
++	return (q31_t)((v + ((int64_t)1 << (8 + sat + 1))) >> (8 + sat + 2));
++}
++
++// mastertune v18: every product in the recursion rounds (smmulr) instead of truncating: a truncated product is on
++// average half an LSB too low, which the two integrators (low, band) add up every sample into an offset and, at low
++// cutoff, a dead band of about 1 / fc LSB where the state stops following its input. Rounded, the errors are
++// unbiased, a quarter as large in power. The band's saturation likewise (tanhRounded()). The sums and the output's
++// tripling saturate where they would exceed full scale instead of wrapping to the other end. (tests/filters
++// svf_precision: against a float64 model)
++// One integrator step, state += 2 * x * fc (a product of two q31 values >> 32, doubled). Plain: rounded to the LSB (the
++// fraction left as it is). Precise: exactly, into the state with its fraction (smlal), saturating at full scale
++template <bool precise>
++[[gnu::always_inline]] static inline q31_t integrate(q31_t& value, uint32_t& fraction, q31_t x, q31_t fc) {
++	if constexpr (precise) {
++		int64_t acc = (int64_t)(((uint64_t)(uint32_t)value << 32) | fraction);
++		int64_t sum;
++		if (__builtin_add_overflow(acc, (int64_t)x * (fc * 2), &sum)) {
++			sum = x > 0 ? INT64_MAX : INT64_MIN;
++		}
++		value = (q31_t)(sum >> 32);
++		fraction = (uint32_t)sum;
++	}
++	else {
++		value = addSaturate(value, 2 * multiply_32x32_rshift32_rounded(x, fc));
++	}
++	return value;
++}
++
++// The band's saturation; where it changes the band (beyond where tanhRounded() is exactly x), the fraction goes back to
++// none (half an LSB, the bias)
++template <bool precise>
++[[gnu::always_inline]] static inline q31_t saturateBand(q31_t& band, uint32_t& fraction) {
++	const q31_t t = tanhRounded<3>(band);
++	if constexpr (precise) {
++		if (t != band) {
++			fraction = 2147483648u;
++		}
++	}
++	band = t;
++	return band;
++}
++
++template <SVFilter::Mix mix, bool precise>
+ [[gnu::always_inline]] inline q31_t SVFilter::doSVF(int32_t input, SVFState& state, const Coefficients& c) {
+ 	q31_t high = 0;
+ 	q31_t lowi;
+@@ -188,31 +260,34 @@ template <SVFilter::Mix mix>
+ 	q31_t bandi;
+ 	q31_t low = state.low;
+ 	q31_t band = state.band;
++	uint32_t lowFraction = state.lowFraction;
++	uint32_t bandFraction = state.bandFraction;
+ 
+-	input = multiply_32x32_rshift32(c.in, input);
++	input = multiply_32x32_rshift32_rounded(c.in, input);
+ 
+-	low = low + 2 * multiply_32x32_rshift32(band, c.fc);
+-	high = input - low;
+-	high = high - 2 * multiply_32x32_rshift32(band, c.q);
+-	band = 2 * multiply_32x32_rshift32(high, c.fc) + band;
++	integrate<precise>(low, lowFraction, band, c.fc);
++	high = subSaturate(input, low);
++	// (2 * a product of two q31 values >> 32 stays within full scale)
++	high = subSaturate(high, 2 * multiply_32x32_rshift32_rounded(band, c.q));
++	integrate<precise>(band, bandFraction, high, c.fc);
+ 	// notch = high + low;
+ 
+ 	// saturate band feedback
+-	band = getTanHUnknown(band, 3);
++	saturateBand<precise>(band, bandFraction);
+ 
+ 	lowi = low;
+ 	highi = high;
+ 	bandi = band;
+ 	// double sample to increase the cutoff frequency
+-	low = low + 2 * multiply_32x32_rshift32(band, c.fc);
+-	high = input - low;
+-	high = high - 2 * multiply_32x32_rshift32(band, c.q);
+-	band = 2 * multiply_32x32_rshift32(high, c.fc) + band;
++	integrate<precise>(low, lowFraction, band, c.fc);
++	high = subSaturate(input, low);
++	high = subSaturate(high, 2 * multiply_32x32_rshift32_rounded(band, c.q));
++	integrate<precise>(band, bandFraction, high, c.fc);
+ 
+ 	// notch = high + low;
+-	lowi = lowi + low;
+-	highi = highi + high;
+-	bandi = bandi + band;
++	lowi = addSaturate(lowi, low);
++	highi = addSaturate(highi, high);
++	bandi = addSaturate(bandi, band);
+ 
+ 	q31_t result = multiply_32x32_rshift32_rounded(lowi, c.c_low);
+ 	if constexpr (mix == Mix::LOW_HIGH || mix == Mix::LOW_HIGH_BAND || mix == Mix::ALL) {
+@@ -228,13 +303,15 @@ template <SVFilter::Mix mix>
+ 	}
+ 
+ 	// saturate band feedback
+-	band = getTanHUnknown(band, 3);
++	saturateBand<precise>(band, bandFraction);
+ 	// compensate for division by two on each multiply
+ 	// then multiply by 1.5 to match ladders
+-	result = 3 * result;
++	result = addSaturate(addSaturate(result, result), result);
+ 
+ 	state.low = low;
+ 	state.band = band;
++	state.lowFraction = lowFraction;
++	state.bandFraction = bandFraction;
+ 
+ 	return result;
+ }
+diff --git a/src/deluge/dsp/filter/svf.h b/src/deluge/dsp/filter/svf.h
+index ad8c4fe9..2800eb19 100644
+--- a/src/deluge/dsp/filter/svf.h
++++ b/src/deluge/dsp/filter/svf.h
+@@ -30,15 +30,25 @@ public:
+ 	void doFilter(q31_t* startSample, q31_t* endSample, int32_t sampleIncrememt);
+ 	void doFilterStereo(q31_t* startSample, q31_t* endSample);
+ 	void resetFilter() {
+-		l = (SVFState){0, 0};
+-		r = (SVFState){0, 0};
++		l = SVFState{};
++		r = SVFState{};
+ 	}
+ 
+ private:
++	// low and band: the integrators' states. mastertune v18: each with a fraction 32 bits below the LSB, which the
++	// precise loops (below kPreciseFcLimit) keep: the state is value:fraction in units of 2^-32 LSB, biased by 2^31
++	// (half an LSB), so value is the state rounded, what the plain loops read and write (leaving the fraction), and
++	// all zeroes stays a valid reset (see LadderStage)
+ 	struct SVFState {
+-		q31_t low;
+-		q31_t band;
++		q31_t low = 0;
++		q31_t band = 0;
++		uint32_t lowFraction = 0;
++		uint32_t bandFraction = 0;
+ 	};
++	// Below this fc (a quarter: about 3.1 kHz) the integrators run precise: that's where their rounding shows (each
++	// step moves them by fc / 2^31 of the difference, so a rounded step is a large part of a small one, and the
++	// errors circulate as a limit cycle of about 2^31 / fc LSB after the music). 2 fc stays below 2^31
++	static constexpr q31_t kPreciseFcLimit = 1 << 29;
+ 	// The loops work on a copy of the configuration and the state in local variables (svf.cpp): the output store
+ 	// could otherwise alias every member, so each sample would load and store them all again
+ 	struct Coefficients {
+@@ -98,17 +108,19 @@ private:
+ 	void render(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+ 	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or the left or right of each frame (STEREO,
+ 	// channel 0 or 1), the configuration as it is (as before the ramps)
+-	template <Mix mix, Layout layout, int channel>
++	template <Mix mix, Layout layout, int channel, bool precise>
+ 	[[gnu::always_inline]] static inline void renderChannel(q31_t* startSample, q31_t* endSample,
+ 	                                                        int32_t sampleIncrement, SVFState& channelState,
+ 	                                                        const Coefficients& c);
+ 	// One channel, every stride-th sample from startSample on, the coefficients moving from c by d per sample. One loop
+ 	// for every layout and both channels, not inlined
+-	template <Mix mix>
++	template <Mix mix, bool precise>
+ 	[[gnu::noinline]] static void renderChannelRamp(q31_t* startSample, q31_t* endSample, int32_t stride,
+ 	                                                SVFState& channelState, const Coefficients& c,
+ 	                                                const Coefficients& d);
+-	template <Mix mix>
++	template <Mix mix, Layout layout, bool precise>
++	void renderStates(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, const Coefficients& c);
++	template <Mix mix, bool precise>
+ 	[[gnu::always_inline]] static inline q31_t doSVF(q31_t input, SVFState& state, const Coefficients& c);
+ 	SVFState l;
+ 	SVFState r;
+-- 
+2.43.0
+

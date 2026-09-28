@@ -1,0 +1,352 @@
+From 01d56b0713a91f78720b472d79ad0abcadfc45e1 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 20:37:39 +0000
+Subject: [PATCH 081/112] LPF: the 12 / 24 dB ladders sing on their own from
+ the same resonance and as loud as in the original firmware again
+
+- Below tannedFrequency 6000000 (about 310 Hz) the resonance goes down again, by up to 9 % at the bottom, as in the
+  original firmware (fc76a9cd filter_set_config.cpp). Community #304 (aa3d0bc7) lost this, so at low cutoff the ladder
+  self-oscillated from lower resonance and louder (the 32 Hz hum in "New Sitar Grii 10").
+- The 12 dB and 24 dB ladders saturate per context as in the original: 2 in voices, 3 in the song's, a kit's and an
+  audio track's filters (community #336 made it 2 everywhere: 6 dB louder self-oscillation there). The drive ladder
+  and morph below the saturating resonance are unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter_set.cpp          | 24 +++++----
+ src/deluge/dsp/filter/filter_set.h            | 15 +++---
+ src/deluge/dsp/filter/lpladder.cpp            | 54 +++++++++++++++----
+ src/deluge/dsp/filter/lpladder.h              | 32 +++++++++--
+ .../global_effectable/global_effectable.cpp   |  8 +--
+ 5 files changed, 100 insertions(+), 33 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/filter_set.cpp b/src/deluge/dsp/filter/filter_set.cpp
+index 2216a172..1f3c7796 100644
+--- a/src/deluge/dsp/filter/filter_set.cpp
++++ b/src/deluge/dsp/filter/filter_set.cpp
+@@ -63,18 +63,20 @@ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate ster
+ 	}
+ }
+ 
+-[[gnu::hot]] void FilterSet::renderLPFLong(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
++[[gnu::hot]] void FilterSet::renderLPFLong(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement,
++                                           int32_t lpfSaturation) {
+ 	if (LPFOn) {
+ 		if ((lpfMode_ == FilterMode::SVF_BAND) || (lpfMode_ == FilterMode::SVF_NOTCH)) {
+ 			lpfilter.svf.filterMono(startSample, endSample, sampleIncrement);
+ 		}
+ 		else {
++			lpfilter.ladder.setSaturation(lpfSaturation);
+ 			lpfilter.ladder.filterMono(startSample, endSample, sampleIncrement);
+ 		}
+ 	}
+ }
+ 
+-[[gnu::hot]] void FilterSet::renderLPFLongStereo(q31_t* startSample, q31_t* endSample) {
++[[gnu::hot]] void FilterSet::renderLPFLongStereo(q31_t* startSample, q31_t* endSample, int32_t lpfSaturation) {
+ 	if (LPFOn) {
+ 		if ((lpfMode_ == FilterMode::SVF_BAND) || (lpfMode_ == FilterMode::SVF_NOTCH)) {
+ 
+@@ -82,22 +84,23 @@ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate ster
+ 		}
+ 		else {
+ 
++			lpfilter.ladder.setSaturation(lpfSaturation);
+ 			lpfilter.ladder.filterStereo(startSample, endSample);
+ 		}
+ 	}
+ }
+ [[gnu::hot]] void FilterSet::renderLong(q31_t* startSample, q31_t* endSample, int32_t numSamples,
+-                                        int32_t sampleIncrememt, int32_t hpfSaturation) {
++                                        int32_t sampleIncrememt, int32_t hpfSaturation, int32_t lpfSaturation) {
+ 	switch (routing_) {
+ 	case FilterRoute::HIGH_TO_LOW:
+ 
+ 		renderHPFLong(startSample, endSample, sampleIncrememt, hpfSaturation);
+-		renderLPFLong(startSample, endSample, sampleIncrememt);
++		renderLPFLong(startSample, endSample, sampleIncrememt, lpfSaturation);
+ 
+ 		break;
+ 	case FilterRoute::LOW_TO_HIGH:
+ 
+-		renderLPFLong(startSample, endSample, sampleIncrememt);
++		renderLPFLong(startSample, endSample, sampleIncrememt, lpfSaturation);
+ 		renderHPFLong(startSample, endSample, sampleIncrememt, hpfSaturation);
+ 
+ 		break;
+@@ -109,26 +112,27 @@ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate ster
+ 		memcpy(tempRenderBuffer, startSample, length * sizeof(q31_t));
+ 
+ 		renderHPFLong(tempRenderBuffer, tempRenderBuffer + length, sampleIncrememt, hpfSaturation);
+-		renderLPFLong(startSample, endSample, sampleIncrememt);
++		renderLPFLong(startSample, endSample, sampleIncrememt, lpfSaturation);
+ 
+ 		addTempRenderBuffer(startSample, length);
+ 		break;
+ 	}
+ }
+ // expects to receive an interleaved stereo stream
+-[[gnu::hot]] void FilterSet::renderLongStereo(q31_t* startSample, q31_t* endSample, int32_t hpfSaturation) {
++[[gnu::hot]] void FilterSet::renderLongStereo(q31_t* startSample, q31_t* endSample, int32_t hpfSaturation,
++                                              int32_t lpfSaturation) {
+ 	// Do HPF, if it's on
+ 	switch (routing_) {
+ 	case FilterRoute::HIGH_TO_LOW:
+ 
+ 		renderHPFLongStereo(startSample, endSample, hpfSaturation);
+ 
+-		renderLPFLongStereo(startSample, endSample);
++		renderLPFLongStereo(startSample, endSample, lpfSaturation);
+ 
+ 		break;
+ 	case FilterRoute::LOW_TO_HIGH:
+ 
+-		renderLPFLongStereo(startSample, endSample);
++		renderLPFLongStereo(startSample, endSample, lpfSaturation);
+ 
+ 		renderHPFLongStereo(startSample, endSample, hpfSaturation);
+ 
+@@ -140,7 +144,7 @@ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate ster
+ 
+ 		renderHPFLongStereo(tempRenderBuffer, tempRenderBuffer + length, hpfSaturation);
+ 
+-		renderLPFLongStereo(startSample, endSample);
++		renderLPFLongStereo(startSample, endSample, lpfSaturation);
+ 
+ 		addTempRenderBuffer(startSample, length);
+ 		break;
+diff --git a/src/deluge/dsp/filter/filter_set.h b/src/deluge/dsp/filter/filter_set.h
+index 89888174..812e946f 100644
+--- a/src/deluge/dsp/filter/filter_set.h
++++ b/src/deluge/dsp/filter/filter_set.h
+@@ -48,14 +48,17 @@ public:
+ 	                  q31_t hpfResonance, FilterMode hpfmode, q31_t hpfMorph, q31_t filterGain, FilterRoute routing,
+ 	                  bool adjustVolumeForHPFResonance, q31_t* overallOscAmplitude);
+ 
+-	// hpfSaturation: the HP ladder's saturation amount, HpLadderFilter::kSaturationVoice (a voice's filters) or
+-	// kSaturationGlobal (the song's, a kit's and an audio track's)
++	// hpfSaturation, lpfSaturation: the HP ladder's and the 12 / 24 dB LP ladders' saturation amounts,
++	// HpLadderFilter:: / LpLadderFilter::kSaturationVoice (a voice's filters) or kSaturationGlobal (the song's, a kit's
++	// and an audio track's)
+ 	void renderLong(q31_t* startSample, q31_t* endSample, int32_t numSamples, int32_t sampleIncrememt = 1,
+-	                int32_t hpfSaturation = HpLadderFilter::kSaturationVoice);
++	                int32_t hpfSaturation = HpLadderFilter::kSaturationVoice,
++	                int32_t lpfSaturation = LpLadderFilter::kSaturationVoice);
+ 
+ 	// expects to receive an interleaved stereo stream
+ 	void renderLongStereo(q31_t* startSample, q31_t* endSample,
+-	                      int32_t hpfSaturation = HpLadderFilter::kSaturationVoice);
++	                      int32_t hpfSaturation = HpLadderFilter::kSaturationVoice,
++	                      int32_t lpfSaturation = LpLadderFilter::kSaturationVoice);
+ 
+ 	// used to check whether the filter is used at all
+ 	inline bool isLPFOn() { return LPFOn; }
+@@ -75,8 +78,8 @@ private:
+ 	FilterMode lastHPFMode_;
+ 	FilterRoute routing_;
+ 
+-	void renderLPFLong(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement = 1);
+-	void renderLPFLongStereo(q31_t* startSample, q31_t* endSample);
++	void renderLPFLong(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, int32_t lpfSaturation);
++	void renderLPFLongStereo(q31_t* startSample, q31_t* endSample, int32_t lpfSaturation);
+ 	void renderHPFLongStereo(q31_t* startSample, q31_t* endSample, int32_t hpfSaturation);
+ 	void renderHPFLong(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, int32_t hpfSaturation);
+ 
+diff --git a/src/deluge/dsp/filter/lpladder.cpp b/src/deluge/dsp/filter/lpladder.cpp
+index beef2756..ac43f432 100644
+--- a/src/deluge/dsp/filter/lpladder.cpp
++++ b/src/deluge/dsp/filter/lpladder.cpp
+@@ -93,11 +93,18 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ 	}
+ 
+ 	// Cold transistor ladder
++	curveFrequency(lpfFrequency);
++
+ 	if ((lpfMode == FilterMode::TRANSISTOR_24DB) || (lpfMode == FilterMode::TRANSISTOR_12DB)) {
+ 		// Some long-winded stuff to make it so if frequency goes really low, resonance goes down. This is tuned a bit,
+ 		// but isn't perfect
+-
+-		int32_t howMuchToKeep = ONE_Q31 - 1 * 33;
++		// The original firmware's (fc76a9cd, dsp/filter/filter_set_config.cpp:124-142): below tannedFrequency 6000000
++		// (about 310 Hz) the resonance goes down, by up to 9 % at the bottom. Community #304 (aa3d0bc7) worked out the
++		// tan after this and put 1 in for how much too low, so down there the ladder sang on its own from lower
++		// resonance (from 80 % instead of 90 % around 200 Hz) and louder. Above it, the same as since then (ONE_Q31 -
++		// 33, the original's ONE_Q31 differs by 33 / 2^31)
++		int32_t howMuchTooLow = std::max(6000000 - tannedFrequency, (int32_t)0);
++		int32_t howMuchToKeep = ONE_Q31 - (1 + howMuchTooLow) * 33;
+ 
+ 		int32_t resonanceUpperLimit = 510000000; // Prone to feeding back lots
+ 
+@@ -110,7 +117,6 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ 		processedResonance = multiply_32x32_rshift32_rounded(processedResonance, howMuchToKeep) << 1;
+ 	}
+ 
+-	curveFrequency(lpfFrequency);
+ 	// for backwards compatibility, equivalent to prior lower limit on tan
+ 	moveability = std::max(fc, (q31_t)4317840);
+ 	// min moveability is 4317840
+@@ -235,10 +241,12 @@ void LpLadderFilter::renderSaturation(q31_t* startSample, q31_t* endSample, int3
+ 		// With morph at 0 the morph term is 2 * ((input * 0) >> 32) = 0 and can go. The oversampled drive ladder
+ 		// is rare, so it keeps the general loop for that too (which gives the same result with morph at 0)
+ 		if (morph == 0 && !oversample) {
+-			renderLoop<mode, Saturation::TANH, oversample, layout>(startSample, endSample, sampleIncrement);
++			renderSaturationAmount<mode, oversample, layout, Saturation::TANH, Saturation::TANH_GLOBAL>(
++			    startSample, endSample, sampleIncrement);
+ 		}
+ 		else {
+-			renderLoop<mode, Saturation::TANH_MORPH, oversample, layout>(startSample, endSample, sampleIncrement);
++			renderSaturationAmount<mode, oversample, layout, Saturation::TANH_MORPH, Saturation::TANH_MORPH_GLOBAL>(
++			    startSample, endSample, sampleIncrement);
+ 		}
+ 	}
+ 	else {
+@@ -246,6 +254,28 @@ void LpLadderFilter::renderSaturation(q31_t* startSample, q31_t* endSample, int3
+ 	}
+ }
+ 
++// The saturation amount is the original firmware's per context for the 12 dB and 24 dB ladders: 1 + extraSaturation,
++// that is 2 in voices (its dsp/filter/filter_set.h:122, renderLong(): renderLPFLong(..., 1, 1)) and 3 in the song's, a
++// kit's and an audio track's filters (its model/global_effectable/global_effectable.cpp:372-373, processFilters():
++// renderLPFLong(..., 2, 2, 1)), used at filter_set.cpp:241 (12 dB) and :259 (24 dB). Community #336 (04faf186,
++// "Morphable and Driveable and Parallel filters") made it 2 everywhere, which put the level where the song's ladder
++// limits 1 bit higher, and a self-oscillating ladder sings at its cutoff at about that level: 6 dB louder than in the
++// original firmware. Voices keep 2, as there. So does morph (#336's) below the resonance where the ladder saturates
++// without it (about 26 %): its drive sounds as before. The drive ladder's input tanh (#336's, the original had none
++// there) keeps 2: its own feedback and output tanhs (7 and 4, the original's extraSaturationDrive 1 in every context)
++// limit first.
++template <FilterMode mode, bool oversample, LpLadderFilter::Layout layout, LpLadderFilter::Saturation voice,
++          LpLadderFilter::Saturation global>
++void LpLadderFilter::renderSaturationAmount(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
++	if constexpr (mode != FilterMode::TRANSISTOR_24DB_DRIVE) {
++		if (saturationAmount<mode>() == kSaturationGlobal) {
++			renderLoop<mode, global, oversample, layout>(startSample, endSample, sampleIncrement);
++			return;
++		}
++	}
++	renderLoop<mode, voice, oversample, layout>(startSample, endSample, sampleIncrement);
++}
++
+ // The noise generator, getNoise(): jcong = kNoiseMul * jcong + kNoiseAdd (mod 2^32). Two steps at once are
+ // jcong = kNoiseMul^2 * jcong + (kNoiseMul + 1) * kNoiseAdd, and kNoiseMul (odd) has an inverse mod 2^32, which
+ // steps back
+@@ -273,7 +303,8 @@ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversampl
+ 	                     lpf1Feedback,
+ 	                     lpf2Feedback,
+ 	                     lpf3Feedback,
+-	                     divideBy1PlusTannedFrequency};
++	                     divideBy1PlusTannedFrequency,
++	                     saturationAmount<mode>()};
+ 	if constexpr (layout != Layout::STEREO) {
+ 		uint32_t noise = jcong;
+ 		renderChannel<mode, saturation, oversample, layout, 0, false>(startSample, endSample, sampleIncrement, l, c,
+@@ -379,17 +410,18 @@ template <LpLadderFilter::Saturation saturation>
+ 	                 (input - (multiply_32x32_rshift32_rounded(feedbacksSum, c.processedResonance) << 3)),
+ 	                 c.divideByTotalMoveabilityAndProcessedResonance)
+ 	             << 2;
+-	if constexpr (saturation == Saturation::TANH_MORPH) {
++	if constexpr (saturation == Saturation::TANH_MORPH || saturation == Saturation::TANH_MORPH_GLOBAL) {
+ 		q31_t extra = 2 * multiply_32x32_rshift32(input, c.morph);
+-		temp = getTanHUnknown(temp + extra, 2);
++		temp = getTanHUnknown(temp + extra,
++		                      saturation == Saturation::TANH_MORPH_GLOBAL ? kSaturationGlobal : kSaturationVoice);
+ 	}
+-	else if constexpr (saturation == Saturation::TANH) {
+-		temp = getTanHUnknown(temp, 2); // morph is 0
++	else if constexpr (saturation == Saturation::TANH || saturation == Saturation::TANH_GLOBAL) {
++		temp = getTanHUnknown(temp, saturation == Saturation::TANH_GLOBAL ? kSaturationGlobal : kSaturationVoice);
+ 	}
+ 	else if constexpr (saturation == Saturation::PER_SAMPLE) {
+ 		if (c.morph > 0 || c.processedResonance > 510000000) {
+ 			q31_t extra = 2 * multiply_32x32_rshift32(input, c.morph);
+-			temp = getTanHUnknown(temp + extra, 2);
++			temp = getTanHUnknown(temp + extra, c.saturationAmount);
+ 		}
+ 	}
+ 	return temp;
+diff --git a/src/deluge/dsp/filter/lpladder.h b/src/deluge/dsp/filter/lpladder.h
+index cc2097b4..94705ffd 100644
+--- a/src/deluge/dsp/filter/lpladder.h
++++ b/src/deluge/dsp/filter/lpladder.h
+@@ -30,6 +30,17 @@ public:
+ 	q31_t setConfig(q31_t hpfFrequency, q31_t hpfResonance, FilterMode lpfMode, q31_t lpfMorph, q31_t filterGain);
+ 	void doFilter(q31_t* outputSample, q31_t* endSample, int32_t sampleIncrememt);
+ 	void doFilterStereo(q31_t* startSample, q31_t* endSample);
++
++	// How hard the 12 dB and 24 dB ladders saturate at high resonance (their input tanh's saturation amount; one more
++	// halves the level where it limits, 6 dB): the original firmware's per context, see lpladder.cpp. A
++	// self-oscillating ladder sings at its cutoff at about the level where it limits. The drive ladder keeps 1.2.1's
++	// (the same everywhere, as in the original firmware).
++	// Synths and kit rows (Voice)
++	static constexpr int32_t kSaturationVoice = 2;
++	// The song's, a kit's and an audio track's filters (GlobalEffectable)
++	static constexpr int32_t kSaturationGlobal = 3;
++	// For the next doFilter() / doFilterStereo(): kSaturationVoice or kSaturationGlobal (FilterSet sets it before each)
++	void setSaturation(int32_t amount) { saturationAmount_ = (uint8_t)amount; }
+ 	void resetFilter() {
+ 		l.reset();
+ 		r.reset();
+@@ -60,16 +71,30 @@ private:
+ 		q31_t lpf2Feedback;
+ 		q31_t lpf3Feedback;
+ 		q31_t divideBy1PlusTannedFrequency;
++		int32_t saturationAmount; // PER_SAMPLE's
+ 	};
+-	// scaleInput's branch, which is the same for the whole block: no saturation, saturation, saturation plus morph, or
+-	// decided per sample as before (only for the mono loop with a sampleIncrement other than 1, which nothing uses)
+-	enum class Saturation { NONE, TANH, TANH_MORPH, PER_SAMPLE };
++	// scaleInput's branch, which is the same for the whole block: no saturation, saturation, saturation plus morph
++	// (each with kSaturationVoice, or _GLOBAL: kSaturationGlobal), or decided per sample as before (only for the mono
++	// loop with a sampleIncrement other than 1, which nothing uses)
++	enum class Saturation { NONE, TANH, TANH_MORPH, TANH_GLOBAL, TANH_MORPH_GLOBAL, PER_SAMPLE };
+ 	// MONO: sampleIncrement 1 (all callers), MONO_STRIDED: any sampleIncrement, STEREO: interleaved
+ 	enum class Layout { MONO, MONO_STRIDED, STEREO };
+ 	template <FilterMode mode, Saturation saturation, bool oversample, Layout layout>
+ 	void renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+ 	template <FilterMode mode, bool oversample, Layout layout>
+ 	void renderSaturation(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
++	template <FilterMode mode, bool oversample, Layout layout, Saturation voice, Saturation global>
++	void renderSaturationAmount(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
++	// The saturation amount for this block: kSaturationGlobal for the 12 dB and 24 dB ladders in the song's, a kit's
++	// and an audio track's filters with the resonance up (where they saturate without morph, processedResonance
++	// 510000000, about 26 %), else kSaturationVoice (the drive ladder's everywhere, morph's below that resonance)
++	template <FilterMode mode>
++	[[nodiscard]] int32_t saturationAmount() const {
++		return mode != FilterMode::TRANSISTOR_24DB_DRIVE && saturationAmount_ == kSaturationGlobal
++		               && processedResonance > 510000000
++		           ? kSaturationGlobal
++		           : kSaturationVoice;
++	}
+ 	template <FilterMode mode, bool oversample>
+ 	void renderMono(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+ 	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or the left or right of each frame (STEREO,
+@@ -118,5 +143,6 @@ private:
+ 	q31_t lpf3Feedback;
+ 
+ 	bool doOversampling;
++	uint8_t saturationAmount_; // in the padding after the bool: a voice's FilterSet stays the same size
+ };
+ } // namespace deluge::dsp::filter
+diff --git a/src/deluge/model/global_effectable/global_effectable.cpp b/src/deluge/model/global_effectable/global_effectable.cpp
+index ff8c3942..26c46889 100644
+--- a/src/deluge/model/global_effectable/global_effectable.cpp
++++ b/src/deluge/model/global_effectable/global_effectable.cpp
+@@ -820,10 +820,12 @@ void GlobalEffectable::setupFilterSetConfig(int32_t* postFXVolume, ParamManager*
+ }
+ 
+ [[gnu::hot]] void GlobalEffectable::processFilters(StereoSample* buffer, int32_t numSamples) {
+-	// The HP ladder saturates as it did here in the original firmware (FilterSet::renderHPF(..., 2)), 6 dB lower than
+-	// in a voice: see hpladder.cpp
++	// The HP ladder and the 12 / 24 dB LP ladders saturate as they did here in the original firmware
++	// (FilterSet::renderHPF(..., 2), renderLPFLong(..., 2, 2, 1)), 6 dB lower than in a voice: see hpladder.cpp and
++	// lpladder.cpp
+ 	filterSet.renderLongStereo(&buffer->l, &(buffer + numSamples)->l,
+-	                           deluge::dsp::filter::HpLadderFilter::kSaturationGlobal);
++	                           deluge::dsp::filter::HpLadderFilter::kSaturationGlobal,
++	                           deluge::dsp::filter::LpLadderFilter::kSaturationGlobal);
+ }
+ 
+ void GlobalEffectable::writeAttributesToFile(Serializer& writer, bool writeAutomation) {
+-- 
+2.43.0
+

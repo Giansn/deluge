@@ -1,0 +1,406 @@
+From 05a836d9dd5c0e473284f7a0f325f2320fcf2d93 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 23:22:49 +0000
+Subject: [PATCH 087/112] Filters: unchanged blocks take v17's own loops again;
+ ramps per sample in a loop of their own
+
+Finishes the refactor left uncommitted by the interrupted stage, without its
+CPU shortcuts. A block whose configuration equals the last one's renders in
+the per-layout, per-channel inlined loops of v17 (bit-exact, and as fast as
+v17); only a block whose coefficients move takes the shared, not inlined ramp
+loop (renderChannelRamp(): one per ladder / SVF variant for every layout and
+both channels).
+
+Dropped from the uncommitted draft, as they cost quality the spec rules out:
+- steps every 4 samples (a staircase at 11 kHz): the coefficients move on
+  every sample again;
+- a 1/512 threshold (3.4 cents) below which a change jumped: every change,
+  however small, moves (exact comparison, as in 4a95770c).
+Kept: the 12 / 24 dB ladders take the cheaper tanh loop (no morph term) while
+they move, where morph is 0 at both ends.
+
+filter_neutral (PC): static hash 1b6b22e3ec7a6374 = the source before the
+ramps (04c065ea) in all 648 cases; zipper above 2 kHz: SVF -99 -> -112 dBc,
+HP ladder -73 -> -83 dBc against the chunked draft.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/hpladder.cpp | 64 ++++++++++++++++++++----------
+ src/deluge/dsp/filter/hpladder.h   | 20 ++++++----
+ src/deluge/dsp/filter/lpladder.cpp | 63 ++++++++++++++++++-----------
+ src/deluge/dsp/filter/lpladder.h   | 22 ++++++----
+ src/deluge/dsp/filter/svf.cpp      | 47 +++++++++++++++-------
+ src/deluge/dsp/filter/svf.h        | 18 ++++++---
+ 6 files changed, 153 insertions(+), 81 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/hpladder.cpp b/src/deluge/dsp/filter/hpladder.cpp
+index e4b84be0..10e81b3d 100644
+--- a/src/deluge/dsp/filter/hpladder.cpp
++++ b/src/deluge/dsp/filter/hpladder.cpp
+@@ -158,36 +158,39 @@ template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Lay
+ [[gnu::always_inline]] inline void HpLadderFilter::renderChannels(q31_t* startSample, q31_t* endSample,
+                                                                   int32_t sampleIncrement, const Coefficients& c,
+                                                                   const Coefficients& d) {
+-	// One loop for every layout: the step between samples in a register
+-	const int32_t stride = layout == Layout::STEREO ? 2 : layout == Layout::MONO ? 1 : sampleIncrement;
+-	renderChannel<morph, saturation, Layout::MONO_STRIDED, amount, ramp>(startSample, endSample, stride, l, c, d);
+-	if constexpr (layout == Layout::STEREO) {
+-		// The channels don't depend on each other, so each gets its own pass (fewer registers needed)
+-		renderChannel<morph, saturation, Layout::MONO_STRIDED, amount, ramp>(startSample + 1, endSample, stride, r, c,
+-		                                                                     d);
++	if constexpr (ramp) {
++		const int32_t stride = layout == Layout::STEREO ? 2 : layout == Layout::MONO ? 1 : sampleIncrement;
++		renderChannelRamp<morph, saturation, amount>(startSample, endSample, stride, l, c, d);
++		if constexpr (layout == Layout::STEREO) {
++			renderChannelRamp<morph, saturation, amount>(startSample + 1, endSample, stride, r, c, d);
++		}
++	}
++	else {
++		renderChannel<morph, saturation, layout, 0, amount>(startSample, endSample, sampleIncrement, l, c);
++		if constexpr (layout == Layout::STEREO) {
++			// The channels don't depend on each other, so each gets its own pass (fewer registers needed)
++			renderChannel<morph, saturation, layout, 1, amount>(startSample, endSample, sampleIncrement, r, c);
++		}
+ 	}
+ }
+ 
+-template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Layout layout, int32_t amount, bool ramp>
+-void HpLadderFilter::renderChannel(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement,
+-                                   HPLadderState& channelState, const Coefficients& c, const Coefficients& d) {
++// Without antialiasing, hpfLastWorkingValue is written on every sample and read by none of this block's (only the
++// antialiased tanh reads it), so only the last sample's value matters. It's the antialiased tanh's own working value of
++// that sample (the same shift as its saturation amount; 1.2.1 shifted by 2 whatever the amount)
++template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Layout layout, int channel, int32_t amount>
++[[gnu::always_inline]] inline void HpLadderFilter::renderChannel(q31_t* startSample, q31_t* endSample,
++                                                                 int32_t sampleIncrement, HPLadderState& channelState,
++                                                                 const Coefficients& c) {
+ 	HPLadderState state = channelState;
+-	Coefficients now = c;
+ 	q31_t lastA = 0; // the last sample's a before the tanh, for hpfLastWorkingValue
+ 	// Without morph, doHPF's cutoff is max(multiply_accumulate_32x32_rshift32_rounded(fc, input << 4, 0), lowerLimit)
+ 	// = max(fc, lowerLimit) for every sample: smmlar adds (0 + 2^31) >> 32 = 0 to fc
+ 	const q31_t fixedFc = std::max(c.fc, lowerLimit);
+ 
++	// For STEREO, currentSample points at the frame, as in the loop over both channels (same number of frames)
+ 	q31_t* currentSample = startSample;
+ 	do {
+-		if constexpr (ramp) {
+-			now.step(d);
+-			*currentSample =
+-			    doHPF<morph, saturation, amount>(*currentSample, state, now, std::max(now.fc, lowerLimit), lastA);
+-		}
+-		else {
+-			*currentSample = doHPF<morph, saturation, amount>(*currentSample, state, c, fixedFc, lastA);
+-		}
++		currentSample[channel] = doHPF<morph, saturation, amount>(currentSample[channel], state, c, fixedFc, lastA);
+ 		if constexpr (layout == Layout::MONO) {
+ 			currentSample += 1;
+ 		}
+@@ -199,9 +202,26 @@ void HpLadderFilter::renderChannel(q31_t* startSample, q31_t* endSample, int32_t
+ 		}
+ 	} while (currentSample < endSample);
+ 
+-	// Without antialiasing, hpfLastWorkingValue is written on every sample and read by none of this block's (only
+-	// the antialiased tanh reads it), so only the last sample's value matters. It's the antialiased tanh's own working
+-	// value of that sample (the same shift as its saturation amount; 1.2.1 shifted by 2 whatever the amount)
++	if constexpr (saturation == Saturation::TANH || saturation == Saturation::NONE) {
++		state.hpfLastWorkingValue = (uint32_t)lshiftAndSaturate<amount>(lastA) + 2147483648u;
++	}
++	channelState = state;
++}
++
++template <bool morph, HpLadderFilter::Saturation saturation, int32_t amount>
++void HpLadderFilter::renderChannelRamp(q31_t* startSample, q31_t* endSample, int32_t stride,
++                                       HPLadderState& channelState, const Coefficients& c, const Coefficients& d) {
++	HPLadderState state = channelState;
++	q31_t lastA = 0;
++	q31_t* currentSample = startSample;
++	Coefficients now = c;
++	do {
++		now.step(d);
++		const q31_t fc = std::max(now.fc, lowerLimit);
++		*currentSample = doHPF<morph, saturation, amount>(*currentSample, state, now, fc, lastA);
++		currentSample += stride;
++	} while (currentSample < endSample);
++
+ 	if constexpr (saturation == Saturation::TANH || saturation == Saturation::NONE) {
+ 		state.hpfLastWorkingValue = (uint32_t)lshiftAndSaturate<amount>(lastA) + 2147483648u;
+ 	}
+diff --git a/src/deluge/dsp/filter/hpladder.h b/src/deluge/dsp/filter/hpladder.h
+index ffea7eec..17217e62 100644
+--- a/src/deluge/dsp/filter/hpladder.h
++++ b/src/deluge/dsp/filter/hpladder.h
+@@ -128,14 +128,18 @@ private:
+ 	                    const Coefficients& d);
+ 	template <Layout layout, int32_t amount>
+ 	void render(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+-	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or every other one (STEREO: startSample the
+-	// left or the right of the first frame)
+-	// ramp: the coefficients move per sample from c by d
+-	// (One loop for both channels, not inlined: the ladder's many variants stay half the code)
+-	template <bool morph, Saturation saturation, Layout layout, int32_t amount, bool ramp>
+-	[[gnu::noinline]] static void renderChannel(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement,
+-	                                            HPLadderState& channelState, const Coefficients& c,
+-	                                            const Coefficients& d);
++	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or the left or right of each frame (STEREO,
++	// channel 0 or 1), the configuration as it is (as before the ramps)
++	template <bool morph, Saturation saturation, Layout layout, int channel, int32_t amount>
++	[[gnu::always_inline]] static inline void renderChannel(q31_t* startSample, q31_t* endSample,
++	                                                        int32_t sampleIncrement, HPLadderState& channelState,
++	                                                        const Coefficients& c);
++	// One channel, every stride-th sample from startSample on, the coefficients moving from c by d per sample. One loop
++	// for every layout and both channels, not inlined: the ramps cost little code
++	template <bool morph, Saturation saturation, int32_t amount>
++	[[gnu::noinline]] static void renderChannelRamp(q31_t* startSample, q31_t* endSample, int32_t stride,
++	                                                HPLadderState& channelState, const Coefficients& c,
++	                                                const Coefficients& d);
+ 	template <bool morph, Saturation saturation, int32_t amount>
+ 	[[gnu::always_inline]] static inline q31_t doHPF(q31_t input, HPLadderState& state, const Coefficients& c,
+ 	                                                 q31_t fixedFc, q31_t& lastA);
+diff --git a/src/deluge/dsp/filter/lpladder.cpp b/src/deluge/dsp/filter/lpladder.cpp
+index 92f8e3cb..4cb98897 100644
+--- a/src/deluge/dsp/filter/lpladder.cpp
++++ b/src/deluge/dsp/filter/lpladder.cpp
+@@ -261,7 +261,7 @@ void LpLadderFilter::renderSaturation(q31_t* startSample, q31_t* endSample, int3
+ 		// With morph at 0 the morph term is 2 * ((input * 0) >> 32) = 0 and can go. The oversampled drive ladder
+ 		// is rare, so it keeps the general loop for that too (which gives the same result with morph at 0)
+ 		// (While the coefficients move, the loop with morph serves both: fewer variants of the ladders)
+-		if (morph == 0 && !ramping_ && !oversample) {
++		if (morph == 0 && (!ramping_ || last_.morph == 0) && !oversample) {
+ 			renderSaturationAmount<mode, oversample, layout, Saturation::TANH, Saturation::TANH_GLOBAL>(
+ 			    startSample, endSample, sampleIncrement);
+ 		}
+@@ -300,12 +300,11 @@ void LpLadderFilter::renderSaturationAmount(q31_t* startSample, q31_t* endSample
+ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, LpLadderFilter::Layout layout>
+ [[gnu::hot]] void LpLadderFilter::renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
+ 	const Coefficients c = coefficients<mode>();
+-	// Moving coefficients take the loops with morph (renderSaturation()), and the strided mono loop none
+-	constexpr bool canRamp =
+-	    saturation != Saturation::TANH && saturation != Saturation::TANH_GLOBAL && saturation != Saturation::PER_SAMPLE;
++	// (The strided mono loop, which nothing uses, doesn't move them)
++	constexpr bool canRamp = saturation != Saturation::PER_SAMPLE;
+ 	if (canRamp && ramping_) {
+-		// From the last block's configuration to this one's, per sample. The precise stages where both are below
+-		// their limit (they share the state with the others, so the choice can change from block to block)
++		// From the last block's configuration to this one's, per sample. The precise stages where both are below their
++		// limit (they share the state with the others, so the choice can change from block to block)
+ 		int32_t n = (int32_t)(endSample - startSample);
+ 		if constexpr (layout == Layout::STEREO) {
+ 			n >>= 1;
+@@ -337,30 +336,34 @@ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversampl
+ [[gnu::always_inline]] inline void LpLadderFilter::renderStates(q31_t* startSample, q31_t* endSample,
+                                                                 int32_t sampleIncrement, const Coefficients& c,
+                                                                 const Coefficients& d) {
+-	// One loop for every layout: the step between samples in a register
+-	const int32_t stride = layout == Layout::STEREO ? 2 : layout == Layout::MONO ? 1 : sampleIncrement;
+-	renderChannel<mode, saturation, oversample, Layout::MONO_STRIDED, precise, ramp>(startSample, endSample, stride, l,
+-	                                                                                 c, d);
+-	if constexpr (layout == Layout::STEREO) {
+-		// The channels don't depend on each other, so each gets its own pass (a loop over both needs more registers
+-		// than there are, for the two states)
+-		renderChannel<mode, saturation, oversample, Layout::MONO_STRIDED, precise, ramp>(startSample + 1, endSample,
+-		                                                                                 stride, r, c, d);
++	if constexpr (ramp) {
++		const int32_t stride = layout == Layout::STEREO ? 2 : layout == Layout::MONO ? 1 : sampleIncrement;
++		renderChannelRamp<mode, saturation, oversample, precise>(startSample, endSample, stride, l, c, d);
++		if constexpr (layout == Layout::STEREO) {
++			renderChannelRamp<mode, saturation, oversample, precise>(startSample + 1, endSample, stride, r, c, d);
++		}
++	}
++	else {
++		renderChannel<mode, saturation, oversample, layout, 0, precise>(startSample, endSample, sampleIncrement, l, c);
++		if constexpr (layout == Layout::STEREO) {
++			// The channels don't depend on each other, so each gets its own pass (a loop over both needs more registers
++			// than there are, for the two states)
++			renderChannel<mode, saturation, oversample, layout, 1, precise>(startSample, endSample, sampleIncrement, r,
++			                                                                c);
++		}
+ 	}
+ }
+ 
+ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, LpLadderFilter::Layout layout,
+-          bool precise, bool ramp>
+-void LpLadderFilter::renderChannel(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement,
+-                                   LpLadderState& channelState, const Coefficients& c, const Coefficients& d) {
++          int channel, bool precise>
++[[gnu::always_inline]] inline void LpLadderFilter::renderChannel(q31_t* startSample, q31_t* endSample,
++                                                                 int32_t sampleIncrement, LpLadderState& channelState,
++                                                                 const Coefficients& c) {
+ 	LpLadderState state = channelState;
+-	Coefficients now = c;
++	// For STEREO, currentSample points at the frame, as in the loop over both channels (same number of frames)
+ 	q31_t* currentSample = startSample;
+ 	do {
+-		if constexpr (ramp) {
+-			now.step(d);
+-		}
+-		*currentSample = filterSample<mode, saturation, oversample, precise>(*currentSample, state, ramp ? now : c);
++		currentSample[channel] = filterSample<mode, saturation, oversample, precise>(currentSample[channel], state, c);
+ 		if constexpr (layout == Layout::MONO) {
+ 			currentSample += 1;
+ 		}
+@@ -374,6 +377,20 @@ void LpLadderFilter::renderChannel(q31_t* startSample, q31_t* endSample, int32_t
+ 	channelState = state;
+ }
+ 
++template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, bool precise>
++void LpLadderFilter::renderChannelRamp(q31_t* startSample, q31_t* endSample, int32_t stride,
++                                       LpLadderState& channelState, const Coefficients& c, const Coefficients& d) {
++	LpLadderState state = channelState;
++	q31_t* currentSample = startSample;
++	Coefficients now = c;
++	do {
++		now.step(d);
++		*currentSample = filterSample<mode, saturation, oversample, precise>(*currentSample, state, now);
++		currentSample += stride;
++	} while (currentSample < endSample);
++	channelState = state;
++}
++
+ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, bool precise>
+ [[gnu::always_inline]] inline q31_t LpLadderFilter::filterSample(q31_t input, LpLadderState& state,
+                                                                  const Coefficients& c) {
+diff --git a/src/deluge/dsp/filter/lpladder.h b/src/deluge/dsp/filter/lpladder.h
+index 84249b33..84a58cdb 100644
+--- a/src/deluge/dsp/filter/lpladder.h
++++ b/src/deluge/dsp/filter/lpladder.h
+@@ -72,7 +72,8 @@ private:
+ 		q31_t divideBy1PlusTannedFrequency;
+ 		int32_t saturationAmount; // PER_SAMPLE's
+ 		q31_t moveability2;       // 2 * moveability, for the precise stages (below kPreciseMoveabilityLimit only)
+-		// What the loops move per sample (all but saturationAmount, which is the block's)
++		// What the loops move per sample (all but saturationAmount, which is the block's; moveability2 follows
++		// moveability)
+ 		[[nodiscard]] bool sameRamp(const Coefficients& o) const {
+ 			return moveability == o.moveability && processedResonance == o.processedResonance
+ 			       && divideByTotalMoveabilityAndProcessedResonance == o.divideByTotalMoveabilityAndProcessedResonance
+@@ -157,13 +158,18 @@ private:
+ 	}
+ 	template <FilterMode mode, bool oversample>
+ 	void renderMono(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+-	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or every other one (STEREO: startSample the
+-	// left or the right of the first frame). One loop for both channels (not inlined): the ladders' many variants stay
+-	// half the code
+-	template <FilterMode mode, Saturation saturation, bool oversample, Layout layout, bool precise, bool ramp>
+-	[[gnu::noinline]] static void renderChannel(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement,
+-	                                            LpLadderState& channelState, const Coefficients& c,
+-	                                            const Coefficients& d);
++	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or the left or right of each frame (STEREO,
++	// channel 0 or 1), the configuration as it is (as before the ramps)
++	template <FilterMode mode, Saturation saturation, bool oversample, Layout layout, int channel, bool precise>
++	[[gnu::always_inline]] static inline void renderChannel(q31_t* startSample, q31_t* endSample,
++	                                                        int32_t sampleIncrement, LpLadderState& channelState,
++	                                                        const Coefficients& c);
++	// One channel, every stride-th sample from startSample on, the coefficients moving from c by d per sample. One loop
++	// for every layout and both channels, not inlined: the ramps cost little code
++	template <FilterMode mode, Saturation saturation, bool oversample, bool precise>
++	[[gnu::noinline]] static void renderChannelRamp(q31_t* startSample, q31_t* endSample, int32_t stride,
++	                                                LpLadderState& channelState, const Coefficients& c,
++	                                                const Coefficients& d);
+ 	template <FilterMode mode, Saturation saturation, bool oversample, bool precise>
+ 	[[gnu::always_inline]] static inline q31_t filterSample(q31_t input, LpLadderState& state, const Coefficients& c);
+ 	template <Saturation saturation>
+diff --git a/src/deluge/dsp/filter/svf.cpp b/src/deluge/dsp/filter/svf.cpp
+index 9c078993..5b606ca7 100644
+--- a/src/deluge/dsp/filter/svf.cpp
++++ b/src/deluge/dsp/filter/svf.cpp
+@@ -83,26 +83,31 @@ template <SVFilter::Mix mix, SVFilter::Layout layout, bool ramp>
+ [[gnu::always_inline]] inline void SVFilter::renderChannels(q31_t* startSample, q31_t* endSample,
+                                                             int32_t sampleIncrement, const Coefficients& c,
+                                                             const Coefficients& d) {
+-	// One loop for every layout: the step between samples in a register
+-	const int32_t stride = layout == Layout::STEREO ? 2 : layout == Layout::MONO ? 1 : sampleIncrement;
+-	renderChannel<mix, Layout::MONO_STRIDED, ramp>(startSample, endSample, stride, l, c, d);
+-	if constexpr (layout == Layout::STEREO) {
+-		// The channels don't depend on each other, so each gets its own pass (fewer registers needed)
+-		renderChannel<mix, Layout::MONO_STRIDED, ramp>(startSample + 1, endSample, stride, r, c, d);
++	if constexpr (ramp) {
++		const int32_t stride = layout == Layout::STEREO ? 2 : layout == Layout::MONO ? 1 : sampleIncrement;
++		renderChannelRamp<mix>(startSample, endSample, stride, l, c, d);
++		if constexpr (layout == Layout::STEREO) {
++			renderChannelRamp<mix>(startSample + 1, endSample, stride, r, c, d);
++		}
++	}
++	else {
++		renderChannel<mix, layout, 0>(startSample, endSample, sampleIncrement, l, c);
++		if constexpr (layout == Layout::STEREO) {
++			// The channels don't depend on each other, so each gets its own pass (fewer registers needed)
++			renderChannel<mix, layout, 1>(startSample, endSample, sampleIncrement, r, c);
++		}
+ 	}
+ }
+ 
+-template <SVFilter::Mix mix, SVFilter::Layout layout, bool ramp>
+-void SVFilter::renderChannel(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, SVFState& channelState,
+-                             const Coefficients& c, const Coefficients& d) {
++template <SVFilter::Mix mix, SVFilter::Layout layout, int channel>
++[[gnu::always_inline]] inline void SVFilter::renderChannel(q31_t* startSample, q31_t* endSample,
++                                                           int32_t sampleIncrement, SVFState& channelState,
++                                                           const Coefficients& c) {
+ 	SVFState state = channelState;
+-	Coefficients now = c;
++	// For STEREO, currentSample points at the frame, as in the loop over both channels (same number of frames)
+ 	q31_t* currentSample = startSample;
+ 	do {
+-		if constexpr (ramp) {
+-			now.step(d);
+-		}
+-		*currentSample = doSVF<mix>(*currentSample, state, ramp ? now : c);
++		currentSample[channel] = doSVF<mix>(currentSample[channel], state, c);
+ 		if constexpr (layout == Layout::MONO) {
+ 			currentSample += 1;
+ 		}
+@@ -116,6 +121,20 @@ void SVFilter::renderChannel(q31_t* startSample, q31_t* endSample, int32_t sampl
+ 	channelState = state;
+ }
+ 
++template <SVFilter::Mix mix>
++void SVFilter::renderChannelRamp(q31_t* startSample, q31_t* endSample, int32_t stride, SVFState& channelState,
++                                 const Coefficients& c, const Coefficients& d) {
++	SVFState state = channelState;
++	q31_t* currentSample = startSample;
++	Coefficients now = c;
++	do {
++		now.step(d);
++		*currentSample = doSVF<mix>(*currentSample, state, now);
++		currentSample += stride;
++	} while (currentSample < endSample);
++	channelState = state;
++}
++
+ q31_t SVFilter::setConfig(q31_t freq, q31_t res, FilterMode lpfMode, q31_t lpfMorph, q31_t filterGain) {
+ 	curveFrequency(freq);
+ 	// multiply by 1.25 to loosely correct for equivalency to ladders
+diff --git a/src/deluge/dsp/filter/svf.h b/src/deluge/dsp/filter/svf.h
+index 3a8a0d81..c77dfb64 100644
+--- a/src/deluge/dsp/filter/svf.h
++++ b/src/deluge/dsp/filter/svf.h
+@@ -93,12 +93,18 @@ private:
+ 	void renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+ 	template <Layout layout>
+ 	void render(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+-	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or every other one (STEREO: startSample the
+-	// left or the right of the first frame); one loop for both channels, not inlined
+-	// ramp: the coefficients move per sample from c by d
+-	template <Mix mix, Layout layout, bool ramp>
+-	[[gnu::noinline]] static void renderChannel(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement,
+-	                                            SVFState& channelState, const Coefficients& c, const Coefficients& d);
++	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or the left or right of each frame (STEREO,
++	// channel 0 or 1), the configuration as it is (as before the ramps)
++	template <Mix mix, Layout layout, int channel>
++	[[gnu::always_inline]] static inline void renderChannel(q31_t* startSample, q31_t* endSample,
++	                                                        int32_t sampleIncrement, SVFState& channelState,
++	                                                        const Coefficients& c);
++	// One channel, every stride-th sample from startSample on, the coefficients moving from c by d per sample. One loop
++	// for every layout and both channels, not inlined
++	template <Mix mix>
++	[[gnu::noinline]] static void renderChannelRamp(q31_t* startSample, q31_t* endSample, int32_t stride,
++	                                                SVFState& channelState, const Coefficients& c,
++	                                                const Coefficients& d);
+ 	template <Mix mix, Layout layout, bool ramp>
+ 	void renderChannels(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, const Coefficients& c,
+ 	                    const Coefficients& d);
+-- 
+2.43.0
+

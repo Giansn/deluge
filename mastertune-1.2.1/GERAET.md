@@ -21,20 +21,33 @@ Vor jeder Arbeit `git pull`, denn die Cloud-Session liefert laufend nach.
 - **Python 3.12 nehmen.** `python-rtmidi` hat für neuere Versionen keine fertigen Pakete.
 - **Port-Namen:** Die Ports heissen `Deluge 0`, `MIDIIN2 (Deluge) 1` und `MIDIIN3 (Deluge) 2`. Ab Commit nach `0377a67` erkennt das Skript `MIDIIN3` von selbst, `-p` ist dann nicht mehr nötig.
 
-## Aufträge (Stand 27.09.2026, v17 ist da)
+## Aufträge (Stand 28.09.2026, v18 ist da)
 
-Erledigt: der Bericht zu v16, l2d, der Song für den Emulator, der Retune-Test unter Windows.
+Erledigt: der Bericht zu v16, l2d, der Song für den Emulator, der Retune-Test unter Windows, «Rescue». Die Aufträge zu v17 entfallen: v18 enthält v17, alles gilt jetzt für v18. Was v18 bringt, steht im README im Abschnitt «v18».
 
-1. **v17 aufspielen:** `deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin`, die neue Hauptdatei mit L2 für Code und Daten. Settings → Firmware version zeigt `1.2.1-mastertune-v17-l2d-b3385d83`. Bei einem Absturz: `deluge-1.2.1-mastertune-v17-2cb5e31b.bin` ohne L2.
-2. **Die wichtigste Messung: «New Sitar Grii 10» mit v17**, wie der v16-Bericht. 432 Hz, CPU monitor auf Profile, 30 s Stillstand, dann 40 s dieselbe Stelle mit denselben Clips. `live -s 70 -o 2026-..-v17-l2d-grosser-song.jsonl --symbols deluge-1.2.1-mastertune-v17-l2d-b3385d83.symbols.json`.
-   - Der Emulator erwartet etwa die halbe Last: 41 statt 93 % Anzeige, die Kits 14 statt 38 %.
-   - Notieren: QL, abgeschnittene Stimmen, die längste Lücke, und ob Oboe und Sitar jetzt zu hören sind.
-3. **Neues in v17 kurz ausprobieren:**
-   - **Drone-Ansicht:** öffnen (per SCALE in der Song-Ansicht). Der Deluge darf nicht mehr hängen.
-   - **CPU-Monitor-Kürzel:** LEARN halten und den TEMPO-Knopf drücken. Er schaltet ein und aus. Nach dem Neustart muss der Modus erhalten sein.
-   - **Song-Übersicht:** Songs `TRACK`, `TRACK 2`, `TRACK 3` erscheinen als eine Zeile «TRACK». Klick klappt auf, BACK klappt zu, laden, auch während der Wiedergabe.
-   - **HPF-Pfeifton:** In der Song-Ansicht HPF mit viel Resonanz, dann das LPF aufdrehen. Der Ton soll jetzt etwa so laut sein wie die Musik, nicht weit darüber. Und: Stand das LPF bei deinem Fall auf Drive?
-4. **Die Bibliothek `deluge topics` auf 432 Hz umwandeln, neu mit der Version, die den Laptop nicht mehr einfriert** (`tools/retune_library.py`, Stand ab Commit `868d85f`, also zuerst `git pull`):
+1. **v18 aufspielen:** `deluge-1.2.1-mastertune-v18-l2d-6fa0875b.bin`, die Hauptdatei mit L2 für Code und Daten. Settings → Firmware version zeigt neu ohne Hash `1.2.1-mastertune-` / `v18-l2d` auf zwei Zeilen. Bei einem Absturz: `deluge-1.2.1-mastertune-v18-124aeaa2.bin` ohne L2 (zeigt `v18`).
+2. **Die wichtigste Messung: «New Sitar Grii 10» mit v18**, wie der v16-Bericht. 432 Hz, CPU monitor auf Profile, 30 s Stillstand, dann 40 s dieselbe Stelle mit denselben Clips. `live -s 70 -o 2026-..-v18-l2d-grosser-song.jsonl --symbols deluge-1.2.1-mastertune-v18-l2d-6fa0875b.symbols.json`.
+   - Der Emulator erwartet etwa die Last von v17 (41 statt 93 % Anzeige bei v16). Die neuen Filter kosten etwas mehr: Der Testsong braucht 91,4 statt 89,3 %.
+   - Notieren: QL, abgeschnittene Stimmen, die längste Lücke, und ob Oboe und Sitar zu hören sind.
+3. **Filter und Lautstärke am Gehör**, jeweils kurz, am besten mit Kopfhörer:
+   - **Rascheln:** Synth mit LPF 24 dB, Cutoff tief (etwa 10–20), Resonanz mittel, ein langer Ton. Das Rauschband um den Ton muss weg sein. Dasselbe mit 12 dB und Drive.
+   - **Brummen:** In «New Sitar Grii 10» das Song-LPF ganz zu. Das Brummen bei 32 Hz muss weg sein.
+   - **Übergänge:** Cutoff und Resonanz schnell drehen, Filtermodus und Routing wechseln, während ein Ton klingt. Keine Stufen, keine Klicks.
+   - **Parallel-Routing:** Ein Song mit Routing «Parallel» ist 6 dB leiser als mit v17. Stört das?
+   - **Drive:** LPF-Modus Drive mit viel Resonanz. Der Bass bleibt, statt dünn zu werden.
+   - **EQ:** Bass und Treble drehen, während Musik läuft. Keine Klicks.
+   - **Lautstärke:** Jede Raste ändert 0,5 dB, die Anzeige zeigt dB (`-3.5`), ganz unten `OFF`. Leise eingestellte Spuren klingen sauber.
+   - **Sidechain:** Ein alter Song mit hartem Pumpen setzt jetzt über mindestens 5 ms ein, etwas weicher. Stört das?
+   - **Output limiter** (Settings → Community features, `LIMT`): an einem Song, der übersteuert. Kein hartes Verzerren mehr. Beim Umschalten kann es einmal knacken.
+   - **Filter crossing guard** (Settings → Community features, `CROS`): HPF und LPF mit Resonanz aufeinander zu drehen. Kein schmerzhafter Pegelsprung mehr.
+4. **OLED und Song-Übersicht:**
+   - **Helligkeit:** Settings → OLED brightness, Stufen 1–10. Jeder Dreh wirkt sofort, die Stufe gilt nach dem Neustart weiter. Ist Stufe 1 noch lesbar?
+   - **Gruppen:** «New Sitar Grii», «New Sitar Grii 2» und «… 10» erscheinen als eine Gruppe. «TR-808» oder «Jam 2026-09-27» bleiben eigene Songs.
+5. **DelugeRec mit Songnamen** (die neuste Version im Release https://github.com/Giansn/deluge/releases/tag/deluge-rec, ab v6):
+   - USB audio an, einen Song laden, aufnehmen. Die Datei muss «Songname, Datum - 1.2.1 v18.WAV» heissen.
+   - Einen anderen Song laden und wieder aufnehmen. Der neue Name muss erscheinen.
+   - Das kann nur das Gerät prüfen, im Emulator läuft kein USB.
+6. **Die Bibliothek `deluge topics` auf 432 Hz umwandeln, neu mit der Version, die den Laptop nicht mehr einfriert** (`tools/retune_library.py`, Stand ab Commit `868d85f`, also zuerst `git pull`):
    - **Was neu ist:**
      - Jede Datei wird in Stücken von etwa 3 s umgerechnet. Pro Datei braucht es so etwa 60 MB Speicher statt bis zu 8,5 GB, auch bei langen Aufnahmen.
      - Wie viele Dateien gleichzeitig laufen, richtet sich nach dem freien Speicher: höchstens die Hälfte davon. Die Konsole zeigt, was gewählt wurde.
@@ -43,10 +56,7 @@ Erledigt: der Bericht zu v16, l2d, der Song für den Emulator, der Retune-Test u
      `python tools/retune_library.py --card <Kopie der Karte> --out <neuer leerer Ordner>`
    - **Bricht es ab** (Absturz, Strom, volle Platte): denselben Befehl mit `--resume` und denselben Ordnern. Fertige Dateien bleiben, halbe werden neu gemacht.
    - Dateien, deren Spitzen über 0 dBFS gingen, schreibt es wie gewünscht als 32-Bit-Float. Der Deluge begrenzt sie beim Abspielen trotzdem auf 0 dBFS.
-   - Danach auf eine zweite Karte kopieren, `RETUNE_REPORT.txt` mit pushen und Messung 2 mit der umgewandelten Karte wiederholen.
-5. **DELUGE USB REC** (`DelugeRec-v3.exe` aus dem Release https://github.com/Giansn/deluge/releases/tag/deluge-rec-v3, oder `tools/deluge_rec.py`):
-   - eine Aufnahme mit USB audio an. Zeigt das Display `24B`?
-   - Die Tasten R, A, S, F.
+   - Danach auf eine zweite Karte kopieren, `RETUNE_REPORT.txt` mit pushen und Auftrag 2 mit der umgewandelten Karte wiederholen.
 
 ### Erledigt: «Rescue», das LPF wirkt nicht (27.09.2026)
 
@@ -55,12 +65,13 @@ Erledigt: der Bericht zu v16, l2d, der Song für den Emulator, der Retune-Test u
 - **Entscheid des Nutzers:** Die Firmware begrenzt die Resonanz nicht, Selbstschwingung bleibt möglich wie im Original. v18 macht sie 6 dB leiser und ohne das Brummen unten.
 - **Am Gerät:** in der Song-Ansicht mit der Filter-Taste auf LPF, den unteren Goldknopf (Resonanz) unter etwa 35, dann speichern. Wer die Automation auch loswerden will: SHIFT halten, dann den oberen Goldknopf drücken («Automation deleted»). Ohne SHIFT wechselt der Druck den Filtertyp.
 
-## Stand (27.09.2026)
+## Stand (28.09.2026)
 
 | Datei | Was |
 |---|---|
-| `deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin` | **aktuelle Version**, mit L2-Cache für Code und Daten. Im README der Abschnitt «v17». |
-| `deluge-1.2.1-mastertune-v17-2cb5e31b.bin` | dieselbe ohne L2, zum Zurückwechseln |
+| `deluge-1.2.1-mastertune-v18-l2d-6fa0875b.bin` | **aktuelle Version**, mit L2-Cache für Code und Daten. Im README der Abschnitt «v18». |
+| `deluge-1.2.1-mastertune-v18-124aeaa2.bin` | dieselbe ohne L2, zum Zurückwechseln |
+| `deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin` | v17, die Version davor |
 | `l2test/deluge-1.2.1-mastertune-v17-l2i-e476310e.bin` | v17 mit L2 nur für Code |
 | `*.symbols.json` neben jeder `.bin` | Funktionsnamen für den Profiler, nur zu genau dieser `.bin` passend |
 | `hotfix/…v16-l2d-dronefix…` | abgelöst durch v17 |

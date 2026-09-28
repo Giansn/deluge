@@ -1,0 +1,277 @@
+From 158d3b7c08a612bc8462629d50b35c9a18968758 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 20:08:22 +0000
+Subject: [PATCH 078/112] Song browser: a group is the whole name without its
+ number; groups stay open
+
+A song's versions are grouped by the whole name without the number at its
+end (and the ' ', '_', '-' or '.' before it; case doesn't matter): "New
+Sitar Grii", "New Sitar Grii 2", "New Sitar Grii 9", "New Sitar Grii 10" are
+the row "New Sitar Grii >"; "TRACK", "TRACK 2", "TRACK3" the row "TRACK >". A
+name without a number at its end is a song of its own ("New Drum Idea",
+"TRACK FINAL"), and so is the firmware's name for a new song, "SONG" and a
+number ("SONG1", "SONG001"). The row shows the whole name (cut before the
+arrow, scrolling when selected; 7-segment: the name and "--").
+
+A group folded out stays so when the select encoder moves on, and several
+can be folded out at once. BACK on one of a group's versions folds that
+group in and selects its row; BACK anywhere else goes up a folder or exits
+as before (the groups all folded in). The groups folded out are kept by
+name, at most 8: folding out a 9th folds in the one the selection was in
+longest ago. Entering or leaving a folder, and opening the browser, fold
+them all in (on opening, a later version's group is folded out as before).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/ui/load/load_song_ui.cpp | 127 +++++++++++++++++++-----
+ src/deluge/gui/ui/load/load_song_ui.h   |  20 ++--
+ 2 files changed, 117 insertions(+), 30 deletions(-)
+
+diff --git a/src/deluge/gui/ui/load/load_song_ui.cpp b/src/deluge/gui/ui/load/load_song_ui.cpp
+index ca2044ba..51cee0d3 100644
+--- a/src/deluge/gui/ui/load/load_song_ui.cpp
++++ b/src/deluge/gui/ui/load/load_song_ui.cpp
+@@ -60,7 +60,7 @@ extern void setupBlankSong();
+ using namespace deluge::gui;
+ 
+ namespace {
+-// mastertune: versions of a song grouped under its name (LoadSongUI::openGroup)
++// mastertune: versions of a song grouped under its name (LoadSongUI::openGroups)
+ 
+ constexpr int32_t kMaxGroupSteps = 4096; // Only against a loop that doesn't end; a group can have any number
+ // Steps over a folded group's versions between calls of the audio routine (while the folder is read, emptyFileItems()
+@@ -79,17 +79,41 @@ FileItem* itemAt(int32_t i) {
+ 	return (FileItem*)Browser::fileItems.getElementAddress(i);
+ }
+ 
+-// A file's group: its name up to the first space, or else up to the extension's dot ("TRACK.XML", "TRACK 2.XML",
+-// "track 3.XML": "TRACK"). The files are sorted by name (strcmpspecial(): case doesn't matter, numbers by value, and a
+-// space sorts before any other character but '.' and '_'), so a song's versions come right after its first one.
+-// Only a name that continues with '_' or '.' ("TRACK_B", "TRACK.B.XML") or a folder can sort between them: the group
+-// is then two rows
++// A file's group: its name without the extension and without the number at its end, with the separators before that
++// number (' ', '_', '-', '.'); case doesn't matter. "New Sitar Grii.XML", "New Sitar Grii 2.XML", "New Sitar Grii
++// 10.XML": "New Sitar Grii"; "TRACK", "TRACK 2", "track_3", "TRACK4": "TRACK". A name without a number at its end is a
++// group of its own ("New Drum Idea", "TRACK FINAL"), and so is one that's only a number (the 7-segment display's "1"
++// for SONG001.XML) and the firmware's name for a new song, "SONG" and a number ("SONG1", "SONG001": different songs,
++// Browser::getUnusedSlot(); their versions "SONG1 2", ... are the group "SONG1"). The group's row shows this part of
++// the name.
++// The files are sorted by name (strcmpspecial(): case doesn't matter, numbers by value, '.' and '_' before any other
++// character, then ' ', then the rest as in ASCII), so a song's versions come right after it, and a name that begins
++// with its name but isn't one of them sorts after them ("TRACK FINAL", "TRACK LIVE", "TRACKS", the folder "TRACK
++// DEMOS"), with a few exceptions. Sorting between two versions, these split the group into two rows (each a group of
++// its own, or a single version shown by its name): the song's name continued with '_' ("TRACK_B"), or with a space and
++// a character below '0' ("TRACK (old)", "TRACK - live", "TRACK #2"), between "TRACK" and "TRACK 2"; a version's name
++// continued ("TRACK 2 FINAL", "TRACK 2b"; "TRACK 2.1", the group "TRACK 2", before "TRACK 2"), next to that version;
++// versions with different separators or none ("TRACK 3", "TRACK_4", "TRACK5"), names that sort between those
++// ("TRACK FINAL" between "TRACK 3" and "TRACK5"); a folder named like these
+ int32_t groupKeyLength(FileItem const* item) {
+ 	char const* name = item->displayName;
+ 	char const* dot = strrchr(name, '.');
+ 	int32_t length = dot ? (int32_t)(dot - name) : (int32_t)strlen(name);
+-	char const* space = (char const*)memchr(name, ' ', length);
+-	return space ? (int32_t)(space - name) : length;
++	int32_t end = length;
++	while (end > 0 && name[end - 1] >= '0' && name[end - 1] <= '9') {
++		end--;
++	}
++	int32_t numberStart = end;
++	if (numberStart == length) {
++		return length; // No number at the end
++	}
++	while (end > 0 && (name[end - 1] == ' ' || name[end - 1] == '_' || name[end - 1] == '-' || name[end - 1] == '.')) {
++		end--;
++	}
++	if (!end || (end == numberStart && end == 4 && !memcasecmp(name, "SONG", 4))) {
++		return length; // Only a number; a new song's name
++	}
++	return end;
+ }
+ 
+ bool hasGroupKey(FileItem const* item, char const* key, int32_t keyLength) {
+@@ -112,7 +136,7 @@ LoadSongUI::LoadSongUI() {
+ bool LoadSongUI::opened() {
+ 
+ 	outputTypeToLoad = OutputType::NONE;
+-	openGroup.clear();
++	clearOpenGroups();
+ 	steppingInGroup = false;
+ 	rowsWindowTried[2] = -1;
+ 	currentDir.set(&currentSong->dirPath);
+@@ -207,7 +231,7 @@ void LoadSongUI::enterKeyPress() {
+ 
+ 	// If it's a directory...
+ 	if (currentFileItem && currentFileItem->isFolder) {
+-		openGroup.clear();
++		clearOpenGroups();
+ 		rowsWindowTried[2] = -1;
+ 
+ 		Error error = goIntoFolder(currentFileItem->filename.get());
+@@ -226,8 +250,7 @@ void LoadSongUI::enterKeyPress() {
+ 			fillWindowAroundSelection(); // Whether the next file is one of its versions (may read the folder again)
+ 			syncOpenGroup();
+ 			if (selectionShownFolded()) {
+-				FileItem* header = getCurrentFileItem();
+-				openGroup.set(header->displayName, groupKeyLength(header));
++				openGroupOf(getCurrentFileItem());
+ 				fillWindowForRows();
+ 				displayText();
+ 				return;
+@@ -1069,7 +1092,50 @@ FileItem* LoadSongUI::selectedItem() {
+ }
+ 
+ bool LoadSongUI::isInOpenGroup(FileItem* item) {
+-	return !openGroup.isEmpty() && hasGroupKey(item, openGroup.get(), openGroup.getLength());
++	return openGroupIndex(item) >= 0;
++}
++
++// Which of openGroups the file's group is, or -1
++int32_t LoadSongUI::openGroupIndex(FileItem const* item) {
++	if (!numOpenGroups || item->isFolder) {
++		return -1;
++	}
++	int32_t keyLength = groupKeyLength(item);
++	for (int32_t k = numOpenGroups - 1; k >= 0; k--) {
++		if ((int32_t)openGroups[k].getLength() == keyLength
++		    && !memcasecmp(item->displayName, openGroups[k].get(), keyLength)) {
++			return k;
++		}
++	}
++	return -1;
++}
++
++// The file's group folded out, the last of openGroups (if it isn't one of them yet). With kMaxOpenGroups folded out
++// already, the first of them, which the selection has been in longest ago, folds in. If there's no memory for the
++// name, the group stays folded in
++void LoadSongUI::openGroupOf(FileItem const* item) {
++	if (item->isFolder || openGroupIndex(item) >= 0) {
++		return;
++	}
++	if (numOpenGroups == kMaxOpenGroups) {
++		closeOpenGroup(0);
++	}
++	if (openGroups[numOpenGroups].set(item->displayName, groupKeyLength(item)) == Error::NONE) {
++		numOpenGroups++;
++	}
++}
++
++void LoadSongUI::closeOpenGroup(int32_t k) {
++	for (; k + 1 < numOpenGroups; k++) {
++		openGroups[k].set(&openGroups[k + 1]); // Shares the name's memory
++	}
++	openGroups[--numOpenGroups].clear();
++}
++
++void LoadSongUI::clearOpenGroups() {
++	while (numOpenGroups) {
++		openGroups[--numOpenGroups].clear();
++	}
+ }
+ 
+ // A version after a group's first one, with the group folded in: not shown, the encoder steps over it
+@@ -1090,19 +1156,23 @@ bool LoadSongUI::isFoldedHeader(int32_t i) {
+ 	return !isInOpenGroup(item) && !isHiddenVersion(i) && sameGroup(item, itemAt(i + 1));
+ }
+ 
+-// The group folded out is the selected version's, or none: leaving it folds it in, arriving on one of its later
+-// versions (the current song on entry, typing, a deleted file) folds it out
++// Arriving on a later version of a group folded in (the current song on entry, typing, a deleted file) folds it out;
++// the group of the selected version goes to the end of openGroups (the last one to fold in when there are too many).
++// Leaving a group doesn't fold it in: only BACK on one of its versions does (backButtonAction())
+ void LoadSongUI::syncOpenGroup() {
+ 	FileItem* item = selectedItem();
+ 	if (!item || item->isFolder) {
+-		openGroup.clear();
+ 		return;
+ 	}
+-	if (!openGroup.isEmpty() && !isInOpenGroup(item)) {
+-		openGroup.clear();
++	int32_t k = openGroupIndex(item);
++	if (k >= 0 && k + 1 < numOpenGroups) {
++		String key;
++		key.set(&openGroups[k]);
++		closeOpenGroup(k);
++		openGroups[numOpenGroups++].set(&key);
+ 	}
+-	if (openGroup.isEmpty() && isHiddenVersion(fileIndexSelected)) {
+-		openGroup.set(item->displayName, groupKeyLength(item));
++	else if (k < 0 && isHiddenVersion(fileIndexSelected)) {
++		openGroupOf(item);
+ 	}
+ }
+ 
+@@ -1337,18 +1407,27 @@ bool LoadSongUI::selectionShownFolded() {
+ 	return !selectionTyped() && isFoldedHeader(fileIndexSelected);
+ }
+ 
+-// BACK: an open group folds in, its first version selected; otherwise up a folder, or out, as before
++// BACK on a version of a group folded out: that group folds in, its first version selected (the others folded out
++// stay so); otherwise up a folder, or out, as before (the groups then all folded in)
+ ActionResult LoadSongUI::backButtonAction() {
+ 	if (sdRoutineLock) {
+ 		return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE; // The folder may be read
+ 	}
+-	// Typed onto a file at the window's start: whether it's a later version depends on the file before it
++	// Typed onto a file at the window's start: whether it's a later version depends on the file before it (reading
++	// back from it); at the window's end, whether a version follows
+ 	FileItem* item = selectedItem();
+ 	if (item && !item->isFolder && fileIndexSelected == 0 && numFileItemsDeletedAtStart) {
+ 		readWindow(0, -1);
+ 	}
++	fillWindowAroundSelection();
+ 	syncOpenGroup();
+-	if (openGroup.isEmpty()) {
++	item = selectedItem();
++	int32_t k = item ? openGroupIndex(item) : -1;
++	int32_t numItems = fileItems.getNumElements();
++	if (k < 0
++	    || !((fileIndexSelected > 0 && sameGroup(itemAt(fileIndexSelected - 1), item))
++	         || (fileIndexSelected + 1 < numItems && sameGroup(item, itemAt(fileIndexSelected + 1))))) {
++		clearOpenGroups();
+ 		return LoadUI::backButtonAction();
+ 	}
+ 	// Folded in: the group's row, not what was typed (the keyboard off the pads, the song's preview on them)
+@@ -1357,7 +1436,7 @@ ActionResult LoadSongUI::backButtonAction() {
+ 	if (!qwertyAlwaysVisible) {
+ 		qwertyVisible = false;
+ 	}
+-	openGroup.clear();
++	closeOpenGroup(k);
+ 	bool moved = selectGroupTop();
+ 	fillWindowForRows();
+ 	displayText();
+diff --git a/src/deluge/gui/ui/load/load_song_ui.h b/src/deluge/gui/ui/load/load_song_ui.h
+index 949b4232..41fc4f30 100644
+--- a/src/deluge/gui/ui/load/load_song_ui.h
++++ b/src/deluge/gui/ui/load/load_song_ui.h
+@@ -57,12 +57,20 @@ private:
+ 	void drawSongPreview(StorageManager& bdsm, bool toStore = true);
+ 	void removeCountdown();
+ 
+-	// mastertune: versions of a song grouped under its name. Files whose names begin with the same word ("TRACK",
+-	// "TRACK 2", "TRACK 3": up to the first space, or the extension's dot; case doesn't matter) and that sort next to
+-	// each other are one row, the group's first version, shown by that word with an arrow; pressing it folds the group
+-	// out (nothing loads; a name typed loads, the first version's too), BACK folds it in. The group that's folded out:
+-	// always the selected version's, or none.
+-	String openGroup;
++	// mastertune: versions of a song grouped under its name. Files whose names are the same without the number at
++	// their end ("New Sitar Grii", "New Sitar Grii 2", "New Sitar Grii 10"; "TRACK", "TRACK 2": groupKeyLength(); case
++	// doesn't matter) and that sort next to each other are one row, the group's first version, shown by that name with
++	// an arrow; pressing it folds the group out (nothing loads; a name typed loads, the first version's too). A group
++	// folded out stays so while the encoder moves on, until BACK is pressed on one of its versions (or the browser
++	// leaves the folder): the groups folded out, by name, the one the selection was last in at the end. At most
++	// kMaxOpenGroups: folding out one more folds in the one the selection has been in longest ago
++	static constexpr int32_t kMaxOpenGroups = 8;
++	String openGroups[kMaxOpenGroups];
++	int32_t numOpenGroups = 0;
++	int32_t openGroupIndex(FileItem const* item);
++	void openGroupOf(FileItem const* item);
++	void closeOpenGroup(int32_t k);
++	void clearOpenGroups();
+ 	bool steppingInGroup = false; // selectEncoderAction() steps over folded versions: no display, no preview yet
+ 	bool stepCompleted = false;   // ... and a step would have shown the file it got to
+ 	String headerLabel;           // The selected group's name, for the OLED's side scroller
+-- 
+2.43.0
+

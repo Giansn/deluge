@@ -1,0 +1,54 @@
+From f9ea87ddd234f98a4cad78dacbf89f0fe1186ef5 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 09:48:37 +0000
+Subject: [PATCH 110/112] Filter crossing guard: each peak to (h + 0.6) / 2,
+ leaving 0.4 dB of the 1 dB for the tables' error
+
+The finer grid (tests/filters crossing_guard, FULL=1: 120 Hz to 2.5 kHz, resonance 5 to 50, both series routes)
+found the combined peak up to 1.1 dB over the higher single one with the target (h + 1) / 2 (the SVF pair at
+resonance 45, the 24 dB ladder with the HP SVF at 120 Hz): the peak tables are the 1 kHz ones, off by up to 0.5 dB
+at other cutoffs. With (h + 0.6) / 2 the sum stays at most 0.6 dB over by the tables, within 1 dB measured.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter_set.cpp | 9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/filter_set.cpp b/src/deluge/dsp/filter/filter_set.cpp
+index ba31ef07..4071d32a 100644
+--- a/src/deluge/dsp/filter/filter_set.cpp
++++ b/src/deluge/dsp/filter/filter_set.cpp
+@@ -346,8 +346,9 @@ void FilterSet::renderFade(q31_t* startSample, q31_t* endSample, int32_t sampleI
+ 
+ // The crossing guard (see crossingGuard). In series, the two filters' gains multiply: where their peaks meet, the
+ // combination's peak height (over the level both pass) is the sum of theirs in dB. So at the crossing each filter's
+-// resonance is lowered to where its own peak is half as high (plus 0.5 dB): together they then peak at most 1 dB above
+-// the higher one alone, (hL + 1) / 2 + (hH + 1) / 2 <= max(hL, hH) + 1. (In parallel the two sum at half level and
++// resonance is lowered to where its own peak is half as high (plus 0.3 dB): together they then peak at most 0.6 dB
++// above the higher one alone, (hL + 0.6) / 2 + (hH + 0.6) / 2 <= max(hL, hH) + 0.6, which leaves 0.4 dB of the spec's
++// 1 dB for where the tables are off (up to 0.5 dB up to 25 dB of peak) and the peaks don't meet exactly. (In parallel the two sum at half level and
+ // don't stack: no guard there.) The peak heights are the filters' own, measured (tests/filters crossing_guard
+ // "heights": the impulse response at -66 dBFS, where every filter is linear and the peaks are highest; 200 Hz to 2.5
+ // kHz, the voice's and the song's filters alike within 0.5 dB up to where they sing on their own) at resonance 0,
+@@ -424,7 +425,7 @@ float FilterSet::guardStrength(float octaves) {
+ 	return 1.0f;
+ }
+ 
+-// At full strength the resonance where the peak is (h + 1) / 2 high; between, in a straight line from the resonance
++// At full strength the resonance where the peak is (h + 0.6) / 2 high; between, in a straight line from the resonance
+ // as it is (monotonic in the knob's resonance at every strength: turning it up never lowers it)
+ q31_t FilterSet::guardResonance(q31_t resonance, float strength, const float* peaks) {
+ 	if (resonance <= 0 || strength <= 0.0f || peaks == nullptr) {
+@@ -432,7 +433,7 @@ q31_t FilterSet::guardResonance(q31_t resonance, float strength, const float* pe
+ 	}
+ 	const float steps = (float)resonance * (1.0f / (float)kResonancePerStep);
+ 	const float h = peakAt(peaks, steps);
+-	const float full = std::min(resonanceForPeak(peaks, 0.5f * (h + 1.0f)), steps);
++	const float full = std::min(resonanceForPeak(peaks, 0.5f * (h + 0.6f)), steps);
+ 	const float guarded = steps - strength * (steps - full);
+ 	return std::min(resonance, (q31_t)(guarded * (float)kResonancePerStep));
+ }
+-- 
+2.43.0
+

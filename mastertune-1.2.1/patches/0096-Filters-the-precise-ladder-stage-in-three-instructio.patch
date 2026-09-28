@@ -1,0 +1,102 @@
+From 0b0a974db78d8b2e900353df8f62b99afec363e1 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 03:11:56 +0000
+Subject: [PATCH 096/112] Filters: the precise ladder stage in three
+ instructions; the ladders' tanh bit-exact in fewer
+
+CPU (checker: the full song 102.0 % against v17's 89.0 %, the hard limit broken).
+
+LadderStage::doFilterPrecise(): the new state state + 2a exactly by one smlal of the difference by
+2 * moveability2 (under 2^31 below kPreciseMoveabilityLimit), the output state + a as memory (the state rounded,
+the bias) plus a rounded (smmlar). Seven instructions per stage became three (sub, smmlar, smlal); the state keeps
+every bit, only the output the next stage filters is rounded to within 1 LSB instead of 1/2
+(tests/filters lpf_precision: worst A-weighted error -180.6 dBFS, limit -180; was -183.5).
+
+ladderTanH<amount, pre>(): getTanHUnknown() exactly (t0 * (65536 - f) + t1 * f as (t0 << 16) + (t1 - t0) * f,
+both entries from one pointer), fewer registers in the loops; pre merges a lshiftAndSaturate<pre> in front into one
+saturation (same output for amount + pre <= 8). The HP ladder's tanh uses it. filter_neutral "tanh" compares both
+over 2^20 inputs and the edges.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/hpladder.cpp        |  2 +-
+ src/deluge/dsp/filter/ladder_components.h | 33 ++++++++++++++++++-----
+ 2 files changed, 28 insertions(+), 7 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/hpladder.cpp b/src/deluge/dsp/filter/hpladder.cpp
+index 509b6b38..25ccc061 100644
+--- a/src/deluge/dsp/filter/hpladder.cpp
++++ b/src/deluge/dsp/filter/hpladder.cpp
+@@ -277,7 +277,7 @@ template <bool morph, HpLadderFilter::Saturation saturation, int32_t amount>
+ 	}
+ 	else if constexpr (saturation == Saturation::TANH) {
+ 		lastA = a;
+-		a = getTanH<amount>(a);
++		a = ladderTanH<amount>(a);
+ 	}
+ 	else if constexpr (saturation == Saturation::NONE) {
+ 		lastA = a;
+diff --git a/src/deluge/dsp/filter/ladder_components.h b/src/deluge/dsp/filter/ladder_components.h
+index 84766f9b..deeadd32 100644
+--- a/src/deluge/dsp/filter/ladder_components.h
++++ b/src/deluge/dsp/filter/ladder_components.h
+@@ -18,6 +18,7 @@
+ #pragma once
+ 
+ #include "util/fixedpoint.h"
++#include "util/functions.h"
+ #include <cstdint>
+ namespace deluge::dsp::filter {
+ // sum + multiply_32x32_rshift32(a, b) in one instruction (smmla). Exactly the same: sum << 32 only adds a multiple of
+@@ -58,6 +59,23 @@ namespace deluge::dsp::filter {
+ [[gnu::always_inline]] inline q31_t doubleSaturate(q31_t x) {
+ 	return addSaturate(x, x);
+ }
++// getTanHUnknown(input, amount) exactly, in fewer instructions: the table's straight line t0 * (65536 - f) + t1 * f
++// as (t0 << 16) + (t1 - t0) * f, the same integer (modulo 2^32, and the result is within range), both entries read
++// from one pointer. In the ladders' loops that frees the registers the table's two bases and 65536 - f took (they
++// were spilled on every sample). tests/filters filter_neutral (tanh) compares it with getTanHUnknown()
++// pre: of lshiftAndSaturate<pre>(input), in one saturation (lshiftAndSaturate<amount + pre>): the same for every input.
++// Where the two shifts' results differ (the input saturates in one of them), both put workingValue in the table's last
++// interval with the position 65535 (for amount + pre <= 8) or at the bottom (-2^31, both the same): the same output
++template <uint32_t amount, uint32_t pre = 0>
++[[gnu::always_inline]] inline q31_t ladderTanH(q31_t input) {
++	static_assert(amount + pre <= 8);
++	uint32_t workingValue = (uint32_t)lshiftAndSaturate<amount + pre>(input) + 2147483648u;
++	const int16_t* t = &tanHSmall[workingValue >> 24];
++	int32_t t0 = t[0];
++	uint32_t f = (workingValue >> 8) & 65535;
++	return (q31_t)(((uint32_t)t0 << 16) + (uint32_t)(t[1] - t0) * f) >> (amount + 2);
++}
++
+ // The all-pass output 2b - x, saturated (b and x each within full scale, 2b - x up to three times it)
+ [[gnu::always_inline]] inline q31_t allPassOutput(q31_t b, q31_t input) {
+ 	return subSaturate(addSaturate(b, b), input);
+@@ -117,14 +135,17 @@ public:
+ 		memory = a + b;
+ 		return allPassOutput(b, input);
+ 	}
+-	// moveability2: twice doFilter()'s moveability (under 2^31: the ladder runs this below kPreciseMoveabilityLimit).
+-	// doFilter()'s a is (input - memory) * moveability2 / 2^32 here exactly: b = state + a, the new state b + a
++	// moveability2: twice doFilter()'s moveability (under 2^30: the ladder runs this below kPreciseMoveabilityLimit).
++	// doFilter()'s a is (input - memory) * moveability2 / 2^32 here exactly: the new state is state + 2a, exactly (one
++	// smlal of the difference by 2 * moveability2, under 2^31), and the output b = state + a to within the LSB: memory
++	// (the state rounded, the bias) plus a rounded (smmlar). Three instructions (sub, smmlar, smlal) where state + a
++	// and then state + 2a in 64 bits took seven (the high word copied twice, the accumulators spilled): the state keeps
++	// every bit, only the output the next stage filters is rounded, to within 1 LSB instead of 1/2
+ 	[[gnu::always_inline]] inline q31_t doFilterPrecise(q31_t input, q31_t moveability2) {
++		const q31_t diff = input - memory;
++		const q31_t b = multiply_accumulate_32x32_rshift32_rounded(memory, diff, moveability2); // smmlar
+ 		uint64_t acc = get();
+-		uint64_t a = (uint64_t)((int64_t)(input - memory) * moveability2); // smlal, twice
+-		acc += a;
+-		q31_t b = (q31_t)(acc >> 32); // b rounded to the LSB (the bias)
+-		acc += a;
++		acc += (uint64_t)((int64_t)diff * (int64_t)(moveability2 * 2)); // smlal
+ 		set(acc);
+ 		return b;
+ 	}
+-- 
+2.43.0
+

@@ -1,0 +1,579 @@
+From 66481d4a5c61d4ad478c67a9d7063be7df448eb2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 07:31:50 +0000
+Subject: [PATCH 107/112] Drive LPF: bass compensation, and real 2x
+ oversampling with polyphase IIR half-band filters
+
+Bass: 1.2.1's drive ladder lost its bass with resonance (40 Hz at -45 dBFS: -3 to -14 dB; small signals -13 dB at
+half resonance), and by how much depended on the level, as its feedback tanh limits at about -54 dBFS. The input now
+gets x (1 + k G^4) + 2 k T(c x), the loop's own DC terms (T its feedback tanh, c its feedback weights' sum), so y = x
+is the loop's steady state at DC at every level: 40 Hz within 0.53 dB of resonance 0's (tests/filters drive_test),
+while the loop itself (its self-oscillation, level and saturation) is as before. Without resonance nothing changes.
+
+Oversampling: 1.2.1 ran the ladder twice on the same input and kept the second output (no filter), only above a
+cutoff with resonance, and lowered the cutoff for it. Now the drive ladder runs at 88.2 kHz at every cutoff and
+resonance (unless cpuDireness reaches 14, 1.2.1's guard; the switch is crossfaded), between a polyphase IIR half-band
+interpolator and decimator (halfband.h: 5 allpass coefficients, HIIR's elliptic design; passband to 18 kHz within
+0.0005 dB, images and aliases above 26.1 kHz at -88 dB; 2.3 samples of delay at 44.1 kHz, which lines up with the
+dry fade, the parallel route and a crossfade's copy where a 55-tap FIR's 13.5 would have to be delayed in each), its
+tanhs at the double rate. Aliasing of a 5..17 kHz tone 4.5..22 dB lower (hard clipping's slowly falling harmonics
+still fold at 2x). The self-oscillation's pitch closer to the cutoff (-7 / -30 cents at 500 Hz / 2 kHz, was -16 / -56).
+CPU (stereo, 128 frames): 75k instructions at 2x, 28k at 1x (was 20k; 37k where 1.2.1 oversampled).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter_set.cpp |  18 +-
+ src/deluge/dsp/filter/halfband.h     |  96 ++++++++++
+ src/deluge/dsp/filter/lpladder.cpp   | 257 ++++++++++++++++++++-------
+ src/deluge/dsp/filter/lpladder.h     |  26 +++
+ 4 files changed, 333 insertions(+), 64 deletions(-)
+ create mode 100644 src/deluge/dsp/filter/halfband.h
+
+diff --git a/src/deluge/dsp/filter/filter_set.cpp b/src/deluge/dsp/filter/filter_set.cpp
+index fd41ecbd..96fffae7 100644
+--- a/src/deluge/dsp/filter/filter_set.cpp
++++ b/src/deluge/dsp/filter/filter_set.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include "dsp/filter/filter_set.h"
+ #include "definitions_cxx.hpp"
++#include "processing/engines/audio_engine.h"
+ #include <algorithm>
+ #include <cmath>
+ #if defined(__ARM_NEON)
+@@ -348,8 +349,17 @@ int32_t FilterSet::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMode
+                              q31_t filterGain, FilterRoute routing, bool adjustVolumeForHPFResonance,
+                              q31_t* overallOscAmplitude) {
+ 	const q31_t filterGainIn = filterGain;
++	// mastertune v18: the drive ladder runs 2x oversampled unless the CPU is at its limit (1.2.1's condition,
++	// AudioEngine::cpuDireness < 14). Where that changes on a drive ladder that keeps running, the half-bands' delay
++	// and the coefficients change: crossfaded (below), and while a crossfade runs, it stays as it is
++	bool oversample = AudioEngine::cpuDireness < 14;
++	const bool driveStays = configured_ && lpfmode == FilterMode::TRANSISTOR_24DB_DRIVE
++	                        && lpfMode_ == FilterMode::TRANSISTOR_24DB_DRIVE;
+ 	if (configured_) {
+ 		if (fadeSlot() != 0) {
++			if (lpfMode_ == FilterMode::TRANSISTOR_24DB_DRIVE) {
++				oversample = lpfilter.ladder.isOversampling(); // (the mode stays too, below)
++			}
+ 			// One crossfade at a time: a change during one waits for its end (at most kFadeSamples), with the filters
+ 			// as they are now
+ 			lpfmode = lpfMode_;
+@@ -368,8 +378,11 @@ int32_t FilterSet::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMode
+ 			bool parallelSwitchOn = routing == FilterRoute::PARALLEL && routing_ == FilterRoute::PARALLEL
+ 			                        && ((lpfmode != FilterMode::OFF && !LPFOn && HPFOn)
+ 			                            || (hpfmode != FilterMode::OFF && !HPFOn && LPFOn));
+-			if (lpfChange || hpfChange || routeChange || parallelSwitchOn) {
+-				startFade();
++			bool oversamplingChange = driveStays && lpfilter.ladder.isOversampling() != oversample;
++			if (lpfChange || hpfChange || routeChange || parallelSwitchOn || oversamplingChange) {
++				if (!startFade() && oversamplingChange) {
++					oversample = lpfilter.ladder.isOversampling(); // no slot free: it waits (the CPU guard, not urgent)
++				}
+ 			}
+ 		}
+ 	}
+@@ -401,6 +414,7 @@ int32_t FilterSet::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMode
+ 			else if (lastLPFMode_ != lpfMode_) {
+ 				lpfilter.ladder.restartRamp(); // another ladder: its coefficients mean something else
+ 			}
++			lpfilter.ladder.setOversamplingWanted(oversample);
+ 			filterGain = lpfilter.ladder.configure(lpfFrequency, lpfResonance, lpfMode_, lpfMorph, filterGain);
+ 		}
+ 		lastLPFMode_ = lpfMode_;
+diff --git a/src/deluge/dsp/filter/halfband.h b/src/deluge/dsp/filter/halfband.h
+new file mode 100644
+index 00000000..9a1eca7e
+--- /dev/null
++++ b/src/deluge/dsp/filter/halfband.h
+@@ -0,0 +1,96 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++// mastertune v18: 2x oversampling for the drive ladder (lpladder.cpp): a polyphase IIR half-band interpolator and
++// decimator (two branches of first-order allpass sections in z^-2, Valenzuela / Constantinides; the elliptic design
++// of Laurent de Soras' HIIR, PolyphaseIir2Designer, 5 coefficients for a transition band of (26.1 - 18) / 88.2 kHz):
++// passband 0 to 18 kHz flat within 1e-7 dB, stopband from 26.1 kHz at 83.7 dB (interpolator images, decimator
++// aliases). An IIR rather than a linear-phase FIR (about 55 taps, 27 samples of latency at 88.2 kHz): 16 multiplies
++// per sample and channel instead of about 30, and a group delay of a few samples at 88.2 kHz (see tests/filters
++// drive_test), so the drive ladder's output lines up with what it is summed with (the parallel route's other filter,
++// the fade-in from the dry signal, a crossfade's copy) to within a fraction of a sample at 44.1 kHz below a few kHz,
++// where a FIR's 13.5 samples would have to be delayed in all of those. Its phase isn't linear, as the ladder's own
++// isn't. 1.2.1's "oversampling" ran the ladder twice on the same input and kept the second output: no filter at all,
++// so everything its saturation made above 22 kHz folded back.
++//
++// Fixed point: each allpass y = x1 + a (x - y1) with the product rounded (smmulr, 1 LSB), the difference and the sum
++// saturating (never wrapping). The interpolator runs at half the input's level (the allpasses' transient peaks, 6 dB
++// of headroom), and doubles its outputs back, saturating.
++
++#pragma once
++
++#include "dsp/filter/ladder_components.h"
++#include <cstdint>
++
++namespace deluge::dsp::filter {
++
++// The allpass coefficients in Q31, branch 0: 0, 2, 4, branch 1: 1, 3
++inline constexpr q31_t kHalfbandCoef[5] = {123200196, 449991472, 888043942, 1363941814, 1867103462};
++
++// A branch's chain of N first-order allpass sections at the low rate; s[i]: the last input of section i, s[N] the last
++// output of the chain (section i's last output is section i + 1's last input)
++template <int32_t N, int32_t first>
++[[gnu::always_inline]] inline q31_t halfbandBranch(q31_t v, q31_t* s) {
++	for (int32_t i = 0; i < N; i++) {
++		const q31_t d = subSaturate(v, s[i + 1]);
++		const q31_t y = addSaturate(s[i], doubleSaturate(multiply_32x32_rshift32_rounded(d, kHalfbandCoef[first + 2 * i])));
++		s[i] = v;
++		v = y;
++	}
++	s[N] = v;
++	return v;
++}
++
++struct HalfbandUp {
++	q31_t s0[4];
++	q31_t s1[3];
++	// One input sample -> two at the double rate (even, odd)
++	[[gnu::always_inline]] inline void process(q31_t x, q31_t& even, q31_t& odd) {
++		const q31_t h = x >> 1;
++		even = doubleSaturate(halfbandBranch<3, 0>(h, s0));
++		odd = doubleSaturate(halfbandBranch<2, 1>(h, s1));
++	}
++	void reset() {
++		for (q31_t& v : s0) {
++			v = 0;
++		}
++		for (q31_t& v : s1) {
++			v = 0;
++		}
++	}
++};
++
++struct HalfbandDown {
++	q31_t s0[4];
++	q31_t s1[3];
++	// Two samples at the double rate (even, odd) -> one: (A0(odd) + A1(even)) / 2, rounded
++	[[gnu::always_inline]] inline q31_t process(q31_t even, q31_t odd) {
++		const q31_t a = halfbandBranch<3, 0>(odd, s0);
++		const q31_t b = halfbandBranch<2, 1>(even, s1);
++		return (q31_t)(((int64_t)a + b + 1) >> 1);
++	}
++	void reset() {
++		for (q31_t& v : s0) {
++			v = 0;
++		}
++		for (q31_t& v : s1) {
++			v = 0;
++		}
++	}
++};
++
++} // namespace deluge::dsp::filter
+diff --git a/src/deluge/dsp/filter/lpladder.cpp b/src/deluge/dsp/filter/lpladder.cpp
+index 8ef340f4..d62423ca 100644
+--- a/src/deluge/dsp/filter/lpladder.cpp
++++ b/src/deluge/dsp/filter/lpladder.cpp
+@@ -20,22 +20,6 @@
+ namespace deluge::dsp::filter {
+ // The knots of the ramp being rendered (one filter at a time renders; not on the stack: kMaxKnots of them)
+ LpLadderFilter::Knot<LpLadderFilter::Coefficients> LpLadderFilter::rampKnots_[LpLadderFilter::kMaxKnots];
+-const int16_t resonanceThresholdsForOversampling[] = {
+-    16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384,
+-    16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384,
+-    16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384,
+-    16384, // 48
+-    16384, // 49
+-    16384, // 50
+-    16384,
+-    15500, // 52
+-    20735, // 14848,
+-    17000, // 12800, // 54
+-    9000,  // 4300,
+-    9000,  // 56
+-    9000,  9000,  9000,  9000,  9000,  9000,  9000,  9000,
+-};
+-
+ const int16_t resonanceLimitTable[] = {
+     32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767,
+     32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767,
+@@ -66,13 +50,14 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ 
+ 		logFreq = std::min(logFreq, (int32_t)63 << 24);
+ 
++		// mastertune v18: 2x oversampled at every cutoff and resonance, with real half-band filters (halfband.h,
++		// renderDriveOversampled()), unless the CPU is at its limit (FilterSet: AudioEngine::cpuDireness < 14, as
++		// 1.2.1's condition). 1.2.1 oversampled only above logFreq 51 << 24 with some resonance, by running the
++		// ladder twice on the same input without any filter, and lowered the cutoff by up to about half a semitone
++		// for how that shifted it. The ladder at 88.2 kHz with half the normalised cutoff is the same filter (the
++		// TPT stages' prewarp: tan(pi f / 2 fs)), so the cutoff stays where it is set
+ 		if (!keepOversampling_) {
+-			doOversampling = false; // storageManager.devVarA;
+-			if (AudioEngine::cpuDireness < 14 && (logFreq >> 24) > 51) {
+-				int32_t resonanceThreshold =
+-				    interpolateTableSigned(logFreq, 30, resonanceThresholdsForOversampling, 6);
+-				doOversampling = (processedResonance > resonanceThreshold);
+-			}
++			doOversampling = oversamplingWanted_;
+ 		}
+ 
+ 		if (doOversampling) {
+@@ -81,10 +66,6 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ 
+ 			logFreq -= 33554432;
+ 
+-			// Adjustment for how the oversampling shifts the frequency just slightly
+-			lpfFrequency -= (multiply_32x32_rshift32_rounded(logFreq, lpfFrequency) >> 8) * 34;
+-			// + (lpfFrequency >> 8) * storageManager.devVarB;
+-
+ 			// Enforce a max frequency. Otherwise we'll generate stuff which will cause problems for down-sampling
+ 			// again. But only if resonance is high. If it's low, we need to be able to get the freq high, to let all
+ 			// the HF through that we want to hear
+@@ -154,6 +135,12 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ 		            moveability, multiply_32x32_rshift32_rounded(
+ 		                             moveability, multiply_32x32_rshift32_rounded(moveability, processedResonance)))));
+ 		divideByTotalMoveabilityAndProcessedResonance = (q31_t)(72057594037927936.0 / (double)onePlusThing);
++
++		if (lpfMode == FilterMode::TRANSISTOR_24DB_DRIVE) {
++			// mastertune v18: the bass compensation's coefficients (see driveCompensate())
++			compA_ = (onePlusThing - 67108864) << 4; // k G^4, Q30
++			compS_ = (q31_t)(((int64_t)lpf1Feedback + lpf2Feedback + lpf3Feedback + divideBy1PlusTannedFrequency) >> 1);
++		}
+ 	}
+ 
+ 	if (lpfMode != FilterMode::TRANSISTOR_24DB_DRIVE) { // Cold transistor ladder only
+@@ -188,6 +175,11 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ // calls out. The arithmetic is unchanged.
+ [[gnu::hot]] void LpLadderFilter::doFilter(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
+ 	startBlock();
++	if (lpfMode != FilterMode::TRANSISTOR_24DB_DRIVE) {
++		// (v18: when the drive ladder comes back, its half-bands and its compensation start afresh)
++		halfbandsLive_ = false;
++		compLive_ = false;
++	}
+ 	// Half ladder
+ 	if (lpfMode == FilterMode::TRANSISTOR_12DB) {
+ 		renderMono<FilterMode::TRANSISTOR_12DB, false>(startSample, endSample, sampleIncrement);
+@@ -198,18 +190,18 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ 	}
+ 	// Full ladder (drive)
+ 	else if (lpfMode == FilterMode::TRANSISTOR_24DB_DRIVE) {
+-		if (doOversampling) {
+-			renderMono<FilterMode::TRANSISTOR_24DB_DRIVE, true>(startSample, endSample, sampleIncrement);
+-		}
+-		else {
+-			renderMono<FilterMode::TRANSISTOR_24DB_DRIVE, false>(startSample, endSample, sampleIncrement);
+-		}
++		renderDrive(startSample, endSample, sampleIncrement, false);
+ 	}
+ 	endBlock();
+ }
+ 
+ [[gnu::hot]] void LpLadderFilter::doFilterStereo(q31_t* startSample, q31_t* endSample) {
+ 	startBlock();
++	if (lpfMode != FilterMode::TRANSISTOR_24DB_DRIVE) {
++		// (v18: when the drive ladder comes back, its half-bands and its compensation start afresh)
++		halfbandsLive_ = false;
++		compLive_ = false;
++	}
+ 	// Half ladder
+ 	if (lpfMode == FilterMode::TRANSISTOR_12DB) {
+ 		renderSaturation<FilterMode::TRANSISTOR_12DB, false, Layout::STEREO>(startSample, endSample, 2);
+@@ -220,12 +212,7 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ 	}
+ 	// Full ladder (drive)
+ 	else if (lpfMode == FilterMode::TRANSISTOR_24DB_DRIVE) {
+-		if (doOversampling) {
+-			renderSaturation<FilterMode::TRANSISTOR_24DB_DRIVE, true, Layout::STEREO>(startSample, endSample, 2);
+-		}
+-		else {
+-			renderSaturation<FilterMode::TRANSISTOR_24DB_DRIVE, false, Layout::STEREO>(startSample, endSample, 2);
+-		}
++		renderDrive(startSample, endSample, 2, true);
+ 	}
+ 	endBlock();
+ }
+@@ -242,6 +229,174 @@ void LpLadderFilter::endBlock() {
+ 	rampEndBlock();
+ }
+ 
++// mastertune v18: the drive ladder. At the sample rate: its bass compensation on the input (driveCompensate()), then
++// the ladder's loop, in place. 2x oversampled: each channel on its own (stride: between its samples), through the
++// half-band interpolator into osBuffer at 88.2 kHz, the compensation and the ladder's loop there (mono, with this
++// channel's state; the coefficients ramp over the doubled block, the knots the same; its tanhs' harmonics up to 44
++// kHz, which the decimator takes out instead of letting them fold back), and the half-band decimator back into place
++namespace {
++q31_t osBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2];
++} // namespace
++
++void LpLadderFilter::renderDrive(q31_t* startSample, q31_t* endSample, int32_t stride, bool stereo) {
++	const int32_t frames = stereo ? (int32_t)(endSample - startSample) >> 1
++	                              : (int32_t)((endSample - startSample + stride - 1) / stride);
++	if (frames <= 0) {
++		return;
++	}
++	if (!doOversampling) {
++		halfbandsLive_ = false;
++		driveCompensate(startSample, frames, stereo ? 2 : stride, stereo ? 2 : 1);
++		if (stereo) {
++			renderSaturation<FilterMode::TRANSISTOR_24DB_DRIVE, false, Layout::STEREO>(startSample, endSample, 2);
++		}
++		else {
++			renderMono<FilterMode::TRANSISTOR_24DB_DRIVE, false>(startSample, endSample, stride);
++		}
++	}
++	else {
++		if (!halfbandsLive_) {
++			// (switched to 2x: the half-bands start empty. FilterSet crossfades where oversampling switches)
++			upL_.reset();
++			upR_.reset();
++			downL_.reset();
++			downR_.reset();
++		}
++		halfbandsLive_ = true;
++		renderDriveOversampled(startSample, frames, stereo ? 2 : stride, 0);
++		if (stereo) {
++			renderDriveOversampled(startSample + 1, frames, 2, 1);
++		}
++	}
++	lastCompA_ = compA_;
++	lastCompS_ = compS_;
++	lastCompR_ = processedResonance;
++	compLive_ = true;
++}
++
++namespace {
++// The drive ladder's bass compensation on one sample (see LpLadderFilter::driveCompensate()): x' = x + x k G^4 +
++// 2 k T(c x), with a = k G^4 (Q30), s = c / 2 (Q30), r = processedResonance; the products rounded, the sums saturating.
++// kRamp: the three move per sample in straight lines (32.32 from the last block's + 1/2, the steps truncated: exactly
++// onto this block's at its last sample, n steps missing by less than n / 2^32)
++template <bool kRamp>
++struct DriveCompensation {
++	int64_t a, s, r;
++	int64_t da, ds, dr;
++	DriveCompensation(q31_t a0, q31_t s0, q31_t r0, q31_t a1, q31_t s1, q31_t r1, int32_t n) {
++		auto line = [n](q31_t from, q31_t to, int64_t& acc) {
++			acc = ((int64_t)from << 32) + ((int64_t)1 << 31);
++			return kRamp ? (int64_t)(((double)to - (double)from) * 4294967296.0 / (double)n) : (int64_t)0;
++		};
++		da = line(kRamp ? a0 : a1, a1, a);
++		ds = line(kRamp ? s0 : s1, s1, s);
++		dr = line(kRamp ? r0 : r1, r1, r);
++	}
++	// The next sample's coefficients (per frame: both channels take the same)
++	[[gnu::always_inline]] inline void step() {
++		if constexpr (kRamp) {
++			a += da;
++			s += ds;
++			r += dr;
++		}
++	}
++	[[gnu::always_inline]] inline q31_t operator()(q31_t x) const {
++		const q31_t g4 = lshiftAndSaturate<2>(multiply_32x32_rshift32_rounded(x, (q31_t)(a >> 32)));
++		const q31_t cx = lshiftAndSaturate<3>(multiply_32x32_rshift32_rounded(x, (q31_t)(s >> 32)));
++		const q31_t t = lshiftAndSaturate<3>(multiply_32x32_rshift32_rounded(ladderTanH<7>(cx), (q31_t)(r >> 32)));
++		return addSaturate(x, addSaturate(g4, t));
++	}
++};
++
++// Upsampling one channel into osBuffer, with the compensation (kComp) at the double rate
++template <bool kComp, bool kRamp>
++void upsampleChannel(HalfbandUp& state, const q31_t* in, int32_t frames, int32_t stride,
++                     DriveCompensation<kRamp> comp) {
++	HalfbandUp up = state;
++	for (int32_t i = 0; i < frames; i++) {
++		q31_t even, odd;
++		up.process(in[i * stride], even, odd);
++		if constexpr (kComp) {
++			comp.step();
++			even = comp(even);
++			comp.step();
++			odd = comp(odd);
++		}
++		osBuffer[2 * i] = even;
++		osBuffer[2 * i + 1] = odd;
++	}
++	state = up;
++}
++
++template <bool kRamp>
++void compensateInPlace(q31_t* p, int32_t count, int32_t stride, int32_t channels, DriveCompensation<kRamp> comp) {
++	for (int32_t i = 0; i < count; i++, p += stride) {
++		comp.step();
++		p[0] = comp(p[0]);
++		if (channels == 2) {
++			p[1] = comp(p[1]);
++		}
++	}
++}
++} // namespace
++
++void LpLadderFilter::renderDriveOversampled(q31_t* startSample, int32_t frames, int32_t stride, int32_t channel) {
++	HalfbandUp& up = channel ? upR_ : upL_;
++	const q31_t a1 = compA_, s1 = compS_, r1 = processedResonance;
++	const q31_t a0 = compLive_ ? lastCompA_ : a1, s0 = compLive_ ? lastCompS_ : s1, r0 = compLive_ ? lastCompR_ : r1;
++	if (r0 == 0 && r1 == 0) {
++		upsampleChannel<false, false>(up, startSample, frames, stride, {a1, s1, r1, a1, s1, r1, 2 * frames});
++	}
++	else if (a0 == a1 && s0 == s1 && r0 == r1) {
++		upsampleChannel<true, false>(up, startSample, frames, stride, {a1, s1, r1, a1, s1, r1, 2 * frames});
++	}
++	else {
++		upsampleChannel<true, true>(up, startSample, frames, stride, {a0, s0, r0, a1, s1, r1, 2 * frames});
++	}
++	// The mono loop runs on l: the right channel's state goes there for it
++	if (channel) {
++		std::swap(l, r);
++	}
++	renderSaturation<FilterMode::TRANSISTOR_24DB_DRIVE, false, Layout::MONO>(osBuffer, osBuffer + 2 * frames, 1);
++	if (channel) {
++		std::swap(l, r);
++	}
++	HalfbandDown down = channel ? downR_ : downL_;
++	for (int32_t i = 0; i < frames; i++) {
++		startSample[i * stride] = down.process(osBuffer[2 * i], osBuffer[2 * i + 1]);
++	}
++	(channel ? downR_ : downL_) = down;
++}
++
++// mastertune v18: the drive ladder's bass compensation, on its input (count frames of `channels` samples, stride
++// apart), before the loop.
++// The loop (scaleInput(), doDriveLPFOnSample()): u = (x - 2 k T(F)) / (1 + k G^4), with k = processedResonance / 2^30,
++// F the feedback sum from the stages' memories (lshiftAndSaturate<2> of the smmulr sum: at DC, where every memory is
++// the output y, F = c y, c = (lpf1Feedback + lpf2Feedback + lpf3Feedback + divideBy1PlusTannedFrequency) / 2^30, their
++// Q30 and the last one's Q31 doubled: (1 - G)(G^3 + G^2 + G + 2) with this ladder's weights), T the feedback's tanh
++// (ladderTanH<7>: slope 1, limiting at 2^22, about -54 dBFS), 1 + k G^4 = onePlusThing / 2^26. At DC every stage passes
++// its input, so y = u: without compensation y = x / (1 + k G^4 + 2 k c) for small signals (1.2.1: up to 19 dB down at
++// full resonance and low cutoff, 13 dB at half), and less where T limits (a louder signal: the loss depends on the
++// level). The compensated input x' = x (1 + k G^4) + 2 k T(c x) makes y = x the loop's steady state at DC for every
++// level, T's limiting included (put y = x: u = (x' - 2 k T(c x)) / (1 + k G^4) = x): the bass as without resonance
++// (tests/filters drive_test: within 0.5 dB from -45 dBFS up, below the self-oscillation's level), the loop itself as
++// before (its self-oscillation, its level and its saturation unchanged; 1.2.1's resonance peak against the bass comes
++// back to the height of the linear ladder's). Without resonance x' = x exactly (and nothing is done).
++// The coefficients move per sample from the last block's where they changed, as the loop's own (DriveCompensation)
++void LpLadderFilter::driveCompensate(q31_t* p, int32_t count, int32_t stride, int32_t channels) {
++	const q31_t a1 = compA_, s1 = compS_, r1 = processedResonance;
++	const q31_t a0 = compLive_ ? lastCompA_ : a1, s0 = compLive_ ? lastCompS_ : s1, r0 = compLive_ ? lastCompR_ : r1;
++	if (r0 == 0 && r1 == 0) {
++		return; // k = 0: x' = x
++	}
++	if (a0 == a1 && s0 == s1 && r0 == r1) {
++		compensateInPlace<false>(p, count, stride, channels, {a1, s1, r1, a1, s1, r1, count});
++	}
++	else {
++		compensateInPlace<true>(p, count, stride, channels, {a0, s0, r0, a1, s1, r1, count});
++	}
++}
++
+ // A knot of a ramp (Filter::rampKnots()): the coefficients setConfig() gives for p, with this block's oversampling
+ // (the ramp only runs where the last block had the same; the cutoff means half as much with it)
+ LpLadderFilter::Coefficients LpLadderFilter::rampKnot(const RampParams& p) {
+@@ -499,31 +654,9 @@ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversampl
+ 		return do24dBLPFOnSample<saturation, precise, ramp>(input, state, c);
+ 	}
+ 	else {
+-		if constexpr (oversample) {
+-			// Linear interpolation works surprisingly well here - it doesn't lead to audible aliasing. But its big
+-			// problem is that it kills the highest frequencies, which is especially noticeable when resonance is
+-			// low. This is because it'll turn all your high sine waves into triangles whose fundamental is lower in
+-			// amplitude. Now, if we immediately downsampled that again with no filtering, no problem, because those
+-			// new really high harmonics that make it triangular are still there. But after running it through the
+-			// ladder filter, those get doubly filtered out, leaving just the reduced-amplitude (fundamental) sine
+-			// waves where our old ones were. So instead, we need to do just a little bit more and take one extra,
+-			// previous sample into account in our interpolation. This is enough to make the HF loss inaudible
+-			// - although we can still see it on the spectrum analysis.
+-
+-			// Insanely just doubling up our input values to oversample works better than fancy 3-sample
+-			// interpolation. And even, making our "interpolated" sample just a 0 and doubling the amplitude of the
+-			// actual sample works very nearly as well as this, but gives a little bit more aliasing on high notes
+-			// fed in.
+-
+-			doDriveLPFOnSample<saturation, precise, ramp>(input, state, c);
+-
+-			// Crude downsampling - just take every second sample, with no anti-aliasing filter. Works fine cos the
+-			// ladder LPF filter takes care of lots of those high harmonics!
+-		}
+-		q31_t outputSampleToKeep = doDriveLPFOnSample<saturation, precise, ramp>(input, state, c);
+-
++		// (mastertune v18: the oversampling is the block's, with real half-band filters: see renderDrive())
+ 		// Only perform the final saturation stage on this one sample, which we want to keep
+-		return ladderTanH<4>(outputSampleToKeep);
++		return ladderTanH<4>(doDriveLPFOnSample<saturation, precise, ramp>(input, state, c));
+ 	}
+ }
+ 
+diff --git a/src/deluge/dsp/filter/lpladder.h b/src/deluge/dsp/filter/lpladder.h
+index 96a7866d..4760733a 100644
+--- a/src/deluge/dsp/filter/lpladder.h
++++ b/src/deluge/dsp/filter/lpladder.h
+@@ -18,6 +18,7 @@
+ #pragma once
+ 
+ #include "dsp/filter/filter.h"
++#include "dsp/filter/halfband.h"
+ #include "dsp/filter/ladder_components.h"
+ #include "util/fixedpoint.h"
+ 
+@@ -44,7 +45,13 @@ public:
+ 	void resetFilter() {
+ 		l.reset();
+ 		r.reset();
++		halfbandsLive_ = false;
++		compLive_ = false;
+ 	}
++	// mastertune v18: whether the drive ladder runs at twice the sample rate (FilterSet sets it before each
++	// configure(): unless the CPU is at its limit), and whether it does now
++	void setOversamplingWanted(bool wanted) { oversamplingWanted_ = wanted; }
++	[[nodiscard]] bool isOversampling() const { return doOversampling; }
+ 
+ private:
+ 	struct LpLadderState {
+@@ -248,6 +255,11 @@ private:
+ 	template <Saturation saturation, bool precise, bool ramp>
+ 	[[gnu::always_inline]] static inline q31_t doDriveLPFOnSample(q31_t input, LpLadderState& state,
+ 	                                                              const Coefficients& c);
++	// mastertune v18: the drive ladder's block, 2x oversampled (lpladder.cpp renderDriveOversampled()) or not, with its
++	// bass compensation on the input (driveCompensate())
++	void renderDrive(q31_t* startSample, q31_t* endSample, int32_t stride, bool stereo);
++	void renderDriveOversampled(q31_t* startSample, int32_t frames, int32_t stride, int32_t channel);
++	void driveCompensate(q31_t* p, int32_t count, int32_t stride, int32_t channels);
+ 	// all ladders are in this class to share the basic components
+ 	// this differentiates between them
+ 	FilterMode lpfMode;
+@@ -276,5 +288,19 @@ private:
+ 	bool keepOversampling_;    // setConfig() keeps doOversampling as it is (rampKnot())
+ 	bool ramping_;             // this block moves from last_ to this configuration (startBlock())
+ 	Coefficients last_;        // the last block's configuration
++	bool oversamplingWanted_;  // v18: FilterSet's say (all zeroes after its reset: set before every configure())
++	bool halfbandsLive_;       // the last block went through the half-band filters: their state carries on
++	bool compLive_;            // the last block was the drive ladder's: its compensation ramps from lastComp*_
++	// mastertune v18: the drive ladder's bass compensation (setConfig(), driveCompensate()): k G^4 (onePlusThing -
++	// 2^26, Q30) and half the feedbacks' sum (c / 2, Q30: Q29 of c), this block's; and the last block's with its
++	// resonance
++	q31_t compA_;
++	q31_t compS_;
++	q31_t lastCompA_;
++	q31_t lastCompS_;
++	q31_t lastCompR_;
++	// The 2x oversampling's half-band filters, per channel
++	HalfbandUp upL_, upR_;
++	HalfbandDown downL_, downR_;
+ };
+ } // namespace deluge::dsp::filter
+-- 
+2.43.0
+

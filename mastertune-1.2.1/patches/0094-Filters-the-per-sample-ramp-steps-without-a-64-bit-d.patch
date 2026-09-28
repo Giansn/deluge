@@ -1,0 +1,146 @@
+From de7b5555cd0058ce7d0ca060993bf8c4d9d067e1 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 00:32:14 +0000
+Subject: [PATCH 094/112] Filters: the per-sample ramp steps without a 64-bit
+ division per coefficient
+
+Filter::rampStep() divided each coefficient's change by the block's length in 64 bits (__udivmoddi4: the Cortex-A9 has
+no divide instruction), ten times per filter per block: 47,000 instructions per 128 samples in the full test song
+(4 % CPU). Now 1 / n once per set (a 32-bit division) and a multiplication per coefficient; the last sample lands
+within 2n LSB short of the target as before within n. And rampPieces() leaves out its two logs where the cutoff moved
+by less than a third of an octave (the usual case).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter.h   | 22 +++++++++++++++++-----
+ src/deluge/dsp/filter/hpladder.h | 15 ++++++++-------
+ src/deluge/dsp/filter/lpladder.h | 19 ++++++++++---------
+ src/deluge/dsp/filter/svf.h      | 13 +++++++------
+ 4 files changed, 42 insertions(+), 27 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/filter.h b/src/deluge/dsp/filter/filter.h
+index 46237a77..485010cc 100644
+--- a/src/deluge/dsp/filter/filter.h
++++ b/src/deluge/dsp/filter/filter.h
+@@ -151,10 +151,19 @@ protected:
+ 	// change renders exactly as before. haveLast_: whether there is a last block's configuration to move from
+ 	bool haveLast_ = false;
+ 	// Per-sample steps from `from` to `to` over n samples: sample k (from 1) takes from + k * step, the last one to
+-	// within n LSB of `to` (under 2^-24 of the unit for a block of 128), and the next block starts from `to` exactly.
+-	// Every change moves, however small: no threshold, no staircase
+-	[[gnu::always_inline]] static inline q31_t rampStep(q31_t from, q31_t to, int32_t n) {
+-		return (q31_t)(((int64_t)to - (int64_t)from) / n);
++	// within 2n LSB of `to` (under 2^-23 of the unit for a block of 128; short of it, never beyond), and the next block
++	// starts from `to` exactly. Every change moves, however small: no threshold, no staircase. The division by n is
++	// a multiplication by 1 / n, taken once for all of a set's coefficients (RampDivisor): the Cortex-A9 has no divide
++	// instruction, and a 64-bit division per coefficient per block was 4 % of the CPU in the full song
++	struct RampDivisor {
++		uint32_t inv; // floor((2^32 - 1) / n)
++		explicit RampDivisor(int32_t n) : inv(0xFFFFFFFFu / (uint32_t)std::max(n, (int32_t)1)) {}
++	};
++	[[gnu::always_inline]] static inline q31_t rampStep(q31_t from, q31_t to, const RampDivisor& div) {
++		int64_t d = (int64_t)to - (int64_t)from;
++		uint64_t magnitude = (uint64_t)(d < 0 ? -d : d) * div.inv; // < 2^64
++		q31_t step = (q31_t)(magnitude >> 32);
++		return d < 0 ? -step : step;
+ 	}
+ 
+ 	// A filter's coefficients are nonlinear in its cutoff and resonance (the ladders' feedbacks go with moveability^1..3
+@@ -183,7 +192,10 @@ public:
+ 	// How many pieces a ramp from lastParams_ to params_ over n samples takes (1 to min(kMaxPieces, n))
+ 	[[nodiscard]] int32_t rampPieces(int32_t n) const {
+ 		int64_t pieces = 1;
+-		if (params_.frequency > 0 && lastParams_.frequency > 0) {
++		const int64_t lo = std::min(params_.frequency, lastParams_.frequency);
++		const int64_t hi = std::max(params_.frequency, lastParams_.frequency);
++		// (Within a third of an octave, 2^(1/3) < 1.26, one piece: without the logs, the usual case)
++		if (lo > 0 && hi * 100 > lo * 126) {
+ 			// quickLog: 2^25 per octave
+ 			constexpr int64_t kThirdOctave = (1 << 25) / 3;
+ 			int64_t logs = std::abs((int64_t)quickLog(params_.frequency) - (int64_t)quickLog(lastParams_.frequency));
+diff --git a/src/deluge/dsp/filter/hpladder.h b/src/deluge/dsp/filter/hpladder.h
+index ffa19ded..d6d0cbf3 100644
+--- a/src/deluge/dsp/filter/hpladder.h
++++ b/src/deluge/dsp/filter/hpladder.h
+@@ -77,13 +77,14 @@ private:
+ 		}
+ 		// The per-sample steps from this to `to` over n samples
+ 		[[nodiscard]] Coefficients steps(const Coefficients& to, int32_t n) const {
+-			return Coefficients{rampStep(fc, to.fc, n),
+-			                    rampStep(morph, to.morph, n),
+-			                    rampStep(hpfHPF3Feedback, to.hpfHPF3Feedback, n),
+-			                    rampStep(hpfLPF1Feedback, to.hpfLPF1Feedback, n),
+-			                    rampStep(divideByTotalMoveability, to.divideByTotalMoveability, n),
+-			                    rampStep(hpfDivideByProcessedResonance, to.hpfDivideByProcessedResonance, n),
+-			                    rampStep(hpfProcessedResonance, to.hpfProcessedResonance, n),
++			const RampDivisor div(n);
++			return Coefficients{rampStep(fc, to.fc, div),
++			                    rampStep(morph, to.morph, div),
++			                    rampStep(hpfHPF3Feedback, to.hpfHPF3Feedback, div),
++			                    rampStep(hpfLPF1Feedback, to.hpfLPF1Feedback, div),
++			                    rampStep(divideByTotalMoveability, to.divideByTotalMoveability, div),
++			                    rampStep(hpfDivideByProcessedResonance, to.hpfDivideByProcessedResonance, div),
++			                    rampStep(hpfProcessedResonance, to.hpfProcessedResonance, div),
+ 			                    0};
+ 		}
+ 		[[gnu::always_inline]] inline void step(const Coefficients& d) {
+diff --git a/src/deluge/dsp/filter/lpladder.h b/src/deluge/dsp/filter/lpladder.h
+index 76159491..216fa9f0 100644
+--- a/src/deluge/dsp/filter/lpladder.h
++++ b/src/deluge/dsp/filter/lpladder.h
+@@ -82,17 +82,18 @@ private:
+ 		}
+ 		// The per-sample steps from this to `to` over n samples
+ 		[[nodiscard]] Coefficients steps(const Coefficients& to, int32_t n) const {
+-			return Coefficients{rampStep(moveability, to.moveability, n),
+-			                    rampStep(processedResonance, to.processedResonance, n),
++			const RampDivisor div(n);
++			return Coefficients{rampStep(moveability, to.moveability, div),
++			                    rampStep(processedResonance, to.processedResonance, div),
+ 			                    rampStep(divideByTotalMoveabilityAndProcessedResonance,
+-			                             to.divideByTotalMoveabilityAndProcessedResonance, n),
+-			                    rampStep(morph, to.morph, n),
+-			                    rampStep(lpf1Feedback, to.lpf1Feedback, n),
+-			                    rampStep(lpf2Feedback, to.lpf2Feedback, n),
+-			                    rampStep(lpf3Feedback, to.lpf3Feedback, n),
+-			                    rampStep(divideBy1PlusTannedFrequency, to.divideBy1PlusTannedFrequency, n),
++			                             to.divideByTotalMoveabilityAndProcessedResonance, div),
++			                    rampStep(morph, to.morph, div),
++			                    rampStep(lpf1Feedback, to.lpf1Feedback, div),
++			                    rampStep(lpf2Feedback, to.lpf2Feedback, div),
++			                    rampStep(lpf3Feedback, to.lpf3Feedback, div),
++			                    rampStep(divideBy1PlusTannedFrequency, to.divideBy1PlusTannedFrequency, div),
+ 			                    0,
+-			                    rampStep(moveability2, to.moveability2, n)};
++			                    rampStep(moveability2, to.moveability2, div)};
+ 		}
+ 		[[gnu::always_inline]] inline void step(const Coefficients& d) {
+ 			moveability += d.moveability;
+diff --git a/src/deluge/dsp/filter/svf.h b/src/deluge/dsp/filter/svf.h
+index 2800eb19..b42752dc 100644
+--- a/src/deluge/dsp/filter/svf.h
++++ b/src/deluge/dsp/filter/svf.h
+@@ -65,12 +65,13 @@ private:
+ 		}
+ 		// The per-sample steps from this to `to` over n samples
+ 		[[nodiscard]] Coefficients steps(const Coefficients& to, int32_t n) const {
+-			return Coefficients{rampStep(q, to.q, n),
+-			                    rampStep(in, to.in, n),
+-			                    rampStep(fc, to.fc, n),
+-			                    rampStep(c_low, to.c_low, n),
+-			                    rampStep(c_band, to.c_band, n),
+-			                    rampStep(c_high, to.c_high, n),
++			const RampDivisor div(n);
++			return Coefficients{rampStep(q, to.q, div),
++			                    rampStep(in, to.in, div),
++			                    rampStep(fc, to.fc, div),
++			                    rampStep(c_low, to.c_low, div),
++			                    rampStep(c_band, to.c_band, div),
++			                    rampStep(c_high, to.c_high, div),
+ 			                    to.band_mode};
+ 		}
+ 		[[gnu::always_inline]] inline void step(const Coefficients& d) {
+-- 
+2.43.0
+

@@ -1,0 +1,59 @@
+From 8a82ccafca3ae98c21288253130f9db9425e8d09 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 21:58:53 +0000
+Subject: [PATCH 084/112] Filters: FilterSet::reset() zeroes the whole
+ FilterSet (community #4635, 15bdf097)
+
+A voice's filters now start with nothing remembered from the note that used the
+voice before: no kept last modes, so a note after one with the LPF off no longer
+starts with the switch-on fade from the dry signal (its first ~10 ms unfiltered).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter_set.cpp | 5 -----
+ src/deluge/dsp/filter/filter_set.h   | 7 ++++++-
+ 2 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/filter_set.cpp b/src/deluge/dsp/filter/filter_set.cpp
+index 1f3c7796..9dd51fd2 100644
+--- a/src/deluge/dsp/filter/filter_set.cpp
++++ b/src/deluge/dsp/filter/filter_set.cpp
+@@ -210,9 +210,4 @@ int32_t FilterSet::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMode
+ 
+ 	return filterGain;
+ }
+-
+-void FilterSet::reset() {
+-	memset(&lpfilter, 0, sizeof(LowPass));
+-	memset(&hpfilter, 0, sizeof(HighPass));
+-}
+ } // namespace deluge::dsp::filter
+diff --git a/src/deluge/dsp/filter/filter_set.h b/src/deluge/dsp/filter/filter_set.h
+index 812e946f..b4d5d8cd 100644
+--- a/src/deluge/dsp/filter/filter_set.h
++++ b/src/deluge/dsp/filter/filter_set.h
+@@ -24,6 +24,7 @@
+ #include "model/mod_controllable/filters/filter_config.h"
+ #include "util/fixedpoint.h"
+ #include <cstdint>
++#include <cstring>
+ 
+ class Sound;
+ 
+@@ -43,7 +44,11 @@ union HighPass {
+ 
+ class FilterSet {
+ public:
+-	void reset();
++	// Community #4635 (15bdf097): reset() zeroes the whole FilterSet, the filters and what it remembers of the last
++	// configuration (lastLPFMode_, lastHPFMode_, ...), so a new voice starts as a new one and doesn't take a switch-on
++	// fade or a kept state from the note that used the voice before
++	FilterSet() { reset(); }
++	void reset() { memset((void*)this, 0, sizeof(FilterSet)); }
+ 	int32_t setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMode lpfmode, q31_t lpfMorph, q31_t hpfFrequency,
+ 	                  q31_t hpfResonance, FilterMode hpfmode, q31_t hpfMorph, q31_t filterGain, FilterRoute routing,
+ 	                  bool adjustVolumeForHPFResonance, q31_t* overallOscAmplitude);
+-- 
+2.43.0
+

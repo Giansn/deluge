@@ -1,0 +1,85 @@
+From 651aad4565dd867171c661b432f592c85cc09012 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 01:10:13 +0000
+Subject: [PATCH 095/112] Filters: the ladders' saturating output doubling in
+ one instruction (qadd)
+
+lshiftAndSaturate<1>() is ssat + lsl; doubleSaturate() is qadd(x, x), the same but for 2^31 - 1 instead of - 2 at the
+top. The full test song with static filters (song_emu, --static-filters): 80b6060c 88.8 % CPU, with the saturating
+shifts and sums of 2b0839f0 91.8 %, with this 91.4 % (LP ladders 272,190 -> 289,975 instructions per 128 samples,
+HP ladder 58,367 -> 65,556). Output bit-exact to 80b6060c there (demand and digital runs).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/ladder_components.h |  4 ++++
+ src/deluge/dsp/filter/lpladder.cpp        | 12 ++++++------
+ 2 files changed, 10 insertions(+), 6 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/ladder_components.h b/src/deluge/dsp/filter/ladder_components.h
+index 32b99f0a..84766f9b 100644
+--- a/src/deluge/dsp/filter/ladder_components.h
++++ b/src/deluge/dsp/filter/ladder_components.h
+@@ -54,6 +54,10 @@ namespace deluge::dsp::filter {
+ 	return (q31_t)(s > INT32_MAX ? INT32_MAX : s < INT32_MIN ? INT32_MIN : s);
+ #endif
+ }
++// 2x, saturated: lshiftAndSaturate<1>() in one instruction (qadd) instead of two (ssat, lsl)
++[[gnu::always_inline]] inline q31_t doubleSaturate(q31_t x) {
++	return addSaturate(x, x);
++}
+ // The all-pass output 2b - x, saturated (b and x each within full scale, 2b - x up to three times it)
+ [[gnu::always_inline]] inline q31_t allPassOutput(q31_t b, q31_t input) {
+ 	return subSaturate(addSaturate(b, b), input);
+diff --git a/src/deluge/dsp/filter/lpladder.cpp b/src/deluge/dsp/filter/lpladder.cpp
+index 22a36d71..3af3087d 100644
+--- a/src/deluge/dsp/filter/lpladder.cpp
++++ b/src/deluge/dsp/filter/lpladder.cpp
+@@ -524,10 +524,10 @@ template <LpLadderFilter::Saturation saturation, bool precise>
+ 
+ 	// (The output's doubling saturates, v18)
+ 	if constexpr (precise) {
+-		return lshiftAndSaturate<1>(
++		return doubleSaturate(
+ 		    state.lpfLPF3.doAPFPrecise(state.lpfLPF2.doFilterPrecise(state.lpfLPF1.doFilterPrecise(x, m), m), m));
+ 	}
+-	return lshiftAndSaturate<1>(state.lpfLPF3.doAPF(state.lpfLPF2.doFilter(state.lpfLPF1.doFilter(x, m), m), m));
++	return doubleSaturate(state.lpfLPF3.doAPF(state.lpfLPF2.doFilter(state.lpfLPF1.doFilter(x, m), m), m));
+ }
+ 
+ template <LpLadderFilter::Saturation saturation, bool precise>
+@@ -557,11 +557,11 @@ template <LpLadderFilter::Saturation saturation, bool precise>
+ 
+ 	// (The output's doubling saturates, v18)
+ 	if constexpr (precise) {
+-		return lshiftAndSaturate<1>(state.lpfLPF4.doFilterPrecise(
++		return doubleSaturate(state.lpfLPF4.doFilterPrecise(
+ 		    state.lpfLPF3.doFilterPrecise(state.lpfLPF2.doFilterPrecise(state.lpfLPF1.doFilterPrecise(x, m), m), m),
+ 		    m));
+ 	}
+-	return lshiftAndSaturate<1>(
++	return doubleSaturate(
+ 	    state.lpfLPF4.doFilter(state.lpfLPF3.doFilter(state.lpfLPF2.doFilter(state.lpfLPF1.doFilter(x, m), m), m), m));
+ }
+ 
+@@ -591,7 +591,7 @@ template <LpLadderFilter::Saturation saturation, bool precise>
+ 		q31_t a = state.lpfLPF1.doFilterPrecise(x, m);
+ 		q31_t b = state.lpfLPF2.doFilterPrecise(a, m);
+ 		q31_t c3 = state.lpfLPF3.doFilterPrecise(b, m);
+-		return lshiftAndSaturate<1>(state.lpfLPF4.doFilterPrecise(c3, m));
++		return doubleSaturate(state.lpfLPF4.doFilterPrecise(c3, m));
+ 	}
+ 
+ 	q31_t a = state.lpfLPF1.doFilter(x, m);
+@@ -600,7 +600,7 @@ template <LpLadderFilter::Saturation saturation, bool precise>
+ 
+ 	q31_t c3 = state.lpfLPF3.doFilter(b, m);
+ 
+-	q31_t d = lshiftAndSaturate<1>(state.lpfLPF4.doFilter(c3, m));
++	q31_t d = doubleSaturate(state.lpfLPF4.doFilter(c3, m));
+ 
+ 	return d;
+ }
+-- 
+2.43.0
+

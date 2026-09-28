@@ -1,0 +1,168 @@
+From a87feb67c5c2ac7f0d7ad1904bc79ef401880c91 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 19:35:46 +0000
+Subject: [PATCH 075/112] Settings > Firmware version: readable on the OLED, on
+ up to three lines
+
+The version string was squeezed onto one line with
+drawStringCentredShrinkIfNecessary(): "1.2.1-mastertune-v17-l2d-b3385d83"
+(33 characters) got 128 / 33 = 3 pixels per character of the 6 the small
+font needs, so the letters overlapped into garble (v16 L2: 42 characters).
+
+Now drawLinesBrokenAtDashes() draws it in the normal small menu font
+(6 x 7 pixels, 9 from line to line), broken after a '-' (the '-' stays at
+the end of the line), at most 21 characters a line and three lines: as few
+lines as it takes, then as even as they can be ("1.2.1-mastertune-" /
+"v17-l2d-b3385d83"), each line centred, the block centred below the title.
+A part longer than a line without a '-' is cut where the line is full; up
+to 63 characters fit. The 7-segment display scrolls the string as before.
+
+Tested in the emulator (tests/settings/firmware_version_emu.py): the menu
+item's own render and the 33-, 42- and 48-character strings, from the
+canvas calls and the OLED image; 41 of 41 checks (v17: 6 fail).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/menu_item/firmware/version.cpp | 102 ++++++++++++++++++
+ src/deluge/gui/menu_item/firmware/version.h   |  11 +-
+ 2 files changed, 109 insertions(+), 4 deletions(-)
+ create mode 100644 src/deluge/gui/menu_item/firmware/version.cpp
+
+diff --git a/src/deluge/gui/menu_item/firmware/version.cpp b/src/deluge/gui/menu_item/firmware/version.cpp
+new file mode 100644
+index 00000000..7016129b
+--- /dev/null
++++ b/src/deluge/gui/menu_item/firmware/version.cpp
+@@ -0,0 +1,102 @@
++/*
++ * Copyright (c) 2014-2023 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#include "gui/menu_item/firmware/version.h"
++#include "definitions_cxx.hpp"
++#include <algorithm>
++#include <cstring>
++
++namespace deluge::gui::menu_item::firmware {
++
++namespace {
++constexpr int32_t kMaxLineChars = OLED_MAIN_WIDTH_PIXELS / kTextSpacingX; // 21
++constexpr int32_t kMaxLines = 3;                                          // 30 pixels below the title
++constexpr int32_t kTooMany = kMaxLines + 1;
++
++/// Fills lines of at most `limit` characters from the text's start, each as far as its last '-' in reach (or, with
++/// hardBreaks, full where there's none in reach). The number of lines (kTooMany when they don't fit), each one's first
++/// character in starts[].
++int32_t fillLines(char const* text, int32_t length, int32_t limit, bool hardBreaks, int32_t* starts) {
++	int32_t lines = 0;
++	int32_t pos = 0;
++	while (pos < length) {
++		if (lines == kMaxLines) {
++			return kTooMany;
++		}
++		starts[lines++] = pos;
++		if (length - pos <= limit) {
++			break;
++		}
++		int32_t end = -1;
++		for (int32_t i = pos; i < pos + limit; i++) {
++			if (text[i] == '-') {
++				end = i + 1; // The '-' stays at the end of the line: the text goes on on the next one
++			}
++		}
++		if (end < 0) {
++			if (!hardBreaks) {
++				return kTooMany;
++			}
++			end = pos + limit;
++		}
++		pos = end;
++	}
++	return lines;
++}
++} // namespace
++
++// noipa: a function of its own with both arguments (tests/settings/firmware_version_emu.py calls it)
++[[gnu::noipa]] void drawLinesBrokenAtDashes(hid::display::oled_canvas::Canvas& canvas, char const* text) {
++	int32_t length = (int32_t)strlen(text);
++	int32_t starts[kMaxLines];
++	int32_t lines = kTooMany;
++	// As few lines as it takes, only broken after a '-' if that works, then the shortest limit that still needs no
++	// more lines: the lines as even as they can be ("1.2.1-mastertune-" / "v17-l2d-b3385d83", not 21 + 12 characters)
++	for (bool hardBreaks : {false, true}) {
++		int32_t fewest = fillLines(text, length, kMaxLineChars, hardBreaks, starts);
++		if (fewest == kTooMany) {
++			continue;
++		}
++		int32_t limit = 1;
++		while (fillLines(text, length, limit, hardBreaks, starts) > fewest) {
++			limit++;
++		}
++		lines = fewest;
++		break;
++	}
++	if (lines == kTooMany) { // Longer than three full lines (not a version string): its first three lines
++		for (int32_t i = 0; i < kMaxLines; i++) {
++			starts[i] = std::min(i * kMaxLineChars, length);
++		}
++		lines = kMaxLines;
++		length = std::min(length, kMaxLines * kMaxLineChars);
++	}
++
++	// The area below the title's line (Canvas::drawScreenTitle()), to the bottom of the image
++	int32_t top = OLED_MAIN_TOPMOST_PIXEL + ((OLED_MAIN_HEIGHT_PIXELS == 64) ? 0 : 1) + 12;
++	int32_t height = OLED_MAIN_HEIGHT_PIXELS - top;
++	int32_t blockHeight = (lines - 1) * kTextSpacingY + kTextSizeYUpdated;
++	int32_t y = top + ((height - blockHeight) >> 1);
++	for (int32_t i = 0; i < lines; i++) {
++		int32_t end = (i + 1 < lines) ? starts[i + 1] : length;
++		int32_t chars = end - starts[i];
++		int32_t x = (OLED_MAIN_WIDTH_PIXELS - chars * kTextSpacingX) >> 1;
++		canvas.drawString(std::string_view{text + starts[i], (size_t)chars}, x, y, kTextSpacingX, kTextSizeYUpdated);
++		y += kTextSpacingY;
++	}
++}
++
++} // namespace deluge::gui::menu_item::firmware
+diff --git a/src/deluge/gui/menu_item/firmware/version.h b/src/deluge/gui/menu_item/firmware/version.h
+index 8ee3acab..fc51118a 100644
+--- a/src/deluge/gui/menu_item/firmware/version.h
++++ b/src/deluge/gui/menu_item/firmware/version.h
+@@ -22,14 +22,17 @@
+ #include <version.h>
+ 
+ namespace deluge::gui::menu_item::firmware {
++
++/// mastertune-v18: the text in the normal small font, on up to three lines broken after a '-' (a longer part without
++/// one is cut where the line is full), as few lines as it takes and those as even as they can be, each centred, the
++/// block centred below the menu's title. It used to be squeezed onto one line: 33 characters had 3 pixels each.
++void drawLinesBrokenAtDashes(hid::display::oled_canvas::Canvas& canvas, char const* text);
++
+ class Version final : public MenuItem {
+ public:
+ 	using MenuItem::MenuItem;
+ 
+-	void drawPixelsForOled() {
+-		deluge::hid::display::oled_canvas::Canvas& canvas = hid::display::OLED::main;
+-		canvas.drawStringCentredShrinkIfNecessary(kFirmwareVersionString, 22, 18, 20);
+-	}
++	void drawPixelsForOled() { drawLinesBrokenAtDashes(hid::display::OLED::main, kFirmwareVersionString); }
+ 
+ 	void beginSession(MenuItem* navigatedBackwardFrom) override { drawValue(); }
+ 
+-- 
+2.43.0
+

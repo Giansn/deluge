@@ -1,0 +1,963 @@
+From 865d84132e16df2ea830dbd3f6f84f587064bd8c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 22:21:33 +0000
+Subject: [PATCH 085/112] Filters: coefficients move per sample across each
+ block; the gain compensation too
+
+LPF / HPF cutoff, resonance and morph set once per render block (a knob,
+automation, an envelope, an LFO) no longer step every block (zipper): the
+12 / 24 dB and drive ladders, the HP ladder and the SVF move every coefficient
+setConfig() computes in a straight line from the last block's to this one's,
+per sample, for voices and the song's / kits' / audio tracks' filters. A
+configuration that doesn't change takes the same loops as before: bit-exact
+(tests/filters filter_neutral_test, 648 cases, same hash as without the ramps).
+
+- LP ladders: the precise stages where both ends are below their limit; the
+  saturation of either end; a mode change or the drive's oversampling switching
+  jumps as before (the coefficients mean something else there).
+- The filter gain compensation: a voice moves its oscillators' amplitudes per
+  sample (it used to jump them where the filter gain changed); the song's, a
+  kit's and an audio track's filters move their output from the last block's
+  compensation to this one's (renderLongStereo(..., rampGain)), as the caller
+  applies it flat with the post-FX volume.
+- One loop for both stereo channels and every stride (not inlined): the
+  ramp variants cost 32 KB of code instead of 95 KB.
+
+Zipper, block-set vs per-sample-set, above 2 kHz: LP24 cutoff -60.6 -> -67.5
+dBc, drive -40.3 -> -58.7, HP ladder -40.5 -> -83.1, SVF -66.4 -> -112.4,
+kit LP24 resonance -60.8 -> -73.1.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter.h                | 17 ++++
+ src/deluge/dsp/filter/filter_set.cpp          | 49 +++++++++-
+ src/deluge/dsp/filter/filter_set.h            | 14 ++-
+ src/deluge/dsp/filter/hpladder.cpp            | 78 +++++++++++-----
+ src/deluge/dsp/filter/hpladder.h              | 64 +++++++++++--
+ src/deluge/dsp/filter/lpladder.cpp            | 92 ++++++++++++++-----
+ src/deluge/dsp/filter/lpladder.h              | 78 ++++++++++++++--
+ src/deluge/dsp/filter/svf.cpp                 | 51 +++++++---
+ src/deluge/dsp/filter/svf.h                   | 50 ++++++++--
+ .../global_effectable/global_effectable.cpp   |  4 +-
+ src/deluge/model/voice/voice.cpp              |  8 +-
+ src/deluge/model/voice/voice.h                |  2 -
+ 12 files changed, 413 insertions(+), 94 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/filter.h b/src/deluge/dsp/filter/filter.h
+index 5b305c5d..c53154be 100644
+--- a/src/deluge/dsp/filter/filter.h
++++ b/src/deluge/dsp/filter/filter.h
+@@ -109,6 +109,7 @@ public:
+ 	 */
+ 	void reset(bool fade = false) {
+ 		static_cast<T*>(this)->resetFilter();
++		haveLast_ = false;
+ 		if (fade) {
+ 			dryFade = 1;
+ 			wetLevel = 0;
+@@ -134,11 +135,27 @@ public:
+ 		divideBy1PlusTannedFrequency = (q31_t)(288230376151711744.0 / (double)(ONE_Q16 + (tannedFrequency >> 1)));
+ 		fc = multiply_32x32_rshift32_rounded(tannedFrequency, divideBy1PlusTannedFrequency) << 4;
+ 	}
++	/// mastertune v18: the next block takes the configuration as it is, without moving to it from the last one's (after
++	/// a reset, a mode change, or anything else that makes the last configuration meaningless for this one)
++	void restartRamp() { haveLast_ = false; }
++
+ 	q31_t fc;
+ 	float dryFade = 1;
+ 	q31_t wetLevel = ONE_Q31;
+ 	q31_t tannedFrequency;
+ 	q31_t divideBy1PlusTannedFrequency;
++
++protected:
++	// mastertune v18: the filters move their coefficients per sample, in a straight line from the last block's (the
++	// configuration they rendered with) to this one's, so a cutoff, resonance or morph that changes from block to block
++	// (a knob, automation, an envelope or LFO) no longer steps every block (zipper). A configuration that doesn't
++	// change renders exactly as before. haveLast_: whether there is a last block's configuration to move from
++	bool haveLast_ = false;
++	// Per-sample steps from `from` to `to` over n samples: sample k (from 1) takes from + k * step, the last one to
++	// within n LSB of to (the next block starts from to exactly)
++	[[gnu::always_inline]] static inline q31_t rampStep(q31_t from, q31_t to, int32_t n) {
++		return (q31_t)(((int64_t)to - (int64_t)from) / n);
++	}
+ };
+ 
+ } // namespace deluge::dsp::filter
+diff --git a/src/deluge/dsp/filter/filter_set.cpp b/src/deluge/dsp/filter/filter_set.cpp
+index 9dd51fd2..e8b8781b 100644
+--- a/src/deluge/dsp/filter/filter_set.cpp
++++ b/src/deluge/dsp/filter/filter_set.cpp
+@@ -17,6 +17,8 @@
+ 
+ #include "dsp/filter/filter_set.h"
+ #include "definitions_cxx.hpp"
++#include <algorithm>
++#include <cmath>
+ #if defined(__ARM_NEON)
+ #include <arm_neon.h>
+ #endif
+@@ -118,9 +120,41 @@ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate ster
+ 		break;
+ 	}
+ }
++// The output from the last block's gain compensation to this one's (see renderLongStereo()), where it changed by more
++// than 1 in 2^20 (0.00001 dB; the division's rounding alone moves it by less, so a block whose filters' configuration
++// stays renders exactly as before). Q2.29 factor from last / now to 1, applied per frame
++void FilterSet::rampGainCompensation(q31_t* startSample, q31_t* endSample) {
++	float last = renderedGainCompensation_;
++	bool had = haveRenderedGain_;
++	renderedGainCompensation_ = gainCompensation_;
++	haveRenderedGain_ = true;
++	if (!had || gainCompensation_ <= 0.0f || last <= 0.0f) {
++		return;
++	}
++	float ratio = last / gainCompensation_;
++	if (std::fabs(ratio - 1.0f) < (1.0f / 1048576.0f)) {
++		return;
++	}
++	ratio = std::clamp(ratio, 0.25f, 3.99f);
++	constexpr q31_t kOne = 1 << 29;
++	int32_t frames = (int32_t)(endSample - startSample) >> 1;
++	if (frames <= 0) {
++		return;
++	}
++	q31_t factor = (q31_t)(ratio * (float)kOne);
++	q31_t step = (kOne - factor) / frames;
++	q31_t* sample = startSample;
++	do {
++		factor += step;
++		sample[0] = lshiftAndSaturate<3>(multiply_32x32_rshift32_rounded(sample[0], factor));
++		sample[1] = lshiftAndSaturate<3>(multiply_32x32_rshift32_rounded(sample[1], factor));
++		sample += 2;
++	} while (sample < endSample);
++}
++
+ // expects to receive an interleaved stereo stream
+ [[gnu::hot]] void FilterSet::renderLongStereo(q31_t* startSample, q31_t* endSample, int32_t hpfSaturation,
+-                                              int32_t lpfSaturation) {
++                                              int32_t lpfSaturation, bool rampGain) {
+ 	// Do HPF, if it's on
+ 	switch (routing_) {
+ 	case FilterRoute::HIGH_TO_LOW:
+@@ -149,12 +183,16 @@ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate ster
+ 		addTempRenderBuffer(startSample, length);
+ 		break;
+ 	}
++	if (rampGain) {
++		rampGainCompensation(startSample, endSample);
++	}
+ }
+ 
+ int32_t FilterSet::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMode lpfmode, q31_t lpfMorph,
+                              q31_t hpfFrequency, q31_t hpfResonance, FilterMode hpfmode, q31_t hpfMorph,
+                              q31_t filterGain, FilterRoute routing, bool adjustVolumeForHPFResonance,
+                              q31_t* overallOscAmplitude) {
++	const q31_t filterGainIn = filterGain;
+ 	LPFOn = lpfmode != FilterMode::OFF;
+ 	HPFOn = hpfmode != FilterMode::OFF;
+ 	lpfMode_ = lpfmode;
+@@ -168,12 +206,18 @@ int32_t FilterSet::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMode
+ 			if (SpecificFilter(lastLPFMode_).getFamily() != FilterFamily::SVF) {
+ 				lpfilter.svf.reset(lastLPFMode_ == FilterMode::OFF);
+ 			}
++			else if (lastLPFMode_ != lpfMode_) {
++				lpfilter.svf.restartRamp(); // band <-> notch: the mix changes at once
++			}
+ 			filterGain = lpfilter.svf.configure(lpfFrequency, lpfResonance, lpfMode_, lpfMorph, filterGain);
+ 		}
+ 		else {
+ 			if (SpecificFilter(lastLPFMode_).getFamily() != FilterFamily::LP_LADDER) {
+ 				lpfilter.ladder.reset(lastLPFMode_ == FilterMode::OFF);
+ 			}
++			else if (lastLPFMode_ != lpfMode_) {
++				lpfilter.ladder.restartRamp(); // another ladder: its coefficients mean something else
++			}
+ 			filterGain = lpfilter.ladder.configure(lpfFrequency, lpfResonance, lpfMode_, lpfMorph, filterGain);
+ 		}
+ 		lastLPFMode_ = lpfMode_;
+@@ -208,6 +252,9 @@ int32_t FilterSet::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMode
+ 		lastHPFMode_ = FilterMode::OFF;
+ 	}
+ 
++	if (filterGainIn != 0) {
++		gainCompensation_ = (float)filterGain / (float)filterGainIn;
++	}
+ 	return filterGain;
+ }
+ } // namespace deluge::dsp::filter
+diff --git a/src/deluge/dsp/filter/filter_set.h b/src/deluge/dsp/filter/filter_set.h
+index b4d5d8cd..6d8f4593 100644
+--- a/src/deluge/dsp/filter/filter_set.h
++++ b/src/deluge/dsp/filter/filter_set.h
+@@ -61,9 +61,14 @@ public:
+ 	                int32_t lpfSaturation = LpLadderFilter::kSaturationVoice);
+ 
+ 	// expects to receive an interleaved stereo stream
++	// rampGain: the caller applies the gain setConfig() gave as it is, for the whole block (the song's, a kit's and an
++	// audio track's filters: the post-FX volume). Where the filters' part of it (their gain compensation, which
++	// follows the resonance and the modes) changed since the last block, the output moves from the last block's to
++	// this one's per sample, so the gain moves in a straight line instead of jumping. A voice's filters don't need it:
++	// the voice moves its oscillators' amplitudes, which carry the gain, per sample itself
+ 	void renderLongStereo(q31_t* startSample, q31_t* endSample,
+ 	                      int32_t hpfSaturation = HpLadderFilter::kSaturationVoice,
+-	                      int32_t lpfSaturation = LpLadderFilter::kSaturationVoice);
++	                      int32_t lpfSaturation = LpLadderFilter::kSaturationVoice, bool rampGain = false);
+ 
+ 	// used to check whether the filter is used at all
+ 	inline bool isLPFOn() { return LPFOn; }
+@@ -82,6 +87,13 @@ private:
+ 	FilterMode hpfMode_;
+ 	FilterMode lastHPFMode_;
+ 	FilterRoute routing_;
++	// The filters' part of the gain setConfig() gave (its output over its input) for this block, and for the last one
++	// rendered with rampGain (haveRenderedGain_: there is one)
++	float gainCompensation_;
++	float renderedGainCompensation_;
++	bool haveRenderedGain_;
++
++	void rampGainCompensation(q31_t* startSample, q31_t* endSample);
+ 
+ 	void renderLPFLong(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, int32_t lpfSaturation);
+ 	void renderLPFLongStereo(q31_t* startSample, q31_t* endSample, int32_t lpfSaturation);
+diff --git a/src/deluge/dsp/filter/hpladder.cpp b/src/deluge/dsp/filter/hpladder.cpp
+index 4923a335..e4b84be0 100644
+--- a/src/deluge/dsp/filter/hpladder.cpp
++++ b/src/deluge/dsp/filter/hpladder.cpp
+@@ -79,6 +79,7 @@ q31_t HpLadderFilter::setConfig(q31_t hpfFrequency, q31_t hpfResonance, FilterMo
+ // that level: 12 to 18 dB louder, on a song's filters far louder than the music. Below the resonance where the ladder
+ // saturates (hpfProcessedResonance 750000000, about 39 %) nothing changes.
+ [[gnu::hot]] void HpLadderFilter::doFilter(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
++	startBlock();
+ 	if (sampleIncrement == 1) {
+ 		if (saturationAmount_ == kSaturationGlobal) {
+ 			render<Layout::MONO, kSaturationGlobal>(startSample, endSample, 1);
+@@ -88,28 +89,34 @@ q31_t HpLadderFilter::setConfig(q31_t hpfFrequency, q31_t hpfResonance, FilterMo
+ 		}
+ 	}
+ 	else {
++		ramping_ = false; // nothing uses it: jumps as before
+ 		renderLoop<true, Saturation::PER_SAMPLE, Layout::MONO_STRIDED, 0>(startSample, endSample, sampleIncrement);
+ 	}
++	endBlock();
+ }
+ // filter an interleaved stereo buffer
+ [[gnu::hot]] void HpLadderFilter::doFilterStereo(q31_t* startSample, q31_t* endSample) {
++	startBlock();
+ 	if (saturationAmount_ == kSaturationGlobal) {
+ 		render<Layout::STEREO, kSaturationGlobal>(startSample, endSample, 2);
+ 	}
+ 	else {
+ 		render<Layout::STEREO, kSaturationVoice>(startSample, endSample, 2);
+ 	}
++	endBlock();
+ }
+ 
+-// The branches that depend on the configuration only are taken once per block
++// The branches that depend on the configuration only are taken once per block (while the coefficients move, from the
++// last block's and this one's: morph where either has it, the saturation of the higher resonance)
+ template <HpLadderFilter::Layout layout, int32_t amount>
+ void HpLadderFilter::render(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
++	q31_t resonance = ramping_ ? std::max(hpfProcessedResonance, last_.hpfProcessedResonance) : hpfProcessedResonance;
+ 	// Only saturate / anti-alias if lots of resonance
+-	if (morph_ != 0) {
+-		if (hpfProcessedResonance > 900000000) { // 890551738
++	if (morph_ != 0 || (ramping_ && last_.morph != 0)) {
++		if (resonance > 900000000) { // 890551738
+ 			renderLoop<true, Saturation::ANTIALIASED, layout, amount>(startSample, endSample, sampleIncrement);
+ 		}
+-		else if (hpfProcessedResonance > 750000000) { // 400551738
++		else if (resonance > 750000000) { // 400551738
+ 			renderLoop<true, Saturation::TANH, layout, amount>(startSample, endSample, sampleIncrement);
+ 		}
+ 		else {
+@@ -117,10 +124,10 @@ void HpLadderFilter::render(q31_t* startSample, q31_t* endSample, int32_t sample
+ 		}
+ 	}
+ 	else {
+-		if (hpfProcessedResonance > 900000000) {
++		if (resonance > 900000000) {
+ 			renderLoop<false, Saturation::ANTIALIASED, layout, amount>(startSample, endSample, sampleIncrement);
+ 		}
+-		else if (hpfProcessedResonance > 750000000) {
++		else if (resonance > 750000000) {
+ 			renderLoop<false, Saturation::TANH, layout, amount>(startSample, endSample, sampleIncrement);
+ 		}
+ 		else {
+@@ -131,35 +138,56 @@ void HpLadderFilter::render(q31_t* startSample, q31_t* endSample, int32_t sample
+ 
+ template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Layout layout, int32_t amount>
+ [[gnu::hot]] void HpLadderFilter::renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
+-	const Coefficients c{fc,
+-	                     morph_,
+-	                     hpfHPF3Feedback,
+-	                     hpfLPF1Feedback,
+-	                     divideByTotalMoveability,
+-	                     hpfDivideByProcessedResonance,
+-	                     hpfProcessedResonance,
+-	                     saturationAmount_ == kSaturationGlobal ? kSaturationGlobal : kSaturationVoice};
+-	// Without morph, doHPF's cutoff is max(multiply_accumulate_32x32_rshift32_rounded(fc, input << 4, 0), lowerLimit)
+-	// = max(fc, lowerLimit) for every sample: smmlar adds (0 + 2^31) >> 32 = 0 to fc
+-	const q31_t fixedFc = std::max(fc, lowerLimit);
+-	renderChannel<morph, saturation, layout, 0, amount>(startSample, endSample, sampleIncrement, l, c, fixedFc);
++	const Coefficients c = coefficients();
++	if (ramping_) {
++		int32_t n = (int32_t)(endSample - startSample);
++		if constexpr (layout == Layout::STEREO) {
++			n >>= 1;
++		}
++		Coefficients from = last_;
++		from.saturationAmount = c.saturationAmount;
++		const Coefficients d = from.steps(c, std::max(n, (int32_t)1));
++		renderChannels<morph, saturation, layout, amount, true>(startSample, endSample, sampleIncrement, from, d);
++	}
++	else {
++		renderChannels<morph, saturation, layout, amount, false>(startSample, endSample, sampleIncrement, c, c);
++	}
++}
++
++template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Layout layout, int32_t amount, bool ramp>
++[[gnu::always_inline]] inline void HpLadderFilter::renderChannels(q31_t* startSample, q31_t* endSample,
++                                                                  int32_t sampleIncrement, const Coefficients& c,
++                                                                  const Coefficients& d) {
++	// One loop for every layout: the step between samples in a register
++	const int32_t stride = layout == Layout::STEREO ? 2 : layout == Layout::MONO ? 1 : sampleIncrement;
++	renderChannel<morph, saturation, Layout::MONO_STRIDED, amount, ramp>(startSample, endSample, stride, l, c, d);
+ 	if constexpr (layout == Layout::STEREO) {
+ 		// The channels don't depend on each other, so each gets its own pass (fewer registers needed)
+-		renderChannel<morph, saturation, layout, 1, amount>(startSample, endSample, sampleIncrement, r, c, fixedFc);
++		renderChannel<morph, saturation, Layout::MONO_STRIDED, amount, ramp>(startSample + 1, endSample, stride, r, c,
++		                                                                     d);
+ 	}
+ }
+ 
+-template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Layout layout, int channel, int32_t amount>
+-[[gnu::always_inline]] inline void HpLadderFilter::renderChannel(q31_t* startSample, q31_t* endSample,
+-                                                                 int32_t sampleIncrement, HPLadderState& channelState,
+-                                                                 const Coefficients& c, q31_t fixedFc) {
++template <bool morph, HpLadderFilter::Saturation saturation, HpLadderFilter::Layout layout, int32_t amount, bool ramp>
++void HpLadderFilter::renderChannel(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement,
++                                   HPLadderState& channelState, const Coefficients& c, const Coefficients& d) {
+ 	HPLadderState state = channelState;
++	Coefficients now = c;
+ 	q31_t lastA = 0; // the last sample's a before the tanh, for hpfLastWorkingValue
++	// Without morph, doHPF's cutoff is max(multiply_accumulate_32x32_rshift32_rounded(fc, input << 4, 0), lowerLimit)
++	// = max(fc, lowerLimit) for every sample: smmlar adds (0 + 2^31) >> 32 = 0 to fc
++	const q31_t fixedFc = std::max(c.fc, lowerLimit);
+ 
+-	// For STEREO, currentSample points at the frame, as in the loop over both channels (same number of frames)
+ 	q31_t* currentSample = startSample;
+ 	do {
+-		currentSample[channel] = doHPF<morph, saturation, amount>(currentSample[channel], state, c, fixedFc, lastA);
++		if constexpr (ramp) {
++			now.step(d);
++			*currentSample =
++			    doHPF<morph, saturation, amount>(*currentSample, state, now, std::max(now.fc, lowerLimit), lastA);
++		}
++		else {
++			*currentSample = doHPF<morph, saturation, amount>(*currentSample, state, c, fixedFc, lastA);
++		}
+ 		if constexpr (layout == Layout::MONO) {
+ 			currentSample += 1;
+ 		}
+diff --git a/src/deluge/dsp/filter/hpladder.h b/src/deluge/dsp/filter/hpladder.h
+index abf5f478..ffea7eec 100644
+--- a/src/deluge/dsp/filter/hpladder.h
++++ b/src/deluge/dsp/filter/hpladder.h
+@@ -68,7 +68,52 @@ private:
+ 		q31_t hpfDivideByProcessedResonance;
+ 		q31_t hpfProcessedResonance;
+ 		int32_t saturationAmount; // for PER_SAMPLE, which takes it at run time
++		// What the loops move per sample (all but saturationAmount, which is the block's)
++		[[nodiscard]] bool sameRamp(const Coefficients& o) const {
++			return fc == o.fc && morph == o.morph && hpfHPF3Feedback == o.hpfHPF3Feedback
++			       && hpfLPF1Feedback == o.hpfLPF1Feedback && divideByTotalMoveability == o.divideByTotalMoveability
++			       && hpfDivideByProcessedResonance == o.hpfDivideByProcessedResonance
++			       && hpfProcessedResonance == o.hpfProcessedResonance;
++		}
++		// The per-sample steps from this to `to` over n samples
++		[[nodiscard]] Coefficients steps(const Coefficients& to, int32_t n) const {
++			return Coefficients{rampStep(fc, to.fc, n),
++			                    rampStep(morph, to.morph, n),
++			                    rampStep(hpfHPF3Feedback, to.hpfHPF3Feedback, n),
++			                    rampStep(hpfLPF1Feedback, to.hpfLPF1Feedback, n),
++			                    rampStep(divideByTotalMoveability, to.divideByTotalMoveability, n),
++			                    rampStep(hpfDivideByProcessedResonance, to.hpfDivideByProcessedResonance, n),
++			                    rampStep(hpfProcessedResonance, to.hpfProcessedResonance, n),
++			                    0};
++		}
++		[[gnu::always_inline]] inline void step(const Coefficients& d) {
++			fc += d.fc;
++			morph += d.morph;
++			hpfHPF3Feedback += d.hpfHPF3Feedback;
++			hpfLPF1Feedback += d.hpfLPF1Feedback;
++			divideByTotalMoveability += d.divideByTotalMoveability;
++			hpfDivideByProcessedResonance += d.hpfDivideByProcessedResonance;
++			hpfProcessedResonance += d.hpfProcessedResonance;
++		}
+ 	};
++	// This block's configuration, as the loops take it
++	[[nodiscard]] Coefficients coefficients() const {
++		return Coefficients{fc,
++		                    morph_,
++		                    hpfHPF3Feedback,
++		                    hpfLPF1Feedback,
++		                    divideByTotalMoveability,
++		                    hpfDivideByProcessedResonance,
++		                    hpfProcessedResonance,
++		                    saturationAmount_ == kSaturationGlobal ? kSaturationGlobal : kSaturationVoice};
++	}
++	// Before a block: whether it moves from the last block's configuration to this one (ramping_); after it, this one
++	// is the next block's last
++	void startBlock() { ramping_ = haveLast_ && !last_.sameRamp(coefficients()); }
++	void endBlock() {
++		last_ = coefficients();
++		haveLast_ = true;
++	}
+ 	// The saturation branch, which depends on the configuration only: antialiased tanh, tanh, none, or decided per
+ 	// sample as before (only for the mono loop with a sampleIncrement other than 1, which nothing uses)
+ 	enum class Saturation { ANTIALIASED, TANH, NONE, PER_SAMPLE };
+@@ -78,14 +123,19 @@ private:
+ 	// Coefficients::saturationAmount)
+ 	template <bool morph, Saturation saturation, Layout layout, int32_t amount>
+ 	void renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
++	template <bool morph, Saturation saturation, Layout layout, int32_t amount, bool ramp>
++	void renderChannels(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, const Coefficients& c,
++	                    const Coefficients& d);
+ 	template <Layout layout, int32_t amount>
+ 	void render(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+-	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or the left or right of each frame (STEREO,
+-	// channel 0 or 1)
+-	template <bool morph, Saturation saturation, Layout layout, int channel, int32_t amount>
+-	[[gnu::always_inline]] static inline void renderChannel(q31_t* startSample, q31_t* endSample,
+-	                                                        int32_t sampleIncrement, HPLadderState& channelState,
+-	                                                        const Coefficients& c, q31_t fixedFc);
++	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or every other one (STEREO: startSample the
++	// left or the right of the first frame)
++	// ramp: the coefficients move per sample from c by d
++	// (One loop for both channels, not inlined: the ladder's many variants stay half the code)
++	template <bool morph, Saturation saturation, Layout layout, int32_t amount, bool ramp>
++	[[gnu::noinline]] static void renderChannel(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement,
++	                                            HPLadderState& channelState, const Coefficients& c,
++	                                            const Coefficients& d);
+ 	template <bool morph, Saturation saturation, int32_t amount>
+ 	[[gnu::always_inline]] static inline q31_t doHPF(q31_t input, HPLadderState& state, const Coefficients& c,
+ 	                                                 q31_t fixedFc, q31_t& lastA);
+@@ -114,5 +164,7 @@ private:
+ 	q31_t morph_;
+ 	HPLadderState l;
+ 	HPLadderState r;
++	bool ramping_;      // this block moves from last_ to this configuration (startBlock())
++	Coefficients last_; // the last block's configuration
+ };
+ } // namespace deluge::dsp::filter
+diff --git a/src/deluge/dsp/filter/lpladder.cpp b/src/deluge/dsp/filter/lpladder.cpp
+index 348a9015..92f8e3cb 100644
+--- a/src/deluge/dsp/filter/lpladder.cpp
++++ b/src/deluge/dsp/filter/lpladder.cpp
+@@ -183,6 +183,7 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ // spareRenderingBuffer, GlobalEffectable's, FilterSet's tempRenderBuffer), never the filter, and nothing in the loops
+ // calls out. The arithmetic is unchanged.
+ [[gnu::hot]] void LpLadderFilter::doFilter(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
++	startBlock();
+ 	// Half ladder
+ 	if (lpfMode == FilterMode::TRANSISTOR_12DB) {
+ 		renderMono<FilterMode::TRANSISTOR_12DB, false>(startSample, endSample, sampleIncrement);
+@@ -200,9 +201,11 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ 			renderMono<FilterMode::TRANSISTOR_24DB_DRIVE, false>(startSample, endSample, sampleIncrement);
+ 		}
+ 	}
++	endBlock();
+ }
+ 
+ [[gnu::hot]] void LpLadderFilter::doFilterStereo(q31_t* startSample, q31_t* endSample) {
++	startBlock();
+ 	// Half ladder
+ 	if (lpfMode == FilterMode::TRANSISTOR_12DB) {
+ 		renderSaturation<FilterMode::TRANSISTOR_12DB, false, Layout::STEREO>(startSample, endSample, 2);
+@@ -220,6 +223,19 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ 			renderSaturation<FilterMode::TRANSISTOR_24DB_DRIVE, false, Layout::STEREO>(startSample, endSample, 2);
+ 		}
+ 	}
++	endBlock();
++}
++
++// The saturation amount doesn't take part in the comparison (it's the block's), so the mode doesn't matter here
++void LpLadderFilter::startBlock() {
++	ramping_ = haveLast_ && lastOversampling_ == doOversampling
++	           && !last_.sameRamp(coefficients<FilterMode::TRANSISTOR_24DB>());
++}
++
++void LpLadderFilter::endBlock() {
++	last_ = coefficients<FilterMode::TRANSISTOR_24DB>();
++	lastOversampling_ = doOversampling;
++	haveLast_ = true;
+ }
+ 
+ // A constant sampleIncrement of 1 frees a register in the loop
+@@ -229,18 +245,23 @@ void LpLadderFilter::renderMono(q31_t* startSample, q31_t* endSample, int32_t sa
+ 		renderSaturation<mode, oversample, Layout::MONO>(startSample, endSample, 1);
+ 	}
+ 	else {
++		ramping_ = false; // nothing uses it: jumps as before
+ 		renderLoop<mode, Saturation::PER_SAMPLE, oversample, Layout::MONO_STRIDED>(startSample, endSample,
+ 		                                                                           sampleIncrement);
+ 	}
+ }
+ 
+-// scaleInput's branch depends on the configuration only, so it's taken once per block
++// scaleInput's branch depends on the configuration only, so it's taken once per block (while the coefficients move,
++// from the last block's and this one's: saturation where either saturates, morph where either has it)
+ template <FilterMode mode, bool oversample, LpLadderFilter::Layout layout>
+ void LpLadderFilter::renderSaturation(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
+-	if (morph > 0 || processedResonance > 510000000) {
++	bool saturate = morph > 0 || processedResonance > 510000000
++	                || (ramping_ && (last_.morph > 0 || last_.processedResonance > 510000000));
++	if (saturate) {
+ 		// With morph at 0 the morph term is 2 * ((input * 0) >> 32) = 0 and can go. The oversampled drive ladder
+ 		// is rare, so it keeps the general loop for that too (which gives the same result with morph at 0)
+-		if (morph == 0 && !oversample) {
++		// (While the coefficients move, the loop with morph serves both: fewer variants of the ladders)
++		if (morph == 0 && !ramping_ && !oversample) {
+ 			renderSaturationAmount<mode, oversample, layout, Saturation::TANH, Saturation::TANH_GLOBAL>(
+ 			    startSample, endSample, sampleIncrement);
+ 		}
+@@ -278,47 +299,68 @@ void LpLadderFilter::renderSaturationAmount(q31_t* startSample, q31_t* endSample
+ 
+ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, LpLadderFilter::Layout layout>
+ [[gnu::hot]] void LpLadderFilter::renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
+-	const Coefficients c{moveability,
+-	                     processedResonance,
+-	                     divideByTotalMoveabilityAndProcessedResonance,
+-	                     morph,
+-	                     lpf1Feedback,
+-	                     lpf2Feedback,
+-	                     lpf3Feedback,
+-	                     divideBy1PlusTannedFrequency,
+-	                     saturationAmount<mode>(),
+-	                     (q31_t)((uint32_t)moveability * 2)};
++	const Coefficients c = coefficients<mode>();
++	// Moving coefficients take the loops with morph (renderSaturation()), and the strided mono loop none
++	constexpr bool canRamp =
++	    saturation != Saturation::TANH && saturation != Saturation::TANH_GLOBAL && saturation != Saturation::PER_SAMPLE;
++	if (canRamp && ramping_) {
++		// From the last block's configuration to this one's, per sample. The precise stages where both are below
++		// their limit (they share the state with the others, so the choice can change from block to block)
++		int32_t n = (int32_t)(endSample - startSample);
++		if constexpr (layout == Layout::STEREO) {
++			n >>= 1;
++		}
++		Coefficients from = last_;
++		from.saturationAmount = c.saturationAmount;
++		const Coefficients d = from.steps(c, std::max(n, (int32_t)1));
++		if (moveability < kPreciseMoveabilityLimit && last_.moveability < kPreciseMoveabilityLimit) {
++			renderStates<mode, saturation, oversample, layout, true, canRamp>(startSample, endSample, sampleIncrement,
++			                                                                  from, d);
++		}
++		else {
++			renderStates<mode, saturation, oversample, layout, false, canRamp>(startSample, endSample, sampleIncrement,
++			                                                                   from, d);
++		}
++		return;
++	}
+ 	// The precise stages where they make a difference (see kPreciseMoveabilityLimit), per block
+ 	if (moveability < kPreciseMoveabilityLimit) {
+-		renderStates<mode, saturation, oversample, layout, true>(startSample, endSample, sampleIncrement, c);
++		renderStates<mode, saturation, oversample, layout, true, false>(startSample, endSample, sampleIncrement, c, c);
+ 	}
+ 	else {
+-		renderStates<mode, saturation, oversample, layout, false>(startSample, endSample, sampleIncrement, c);
++		renderStates<mode, saturation, oversample, layout, false, false>(startSample, endSample, sampleIncrement, c, c);
+ 	}
+ }
+ 
+ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, LpLadderFilter::Layout layout,
+-          bool precise>
++          bool precise, bool ramp>
+ [[gnu::always_inline]] inline void LpLadderFilter::renderStates(q31_t* startSample, q31_t* endSample,
+-                                                                int32_t sampleIncrement, const Coefficients& c) {
+-	renderChannel<mode, saturation, oversample, layout, 0, precise>(startSample, endSample, sampleIncrement, l, c);
++                                                                int32_t sampleIncrement, const Coefficients& c,
++                                                                const Coefficients& d) {
++	// One loop for every layout: the step between samples in a register
++	const int32_t stride = layout == Layout::STEREO ? 2 : layout == Layout::MONO ? 1 : sampleIncrement;
++	renderChannel<mode, saturation, oversample, Layout::MONO_STRIDED, precise, ramp>(startSample, endSample, stride, l,
++	                                                                                 c, d);
+ 	if constexpr (layout == Layout::STEREO) {
+ 		// The channels don't depend on each other, so each gets its own pass (a loop over both needs more registers
+ 		// than there are, for the two states)
+-		renderChannel<mode, saturation, oversample, layout, 1, precise>(startSample, endSample, sampleIncrement, r, c);
++		renderChannel<mode, saturation, oversample, Layout::MONO_STRIDED, precise, ramp>(startSample + 1, endSample,
++		                                                                                 stride, r, c, d);
+ 	}
+ }
+ 
+ template <FilterMode mode, LpLadderFilter::Saturation saturation, bool oversample, LpLadderFilter::Layout layout,
+-          int channel, bool precise>
+-[[gnu::always_inline]] inline void LpLadderFilter::renderChannel(q31_t* startSample, q31_t* endSample,
+-                                                                 int32_t sampleIncrement, LpLadderState& channelState,
+-                                                                 const Coefficients& c) {
++          bool precise, bool ramp>
++void LpLadderFilter::renderChannel(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement,
++                                   LpLadderState& channelState, const Coefficients& c, const Coefficients& d) {
+ 	LpLadderState state = channelState;
+-	// For STEREO, currentSample points at the frame, as in the loop over both channels (same number of frames)
++	Coefficients now = c;
+ 	q31_t* currentSample = startSample;
+ 	do {
+-		currentSample[channel] = filterSample<mode, saturation, oversample, precise>(currentSample[channel], state, c);
++		if constexpr (ramp) {
++			now.step(d);
++		}
++		*currentSample = filterSample<mode, saturation, oversample, precise>(*currentSample, state, ramp ? now : c);
+ 		if constexpr (layout == Layout::MONO) {
+ 			currentSample += 1;
+ 		}
+diff --git a/src/deluge/dsp/filter/lpladder.h b/src/deluge/dsp/filter/lpladder.h
+index cd46a1a7..84249b33 100644
+--- a/src/deluge/dsp/filter/lpladder.h
++++ b/src/deluge/dsp/filter/lpladder.h
+@@ -72,7 +72,58 @@ private:
+ 		q31_t divideBy1PlusTannedFrequency;
+ 		int32_t saturationAmount; // PER_SAMPLE's
+ 		q31_t moveability2;       // 2 * moveability, for the precise stages (below kPreciseMoveabilityLimit only)
++		// What the loops move per sample (all but saturationAmount, which is the block's)
++		[[nodiscard]] bool sameRamp(const Coefficients& o) const {
++			return moveability == o.moveability && processedResonance == o.processedResonance
++			       && divideByTotalMoveabilityAndProcessedResonance == o.divideByTotalMoveabilityAndProcessedResonance
++			       && morph == o.morph && lpf1Feedback == o.lpf1Feedback && lpf2Feedback == o.lpf2Feedback
++			       && lpf3Feedback == o.lpf3Feedback && divideBy1PlusTannedFrequency == o.divideBy1PlusTannedFrequency;
++		}
++		// The per-sample steps from this to `to` over n samples
++		[[nodiscard]] Coefficients steps(const Coefficients& to, int32_t n) const {
++			return Coefficients{rampStep(moveability, to.moveability, n),
++			                    rampStep(processedResonance, to.processedResonance, n),
++			                    rampStep(divideByTotalMoveabilityAndProcessedResonance,
++			                             to.divideByTotalMoveabilityAndProcessedResonance, n),
++			                    rampStep(morph, to.morph, n),
++			                    rampStep(lpf1Feedback, to.lpf1Feedback, n),
++			                    rampStep(lpf2Feedback, to.lpf2Feedback, n),
++			                    rampStep(lpf3Feedback, to.lpf3Feedback, n),
++			                    rampStep(divideBy1PlusTannedFrequency, to.divideBy1PlusTannedFrequency, n),
++			                    0,
++			                    rampStep(moveability2, to.moveability2, n)};
++		}
++		[[gnu::always_inline]] inline void step(const Coefficients& d) {
++			moveability += d.moveability;
++			processedResonance += d.processedResonance;
++			divideByTotalMoveabilityAndProcessedResonance += d.divideByTotalMoveabilityAndProcessedResonance;
++			morph += d.morph;
++			lpf1Feedback += d.lpf1Feedback;
++			lpf2Feedback += d.lpf2Feedback;
++			lpf3Feedback += d.lpf3Feedback;
++			divideBy1PlusTannedFrequency += d.divideBy1PlusTannedFrequency;
++			moveability2 += d.moveability2;
++		}
+ 	};
++	// This block's configuration, as the loops take it
++	template <FilterMode mode>
++	[[nodiscard]] Coefficients coefficients() const {
++		return Coefficients{moveability,
++		                    processedResonance,
++		                    divideByTotalMoveabilityAndProcessedResonance,
++		                    morph,
++		                    lpf1Feedback,
++		                    lpf2Feedback,
++		                    lpf3Feedback,
++		                    divideBy1PlusTannedFrequency,
++		                    saturationAmount<mode>(),
++		                    (q31_t)((uint32_t)moveability * 2)};
++	}
++	// Before a block: whether it moves from the last block's configuration to this one (ramping_), and after it: this
++	// one is the next block's last. The drive ladder's oversampling halves the cutoff it works with, so where it
++	// switches on or off the coefficients jump as before
++	void startBlock();
++	void endBlock();
+ 	// Below this moveability (0.25, a cutoff of about 4.5 kHz; twice it stays below 2^31) the stages run precise
+ 	// (LadderStage::doFilterPrecise()): that's where their rounding shows, the dead band being 2^31 / moveability LSB
+ 	// wide and the rounding noise amplified by 1 / moveability. Above it, bit-exact as before
+@@ -85,30 +136,34 @@ private:
+ 	enum class Layout { MONO, MONO_STRIDED, STEREO };
+ 	template <FilterMode mode, Saturation saturation, bool oversample, Layout layout>
+ 	void renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+-	template <FilterMode mode, Saturation saturation, bool oversample, Layout layout, bool precise>
+-	void renderStates(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, const Coefficients& c);
++	// ramp: the coefficients move per sample from c by d
++	template <FilterMode mode, Saturation saturation, bool oversample, Layout layout, bool precise, bool ramp>
++	void renderStates(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, const Coefficients& c,
++	                  const Coefficients& d);
+ 	template <FilterMode mode, bool oversample, Layout layout>
+ 	void renderSaturation(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+ 	template <FilterMode mode, bool oversample, Layout layout, Saturation voice, Saturation global>
+ 	void renderSaturationAmount(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+ 	// The saturation amount for this block: kSaturationGlobal for the 12 dB and 24 dB ladders in the song's, a kit's
+ 	// and an audio track's filters with the resonance up (where they saturate without morph, processedResonance
+-	// 510000000, about 26 %), else kSaturationVoice (the drive ladder's everywhere, morph's below that resonance)
++	// 510000000, about 26 %; while the coefficients move, where the last block's or this one's is), else
++	// kSaturationVoice (the drive ladder's everywhere, morph's below that resonance)
+ 	template <FilterMode mode>
+ 	[[nodiscard]] int32_t saturationAmount() const {
+ 		return mode != FilterMode::TRANSISTOR_24DB_DRIVE && saturationAmount_ == kSaturationGlobal
+-		               && processedResonance > 510000000
++		               && (processedResonance > 510000000 || (ramping_ && last_.processedResonance > 510000000))
+ 		           ? kSaturationGlobal
+ 		           : kSaturationVoice;
+ 	}
+ 	template <FilterMode mode, bool oversample>
+ 	void renderMono(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+-	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or the left or right of each frame (STEREO,
+-	// channel 0 or 1)
+-	template <FilterMode mode, Saturation saturation, bool oversample, Layout layout, int channel, bool precise>
+-	[[gnu::always_inline]] static inline void renderChannel(q31_t* startSample, q31_t* endSample,
+-	                                                        int32_t sampleIncrement, LpLadderState& channelState,
+-	                                                        const Coefficients& c);
++	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or every other one (STEREO: startSample the
++	// left or the right of the first frame). One loop for both channels (not inlined): the ladders' many variants stay
++	// half the code
++	template <FilterMode mode, Saturation saturation, bool oversample, Layout layout, bool precise, bool ramp>
++	[[gnu::noinline]] static void renderChannel(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement,
++	                                            LpLadderState& channelState, const Coefficients& c,
++	                                            const Coefficients& d);
+ 	template <FilterMode mode, Saturation saturation, bool oversample, bool precise>
+ 	[[gnu::always_inline]] static inline q31_t filterSample(q31_t input, LpLadderState& state, const Coefficients& c);
+ 	template <Saturation saturation>
+@@ -151,5 +206,8 @@ private:
+ 
+ 	bool doOversampling;
+ 	uint8_t saturationAmount_; // in the padding after the bool: a voice's FilterSet stays the same size
++	bool lastOversampling_;    // the last block's doOversampling
++	bool ramping_;             // this block moves from last_ to this configuration (startBlock())
++	Coefficients last_;        // the last block's configuration
+ };
+ } // namespace deluge::dsp::filter
+diff --git a/src/deluge/dsp/filter/svf.cpp b/src/deluge/dsp/filter/svf.cpp
+index 55949aad..9c078993 100644
+--- a/src/deluge/dsp/filter/svf.cpp
++++ b/src/deluge/dsp/filter/svf.cpp
+@@ -23,22 +23,28 @@ namespace deluge::dsp::filter {
+ // spareRenderingBuffer, GlobalEffectable's, FilterSet's tempRenderBuffer), never the filter, and nothing in the loops
+ // calls out. The arithmetic is unchanged.
+ [[gnu::hot]] void SVFilter::doFilter(q31_t* startSample, q31_t* endSample, int32_t sampleIncrememt) {
++	startBlock();
+ 	if (sampleIncrememt == 1) {
+ 		render<Layout::MONO>(startSample, endSample, 1);
+ 	}
+ 	else {
++		ramping_ = false; // nothing uses it: jumps as before
+ 		renderLoop<Mix::ALL, Layout::MONO_STRIDED>(startSample, endSample, sampleIncrememt);
+ 	}
++	endBlock();
+ }
+ [[gnu::hot]] void SVFilter::doFilterStereo(q31_t* startSample, q31_t* endSample) {
++	startBlock();
+ 	render<Layout::STEREO>(startSample, endSample, 2);
++	endBlock();
+ }
+ 
+-// The output mix depends on the configuration only, so it's chosen once per block
++// The output mix depends on the configuration only, so it's chosen once per block (while the coefficients move, the
++// terms either the last block's or this one's has)
+ template <SVFilter::Layout layout>
+ void SVFilter::render(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
+-	bool high = c_high != 0;
+-	bool band = band_mode && c_band != 0;
++	bool high = c_high != 0 || (ramping_ && last_.c_high != 0);
++	bool band = band_mode && (c_band != 0 || (ramping_ && last_.c_band != 0));
+ 	if (high) {
+ 		if (band) {
+ 			renderLoop<Mix::LOW_HIGH_BAND, layout>(startSample, endSample, sampleIncrement);
+@@ -59,23 +65,44 @@ void SVFilter::render(q31_t* startSample, q31_t* endSample, int32_t sampleIncrem
+ 
+ template <SVFilter::Mix mix, SVFilter::Layout layout>
+ [[gnu::hot]] void SVFilter::renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
+-	const Coefficients c{q, in, fc, c_low, c_band, c_high, band_mode};
+-	renderChannel<mix, layout, 0>(startSample, endSample, sampleIncrement, l, c);
++	const Coefficients c = coefficients();
++	if (ramping_) {
++		int32_t n = (int32_t)(endSample - startSample);
++		if constexpr (layout == Layout::STEREO) {
++			n >>= 1;
++		}
++		const Coefficients d = last_.steps(c, std::max(n, (int32_t)1));
++		renderChannels<mix, layout, true>(startSample, endSample, sampleIncrement, last_, d);
++	}
++	else {
++		renderChannels<mix, layout, false>(startSample, endSample, sampleIncrement, c, c);
++	}
++}
++
++template <SVFilter::Mix mix, SVFilter::Layout layout, bool ramp>
++[[gnu::always_inline]] inline void SVFilter::renderChannels(q31_t* startSample, q31_t* endSample,
++                                                            int32_t sampleIncrement, const Coefficients& c,
++                                                            const Coefficients& d) {
++	// One loop for every layout: the step between samples in a register
++	const int32_t stride = layout == Layout::STEREO ? 2 : layout == Layout::MONO ? 1 : sampleIncrement;
++	renderChannel<mix, Layout::MONO_STRIDED, ramp>(startSample, endSample, stride, l, c, d);
+ 	if constexpr (layout == Layout::STEREO) {
+ 		// The channels don't depend on each other, so each gets its own pass (fewer registers needed)
+-		renderChannel<mix, layout, 1>(startSample, endSample, sampleIncrement, r, c);
++		renderChannel<mix, Layout::MONO_STRIDED, ramp>(startSample + 1, endSample, stride, r, c, d);
+ 	}
+ }
+ 
+-template <SVFilter::Mix mix, SVFilter::Layout layout, int channel>
+-[[gnu::always_inline]] inline void SVFilter::renderChannel(q31_t* startSample, q31_t* endSample,
+-                                                           int32_t sampleIncrement, SVFState& channelState,
+-                                                           const Coefficients& c) {
++template <SVFilter::Mix mix, SVFilter::Layout layout, bool ramp>
++void SVFilter::renderChannel(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, SVFState& channelState,
++                             const Coefficients& c, const Coefficients& d) {
+ 	SVFState state = channelState;
+-	// For STEREO, currentSample points at the frame, as in the loop over both channels (same number of frames)
++	Coefficients now = c;
+ 	q31_t* currentSample = startSample;
+ 	do {
+-		currentSample[channel] = doSVF<mix>(currentSample[channel], state, c);
++		if constexpr (ramp) {
++			now.step(d);
++		}
++		*currentSample = doSVF<mix>(*currentSample, state, ramp ? now : c);
+ 		if constexpr (layout == Layout::MONO) {
+ 			currentSample += 1;
+ 		}
+diff --git a/src/deluge/dsp/filter/svf.h b/src/deluge/dsp/filter/svf.h
+index 19cf2437..3a8a0d81 100644
+--- a/src/deluge/dsp/filter/svf.h
++++ b/src/deluge/dsp/filter/svf.h
+@@ -49,7 +49,40 @@ private:
+ 		q31_t c_band;
+ 		q31_t c_high;
+ 		bool band_mode;
++		// What the loops move per sample (all but band_mode, which is the mode's)
++		[[nodiscard]] bool sameRamp(const Coefficients& o) const {
++			return q == o.q && in == o.in && fc == o.fc && c_low == o.c_low && c_band == o.c_band && c_high == o.c_high;
++		}
++		// The per-sample steps from this to `to` over n samples
++		[[nodiscard]] Coefficients steps(const Coefficients& to, int32_t n) const {
++			return Coefficients{rampStep(q, to.q, n),
++			                    rampStep(in, to.in, n),
++			                    rampStep(fc, to.fc, n),
++			                    rampStep(c_low, to.c_low, n),
++			                    rampStep(c_band, to.c_band, n),
++			                    rampStep(c_high, to.c_high, n),
++			                    to.band_mode};
++		}
++		[[gnu::always_inline]] inline void step(const Coefficients& d) {
++			q += d.q;
++			in += d.in;
++			fc += d.fc;
++			c_low += d.c_low;
++			c_band += d.c_band;
++			c_high += d.c_high;
++		}
+ 	};
++	// This block's configuration, as the loops take it
++	[[nodiscard]] Coefficients coefficients() const {
++		return Coefficients{q, in, fc, c_low, c_band, c_high, band_mode};
++	}
++	// Before a block: whether it moves from the last block's configuration to this one (ramping_); after it, this one
++	// is the next block's last
++	void startBlock() { ramping_ = haveLast_ && !last_.sameRamp(coefficients()); }
++	void endBlock() {
++		last_ = coefficients();
++		haveLast_ = true;
++	}
+ 	// MONO: sampleIncrement 1 (all callers), MONO_STRIDED: any sampleIncrement, STEREO: interleaved
+ 	enum class Layout { MONO, MONO_STRIDED, STEREO };
+ 	// Which of the high and band terms of the output mix are there. With a coefficient of 0 a term adds exactly 0:
+@@ -60,12 +93,15 @@ private:
+ 	void renderLoop(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+ 	template <Layout layout>
+ 	void render(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement);
+-	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or the left or right of each frame (STEREO,
+-	// channel 0 or 1)
+-	template <Mix mix, Layout layout, int channel>
+-	[[gnu::always_inline]] static inline void renderChannel(q31_t* startSample, q31_t* endSample,
+-	                                                        int32_t sampleIncrement, SVFState& channelState,
+-	                                                        const Coefficients& c);
++	// One channel: every sample from startSample on (MONO, MONO_STRIDED), or every other one (STEREO: startSample the
++	// left or the right of the first frame); one loop for both channels, not inlined
++	// ramp: the coefficients move per sample from c by d
++	template <Mix mix, Layout layout, bool ramp>
++	[[gnu::noinline]] static void renderChannel(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement,
++	                                            SVFState& channelState, const Coefficients& c, const Coefficients& d);
++	template <Mix mix, Layout layout, bool ramp>
++	void renderChannels(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, const Coefficients& c,
++	                    const Coefficients& d);
+ 	template <Mix mix>
+ 	[[gnu::always_inline]] static inline q31_t doSVF(q31_t input, SVFState& state, const Coefficients& c);
+ 	SVFState l;
+@@ -78,5 +114,7 @@ private:
+ 	q31_t c_notch;
+ 	q31_t c_high;
+ 	bool band_mode;
++	bool ramping_;      // this block moves from last_ to this configuration (startBlock())
++	Coefficients last_; // the last block's configuration
+ };
+ } // namespace deluge::dsp::filter
+diff --git a/src/deluge/model/global_effectable/global_effectable.cpp b/src/deluge/model/global_effectable/global_effectable.cpp
+index 26c46889..ba11c641 100644
+--- a/src/deluge/model/global_effectable/global_effectable.cpp
++++ b/src/deluge/model/global_effectable/global_effectable.cpp
+@@ -823,9 +823,11 @@ void GlobalEffectable::setupFilterSetConfig(int32_t* postFXVolume, ParamManager*
+ 	// The HP ladder and the 12 / 24 dB LP ladders saturate as they did here in the original firmware
+ 	// (FilterSet::renderHPF(..., 2), renderLPFLong(..., 2, 2, 1)), 6 dB lower than in a voice: see hpladder.cpp and
+ 	// lpladder.cpp
++	// The post-FX volume carries the filters' gain compensation for the whole block: the filters move it per sample
++	// where it changed (rampGain)
+ 	filterSet.renderLongStereo(&buffer->l, &(buffer + numSamples)->l,
+ 	                           deluge::dsp::filter::HpLadderFilter::kSaturationGlobal,
+-	                           deluge::dsp::filter::LpLadderFilter::kSaturationGlobal);
++	                           deluge::dsp::filter::LpLadderFilter::kSaturationGlobal, true);
+ }
+ 
+ void GlobalEffectable::writeAttributesToFile(Serializer& writer, bool writeAutomation) {
+diff --git a/src/deluge/model/voice/voice.cpp b/src/deluge/model/voice/voice.cpp
+index 29a6577b..e47a16a6 100644
+--- a/src/deluge/model/voice/voice.cpp
++++ b/src/deluge/model/voice/voice.cpp
+@@ -337,7 +337,6 @@ activenessDetermined:
+ 
+ 	previouslyIgnoredNoteOff = false;
+ 	whichExpressionSourcesCurrentlySmoothing = 0;
+-	filterGainLastTime = 0;
+ 
+ 	return true;
+ }
+@@ -1056,8 +1055,9 @@ skipAutoRelease: {}
+ 			}
+ 		}
+ 
+-		bool shouldAvoidIncrementing = doneFirstRender ? (filterGainLastTime != filterGain)
+-		                                               : (paramFinalValues[params::LOCAL_ENV_0_ATTACK] > 245632);
++		// mastertune v18: a change of the filters' gain compensation (resonance, modes) moves per sample over the
++		// block like the rest of the oscillators' amplitudes, as the filters' coefficients do; it used to jump
++		bool shouldAvoidIncrementing = !doneFirstRender && (paramFinalValues[params::LOCAL_ENV_0_ATTACK] > 245632);
+ 
+ 		if (shouldAvoidIncrementing) {
+ 			for (int32_t s = 0; s < kNumSources; s++) {
+@@ -1069,8 +1069,6 @@ skipAutoRelease: {}
+ 			sourceAmplitudeIncrements[s] = (int32_t)(sourceAmplitudes[s] - sourceAmplitudesLastTime[s]) / numSamples;
+ 		}
+ 
+-		filterGainLastTime = filterGain;
+-
+ 		// If FM, cache whether modulators are active
+ 		if (synthMode == SynthMode::FM) {
+ 			for (int32_t m = 0; m < kNumModulators; m++) {
+diff --git a/src/deluge/model/voice/voice.h b/src/deluge/model/voice/voice.h
+index 209af694..42523f06 100644
+--- a/src/deluge/model/voice/voice.h
++++ b/src/deluge/model/voice/voice.h
+@@ -73,8 +73,6 @@ public:
+ 	int32_t modulatorAmplitudeLastTime[kNumModulators];
+ 	uint32_t sourceWaveIndexesLastTime[kNumSources];
+ 
+-	int32_t filterGainLastTime;
+-
+ 	bool doneFirstRender;
+ 	bool previouslyIgnoredNoteOff;
+ 	bool invertReversed = false; // Set by the arpeggiator's reverse probability: play this voice's samples the other way
+-- 
+2.43.0
+

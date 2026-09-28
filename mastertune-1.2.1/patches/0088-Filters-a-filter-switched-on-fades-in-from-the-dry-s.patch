@@ -1,0 +1,183 @@
+From 84e3fdf28141b1b73791b569cb1107d5afd1ee73 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 23:22:49 +0000
+Subject: [PATCH 088/112] Filters: a filter switched on fades in from the dry
+ signal linearly, per frame, in 320 samples
+
+1.2.1's fade-in (Filter::updateBlend()) multiplied the dry share by 0.99 on
+every interleaved sample: exponential, left and right weighted differently in
+every frame, a stereo fade twice as fast as a mono one, and the last 0.1 %
+jumped at once. Now: out = wet + (dry - wet) * left / 320, left counting down
+per frame from 319 to 0 (int64, saturated), the same weight for both channels,
+the last frame all wet; 320 samples (7.3 ms) like FilterSet's crossfades
+(static_assert). The float state is gone; a zeroed filter (FilterSet::reset())
+has no fade, as before.
+
+Only a filter switched from off to on in a running voice or in the song / a
+kit / an audio track fades (a new voice starts without one since #4635).
+tests/filters filter_neutral fadein: linear law within 1.2 LSB, left = right,
+bit-exact with the plain filter from frame 320 (the source before: off by up
+to 10^8 LSB, left != right).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter.h     | 74 +++++++++++++++---------------
+ src/deluge/dsp/filter/filter_set.h |  1 +
+ 2 files changed, 37 insertions(+), 38 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/filter.h b/src/deluge/dsp/filter/filter.h
+index c53154be..f539f1d1 100644
+--- a/src/deluge/dsp/filter/filter.h
++++ b/src/deluge/dsp/filter/filter.h
+@@ -20,6 +20,7 @@
+ #include "model/mod_controllable/filters/filter_config.h"
+ #include "util/fixedpoint.h"
+ #include "util/functions.h"
++#include <algorithm>
+ #include <cstdint>
+ 
+ namespace deluge::dsp::filter {
+@@ -55,72 +56,46 @@ public:
+ 	 * @param startSample pointer to first sample in buffer
+ 	 * @param endSample pointer to last sample
+ 	 * @param sampleIncrement increment between samples
+-	 * @param extraSaturation extra saturation value
+ 	 */
+ 	[[gnu::hot]] void filterMono(q31_t* startSample, q31_t* endSample, int32_t sampleIncrememt = 1) {
+-		if (dryFade < 0.001) {
++		if (fadeInLeft_ == 0) [[likely]] {
+ 			static_cast<T*>(this)->doFilter(startSample, endSample, sampleIncrememt);
+ 		}
+ 		else {
+ 			memcpy(blendBuffer, startSample, (endSample - startSample) * sizeof(q31_t));
+ 			static_cast<T*>(this)->doFilter(startSample, endSample, sampleIncrememt);
+-
+-			q31_t* currentSample = startSample;
+-			q31_t* currentDrySample = blendBuffer;
+-			do {
+-				q31_t wet = multiply_32x32_rshift32(*currentSample, wetLevel);
+-				*currentSample = multiply_accumulate_32x32_rshift32_rounded(wet, *currentDrySample, ONE_Q31 - wetLevel)
+-				                 << 1;
+-				currentSample += 1;
+-				currentDrySample += 1;
+-				updateBlend(); // will go to one over 512 samples
+-			} while (currentSample < endSample);
++			fadeInFromDry(startSample, endSample, sampleIncrememt, 1);
+ 		}
+ 	}
+ 	/**
+ 	 * Filter a buffer of interleaved stereo samples from startSample to endSample incrememnting by the increment
+ 	 * @param startSample pointer to first sample in buffer
+ 	 * @param endSample pointer to last sample
+-	 * @param extraSaturation extra saturation value
+ 	 */
+ 	[[gnu::hot]] void filterStereo(q31_t* startSample, q31_t* endSample) {
+-		if (dryFade < 0.001) {
++		if (fadeInLeft_ == 0) [[likely]] {
+ 			static_cast<T*>(this)->doFilterStereo(startSample, endSample);
+ 		}
+ 		else {
+ 			memcpy(blendBuffer, startSample, (endSample - startSample) * sizeof(q31_t));
+ 			static_cast<T*>(this)->doFilterStereo(startSample, endSample);
+-
+-			q31_t* currentSample = startSample;
+-			q31_t* currentDrySample = blendBuffer;
+-			do {
+-				q31_t wet = multiply_32x32_rshift32(*currentSample, wetLevel);
+-				*currentSample = multiply_accumulate_32x32_rshift32_rounded(wet, *currentDrySample, ONE_Q31 - wetLevel)
+-				                 << 1;
+-				currentSample += 1;
+-				currentDrySample += 1;
+-				updateBlend();
+-			} while (currentSample < endSample);
++			fadeInFromDry(startSample, endSample, 2, 2);
+ 		}
+ 	}
+ 	/**
+ 	 * reset the internal filter state to avoid clicks and pops
+ 	 * All zeroes must be a valid reset state as the filter data will be zeroed by the filterset
++	 * fade: the filter is switched on: its output fades in from its input (see fadeInFromDry())
+ 	 */
+ 	void reset(bool fade = false) {
+ 		static_cast<T*>(this)->resetFilter();
+ 		haveLast_ = false;
+-		if (fade) {
+-			dryFade = 1;
+-			wetLevel = 0;
+-		}
++		fadeInLeft_ = fade ? kFadeInSamples : 0;
+ 	}
+ 
+-	inline void updateBlend() {
+-		// fades over around 500 samples
+-		dryFade = dryFade * 0.99;
+-		wetLevel = (q31_t)(ONE_Q31 * (1 - dryFade));
+-	}
++	/// mastertune v18: how long a filter switched on takes to fade in from the dry signal: 320 samples (7.3 ms), as
++	/// FilterSet's crossfades
++	static constexpr int32_t kFadeInSamples = 320;
+ 
+ 	/**
+ 	 * Applies a pleasing curve to the linear frequency from the knob
+@@ -140,19 +115,42 @@ public:
+ 	void restartRamp() { haveLast_ = false; }
+ 
+ 	q31_t fc;
+-	float dryFade = 1;
+-	q31_t wetLevel = ONE_Q31;
+ 	q31_t tannedFrequency;
+ 	q31_t divideBy1PlusTannedFrequency;
+ 
+ protected:
++	// mastertune v18: the fade-in of a filter switched on, from its input (blendBuffer, same layout) to its output, in a
++	// straight line over kFadeInSamples frames: out = wet + (dry - wet) * left / kFadeInSamples, left counting down
++	// from kFadeInSamples - 1 to 0 (the last frame all wet). Linear in amplitude (dry and wet are correlated, so they
++	// add as amplitudes), the same weight for both channels of a frame, exact at both ends. 1.2.1 faded exponentially
++	// (0.99 per sample), per interleaved sample (L and R weighted differently, a stereo fade twice as fast), and
++	// jumped the last 0.1 % at once
++	int32_t fadeInLeft_ = 0; // frames of the fade-in still to go (0: none; FilterSet's memset leaves none)
++	void fadeInFromDry(q31_t* startSample, q31_t* endSample, int32_t frameStride, int32_t channels) {
++		q31_t* sample = startSample;
++		const q31_t* dry = blendBuffer;
++		int32_t left = fadeInLeft_;
++		while (sample < endSample && left > 0) {
++			left--;
++			int64_t keep = (int64_t)left * ONE_Q31 / kFadeInSamples; // the dry share, Q31
++			for (int32_t c = 0; c < channels; c++) {
++				int64_t wet = sample[c];
++				int64_t out = wet + ((((int64_t)dry[c] - wet) * keep) >> 31);
++				sample[c] = (q31_t)std::clamp(out, (int64_t)INT32_MIN, (int64_t)INT32_MAX);
++			}
++			sample += frameStride;
++			dry += frameStride;
++		}
++		fadeInLeft_ = left;
++	}
+ 	// mastertune v18: the filters move their coefficients per sample, in a straight line from the last block's (the
+ 	// configuration they rendered with) to this one's, so a cutoff, resonance or morph that changes from block to block
+ 	// (a knob, automation, an envelope or LFO) no longer steps every block (zipper). A configuration that doesn't
+ 	// change renders exactly as before. haveLast_: whether there is a last block's configuration to move from
+ 	bool haveLast_ = false;
+ 	// Per-sample steps from `from` to `to` over n samples: sample k (from 1) takes from + k * step, the last one to
+-	// within n LSB of to (the next block starts from to exactly)
++	// within n LSB of `to` (under 2^-24 of the unit for a block of 128), and the next block starts from `to` exactly.
++	// Every change moves, however small: no threshold, no staircase
+ 	[[gnu::always_inline]] static inline q31_t rampStep(q31_t from, q31_t to, int32_t n) {
+ 		return (q31_t)(((int64_t)to - (int64_t)from) / n);
+ 	}
+diff --git a/src/deluge/dsp/filter/filter_set.h b/src/deluge/dsp/filter/filter_set.h
+index 7ee339c2..225b0df4 100644
+--- a/src/deluge/dsp/filter/filter_set.h
++++ b/src/deluge/dsp/filter/filter_set.h
+@@ -83,6 +83,7 @@ public:
+ 	/// mastertune v18: how long the crossfade takes where a filter's mode or the route changes or a filter is switched
+ 	/// off: 320 samples, 7.3 ms
+ 	static constexpr int32_t kFadeSamples = 320;
++	static_assert(kFadeSamples == LpLadderFilter::kFadeInSamples, "a filter switched on fades in as long");
+ 	/// How many FilterSets can fade at once (the song's, kits' and voices' together); more changes at the same time
+ 	/// switch at once, as before
+ 	static constexpr int32_t kNumFades = 24;
+-- 
+2.43.0
+

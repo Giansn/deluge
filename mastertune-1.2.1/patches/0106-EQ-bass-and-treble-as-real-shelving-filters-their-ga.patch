@@ -1,0 +1,489 @@
+From 0de6b528bf9b11c9051fe8d5acbcbe7b88148925 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 06:05:32 +0000
+Subject: [PATCH 106/112] EQ: bass and treble as real shelving filters, their
+ gains and corners moving per sample
+
+v17's EQ (1.2.1's doEQ()) was two forward-Euler one-poles with truncating products and wrapping sums, gains and
+corners set once per block, a band's state left stale while it was off, and a treble corner that went past c = 1
+(the band stopped doing anything) above about 5.5 kHz. Now (dsp/eq_shelves.h):
+- TPT one-pole shelves with a prewarped corner, treble (high shelf) then bass (low shelf) in series; the corners at
+  the knobs' centre are v17's -3 dB points (198.9 Hz, 2805.3 Hz), +-6 octaves as before, clamped to 2 Hz..20 kHz,
+  gliding in log frequency (10 ms, per block) with G moving per sample.
+- The gains exactly v17's for every stored value (g = 4 p^2, up to +12 dB), full cut -60 dB instead of -inf; they
+  move per sample in linear amplitude, exactly onto the target (GainRamp: > 6 dB in at least 5 ms).
+- The state 32 bits below the LSB (smmlar + 2 smlal per sample): no dead band, no DC bias (v17 at 3 Hz / +12 dB:
+  error -77 dBFS, DC -1592 LSB; now -141 dBFS, 0); the output products rounded, every sum saturating.
+- A band at its centre takes no time and passes the audio bit-exact, as before; switched on it starts from its
+  input with the gain from unity (a fade from dry), switched off it ramps back to unity before stopping.
+CPU (Cortex-A9 emulator, 128 samples): both bands 16.4k instructions (v17 8.1k), one band 7.4k, off 62.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/eq_shelves.h                   | 261 ++++++++++++++++++
+ .../mod_controllable_audio.cpp                |  60 +---
+ .../mod_controllable/mod_controllable_audio.h |  13 +-
+ .../model/mod_controllable/track_fx_kernels.h |  48 ----
+ 4 files changed, 270 insertions(+), 112 deletions(-)
+ create mode 100644 src/deluge/dsp/eq_shelves.h
+
+diff --git a/src/deluge/dsp/eq_shelves.h b/src/deluge/dsp/eq_shelves.h
+new file mode 100644
+index 00000000..571d40c4
+--- /dev/null
++++ b/src/deluge/dsp/eq_shelves.h
+@@ -0,0 +1,261 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++// mastertune v18: the bass and treble EQ of sounds, kit rows, kits, audio tracks and the song as real shelving filters.
++//
++// v17 (1.2.1's doEQ()): a forward-Euler one-pole y += c (x - y) per band, the treble's split first, the bass taken
++// from what was left, out = lowpass_t + g_t * (x - lowpass_t) + (g_b - 1) * lowpass_b, each product truncated and the
++// sums wrapping; c and g set once per block (steps: zipper on a knob, clicks on automation); a band's state left as
++// it was while the band was off (a click when it came back on); the treble's corner (2.8 kHz, up to 6 octaves higher
++// by the knob) past c = 1 above about 5.5 kHz, where the band simply stopped doing anything.
++//
++// Now, per band:
++// - The filter: a TPT (trapezoidal, zero-delay) one-pole lowpass with a prewarped corner, g = tan(pi f / fs),
++//   G = g / (1 + g): v = (x - s) G, lp = s + v, s += 2 v. Its -3 dB point is at f exactly, for every f up to Nyquist.
++//   The low shelf: y = x + (g_b - 1) lp_b(x), DC gain g_b, 1 at Nyquist. The high shelf: y = x + (g_t - 1) (x - lp_t(x)),
++//   1 at DC, g_t at Nyquist. Treble first, then bass on its output: the two shelves in series (as linear filters in
++//   either order the same; v17's bass took the treble split's lowpass, which is nearly the same where the corners are
++//   far apart).
++// - The corners: v17's at the knobs' centre, matched at their -3 dB points (v17's lowpass there: bass c =
++//   120000000 / 2^32, -3 dB at 198.9 Hz; treble c = 700000000 / 2^31, 2805.3 Hz), times 2^(+-6) over the frequency
++//   knob's range as before (getExp(): param / 2^26 * 6 / 32 octaves), the treble's clamped to 20 kHz, the bass's to
++//   at least 2 Hz (its lowest: 3.1 Hz). The corner glides to a new setting in log frequency (10 ms one-pole per
++//   block, as the filters' params) and its G moves per sample across the block.
++// - The gain: v17's for every stored value, g = 4 p^2 (p the knob from 0 to 1, 1 at the centre, up to 4, +12 dB),
++//   computed as v17 did (bassAmount + 1, trebleAmount), except that full cut is -60 dB (0.001) instead of -inf. It
++//   moves per sample in linear amplitude from where the last block left it (exactly onto the target at the block's
++//   end; a move by more than 6 dB in at least 5 ms, dsp/gain_ramp.h).
++// - The state: 64 bits, 32 below the LSB (the ladders' precise stage, ladder_components.h): no dead band at low
++//   corners (v17's truncating c * (x - y) with c = 0.028 left up to 36 LSB unmoved, and a DC bias), no rounding noise
++//   in the state; the lowpass output rounded to the LSB. Products into the output rounded (64-bit), every sum
++//   saturating instead of wrapping. The filters' input is limited to +-2^29 (30 dB above the output's clip), what
++//   the gains multiply to +-2^28 (24 dB above it).
++// - A band that is off (its gain param at the centre, unity) and not moving takes no time, the audio passes
++//   untouched (bit-exact, as in v17). When it comes on, its state starts from the input (a lowpass already at the
++//   signal, nothing to settle from an old one) and its gain from 1, so it fades in from the dry signal; when it goes
++//   off, it moves back to 1 over a block (or the 5 ms) before it stops.
++
++#pragma once
++
++#include "dsp/filter/ladder_components.h"
++#include "dsp/gain_ramp.h"
++#include "dsp/stereo_sample.h"
++#include <algorithm>
++#include <cmath>
++#include <cstdint>
++
++namespace deluge::dsp::eq {
++
++// Gains: unity 2^29 (v17's bassAmount + 2^29, trebleAmount: 4 p^2 in Q29)
++constexpr int32_t kUnity = 1 << 29;
++// Full cut: -60 dB
++constexpr int32_t kMinGain = 536871; // 0.001 * 2^29
++constexpr float kSampleRate = 44100.0f;
++// The corners at the frequency knobs' centre: v17's -3 dB points (see above)
++constexpr float kBassCorner = 198.906f;
++constexpr float kTrebleCorner = 2805.30f;
++constexpr float kMaxCorner = 20000.0f;
++constexpr float kMinCorner = 2.0f;
++
++// The shelf gain in Q29 for a stored bass / treble param, v17's formula: p = (param + 2^31) / 2^32,
++// 4 p^2 = (((param >> 1) + 2^30)^2 >> 32) << 1, rounded; at least kMinGain
++[[gnu::always_inline]] inline int32_t gainForParam(int32_t param) {
++	int32_t positive = (param >> 1) + 1073741824;
++	int32_t g = (int32_t)((((int64_t)positive * positive) + ((int64_t)1 << 31)) >> 32) << 1;
++	return std::max(g, kMinGain);
++}
++
++// The corner's log2 frequency for a frequency param (getExp(base, (param >> 5) * 6): (param >> 5) * 6 / 2^26 octaves)
++[[gnu::always_inline]] inline float log2CornerForParam(int32_t param, float centre) {
++	float octaves = (float)((param >> 5) * 6) * (1.0f / 67108864.0f);
++	return std::clamp(std::log2(centre) + octaves, std::log2(kMinCorner), std::log2(kMaxCorner));
++}
++
++// G = g / (1 + g), g = tan(pi f / fs), Q31
++[[gnu::always_inline]] inline int32_t moveabilityForLog2(float log2f) {
++	float f = std::exp2(log2f);
++	float g = std::tan((float)M_PI * f / kSampleRate);
++	return (int32_t)std::min(g / (1.0f + g) * 2147483648.0f, 2147483520.0f);
++}
++
++// A TPT one-pole lowpass with its state 32 bits below the LSB (as the ladders' precise stage, ladder_components.h
++// LadderStage::doFilterPrecise(), for moveabilities up to 1): acc is memory:fraction in units of 2^-32 LSB, biased by
++// half an LSB, so memory, the high word, is the state rounded. Per sample, for an input x within +-2^29 (so the
++// difference to the state and twice it stay within range): d2 = 2 (x - memory), the output
++// lp = memory + round(d2 G / 2^32) = the state + v to within an LSB (smmlar), and the state moves by exactly
++// 2 v = 4 (x - memory) G (2^-32 LSB units: d2 * G twice, smlal): five instructions, nothing lost in the state. (From
++// memory rather than the exact state the lowpass settles within half an LSB of a constant input: no dead band.)
++struct PreciseOnePole {
++	int64_t acc = (int64_t)1 << 31; // 0 exactly
++	[[gnu::always_inline]] inline int32_t step(int32_t x, int32_t moveability) {
++		const int32_t memory = (int32_t)(acc >> 32);
++		const int32_t d2 = (x - memory) * 2;
++		const int32_t lp = multiply_accumulate_32x32_rshift32_rounded(memory, d2, moveability);
++		acc += (int64_t)d2 * moveability;
++		acc += (int64_t)d2 * moveability;
++		return lp;
++	}
++	void resetTo(int32_t x) { acc = ((int64_t)x << 32) + ((int64_t)1 << 31); }
++};
++
++// The filters' input: within +-2^29 (30 dB above the output's clip, ssat)
++[[gnu::always_inline]] inline int32_t clampFilterInput(int32_t x) {
++	return signed_saturate<30>(x);
++}
++// x + a * (gain - 1), gain - 1 in Q29 (-1 to 3): round(a * 8 * (gain - 1) / 2^32) with a limited to +-2^28 (24 dB
++// above the output's clip), so that the product keeps every bit (within half an LSB); the sum saturating
++[[gnu::always_inline]] inline int32_t addScaled(int32_t x, int32_t a, int32_t gainMinusOne) {
++	return deluge::dsp::filter::addSaturate(x,
++	                                        multiply_32x32_rshift32_rounded(signed_saturate<29>(a) << 3, gainMinusOne));
++}
++
++// A value moving linearly per sample across a block, exactly onto its end value at the last sample: sample i (1 to
++// n) takes start + (end - start) * i / n, rounded (32.32 fixed point from start + 1/2, the step truncated: n steps
++// miss the difference by less than n units of 2^-32, far less than the half added)
++struct Line {
++	int64_t acc;
++	int64_t step;
++	Line(int32_t start, int32_t end, int32_t n) {
++		acc = ((int64_t)start << 32) + ((int64_t)1 << 31);
++		step = end == start ? 0 : (int64_t)(((double)end - (double)start) * 4294967296.0 / (double)n);
++		// (the double's quotient is within 2^-21 of a unit of the exact one: truncated towards zero it may be one unit
++		// too far, which the n * 1 < 2^31 margin covers)
++	}
++	[[gnu::always_inline]] inline int32_t next() {
++		acc += step;
++		return (int32_t)(acc >> 32);
++	}
++};
++
++class EqShelves {
++public:
++	// One block: bassParam / trebleParam the stored gain params (0: the centre, unity), bassFreqParam /
++	// trebleFreqParam the corners' params
++	void process(StereoSample* buffer, int32_t numSamples, int32_t bassParam, int32_t trebleParam,
++	             int32_t bassFreqParam, int32_t trebleFreqParam) {
++		bool bass = bass_.prepare(buffer, numSamples, bassParam, bassFreqParam, kBassCorner);
++		bool treble = treble_.prepare(buffer, numSamples, trebleParam, trebleFreqParam, kTrebleCorner);
++		if (bass && treble) {
++			render<true, true>(buffer, numSamples);
++		}
++		else if (bass) {
++			render<true, false>(buffer, numSamples);
++		}
++		else if (treble) {
++			render<false, true>(buffer, numSamples);
++		}
++	}
++	// Whether a band renders (or still moves back to unity)
++	[[nodiscard]] bool isActive() const { return bass_.active || treble_.active; }
++	// Everything from scratch (a band comes on from its input again)
++	void reset() {
++		bass_ = Band{};
++		treble_ = Band{};
++	}
++
++private:
++	struct Band {
++		deluge::dsp::gain::GainRamp gain;
++		PreciseOnePole l, r;
++		float log2Corner = 0;
++		int32_t moveability = 0; // G at the last block's end
++		bool active = false;
++		// This block's lines
++		int32_t gainStart, gainEnd, moveStart, moveEnd;
++
++		int32_t freqParam = 0;
++		float targetLog2 = 0; // the corner's for freqParam
++		bool haveTarget = false;
++
++		// Sets up the block; false: the band is off and stays off (nothing to render)
++		bool prepare(const StereoSample* buffer, int32_t n, int32_t gainParam, int32_t newFreqParam, float centre) {
++			if (!active && gainParam == 0) {
++				return false; // (the centre: unity; nothing else computed while off)
++			}
++			const int32_t targetGain = gainForParam(gainParam);
++			if (!haveTarget || newFreqParam != freqParam) {
++				freqParam = newFreqParam;
++				targetLog2 = log2CornerForParam(newFreqParam, centre);
++				haveTarget = true;
++			}
++			if (!active) {
++				// Comes on: the corner where it's set, the state at the input, the gain from unity
++				active = true;
++				log2Corner = targetLog2;
++				moveability = moveabilityForLog2(targetLog2);
++				l.resetTo(clampFilterInput(buffer[0].l));
++				r.resetTo(clampFilterInput(buffer[0].r));
++				gain.restart();
++				gain.advance(kUnity, n);
++			}
++			gainStart = gain.current();
++			gainEnd = gain.advance(targetGain, n);
++			moveStart = moveability;
++			if (log2Corner != targetLog2) {
++				// The corner glides in log frequency: 10 ms one-pole, per block (exact for the block's length)
++				float k = 1.0f - std::exp(-(float)n * (1.0f / 441.0f));
++				float d = targetLog2 - log2Corner;
++				log2Corner = std::fabs(d) < 1.0e-4f ? targetLog2 : log2Corner + d * k;
++				moveability = moveabilityForLog2(log2Corner);
++			}
++			moveEnd = moveability;
++			if (gainStart == kUnity && gainEnd == kUnity && targetGain == kUnity) {
++				// Back at unity: this block renders nothing any more (the output is x exactly), and the band stops
++				active = false;
++				return false;
++			}
++			return true;
++		}
++	};
++
++	template <bool kBass, bool kTreble>
++	void render(StereoSample* buffer, int32_t n) {
++		Line bassGain(kBass ? bass_.gainStart - kUnity : 0, kBass ? bass_.gainEnd - kUnity : 0, n);
++		Line bassG(kBass ? bass_.moveStart : 0, kBass ? bass_.moveEnd : 0, n);
++		Line trebleGain(kTreble ? treble_.gainStart - kUnity : 0, kTreble ? treble_.gainEnd - kUnity : 0, n);
++		Line trebleG(kTreble ? treble_.moveStart : 0, kTreble ? treble_.moveEnd : 0, n);
++		PreciseOnePole bl = bass_.l, br = bass_.r, tl = treble_.l, tr = treble_.r;
++		StereoSample* const end = buffer + n;
++		for (StereoSample* s = buffer; s != end; s++) {
++			int32_t l = s->l, r = s->r;
++			if constexpr (kTreble) {
++				int32_t k = trebleGain.next(), g = trebleG.next();
++				// high shelf: x + (g_t - 1) (x - lp_t(x))
++				int32_t lpL = tl.step(clampFilterInput(l), g), lpR = tr.step(clampFilterInput(r), g);
++				l = addScaled(l, deluge::dsp::filter::subSaturate(l, lpL), k);
++				r = addScaled(r, deluge::dsp::filter::subSaturate(r, lpR), k);
++			}
++			if constexpr (kBass) {
++				int32_t k = bassGain.next(), g = bassG.next();
++				// low shelf: x + (g_b - 1) lp_b(x)
++				l = addScaled(l, bl.step(clampFilterInput(l), g), k);
++				r = addScaled(r, br.step(clampFilterInput(r), g), k);
++			}
++			s->l = l;
++			s->r = r;
++		}
++		bass_.l = bl;
++		bass_.r = br;
++		treble_.l = tl;
++		treble_.r = tr;
++	}
++
++	Band bass_;
++	Band treble_;
++};
++
++} // namespace deluge::dsp::eq
+diff --git a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+index b630996a..ad6fd829 100644
+--- a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
++++ b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+@@ -67,12 +67,6 @@ ModControllableAudio::ModControllableAudio() {
+ 	grainLastTickCountIsZero = true;
+ 	grainInitialized = false;
+ 
+-	// EQ
+-	withoutTrebleL = 0;
+-	bassOnlyL = 0;
+-	withoutTrebleR = 0;
+-	bassOnlyR = 0;
+-
+ 	// Filters
+ 	lpfMode = FilterMode::TRANSISTOR_24DB;
+ 	hpfMode = FilterMode::HPLADDER;
+@@ -115,8 +109,6 @@ void ModControllableAudio::cloneFrom(ModControllableAudio* other) {
+ 	hpfMode = other->hpfMode;
+ 	clippingAmount = other->clippingAmount;
+ 	modFXType = other->modFXType;
+-	bassFreq = other->bassFreq; // Eventually, these shouldn't be variables like this
+-	trebleFreq = other->trebleFreq;
+ 	filterRoute = other->filterRoute;
+ 	sidechain.cloneFrom(&other->sidechain);
+ 	midiKnobArray.cloneFrom(&other->midiKnobArray); // Could fail if no RAM... not too big a concern
+@@ -161,16 +153,6 @@ void ModControllableAudio::initParams(ParamManager* paramManager) {
+ 	unpatchedParams->params[params::UNPATCHED_COMPRESSOR_THRESHOLD].setCurrentValueBasicForSetup(0);
+ }
+ 
+-bool ModControllableAudio::hasBassAdjusted(ParamManager* paramManager) {
+-	UnpatchedParamSet* unpatchedParams = paramManager->getUnpatchedParamSet();
+-	return (unpatchedParams->getValue(params::UNPATCHED_BASS) != 0);
+-}
+-
+-bool ModControllableAudio::hasTrebleAdjusted(ParamManager* paramManager) {
+-	UnpatchedParamSet* unpatchedParams = paramManager->getUnpatchedParamSet();
+-	return (unpatchedParams->getValue(params::UNPATCHED_TREBLE) != 0);
+-}
+-
+ void ModControllableAudio::setWrapsToShutdown() {
+ 
+ 	if (grainFeedbackVol < 33554432) {
+@@ -524,42 +506,12 @@ void ModControllableAudio::processFX(StereoSample* buffer, int32_t numSamples, M
+ 	}
+ 
+ 	// EQ -------------------------------------------------------------------------------------
+-	bool thisDoBass = hasBassAdjusted(paramManager);
+-	bool thisDoTreble = hasTrebleAdjusted(paramManager);
+-
+-	// Bass. No-change represented by 0. Off completely represented by -536870912
+-	int32_t positive = (unpatchedParams->getValue(params::UNPATCHED_BASS) >> 1) + 1073741824;
+-	int32_t bassAmount = (multiply_32x32_rshift32_rounded(positive, positive) << 1) - 536870912;
+-
+-	// Treble. No-change represented by 536870912
+-	positive = (unpatchedParams->getValue(params::UNPATCHED_TREBLE) >> 1) + 1073741824;
+-	int32_t trebleAmount = multiply_32x32_rshift32_rounded(positive, positive) << 1;
+-
+-	if (thisDoBass || thisDoTreble) {
+-
+-		if (thisDoBass) {
+-			bassFreq = getExp(120000000, (unpatchedParams->getValue(params::UNPATCHED_BASS_FREQ) >> 5) * 6);
+-		}
+-
+-		if (thisDoTreble) {
+-			trebleFreq = getExp(700000000, (unpatchedParams->getValue(params::UNPATCHED_TREBLE_FREQ) >> 5) * 6);
+-		}
+-
+-		// Just the bands that are on, with the filter states in registers (track_fx_kernels.h)
+-		using namespace deluge::dsp::track_fx;
+-		if (thisDoBass && thisDoTreble) {
+-			eq<true, true>(buffer, numSamples, withoutTrebleL, withoutTrebleR, bassOnlyL, bassOnlyR, bassFreq,
+-			               trebleFreq, bassAmount, trebleAmount);
+-		}
+-		else if (thisDoBass) {
+-			eq<true, false>(buffer, numSamples, withoutTrebleL, withoutTrebleR, bassOnlyL, bassOnlyR, bassFreq,
+-			                trebleFreq, bassAmount, trebleAmount);
+-		}
+-		else {
+-			eq<false, true>(buffer, numSamples, withoutTrebleL, withoutTrebleR, bassOnlyL, bassOnlyR, bassFreq,
+-			                trebleFreq, bassAmount, trebleAmount);
+-		}
+-	}
++	// (mastertune v18: shelving filters, see dsp/eq_shelves.h. A band at its centre, not moving, takes no time and
++	// leaves the audio as it is, as before)
++	eqShelves_.process(buffer, numSamples, unpatchedParams->getValue(params::UNPATCHED_BASS),
++	                   unpatchedParams->getValue(params::UNPATCHED_TREBLE),
++	                   unpatchedParams->getValue(params::UNPATCHED_BASS_FREQ),
++	                   unpatchedParams->getValue(params::UNPATCHED_TREBLE_FREQ));
+ 
+ 	// Delay ----------------------------------------------------------------------------------
+ 	delay.process({buffer, static_cast<size_t>(numSamples)}, delayWorkingState);
+diff --git a/src/deluge/model/mod_controllable/mod_controllable_audio.h b/src/deluge/model/mod_controllable/mod_controllable_audio.h
+index 9c20bdb5..58763a73 100644
+--- a/src/deluge/model/mod_controllable/mod_controllable_audio.h
++++ b/src/deluge/model/mod_controllable/mod_controllable_audio.h
+@@ -20,6 +20,7 @@
+ #include "definitions_cxx.hpp"
+ #include "dsp/compressor/rms_feedback.h"
+ #include "dsp/delay/delay.h"
++#include "dsp/eq_shelves.h"
+ #include "dsp/gain_ramp.h"
+ #include "hid/button.h"
+ #include "model/fx/stutterer.h"
+@@ -94,8 +95,6 @@ public:
+ 	virtual void ensureInaccessibleParamPresetValuesWithoutKnobsAreZero(Song* song) {} // Song may be NULL
+ 	bool isBitcrushingEnabled(ParamManager* paramManager);
+ 	bool isSRREnabled(ParamManager* paramManager);
+-	bool hasBassAdjusted(ParamManager* paramManager);
+-	bool hasTrebleAdjusted(ParamManager* paramManager);
+ 	ModelStackWithAutoParam* getParamFromMIDIKnob(MIDIKnob* knob, ModelStackWithThreeMainThings* modelStack);
+ 	ActionResult buttonAction(deluge::hid::Button b, bool on, ModelStackWithThreeMainThings* modelStack);
+ 
+@@ -103,14 +102,8 @@ public:
+ 	StereoSample phaserMemory;
+ 	StereoSample allpassMemory[kNumAllpassFiltersPhaser];
+ 
+-	// EQ
+-	int32_t bassFreq; // These two should eventually not be variables like this
+-	int32_t trebleFreq;
+-
+-	int32_t withoutTrebleL;
+-	int32_t bassOnlyL;
+-	int32_t withoutTrebleR;
+-	int32_t bassOnlyR;
++	// EQ (mastertune v18: shelving filters with their gains and corners moving per sample, dsp/eq_shelves.h)
++	deluge::dsp::eq::EqShelves eqShelves_;
+ 
+ 	// Delay
+ 	Delay delay;
+diff --git a/src/deluge/model/mod_controllable/track_fx_kernels.h b/src/deluge/model/mod_controllable/track_fx_kernels.h
+index 3f435b4b..441c6dde 100644
+--- a/src/deluge/model/mod_controllable/track_fx_kernels.h
++++ b/src/deluge/model/mod_controllable/track_fx_kernels.h
+@@ -185,54 +185,6 @@ template <ModFXType kType>
+ 	modFXLFO = lfo;
+ }
+ 
+-// EQ, as doEQ() was per sample, for just the bands that are on, with the filter states in locals
+-template <bool kBass, bool kTreble>
+-[[gnu::always_inline]] inline void eqChannel(int32_t& input, int32_t& withoutTreble, int32_t& bassOnly,
+-                                             int32_t bassFreq, int32_t trebleFreq, int32_t bassAmount,
+-                                             int32_t trebleAmount) {
+-	int32_t trebleOnly;
+-	if constexpr (kTreble) {
+-		int32_t distanceToGo = subWrap(input, withoutTreble);
+-		withoutTreble = addWrap(withoutTreble, multiply_32x32_rshift32(distanceToGo, trebleFreq) << 1);
+-		trebleOnly = subWrap(input, withoutTreble);
+-		input = withoutTreble; // Input now has had the treble removed. Or is this bad?
+-	}
+-	if constexpr (kBass) {
+-		int32_t distanceToGo = subWrap(input, bassOnly);
+-		bassOnly = addWrap(bassOnly, multiply_32x32_rshift32(distanceToGo, bassFreq)); // 33554432
+-	}
+-	if constexpr (kTreble) {
+-		input = addWrap(input, multiply_32x32_rshift32(trebleOnly, trebleAmount) << 3);
+-	}
+-	if constexpr (kBass) {
+-		input = addWrap(input, multiply_32x32_rshift32(bassOnly, bassAmount) << 3);
+-	}
+-}
+-
+-template <bool kBass, bool kTreble>
+-[[gnu::always_inline]] inline void eq(StereoSample* buffer, int32_t numSamples, int32_t& withoutTrebleL,
+-                                      int32_t& withoutTrebleR, int32_t& bassOnlyL, int32_t& bassOnlyR, int32_t bassFreq,
+-                                      int32_t trebleFreq, int32_t bassAmount, int32_t trebleAmount) {
+-	int32_t withoutTrebleLLocal = withoutTrebleL, withoutTrebleRLocal = withoutTrebleR;
+-	int32_t bassOnlyLLocal = bassOnlyL, bassOnlyRLocal = bassOnlyR;
+-	StereoSample* const bufferEnd = buffer + numSamples;
+-	StereoSample* currentSample = buffer;
+-	do {
+-		int32_t l = currentSample->l;
+-		int32_t r = currentSample->r;
+-		eqChannel<kBass, kTreble>(l, withoutTrebleLLocal, bassOnlyLLocal, bassFreq, trebleFreq, bassAmount,
+-		                          trebleAmount);
+-		eqChannel<kBass, kTreble>(r, withoutTrebleRLocal, bassOnlyRLocal, bassFreq, trebleFreq, bassAmount,
+-		                          trebleAmount);
+-		currentSample->l = l;
+-		currentSample->r = r;
+-	} while (++currentSample != bufferEnd);
+-	withoutTrebleL = withoutTrebleLLocal;
+-	withoutTrebleR = withoutTrebleRLocal;
+-	bassOnlyL = bassOnlyLLocal;
+-	bassOnlyR = bassOnlyRLocal;
+-}
+-
+ // ---- processSRRAndBitcrushing() ------------------------------------------------------------------------------------
+ 
+ // Bitcrushing alone: the mask on four samples at a time
+-- 
+2.43.0
+

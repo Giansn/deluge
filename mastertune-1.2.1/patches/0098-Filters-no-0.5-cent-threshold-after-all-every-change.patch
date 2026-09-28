@@ -1,0 +1,124 @@
+From c3572b5e3620cadc3873ebab71941311ad2f7643 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 03:41:54 +0000
+Subject: [PATCH 098/112] Filters: no 0.5-cent threshold after all: every
+ change ramps, as before
+
+The threshold (d10aca5f) saved no CPU in the full song (every synth's cutoff moves more than 0.5 cent per block)
+and only changed the SVF's output by up to 1 LSB16 where an LFO turns. Without it the song with every LPF an SVF
+(make_sd.py --lpf-mode SVF_Band) renders bit-exactly as at 54340c16 (6d00c7e94fcc3bfa): the song's changes since are
+the LP ladders' alone. filter_neutral static against 54340c16: only the LP12 / LP24 / drive groups differ (the precise
+stages' output rounding, 0e2da76d), LPF off, SVF and the HP ladder identical.
+
+Full song: demand 90.7 % (v17 89.3 %), device FORCE 7 (v17 13), SOFT 105 (98), mean voices 31.2 (31.7); hashes
+demand 76b61a69613126fb, digital 6591fb200dd73760.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter.h     | 16 +---------------
+ src/deluge/dsp/filter/hpladder.h   |  2 +-
+ src/deluge/dsp/filter/lpladder.cpp |  5 +++--
+ src/deluge/dsp/filter/lpladder.h   |  8 ++++++++
+ src/deluge/dsp/filter/svf.h        |  2 +-
+ 5 files changed, 14 insertions(+), 19 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/filter.h b/src/deluge/dsp/filter/filter.h
+index 4261aec4..053cafd4 100644
+--- a/src/deluge/dsp/filter/filter.h
++++ b/src/deluge/dsp/filter/filter.h
+@@ -152,7 +152,7 @@ protected:
+ 	bool haveLast_ = false;
+ 	// Per-sample steps from `from` to `to` over n samples: sample k (from 1) takes from + k * step, the last one to
+ 	// within 2n LSB of `to` (under 2^-23 of the unit for a block of 128; short of it, never beyond), and the next block
+-	// starts from `to` exactly (a change of under 0.5 cent takes no ramp: rampAudible()). The division by n is
++	// starts from `to` exactly. Every change moves, however small: no threshold, no staircase. The division by n is
+ 	// a multiplication by 1 / n, taken once for all of a set's coefficients (RampDivisor): the Cortex-A9 has no divide
+ 	// instruction, and a 64-bit division per coefficient per block was 4 % of the CPU in the full song
+ 	struct RampDivisor {
+@@ -295,20 +295,6 @@ public:
+ 		}
+ 		return p;
+ 	}
+-	// Whether this block's configuration is far enough from the last one's to move to it per sample (spec 7: steps of
+-	// at most 0.5 cent): the cutoff by more than 0.5 cent (2^(0.5 / 1200) - 1 = 1 / 3463 of it), the resonance by
+-	// more than 2^-13 of its range (2^29), morph by more than 2^-13 of its (2^31), or the mode. A smaller change takes
+-	// the block's own loop with the new coefficients at once: a step of at most 0.5 cent, which nothing hears (a
+-	// sweep of an octave per second moves 3.5 cents per block of 128), and a ramp's cost only where it's needed
+-	[[nodiscard]] bool rampAudible() const {
+-		if (params_.mode != lastParams_.mode) {
+-			return true;
+-		}
+-		const int64_t lo = std::min(params_.frequency, lastParams_.frequency);
+-		const int64_t hi = std::max(params_.frequency, lastParams_.frequency);
+-		return (hi - lo) * 3463 > lo || std::abs((int64_t)params_.resonance - (int64_t)lastParams_.resonance) > (1 << 16)
+-		       || std::abs((int64_t)params_.morph - (int64_t)lastParams_.morph) > (1 << 18);
+-	}
+ 	// Whether this block's ramp over n samples is one straight line (rampKnots() would give only its two ends: one
+ 	// piece, no break), the usual case
+ 	[[nodiscard]] bool rampIsOnePiece(int32_t n) const {
+diff --git a/src/deluge/dsp/filter/hpladder.h b/src/deluge/dsp/filter/hpladder.h
+index fd028705..d6d0cbf3 100644
+--- a/src/deluge/dsp/filter/hpladder.h
++++ b/src/deluge/dsp/filter/hpladder.h
+@@ -110,7 +110,7 @@ private:
+ 	}
+ 	// Before a block: whether it moves from the last block's configuration to this one (ramping_); after it, this one
+ 	// is the next block's last
+-	void startBlock() { ramping_ = haveLast_ && !last_.sameRamp(coefficients()) && rampAudible(); }
++	void startBlock() { ramping_ = haveLast_ && !last_.sameRamp(coefficients()); }
+ 	void endBlock() {
+ 		last_ = coefficients();
+ 		rampEndBlock();
+diff --git a/src/deluge/dsp/filter/lpladder.cpp b/src/deluge/dsp/filter/lpladder.cpp
+index 954ce3de..8ef340f4 100644
+--- a/src/deluge/dsp/filter/lpladder.cpp
++++ b/src/deluge/dsp/filter/lpladder.cpp
+@@ -230,9 +230,10 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
+ 	endBlock();
+ }
+ 
+-// A ramp where the params moved audibly since the last block (rampAudible()) and the oversampling is the same
++// The saturation amount doesn't take part in the comparison (it's the block's), so the mode doesn't matter here
+ void LpLadderFilter::startBlock() {
+-	ramping_ = haveLast_ && lastOversampling_ == doOversampling && rampAudible();
++	ramping_ = haveLast_ && lastOversampling_ == doOversampling
++	           && !last_.sameRamp(coefficients<FilterMode::TRANSISTOR_24DB>());
+ }
+ 
+ void LpLadderFilter::endBlock() {
+diff --git a/src/deluge/dsp/filter/lpladder.h b/src/deluge/dsp/filter/lpladder.h
+index 07f4c861..96a7866d 100644
+--- a/src/deluge/dsp/filter/lpladder.h
++++ b/src/deluge/dsp/filter/lpladder.h
+@@ -72,6 +72,14 @@ private:
+ 		q31_t divideBy1PlusTannedFrequency;
+ 		int32_t saturationAmount; // PER_SAMPLE's
+ 		q31_t moveability2;       // 2 * moveability, for the precise stages (below kPreciseMoveabilityLimit only)
++		// What the loops move per sample (all but saturationAmount, which is the block's; moveability2 follows
++		// moveability)
++		[[nodiscard]] bool sameRamp(const Coefficients& o) const {
++			return moveability == o.moveability && processedResonance == o.processedResonance
++			       && divideByTotalMoveabilityAndProcessedResonance == o.divideByTotalMoveabilityAndProcessedResonance
++			       && morph == o.morph && lpf1Feedback == o.lpf1Feedback && lpf2Feedback == o.lpf2Feedback
++			       && lpf3Feedback == o.lpf3Feedback && divideBy1PlusTannedFrequency == o.divideBy1PlusTannedFrequency;
++		}
+ 		// The per-sample steps from this to `to` over n samples
+ 		[[nodiscard]] Coefficients steps(const Coefficients& to, int32_t n) const {
+ 			const RampDivisor div(n);
+diff --git a/src/deluge/dsp/filter/svf.h b/src/deluge/dsp/filter/svf.h
+index 35c1f575..b42752dc 100644
+--- a/src/deluge/dsp/filter/svf.h
++++ b/src/deluge/dsp/filter/svf.h
+@@ -89,7 +89,7 @@ private:
+ 	}
+ 	// Before a block: whether it moves from the last block's configuration to this one (ramping_); after it, this one
+ 	// is the next block's last
+-	void startBlock() { ramping_ = haveLast_ && !last_.sameRamp(coefficients()) && rampAudible(); }
++	void startBlock() { ramping_ = haveLast_ && !last_.sameRamp(coefficients()); }
+ 	void endBlock() {
+ 		last_ = coefficients();
+ 		rampEndBlock();
+-- 
+2.43.0
+

@@ -1,0 +1,308 @@
+From dfc71d515c85063b724794bd041c1382b380a01d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 22:28:11 +0000
+Subject: [PATCH 086/112] Filters: 7 ms crossfade where a mode or the route
+ changes or a filter is switched off
+
+Changing the LPF or HPF mode, the route (H2L / L2H / parallel) or switching a
+filter off used to switch at once: the new filter started from a reset or
+foreign state, the switched-off one's output vanished, the route jumped
+(clicks up to 250x the tone's largest step, +20 to +55 dB above 4 kHz).
+Now FilterSet keeps a copy of itself as it was (configuration and state) in
+one of 24 shared slots, which renders on beside it for 320 samples (7.3 ms);
+the output moves from the copy's to the new one's in a straight line, with
+the copy's own gain compensation (on its input for a voice, on its output for
+the song / a kit / an audio track). Then the copy goes, and a switched-off
+filter with it. A change during a fade waits for its end. Nothing changes
+where nothing changes (static hash as before); a filter switched on keeps its
+fade-in from the dry signal. All slots busy: switches at once, as before.
+A voice frees its slot when it's unassigned; isOn() holds while fading.
+
+tests/filters filter_neutral_test clicks: largest step <= 1.74x (was up to
+254x), above 4 kHz at most +3 dB (was up to +55 dB).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/filter/filter_set.cpp | 152 ++++++++++++++++++++++++++-
+ src/deluge/dsp/filter/filter_set.h   |  38 ++++++-
+ src/deluge/model/voice/voice.cpp     |   2 +
+ 3 files changed, 185 insertions(+), 7 deletions(-)
+
+diff --git a/src/deluge/dsp/filter/filter_set.cpp b/src/deluge/dsp/filter/filter_set.cpp
+index e8b8781b..64507488 100644
+--- a/src/deluge/dsp/filter/filter_set.cpp
++++ b/src/deluge/dsp/filter/filter_set.cpp
+@@ -93,6 +93,15 @@ q31_t tempRenderBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2]; // * 2 to accomodate ster
+ }
+ [[gnu::hot]] void FilterSet::renderLong(q31_t* startSample, q31_t* endSample, int32_t numSamples,
+                                         int32_t sampleIncrememt, int32_t hpfSaturation, int32_t lpfSaturation) {
++	if (fadeSlot_ != 0 && fadeSlot() != 0) [[unlikely]] {
++		renderFade(startSample, endSample, sampleIncrememt, false, hpfSaturation, lpfSaturation, false);
++		return;
++	}
++	renderLongInner(startSample, endSample, sampleIncrememt, hpfSaturation, lpfSaturation);
++}
++
++[[gnu::hot]] void FilterSet::renderLongInner(q31_t* startSample, q31_t* endSample, int32_t sampleIncrememt,
++                                             int32_t hpfSaturation, int32_t lpfSaturation) {
+ 	switch (routing_) {
+ 	case FilterRoute::HIGH_TO_LOW:
+ 
+@@ -128,7 +137,8 @@ void FilterSet::rampGainCompensation(q31_t* startSample, q31_t* endSample) {
+ 	bool had = haveRenderedGain_;
+ 	renderedGainCompensation_ = gainCompensation_;
+ 	haveRenderedGain_ = true;
+-	if (!had || gainCompensation_ <= 0.0f || last <= 0.0f) {
++	// (While a crossfade runs, the filters as they were keep their own gain: see renderFade())
++	if (!had || gainCompensation_ <= 0.0f || last <= 0.0f || fadeSlot_ != 0) {
+ 		return;
+ 	}
+ 	float ratio = last / gainCompensation_;
+@@ -155,6 +165,19 @@ void FilterSet::rampGainCompensation(q31_t* startSample, q31_t* endSample) {
+ // expects to receive an interleaved stereo stream
+ [[gnu::hot]] void FilterSet::renderLongStereo(q31_t* startSample, q31_t* endSample, int32_t hpfSaturation,
+                                               int32_t lpfSaturation, bool rampGain) {
++	if (fadeSlot_ != 0 && fadeSlot() != 0) [[unlikely]] {
++		renderFade(startSample, endSample, 2, true, hpfSaturation, lpfSaturation, rampGain);
++	}
++	else {
++		renderLongStereoInner(startSample, endSample, hpfSaturation, lpfSaturation);
++	}
++	if (rampGain) {
++		rampGainCompensation(startSample, endSample);
++	}
++}
++
++[[gnu::hot]] void FilterSet::renderLongStereoInner(q31_t* startSample, q31_t* endSample, int32_t hpfSaturation,
++                                                   int32_t lpfSaturation) {
+ 	// Do HPF, if it's on
+ 	switch (routing_) {
+ 	case FilterRoute::HIGH_TO_LOW:
+@@ -183,8 +206,111 @@ void FilterSet::rampGainCompensation(q31_t* startSample, q31_t* endSample) {
+ 		addTempRenderBuffer(startSample, length);
+ 		break;
+ 	}
+-	if (rampGain) {
+-		rampGainCompensation(startSample, endSample);
++}
++
++// ---- mastertune v18: crossfades
++
++namespace {
++struct FilterFade {
++	FilterSet* owner; // nullptr: free
++	int32_t done;     // samples (frames) of the fade done
++	float gain;       // the gain compensation the filters as they were had (setConfig()'s output over its input)
++	alignas(FilterSet) uint8_t filters[sizeof(FilterSet)]; // a copy of the FilterSet as it was
++	FilterSet& old() { return *reinterpret_cast<FilterSet*>(filters); }
++};
++FilterFade fades[FilterSet::kNumFades];
++// The input of the filters as they were (the render buffers' size)
++q31_t fadeBuffer[SSI_TX_BUFFER_NUM_SAMPLES * 2];
++} // namespace
++
++bool FilterSet::startFade() {
++	for (int32_t i = 0; i < kNumFades; i++) {
++		FilterFade& f = fades[i];
++		if (f.owner == nullptr) {
++			memcpy(f.filters, (const void*)this, sizeof(FilterSet));
++			f.old().fadeSlot_ = 0; // the copy renders plainly
++			f.owner = this;
++			f.done = 0;
++			f.gain = gainCompensation_;
++			fadeSlot_ = (uint8_t)(i + 1);
++			return true;
++		}
++	}
++	return false; // all busy: the change switches at once, as before
++}
++
++uint8_t FilterSet::fadeSlot() {
++	int32_t i = (int32_t)fadeSlot_ - 1;
++	if (i >= 0 && i < kNumFades && fades[i].owner == this) {
++		return fadeSlot_;
++	}
++	fadeSlot_ = 0;
++	return 0;
++}
++
++// Also from reset() and the constructor, where fadeSlot_ may be anything: only a slot that is this one's goes
++void FilterSet::endFade() {
++	int32_t i = (int32_t)fadeSlot_ - 1;
++	if (i >= 0 && i < kNumFades && fades[i].owner == this) {
++		fades[i].owner = nullptr;
++	}
++	fadeSlot_ = 0;
++}
++
++// The filters as they were render the same input into fadeBuffer, this one's in place, and the output moves from theirs
++// to this one's over kFadeSamples. Their gain: the gain compensation their configuration gave against this one's, on
++// their input where the caller applies it before the filters (a voice), on their output where after (outputGain: the
++// song's, a kit's, an audio track's)
++void FilterSet::renderFade(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, bool stereo,
++                           int32_t hpfSaturation, int32_t lpfSaturation, bool outputGain) {
++	FilterFade& f = fades[fadeSlot_ - 1];
++	int32_t length = (int32_t)(endSample - startSample);
++	// Q2.29, 1 = 536870912
++	constexpr q31_t kOne = 1 << 29;
++	q31_t ratio = kOne;
++	if (gainCompensation_ > 0.0f && f.gain > 0.0f && f.gain != gainCompensation_) {
++		ratio = (q31_t)std::clamp(f.gain / gainCompensation_ * (float)kOne, (float)(kOne >> 2), 3.99f * kOne);
++	}
++	if (ratio != kOne && !outputGain) {
++		for (int32_t i = 0; i < length; i++) {
++			fadeBuffer[i] = lshiftAndSaturate<3>(multiply_32x32_rshift32_rounded(startSample[i], ratio));
++		}
++	}
++	else {
++		memcpy(fadeBuffer, startSample, length * sizeof(q31_t));
++	}
++	if (stereo) {
++		f.old().renderLongStereoInner(fadeBuffer, fadeBuffer + length, hpfSaturation, lpfSaturation);
++	}
++	else {
++		f.old().renderLongInner(fadeBuffer, fadeBuffer + length, sampleIncrement, hpfSaturation, lpfSaturation);
++	}
++	if (stereo) {
++		renderLongStereoInner(startSample, endSample, hpfSaturation, lpfSaturation);
++	}
++	else {
++		renderLongInner(startSample, endSample, sampleIncrement, hpfSaturation, lpfSaturation);
++	}
++	// out = new + (old - new) * (1 - w), w = (done + 1) / kFadeSamples up to 1, per frame
++	int32_t channels = stereo ? 2 : 1;
++	int32_t step = stereo ? 2 : sampleIncrement;
++	int32_t done = f.done;
++	for (int32_t i = 0; i < length && done < kFadeSamples; i += step) {
++		done++;
++		int64_t keep = (int64_t)(kFadeSamples - done) * ONE_Q31 / kFadeSamples; // the old one's share, Q31
++		for (int32_t c = 0; c < channels; c++) {
++			int64_t old = fadeBuffer[i + c];
++			if (ratio != kOne && outputGain) {
++				old = ((int64_t)old * ratio) >> 29;
++			}
++			int64_t now = startSample[i + c];
++			int64_t out = now + (((old - now) * keep) >> 31);
++			startSample[i + c] = (q31_t)std::clamp(out, (int64_t)INT32_MIN, (int64_t)INT32_MAX);
++		}
++	}
++	f.done = done;
++	if (done >= kFadeSamples) {
++		endFade();
+ 	}
+ }
+ 
+@@ -193,6 +319,26 @@ int32_t FilterSet::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMode
+                              q31_t filterGain, FilterRoute routing, bool adjustVolumeForHPFResonance,
+                              q31_t* overallOscAmplitude) {
+ 	const q31_t filterGainIn = filterGain;
++	if (configured_) {
++		if (fadeSlot() != 0) {
++			// One crossfade at a time: a change during one waits for its end (at most kFadeSamples), with the filters
++			// as they are now
++			lpfmode = lpfMode_;
++			hpfmode = hpfMode_;
++			routing = routing_;
++		}
++		else {
++			// A filter switched off or to another mode, or the route changed with a filter on: fade from the filters as
++			// they were. (A filter switched on fades in from the dry signal itself, see Filter::reset())
++			bool lpfChange = lpfMode_ != FilterMode::OFF && lpfmode != lpfMode_;
++			bool hpfChange = hpfMode_ != FilterMode::OFF && hpfmode != hpfMode_;
++			bool routeChange = routing != routing_ && (LPFOn || HPFOn);
++			if (lpfChange || hpfChange || routeChange) {
++				startFade();
++			}
++		}
++	}
++	configured_ = true;
+ 	LPFOn = lpfmode != FilterMode::OFF;
+ 	HPFOn = hpfmode != FilterMode::OFF;
+ 	lpfMode_ = lpfmode;
+diff --git a/src/deluge/dsp/filter/filter_set.h b/src/deluge/dsp/filter/filter_set.h
+index 6d8f4593..7ee339c2 100644
+--- a/src/deluge/dsp/filter/filter_set.h
++++ b/src/deluge/dsp/filter/filter_set.h
+@@ -47,8 +47,13 @@ public:
+ 	// Community #4635 (15bdf097): reset() zeroes the whole FilterSet, the filters and what it remembers of the last
+ 	// configuration (lastLPFMode_, lastHPFMode_, ...), so a new voice starts as a new one and doesn't take a switch-on
+ 	// fade or a kept state from the note that used the voice before
++	// mastertune v18: a crossfade still running (see startFade()) ends with it
+ 	FilterSet() { reset(); }
+-	void reset() { memset((void*)this, 0, sizeof(FilterSet)); }
++	~FilterSet() { endFade(); }
++	void reset() {
++		endFade();
++		memset((void*)this, 0, sizeof(FilterSet));
++	}
+ 	int32_t setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMode lpfmode, q31_t lpfMorph, q31_t hpfFrequency,
+ 	                  q31_t hpfResonance, FilterMode hpfmode, q31_t hpfMorph, q31_t filterGain, FilterRoute routing,
+ 	                  bool adjustVolumeForHPFResonance, q31_t* overallOscAmplitude);
+@@ -70,15 +75,24 @@ public:
+ 	                      int32_t hpfSaturation = HpLadderFilter::kSaturationVoice,
+ 	                      int32_t lpfSaturation = LpLadderFilter::kSaturationVoice, bool rampGain = false);
+ 
+-	// used to check whether the filter is used at all
++	// used to check whether the filter is used at all (isOn(): also while a filter switched off fades out)
+ 	inline bool isLPFOn() { return LPFOn; }
+ 	inline bool isHPFOn() { return HPFOn; }
+-	inline bool isOn() { return HPFOn || LPFOn; }
++	inline bool isOn() { return HPFOn || LPFOn || fadeSlot_ != 0; }
++
++	/// mastertune v18: how long the crossfade takes where a filter's mode or the route changes or a filter is switched
++	/// off: 320 samples, 7.3 ms
++	static constexpr int32_t kFadeSamples = 320;
++	/// How many FilterSets can fade at once (the song's, kits' and voices' together); more changes at the same time
++	/// switch at once, as before
++	static constexpr int32_t kNumFades = 24;
++	/// Ends a crossfade at once, freeing its slot (a voice that is unassigned: it may be freed without its destructor)
++	void endFade();
+ 
+ 	/// mastertune-v17: whether setConfig() with these modes would leave the filters as they are: no reset, the same
+ 	/// modes remembered. Everything else it sets is only read by the rendering, and set again before it.
+ 	[[nodiscard]] bool keepsModes(FilterMode lpfmode, FilterMode hpfmode) const {
+-		return lastLPFMode_ == lpfmode && lastHPFMode_ == hpfmode;
++		return lastLPFMode_ == lpfmode && lastHPFMode_ == hpfmode && fadeSlot_ == 0;
+ 	}
+ 
+ private:
+@@ -95,6 +109,22 @@ private:
+ 
+ 	void rampGainCompensation(q31_t* startSample, q31_t* endSample);
+ 
++	// mastertune v18: the crossfade from the filters as they were to the filters as they are now, where a mode or the
++	// route changes or a filter is switched off. startFade() keeps a copy of this FilterSet as it was (its
++	// configuration and state) in one of kNumFades slots, which renders on beside this one for kFadeSamples, the
++	// output moving from its to this one's in a straight line. Then the copy goes (a filter switched off with it).
++	// fadeSlot_: the slot + 1, or 0
++	uint8_t fadeSlot_;
++	bool configured_; // setConfig() has run since the reset: there are filters as they were
++	bool startFade();
++	// fadeSlot_, where it's a slot this FilterSet holds (a copy of a FilterSet doesn't hold its original's), else 0
++	uint8_t fadeSlot();
++	void renderLongInner(q31_t* startSample, q31_t* endSample, int32_t sampleIncrememt, int32_t hpfSaturation,
++	                     int32_t lpfSaturation);
++	void renderLongStereoInner(q31_t* startSample, q31_t* endSample, int32_t hpfSaturation, int32_t lpfSaturation);
++	void renderFade(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, bool stereo, int32_t hpfSaturation,
++	                int32_t lpfSaturation, bool outputGain);
++
+ 	void renderLPFLong(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement, int32_t lpfSaturation);
+ 	void renderLPFLongStereo(q31_t* startSample, q31_t* endSample, int32_t lpfSaturation);
+ 	void renderHPFLongStereo(q31_t* startSample, q31_t* endSample, int32_t hpfSaturation);
+diff --git a/src/deluge/model/voice/voice.cpp b/src/deluge/model/voice/voice.cpp
+index e47a16a6..f47cf33c 100644
+--- a/src/deluge/model/voice/voice.cpp
++++ b/src/deluge/model/voice/voice.cpp
+@@ -95,6 +95,8 @@ Voice::Voice() : patcher(&patchableInfoForVoice) {
+ // Unusually, modelStack may be supplied as NULL, because when unassigning all voices e.g. on song swap, we won't have
+ // it. You'll normally want to call audioDriver.voiceUnassigned() after this.
+ void Voice::setAsUnassigned(ModelStackWithVoice* modelStack, bool deletingSong) {
++	// mastertune v18: a filter crossfade still running frees its slot (the voice may be freed without its destructor)
++	filterSet.endFade();
+ 
+ 	unassignStuff(deletingSong);
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,434 @@
+From 22ed04085ea0d7590415be7121f9e8fb5e7358df Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 04:49:08 +0000
+Subject: [PATCH 102/112] Output limiter (Community features, off by default):
+ a look-ahead peak limiter with a soft knee before the output clips
+
+Switched on (Community features > Output limiter, 7-segment LIMT, saved in CommunityFeatures.XML as outputLimiter),
+the render buffer passes a look-ahead peak limiter (dsp/output_limiter.h) as its last stage before the output's
+hard clip: the knee starts 1 dB below full scale and flattens out just under it (f(p) = T + (C-T) v/sqrt(1+v^2)),
+the gain is the lowest asked for over the next 33 samples, held 15 ms, released over 60 ms, averaged over 32
+samples (the attack), stereo-linked, on the input delayed by 32 samples (0.73 ms latency while on). No sample
+reaches full scale; the gain moves smoothly, so no harmonics to alias (a 2x oversampled soft clipper only took a
+hard clip's aliasing down by 7-10 dB at 5-11 kHz). Below the knee the output is the input bit for bit (delayed).
+Off, it doesn't run: the output is exactly as before.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/dsp/output_limiter.cpp             | 154 ++++++++++++++++++
+ src/deluge/dsp/output_limiter.h               |  71 ++++++++
+ src/deluge/gui/l10n/english.json              |   1 +
+ src/deluge/gui/l10n/g_english.cpp             |   1 +
+ src/deluge/gui/l10n/g_seven_segment.cpp       |   1 +
+ src/deluge/gui/l10n/seven_segment.json        |   1 +
+ src/deluge/gui/l10n/strings.h                 |   1 +
+ .../menu_item/runtime_feature/settings.cpp    |   4 +-
+ .../settings/runtime_feature_settings.cpp     |   5 +
+ .../model/settings/runtime_feature_settings.h |   1 +
+ .../processing/engines/audio_engine.cpp       |  19 +++
+ 11 files changed, 258 insertions(+), 1 deletion(-)
+ create mode 100644 src/deluge/dsp/output_limiter.cpp
+ create mode 100644 src/deluge/dsp/output_limiter.h
+
+diff --git a/src/deluge/dsp/output_limiter.cpp b/src/deluge/dsp/output_limiter.cpp
+new file mode 100644
+index 00000000..b4a90407
+--- /dev/null
++++ b/src/deluge/dsp/output_limiter.cpp
+@@ -0,0 +1,154 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "dsp/output_limiter.h"
++#include <algorithm>
++#include <arm_neon.h>
++#include <cmath>
++#include <cstring>
++
++namespace deluge::dsp {
++
++namespace {
++// The gain a peak p asks for: f(p) / p above the knee, 1 below
++inline float askedGain(float p) {
++	if (p <= OutputLimiter::kKnee) {
++		return 1.0f;
++	}
++	constexpr float kRange = OutputLimiter::kCeiling - OutputLimiter::kKnee;
++	float v = (p - OutputLimiter::kKnee) * (1.0f / kRange);
++	float f = OutputLimiter::kKnee + kRange * v / std::sqrt(1.0f + v * v);
++	return f / p;
++}
++
++// round(x * g) for 0 <= g < 1, g as Q31
++inline int32_t applyGain(int32_t x, int32_t gQ31) {
++	return (int32_t)(((int64_t)x * gQ31 + ((int64_t)1 << 30)) >> 31);
++}
++
++// exp(-1 / (release time in samples)): the held gain's distance from 1 shrinks by this per sample
++const float kReleaseFactor = std::exp(-1000.0f / (OutputLimiter::kReleaseMs * 44100.0f));
++} // namespace
++
++void OutputLimiter::reset() {
++	std::memset(history_, 0, sizeof(history_));
++	std::fill(std::begin(asked_), std::end(asked_), 1.0f);
++	std::fill(std::begin(held_), std::end(held_), 1.0f);
++	pos_ = 0;
++	lowest_ = 1.0f;
++	lowestAge_ = 0;
++	release_ = 1.0f;
++	holdLeft_ = 0;
++	heldSum_ = kLatency;
++	heldBelowOne_ = 0;
++	askedBelowOne_ = 0;
++}
++
++void OutputLimiter::process(StereoSample* buffer, int32_t numSamples) {
++	numSamples = std::min<int32_t>(numSamples, kMaxBlock);
++
++	// Nothing near the knee coming in and the gain at 1 throughout: only the delay runs
++	// (saturating absolute values: |INT32_MIN| counts as INT32_MAX)
++	int32x4_t peak4 = vdupq_n_s32(0);
++	int32_t i = 0;
++	for (; i + 2 <= numSamples; i += 2) {
++		peak4 = vmaxq_s32(peak4, vqabsq_s32(vld1q_s32(&buffer[i].l)));
++	}
++	int32x2_t peak2 = vpmax_s32(vget_low_s32(peak4), vget_high_s32(peak4));
++	int32_t peak = std::max(vget_lane_s32(peak2, 0), vget_lane_s32(peak2, 1));
++	for (; i < numSamples; i++) {
++		peak = std::max(
++		    peak, std::max(std::abs(std::max(buffer[i].l, -INT32_MAX)), std::abs(std::max(buffer[i].r, -INT32_MAX))));
++	}
++	bool idle =
++	    ((float)peak <= kKnee && heldBelowOne_ == 0 && askedBelowOne_ == 0 && release_ == 1.0f && lowest_ == 1.0f);
++
++	// The input and the history, in order: work[k] is the input kLatency samples before buffer[k]
++	StereoSample work[kLatency + kMaxBlock];
++	std::memcpy(work, history_, sizeof(history_));
++	std::memcpy(work + kLatency, buffer, numSamples * sizeof(StereoSample));
++
++	if (idle) {
++		std::memcpy(buffer, work, numSamples * sizeof(StereoSample));
++	}
++	else {
++		int32_t askedPos = pos_ % (kLatency + 1);
++		int32_t heldPos = pos_ % kLatency;
++		for (int32_t k = 0; k < numSamples; k++) {
++			// The gain the newest sample asks for, into the look-ahead window
++			const StereoSample& in = work[kLatency + k];
++			float p = (float)std::max(std::abs((int64_t)in.l), std::abs((int64_t)in.r));
++			float asked = askedGain(p);
++			askedBelowOne_ += (asked < 1.0f) - (asked_[askedPos] < 1.0f);
++			asked_[askedPos] = asked;
++			// The lowest over the window (kept with its age: searched again only when it leaves the window), held,
++			// releasing towards 1 after
++			if (asked <= lowest_) {
++				lowest_ = asked;
++				lowestAge_ = 0;
++			}
++			else if (++lowestAge_ > kLatency) {
++				lowest_ = 1.0f;
++				lowestAge_ = 0;
++				if (askedBelowOne_ != 0) {
++					// (the ring from the oldest to the newest: the age of each)
++					for (int32_t a = kLatency; a >= 0; a--) {
++						int32_t idx = askedPos - a;
++						float v = asked_[idx < 0 ? idx + kLatency + 1 : idx];
++						if (v <= lowest_) {
++							lowest_ = v;
++							lowestAge_ = a;
++						}
++					}
++				}
++			}
++			askedPos = (askedPos == kLatency) ? 0 : askedPos + 1;
++			if (lowest_ <= release_) {
++				release_ = lowest_;
++				holdLeft_ = kHoldSamples;
++			}
++			else if (holdLeft_ > 0) {
++				holdLeft_--;
++			}
++			else {
++				release_ = std::min(lowest_, 1.0f - (1.0f - release_) * kReleaseFactor);
++				if (release_ > 0.9999999f) {
++					release_ = 1.0f;
++				}
++			}
++			// Averaged over kLatency samples: the attack
++			heldBelowOne_ += (release_ < 1.0f) - (held_[heldPos] < 1.0f);
++			heldSum_ += (double)release_ - (double)held_[heldPos];
++			held_[heldPos] = release_;
++			heldPos = (heldPos == kLatency - 1) ? 0 : heldPos + 1;
++			if (heldBelowOne_ == 0) {
++				heldSum_ = kLatency; // (exactly: no drift left over from the sums)
++				buffer[k] = work[k];
++			}
++			else {
++				float g = std::min((float)(heldSum_ * (1.0 / kLatency)), 0.99999994f);
++				int32_t gQ31 = (int32_t)(g * 2147483648.0f);
++				buffer[k].l = applyGain(work[k].l, gQ31);
++				buffer[k].r = applyGain(work[k].r, gQ31);
++			}
++		}
++		pos_ += numSamples;
++	}
++	std::memcpy(history_, work + numSamples, sizeof(history_));
++}
++
++} // namespace deluge::dsp
+diff --git a/src/deluge/dsp/output_limiter.h b/src/deluge/dsp/output_limiter.h
+new file mode 100644
+index 00000000..d4cd73b2
+--- /dev/null
++++ b/src/deluge/dsp/output_limiter.h
+@@ -0,0 +1,71 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++// mastertune v18: the output limiter (Community features > Output limiter, off by default): the last stage before the
++// output's hard clip (AudioEngine: the render buffer after the song's FX and the metronome, where 2^24 is the 24-bit
++// output's full scale).
++//
++// A look-ahead peak limiter with a soft knee: each sample's peak p (the larger side, so the stereo image stays) asks
++// for the gain f(p) / p, where f is the knee: the identity up to T (1 dB below full scale), above it
++// f(p) = T + (C - T) s((p - T) / (C - T)), s(v) = v / sqrt(1 + v^2), which joins the straight line with slope 1 and
++// curvature 0 and approaches C (just under full scale) without reaching it. The gain applied is the lowest asked for
++// over the next kLatency + 1 samples (held for 15 ms, so that the sample peaks' beating near a quarter of the sample
++// rate doesn't modulate it, then released over 60 ms), averaged over kLatency samples (the attack: a
++// straight-line ramp of 0.73 ms), and applied to the input delayed by kLatency samples: when a peak comes out, the
++// gain has got to what it asked for, so no sample reaches full scale and nothing hard-clips; the gain moves smoothly,
++// so the limiting adds no harmonics that could alias (a waveshaping soft clipper, even 2x oversampled, only took the
++// aliasing of a hard clip down by 7 to 10 dB at 5 to 11 kHz: tests/volume/limiter_test.cpp).
++// Below the knee the gain is exactly 1: the output is the input bit for bit, delayed by kLatency samples (0.73 ms, the
++// limiter's latency while it's on). Off, it doesn't run at all: the output is exactly as without it.
++
++#pragma once
++
++#include "dsp/stereo_sample.h"
++#include <cstdint>
++
++namespace deluge::dsp {
++
++class OutputLimiter {
++public:
++	static constexpr int32_t kLatency = 32;          // samples of look-ahead (0.73 ms)
++	static constexpr int32_t kMaxBlock = 128;        // SSI_TX_BUFFER_NUM_SAMPLES
++	static constexpr float kFullScale = 16777216.0f; // 2^24: the output's full scale inside the firmware
++	static constexpr float kKnee = 14953486.0f;      // T: 1 dB below
++	static constexpr float kCeiling = 16777152.0f;   // C: 2^24 - 64, where the knee flattens out
++	static constexpr int32_t kHoldSamples = 662;     // 15 ms: how long the gain holds before it releases
++	static constexpr float kReleaseMs = 60.0f;       // time constant of the gain's return to 1 after that
++
++	/// In place; numSamples at most kMaxBlock
++	void process(StereoSample* buffer, int32_t numSamples);
++	/// Silence before, the gain at 1 (when switched on)
++	void reset();
++
++private:
++	StereoSample history_[kLatency] = {}; // the last kLatency input samples: the delay
++	float asked_[kLatency + 1];           // the gains the last kLatency + 1 samples asked for (a ring)
++	float held_[kLatency];                // the held and released gains of the last kLatency samples (a ring)
++	int32_t pos_ = 0;                     // ring position
++	float lowest_ = 1.0f;                 // the lowest gain asked for in the window
++	int32_t lowestAge_ = 0;               // how many samples ago it was asked for
++	float release_ = 1.0f;                // the held gain, releasing towards 1
++	int32_t holdLeft_ = 0;                // samples it holds on for
++	double heldSum_ = kLatency;           // the sum of held_
++	int32_t heldBelowOne_ = 0;            // how many of held_ are below 1 (none: the gain is exactly 1)
++	int32_t askedBelowOne_ = 0;           // the same for asked_
++};
++
++} // namespace deluge::dsp
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index ad3729e0..0204a944 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -956,6 +956,7 @@
+         "STRING_FOR_DRONE_TRACK_CREATED": "Drone track created",
+         "STRING_FOR_CPU_MONITOR": "CPU monitor",
+         "STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING": "Flicker-free dimming",
++        "STRING_FOR_COMMUNITY_FEATURE_OUTPUT_LIMITER": "Output limiter",
+         "STRING_FOR_TIME_CHANGE": "Time change",
+         "STRING_FOR_DELAY_TIME_CHANGE": "Delay time change",
+         "STRING_FOR_FADE": "Fade",
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index ca986244..8f3e6b40 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -884,6 +884,7 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_DRONE_TRACK_CREATED, "Drone track created"},
+         {STRING_FOR_CPU_MONITOR, "CPU monitor"},
+         {STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING, "Flicker-free dimming"},
++        {STRING_FOR_COMMUNITY_FEATURE_OUTPUT_LIMITER, "Output limiter"},
+         {STRING_FOR_TIME_CHANGE, "Time change"},
+         {STRING_FOR_DELAY_TIME_CHANGE, "Delay time change"},
+         {STRING_FOR_FADE, "Fade"},
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index 04b2ca59..2f64ca6c 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -525,6 +525,7 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_DRONE_TRACK_CREATED, "DRON"},
+         {STRING_FOR_CPU_MONITOR, "CPU"},
+         {STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING, "DIMM"},
++        {STRING_FOR_COMMUNITY_FEATURE_OUTPUT_LIMITER, "LIMT"},
+         {STRING_FOR_TIME_CHANGE, "TIME"},
+         {STRING_FOR_FADE, "FADE"},
+         {STRING_FOR_TAPE, "TAPE"},
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index cbdf74a4..14920373 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -560,6 +560,7 @@
+         "STRING_FOR_DRONE_TRACK_CREATED": "DRON",
+         "STRING_FOR_CPU_MONITOR": "CPU",
+         "STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING": "DIMM",
++        "STRING_FOR_COMMUNITY_FEATURE_OUTPUT_LIMITER": "LIMT",
+         "STRING_FOR_TIME_CHANGE": "TIME",
+         "STRING_FOR_FADE": "FADE",
+         "STRING_FOR_TAPE": "TAPE",
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index a19ed44c..fa4e3bab 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -976,6 +976,7 @@ enum class String : size_t {
+ 	STRING_FOR_USB_AUDIO_GAP,
+ 	STRING_FOR_COMMUNITY_FEATURE_KIT_RAM_SAVER,
+ 	STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING,
++	STRING_FOR_COMMUNITY_FEATURE_OUTPUT_LIMITER,
+ 
+ 	// drone (mastertune-v12)
+ 	STRING_FOR_DRONE,
+diff --git a/src/deluge/gui/menu_item/runtime_feature/settings.cpp b/src/deluge/gui/menu_item/runtime_feature/settings.cpp
+index b92d83b1..afdbbfd4 100644
+--- a/src/deluge/gui/menu_item/runtime_feature/settings.cpp
++++ b/src/deluge/gui/menu_item/runtime_feature/settings.cpp
+@@ -53,6 +53,7 @@ SettingToggle menuEnableGridViewLoopPads(RuntimeFeatureSettingType::EnableGridVi
+ UsbAudioSetting menuUsbAudio(RuntimeFeatureSettingType::UsbAudio);
+ SettingToggle menuKitRamSaver(RuntimeFeatureSettingType::KitRamSaver);
+ FlickerFreeDimmingSetting menuFlickerFreeDimming(RuntimeFeatureSettingType::FlickerFreeDimming);
++SettingToggle menuOutputLimiter(RuntimeFeatureSettingType::OutputLimiter);
+ 
+ std::array<MenuItem*, RuntimeFeatureSettingType::MaxElement - kNonTopLevelSettings> subMenuEntries{
+     &menuDrumRandomizer,
+@@ -80,7 +81,8 @@ std::array<MenuItem*, RuntimeFeatureSettingType::MaxElement - kNonTopLevelSettin
+     &menuEnableGridViewLoopPads,
+     &menuUsbAudio,
+     &menuKitRamSaver,
+-    &menuFlickerFreeDimming};
++    &menuFlickerFreeDimming,
++    &menuOutputLimiter};
+ 
+ Settings::Settings(l10n::String name, l10n::String title) : menu_item::Submenu(name, title, subMenuEntries) {
+ }
+diff --git a/src/deluge/model/settings/runtime_feature_settings.cpp b/src/deluge/model/settings/runtime_feature_settings.cpp
+index b59863ac..199e08da 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.cpp
++++ b/src/deluge/model/settings/runtime_feature_settings.cpp
+@@ -213,6 +213,11 @@ void RuntimeFeatureSettings::init() {
+ 	SetupOnOffSetting(settings[RuntimeFeatureSettingType::FlickerFreeDimming],
+ 	                  STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING, "flickerFreeDimming",
+ 	                  RuntimeFeatureStateToggle::On);
++
++	// OutputLimiter (mastertune v18): a soft clipper, 2x oversampled, 1 dB below the output's full scale, as the last
++	// stage before the output clips (dsp/output_limiter.h); off: the output as before, bit for bit
++	SetupOnOffSetting(settings[RuntimeFeatureSettingType::OutputLimiter], STRING_FOR_COMMUNITY_FEATURE_OUTPUT_LIMITER,
++	                  "outputLimiter", RuntimeFeatureStateToggle::Off);
+ }
+ 
+ void RuntimeFeatureSettings::readSettingsFromFile(StorageManager& bdsm) {
+diff --git a/src/deluge/model/settings/runtime_feature_settings.h b/src/deluge/model/settings/runtime_feature_settings.h
+index ec9fc8dc..4302cc51 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.h
++++ b/src/deluge/model/settings/runtime_feature_settings.h
+@@ -69,6 +69,7 @@ enum RuntimeFeatureSettingType : uint32_t {
+ 	UsbAudio,
+ 	KitRamSaver,
+ 	FlickerFreeDimming,
++	OutputLimiter,
+ 	MaxElement // Keep as boundary
+ };
+ 
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index a7637b47..6bbb068f 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -18,6 +18,7 @@
+ #include "processing/engines/audio_engine.h"
+ #include "definitions_cxx.hpp"
+ #include "dsp/drone/drone.h"
++#include "dsp/output_limiter.h"
+ #include "dsp/reverb/reverb.hpp"
+ #include "dsp/timestretch/time_stretcher.h"
+ #include "extern.h"
+@@ -39,6 +40,7 @@
+ #include "model/instrument/kit.h"
+ #include "model/mod_controllable/mod_controllable_audio.h"
+ #include "model/sample/sample_recorder.h"
++#include "model/settings/runtime_feature_settings.h"
+ #include "model/song/song.h"
+ #include "model/tuning/master_tune.h"
+ #include "model/voice/voice.h"
+@@ -203,6 +205,10 @@ uint16_t lastRoutineTime;
+ std::array<StereoSample, SSI_TX_BUFFER_NUM_SAMPLES> renderingBuffer __attribute__((aligned(CACHE_LINE_SIZE)));
+ std::array<int32_t, 2 * SSI_TX_BUFFER_NUM_SAMPLES> reverbBuffer __attribute__((aligned(CACHE_LINE_SIZE)));
+ 
++// mastertune v18: the output limiter (Community features)
++deluge::dsp::OutputLimiter outputLimiter;
++bool outputLimiterRunning = false;
++
+ StereoSample* renderingBufferOutputPos = renderingBuffer.begin();
+ StereoSample* renderingBufferOutputEnd = renderingBuffer.begin();
+ 
+@@ -756,6 +762,19 @@ void renderAudio(size_t numSamples) {
+ 
+ 	metronome.render(renderingBuffer.data(), numSamples);
+ 
++	// mastertune v18: the output limiter, where switched on (Community features), as the last stage before the output
++	// clips (dsp/output_limiter.h); switched on, it starts from silence
++	if (runtimeFeatureSettings.isOn(RuntimeFeatureSettingType::OutputLimiter)) {
++		if (!outputLimiterRunning) {
++			outputLimiter.reset();
++			outputLimiterRunning = true;
++		}
++		outputLimiter.process(renderingBuffer.data(), numSamples);
++	}
++	else {
++		outputLimiterRunning = false;
++	}
++
+ 	approxRMSLevel = envelopeFollower.calcApproxRMS(renderingBuffer.data(), numSamples);
+ 
+ 	setMonitoringMode();
+-- 
+2.43.0
+

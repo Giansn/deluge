@@ -1,0 +1,31 @@
+From ba1dbf039fe757ca1ff19f8993ef5174cd51968d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 05:28:30 +0000
+Subject: [PATCH 103/112] Output limiter: the settings comment says what it is
+ (a look-ahead peak limiter, not a soft clipper)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/model/settings/runtime_feature_settings.cpp | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/src/deluge/model/settings/runtime_feature_settings.cpp b/src/deluge/model/settings/runtime_feature_settings.cpp
+index 199e08da..4b2fd921 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.cpp
++++ b/src/deluge/model/settings/runtime_feature_settings.cpp
+@@ -214,8 +214,9 @@ void RuntimeFeatureSettings::init() {
+ 	                  STRING_FOR_COMMUNITY_FEATURE_FLICKER_FREE_DIMMING, "flickerFreeDimming",
+ 	                  RuntimeFeatureStateToggle::On);
+ 
+-	// OutputLimiter (mastertune v18): a soft clipper, 2x oversampled, 1 dB below the output's full scale, as the last
+-	// stage before the output clips (dsp/output_limiter.h); off: the output as before, bit for bit
++	// OutputLimiter (mastertune v18): a look-ahead peak limiter with a soft knee from 1 dB below the output's full
++	// scale (32 samples of latency while on), as the last stage before the output clips (dsp/output_limiter.h); off:
++	// the output as before, bit for bit
+ 	SetupOnOffSetting(settings[RuntimeFeatureSettingType::OutputLimiter], STRING_FOR_COMMUNITY_FEATURE_OUTPUT_LIMITER,
+ 	                  "outputLimiter", RuntimeFeatureStateToggle::Off);
+ }
+-- 
+2.43.0
+
