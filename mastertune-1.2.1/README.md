@@ -708,7 +708,7 @@ v18 enthält v17. Wie bei v17 hat die Hauptdatei den L2-Cache für Code und Date
 
 **Song-Übersicht** (Patches 0078, 0080): Eine Gruppe ist der ganze Name ohne die Zahl am Ende («New Sitar Grii», «… 2», «… 10»), die Zeile zeigt den ganzen Namen. Aufgeklappte Gruppen bleiben beim Weiterdrehen offen (bis 8), BACK auf einer Version klappt ihre Gruppe zu. Eine Zahl nach «-» oder «.» gehört zum Namen («TR-808», «Jam 2026-09-27»).
 
-**Songname für DelugeRec** (Patch 0112): Solange der Computer den USB-Audio-Stream offen hat, meldet der Deluge Songnamen und Firmware auf USB-MIDI Port 3 (SysEx 0x12). DelugeRec v6 benennt damit seine Aufnahmen «Songname, 28.09.2026 - 1.2.1 v18.WAV». Nur gesendet, nie beantwortet; im Emulator läuft kein USB, darum am Gerät zu prüfen.
+**Songname für DelugeRec** (Patch 0112): Solange der Computer den USB-Audio-Stream offen hat, meldet der Deluge Songnamen und Firmware auf USB-MIDI Port 3 (SysEx 0x12). DelugeRec v6 benennt damit seine Aufnahmen «Songname, 28.09.2026 - 1.2.1 v18.WAV». Ab v18.2 braucht es DelugeRec v7: v6 schneidet den Punkt der Version ab («… - 1.2.1 v18.WAV»), v7 schreibt «… - 1.2.1 v18.2.WAV». Nur gesendet, nie beantwortet; im Emulator läuft kein USB, darum am Gerät zu prüfen.
 
 **Korrektur:** Beim Laden einer Audiospur schrieb die Firmware ein Kennzeichen in ein falsches Objekt (Fehler aus 1.2.1, Patch 0105). Mit dem neuen EQ hätte das den Song zum Absturz gebracht; jetzt bekommen es nur Instrumente.
 

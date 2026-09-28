@@ -307,6 +307,14 @@ class Naming(EngineCase):
         e.info.song, e.info.firmware = "", "1.2.1-mastertune-v18"
         self.assertEqual(self.take(e, [samples24(10)]).name, "New song, 27.09.2026 - 1.2.1 v18.WAV")
 
+    def test_version_with_a_point(self):
+        """From mastertune v18.2 on the version has a point: "1.2.1 v18.2" in the name, whole, and its takes numbered
+        after it."""
+        e = self.engine_at("Rescue 3", "1.2.1-mastertune-v18.2-l2d")
+        self.assertEqual(self.take(e, [samples24(10)]).name, "Rescue 3, 27.09.2026 - 1.2.1 v18.2.WAV")
+        self.assertEqual(self.take(e, [samples24(10)]).name, "Rescue 3, 27.09.2026 - 1.2.1 v18.2 (2).WAV")
+        self.assertIn("Deluge firmware: 1.2.1-mastertune-v18.2-l2d.", wav_info(self.dir / e.last_take[0])[b"ICMT"])
+
     def test_no_overwrite(self):
         """More takes of the same song that day: " (2)", " (3)" ...; an existing file stays as it is."""
         e = self.engine_at("Rescue 3", "1.2.1-mastertune-v17-l2d-b3385d83")
@@ -320,6 +328,10 @@ class Naming(EngineCase):
         self.assertEqual(dr.clean_name("x" * 200), "x" * 80)
         self.assertEqual(dr.short_firmware("1.2.1-mastertune-v16-l2d-dronefix-ba499a93"), "1.2.1 v16")
         self.assertEqual(dr.short_firmware("1.2.1-mastertune-v17-l2d-songinfo-8c1f9b34"), "1.2.1 v17")
+        self.assertEqual(dr.short_firmware("1.2.1-mastertune-v18"), "1.2.1 v18")
+        self.assertEqual(dr.short_firmware("1.2.1-mastertune-v18.2-l2d"), "1.2.1 v18.2")
+        self.assertEqual(dr.short_firmware("1.2.1-mastertune-v18.2-l2d-c9c65066"), "1.2.1 v18.2")
+        self.assertEqual(dr.short_firmware("1.2.1-mastertune-v18.12"), "1.2.1 v18.12")
         self.assertEqual(dr.short_firmware("c1.2.1"), "1.2.1")
         self.assertEqual(dr.short_firmware("my/firmware"), "my_firmware")
         self.assertEqual(dr.short_firmware(None), "")

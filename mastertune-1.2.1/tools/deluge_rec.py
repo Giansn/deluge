@@ -49,6 +49,7 @@ Versions (the number is in the window's title and on the display at start, --ver
   4  VOL, a fader against the red; a box around each control; the monitor without clicks (fades in and out)
   5  the files named by song, date and time and firmware, which the Deluge tells on MIDI port 3; RIFF INFO inside
   6  the file name as "Rescue 3, 28.09.2026 - 1.2.1 v17" ((2), (3) ... for more takes that day)
+  7  a firmware version with a point in the file name, whole: "1.2.1 v18.2" (mastertune v18.2), not "1.2.1 v18"
 """
 import argparse
 import collections
@@ -68,7 +69,7 @@ from pathlib import Path
 
 import numpy as np
 
-VERSION = 6                     # One more with every change of the program, and a line under Versions above
+VERSION = 7                     # One more with every change of the program, and a line under Versions above
 RATE = 44100
 CHANNELS = 2
 FULL_SCALE = 2 ** 31            # The 24-bit samples arrive left-justified in int32
@@ -240,11 +241,12 @@ def clean_name(text, limit=80):
 
 
 def short_firmware(firmware):
-    """The firmware in a file name: "1.2.1-mastertune-v17-l2d-b3385d83" becomes "1.2.1 v17", the community's "c1.2.1"
+    """The firmware in a file name: "1.2.1-mastertune-v17-l2d-b3385d83" becomes "1.2.1 v17",
+    "1.2.1-mastertune-v18.2-l2d" "1.2.1 v18.2" (a version with a point, from v18.2 on), the community's "c1.2.1"
     "1.2.1", anything else stays (made safe). The whole name is in the file's INFO list."""
     if not firmware:
         return ""
-    m = re.match(r"c?(\d+\.\d+\.\d+)(?:-mastertune-(v\d+))?", firmware)
+    m = re.match(r"c?(\d+\.\d+\.\d+)(?:-mastertune-(v\d+(?:\.\d+)?))?", firmware)
     if m:
         return m.group(1) + (" " + m.group(2) if m.group(2) else "")
     return clean_name(firmware, 24)
