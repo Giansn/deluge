@@ -1,5 +1,45 @@
 # Deluge 1.2.1 mit Master Tune
 
+## In short (English)
+
+**mastertune** is the official Deluge community firmware **1.2.1** with a master tune, cleaner sound, half the load and a few tools around it. Latest: **v18.3**, [`deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin`](https://github.com/Giansn/deluge/raw/claude/wizardly-brahmagupta-nnrk07/mastertune-1.2.1/deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin). Every version, the details and the measurements are further down, in German. Install it like any Deluge firmware: the .bin in the SD card's root folder (only one .bin there), then switch the Deluge on while holding SHIFT.
+
+![Song change armed: 2 bars remaining](screenshots/oled_songchange.png)
+
+<sub>The song-change countdown on the OLED of the real v18.3 firmware, run in the emulator (`tests/screenshots`).</sub>
+
+**Tuning**
+- **Master tune** from 415.3 to 466.2 Hz in 0.1 Hz steps (Settings → Tuning → Master tune), for example 432 Hz. Everything that sounds follows: synths, kits, samples, FM and DX7, audio clips (time-stretched, the tempo stays), held notes, CV outputs and external MIDI gear (RPN 1 fine tuning). Recordings remember the tuning they were made in, so they are never tuned twice.
+
+**Sound**
+- **Filters** (v18–v18.3): no rustle at low cutoff, cutoff and resonance glide sample by sample (no zipper), mode and routing changes without clicks, Drive with 2× oversampling where 1.2.1 had it.
+- **EQ and volume:** real shelving EQ, volume in 0.5 dB steps shown in dB, an optional output limiter and filter crossing guard.
+- **Reverb:** a new Digital model, Mutable and Freeverb repaired, HPF and LPF, no wobble. **Delay:** clean repeats, no clicks or pitch jumps when the time changes (Fade or Tape), LPF and HPF in the feedback.
+- **Frequency drone:** up to 16 tones, binaural, monaural or isochronic, tempo sync, sidechain, Life, FM and Pulse; drone tracks in song and arranger view.
+- **Arpeggiator from 1.3** with latch, ratchet bounce and ping-pong.
+
+**Load and workflow**
+- About **half the CPU load** in heavy songs (a scheduling bug from 1.2.1 fixed, silent tracks skipped), L2 cache for code and data, smarter sample streaming, a RAM saver for kits.
+- Song-change countdown, song browser with versions, CPU monitor on the OLED (hold LEARN, press TEMPO), readable firmware version, OLED brightness, flicker-free pad dimming.
+- SD card over USB (DEx, deluge-editor), the Deluge as a USB audio input on the computer (stereo, 24 bit).
+- Fixed: sidechain click, crackle when saving, clock outputs under external clock, USB MIDI receive, section launch by CC, settings of other versions lost on saving, the song's reverb sidechain sync level slipping at every save.
+
+**Tools for Windows** (one .exe each, nothing to install; Windows asks once because they are not signed: More info, Run anyway)
+
+| | |
+|---|---|
+| ![DelugeRec recording](screenshots/deluge_rec.png) | **DelugeRec** ([download v7](https://github.com/Giansn/deluge/releases/download/deluge-rec-v7/DelugeRec-v7.exe)): records the Deluge's USB audio with a monitor on the headphones. Each take is named after the song, the date and the firmware. |
+| ![DelugeTuner having read a card](screenshots/deluge_tuner.png) | **DelugeTuner** ([download v1](https://github.com/Giansn/deluge/releases/download/deluge-tuner-v1/DelugeTuner-v1.exe)): retunes a card's sample library once to the master tune. The samples then play as they are instead of being resampled in every voice. |
+| ![DelugeBaseline having read a card](screenshots/deluge_baseline.png) | **DelugeBaseline** ([download v3](https://github.com/Giansn/deluge/releases/download/deluge-baseline-v3/DelugeBaseline-v3.exe)): checks the levels of all songs on a card and evens them out, with a backup. |
+
+The newest version of each tool is always in its release: [deluge-rec](https://github.com/Giansn/deluge/releases/tag/deluge-rec), [deluge-tuner](https://github.com/Giansn/deluge/releases/tag/deluge-tuner), [deluge-baseline](https://github.com/Giansn/deluge/releases/tag/deluge-baseline). As Python scripts they are in `tools/`.
+
+**Tested:** every release is built twice with the same SHA-256. The firmware's own ARM code runs in an emulator: it boots, loads songs, renders audio and goes through hundreds of checks and stress tests. **v18.x has not been played on a real Deluge yet.** Keep a copy of your card, and feedback is welcome.
+
+**Source:** `patches/0001`–`0116` against `release_1_2_1`, plus `l2test/0001`–`0003` for the L2 build.
+
+## Auf Deutsch
+
 Das ist die offizielle Community-Firmware **1.2.1** (Tag `release_1_2_1`, Commit `c23bc2fe`) mit einstellbarer Grundstimmung, in mehreren Stufen. v5 bringt zusätzlich den Arpeggiator aus 1.3, v6 eine zweite Bounce-Version, v7 den Zugriff auf die SD-Karte über USB, v8 den Deluge als USB-Audio-Eingang am Computer, v9 klügeres Sample-Streaming und einen RAM-Sparer für Kits, v10 ein besseres Reverb, v11 ein besseres Delay und kein Knacksen mehr beim Speichern, v12 einen Frequenz-Drone mit bis zu 16 Tönen, v13 mehr Leistung, einen Ping-Pong-Arp, flimmerfreies Dimmen der Pads, genaueres MIDI und einen überarbeiteten Drone, v14 ein Reverb ohne Wabbeln, ein Delay ohne Tonhöhensprung und einen Countdown beim Song-Wechsel, v15 einen lebendigen Drone (Life, FM, Pulse), einen CPU-Monitor in einer Zeile und drei Korrekturen aus der Community, v16 Drone-Spuren für Song- und Arranger-View und einen Profiler, v17 halbe Last, eine Song-Übersicht mit aufklappbaren Versionen, ein Kürzel für den CPU-Monitor und den L2-Cache in der Hauptdatei, v18 Filter ohne Rascheln und mit sauberen Übergängen, Lautstärkeregler in dB und ein lesbares OLED, v18.2 Filter, EQ und Lautstärke ohne Reste nach einer Stille, v18.3 Drive mit Überabtastung wie in 1.2.1 und Einstellungen, die beim Speichern erhalten bleiben.
 
 | Datei | Version (Settings → Firmware version) | Inhalt |
