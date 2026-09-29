@@ -4,7 +4,7 @@
 
 **mastertune** is my fork of the official Deluge community firmware **1.2.1**: lighter on the CPU, with a CPU monitor, the Deluge as a USB audio interface, a master tune and a few tools around it. Latest: **v19.0.1**, [`deluge-1.2.1-mastertune-v19.0.1-l2d-782cf068.bin`](https://github.com/Giansn/deluge/raw/claude/wizardly-brahmagupta-nnrk07/mastertune-1.2.1/deluge-1.2.1-mastertune-v19.0.1-l2d-782cf068.bin). Install it like any Deluge firmware: the .bin in the SD card's root folder (only one .bin there), then switch the Deluge on while holding SHIFT. Every version, the details and the measurements are further down.
 
-**Manual:** [English](mastertune-1.2.1/docs/mastertune-manual-en.pdf) (56 pages) or [German](mastertune-1.2.1/docs/mastertune-manual-de.pdf) (59 pages): every change explained, where to find it on the Deluge and how to use it, with diagrams, the frequency drone in full and a reference of all menus, buttons and messages.
+**Manual:** [English](mastertune-1.2.1/docs/mastertune-manual-en.pdf) (56 pages) or [German](mastertune-1.2.1/docs/mastertune-manual-de.pdf) (59 pages): every change explained, where to find it on the Deluge and how to use it, with diagrams, the frequency drone in full and a reference of all menus, buttons and messages. **DJ manual:** [DJ with the Deluge](mastertune-1.2.1/docs/DJ-manual.pdf) (11 pages, v19.0 and newer): wiring a player, Scan, Sync, Nudge and the DJ filter, a mixing workflow, messages and troubleshooting.
 
 **Written with Claude (AI).** This is a personal fork, not a contribution to the official firmware: please don't report its bugs to the community developers, report them in this repository's [issues](https://github.com/Giansn/deluge/issues). Every change is tested in an emulator that runs the firmware's real ARM code (below), but **v18.x and v19.0 have not been played on a real Deluge yet.** Keep a copy of your card.
 
@@ -739,7 +739,7 @@ v19.0.1 contains v19.0 and changes one thing, the arp mode Ball (patch 0120). Li
 
 ## v19.0: DJ filter, sync to the tempo heard, nudge
 
-v19.0 contains v18.4 and adds the DJ tool's first step (patch 0119): the Deluge playing along with an external player, its track in the line input. The next steps are in `mastertune-1.2.1/research/DJ-TOOL-PLAN.md`: the Deluge's own tracks as decks (v19.1), crossfader and isolator (v19.2). Like v18.4, v19.0 exists only as the main file with L2 cache for code and data. **v19.0 has not been tested on the device yet**; it is tested on the PC and with the whole firmware in the emulator.
+v19.0 contains v18.4 and adds the DJ tool's first step (patch 0119): the Deluge playing along with an external player, its track in the line input. How to use it, step by step: [DJ with the Deluge](mastertune-1.2.1/docs/DJ-manual.pdf) (source `docs/dj-manual.html`; its screen pictures are the firmware's OLED in the emulator, from `tests/dj/dj_emu.py --shots`). The next steps are in `mastertune-1.2.1/research/DJ-TOOL-PLAN.md`: the Deluge's own tracks as decks (v19.1), crossfader and isolator (v19.2). Like v18.4, v19.0 exists only as the main file with L2 cache for code and data. **v19.0 has not been tested on the device yet**; it is tested on the PC and with the whole firmware in the emulator.
 
 **DJ filter** (Song view, AFFECT ENTIRE on, the filter mod button):
 - **Switch it on:** press the upper gold knob: LPF, HPF, EQ, then **DJ**. This is for the song only; clips and synths go round as before.

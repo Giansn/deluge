@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DJ with the Deluge – Manual</title>
+<style>
+  @page { size: A4; margin: 16mm 15mm 16mm 15mm; }
+  :root { --ink: #1d1d1f; --muted: #5f6368; --line: #d9dce1; --accent: #2d5bd7; --soft: #f3f5f9; --lpf: #2d5bd7; --hpf: #d9730d; }
+  * { box-sizing: border-box; }
+  body { font-family: "Liberation Sans", "DejaVu Sans", Arial, sans-serif; color: var(--ink); font-size: 10pt; line-height: 1.45; margin: 0; }
+  h1 { font-size: 24pt; margin: 0 0 4pt; letter-spacing: -0.3pt; }
+  h2 { font-size: 14pt; margin: 18pt 0 6pt; padding-bottom: 3pt; border-bottom: 1.5pt solid var(--ink); break-after: avoid; }
+  h3 { font-size: 11pt; margin: 12pt 0 4pt; break-after: avoid; }
+  p { margin: 0 0 6pt; }
+  ul, ol { margin: 0 0 6pt; padding-left: 16pt; }
+  li { margin-bottom: 2pt; }
+  table { border-collapse: collapse; width: 100%; margin: 4pt 0 8pt; font-size: 9.3pt; break-inside: avoid; }
+  th, td { border-bottom: 0.6pt solid var(--line); padding: 3.5pt 5pt; text-align: left; vertical-align: top; }
+  th { background: var(--soft); font-weight: bold; }
+  code, .key, .disp { font-family: "DejaVu Sans Mono", "Liberation Mono", monospace; font-size: 8.8pt; }
+  .key { border: 0.7pt solid #9aa0a6; border-radius: 3pt; padding: 0 3pt; background: #fff; white-space: nowrap; }
+  .disp { background: #16181c; color: #eef3ff; border-radius: 2pt; padding: 0 3pt; white-space: nowrap; }
+  .subtitle { color: var(--muted); font-size: 11pt; margin-bottom: 10pt; }
+  .cover { border-bottom: 3pt solid var(--ink); padding-bottom: 10pt; margin-bottom: 10pt; }
+  .box { background: var(--soft); border-left: 3pt solid var(--accent); padding: 6pt 9pt; margin: 6pt 0 8pt; break-inside: avoid; }
+  .warn { background: #fff6e5; border-left-color: #d98a00; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10pt; }
+  .figure { text-align: center; margin: 6pt 0 10pt; break-inside: avoid; }
+  .figure figcaption { color: var(--muted); font-size: 8.8pt; margin-top: 3pt; }
+  .shots { display: grid; gap: 6pt 10pt; justify-items: center; margin: 4pt 0 2pt; }
+  .shots.two { grid-template-columns: 1fr 1fr; }
+  .shots.one { grid-template-columns: 1fr; }
+  .shots div { text-align: center; font-size: 8.3pt; color: var(--muted); }
+  .shots img { width: 72mm; display: block; margin: 0 auto 2pt; }
+  .toc { columns: 2; column-gap: 18pt; font-size: 9.5pt; margin: 4pt 0 0; padding-left: 14pt; }
+  .page-break { break-before: page; }
+  .small { font-size: 8.8pt; color: var(--muted); }
+  .tag { font-size: 7.6pt; font-weight: bold; color: #8a5a00; background: #fff6e5; border: 0.6pt solid #d98a00; border-radius: 2pt; padding: 0 2.5pt; white-space: nowrap; vertical-align: 0.5pt; }
+  .new { font-size: 7.6pt; font-weight: bold; color: #fff; background: var(--accent); border-radius: 2pt; padding: 0 2.5pt; white-space: nowrap; vertical-align: 0.5pt; }
+  .steps li { margin-bottom: 3.5pt; }
+  .keep { break-inside: avoid; }
+  table.split { break-inside: auto; }
+  table.split tr { break-inside: avoid; }
+  .card td:first-child { width: 30%; font-weight: bold; }
+  .card td:nth-child(2) { width: 42%; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <h1>DJ with the Deluge</h1>
+  <div class="subtitle">Manual for the DJ functions of the Deluge firmware 1.2.1-mastertune v19.0 and newer: Scan, Sync, Nudge and the DJ filter</div>
+  <p>With v19.0 the Deluge plays along with a track from an external player. It <b>hears</b> the track's tempo and key (Scan), <b>takes over</b> the tempo with one press (Sync), lets you <b>push</b> its beat onto the track's by ear, like a jog wheel (Nudge), and gives the whole song a DJ mixer's <b>filter</b> on one knob (DJ filter). This manual shows how to wire it, how each function works and how they fit together in a mix.</p>
+  <ol class="toc">
+    <li>What the DJ functions do</li>
+    <li>What you need</li>
+    <li>Setting up</li>
+    <li>Quick start</li>
+    <li>The Scan view: tempo and key</li>
+    <li>Sync: the song at the track's tempo</li>
+    <li>Nudge: the beats together</li>
+    <li>The DJ filter</li>
+    <li>Mixing with it</li>
+    <li>Messages</li>
+    <li>Troubleshooting</li>
+    <li>Limits and what comes next</li>
+    <li>Quick reference</li>
+  </ol>
+</div>
+
+<div class="box warn">
+  <b>Status.</b> v19.0 has been tested on the PC and with the whole firmware in an emulator that runs the Deluge's real ARM code, <b>not yet on a real Deluge</b>. The screen pictures in this manual are the firmware's own OLED images from that emulator. Points marked <span class="tag">verify</span> follow from the firmware's code but have not been tested. Keep a copy of your SD card.<br>
+  <b>Start quiet.</b> A loud line input and resonant filter sweeps can get loud quickly on headphones.
+</div>
+
+<h2>1. What the DJ functions do</h2>
+<table>
+  <tr><th style="width:17%">Function</th><th>What it does</th><th style="width:31%">Where</th></tr>
+  <tr><td><b>Scan</b> <span class="small">v18.4</span></td><td>Hears the <b>tempo</b> (BPM) and the <b>key</b> of what comes into the Deluge's input, with its number on the Camelot wheel.</td><td>Song view: Settings → Tuning → Scan</td></tr>
+  <tr><td><b>Sync</b> <span class="new">v19.0</span></td><td>One press sets the song's tempo to the BPM heard. Your clips then play at the track's tempo.</td><td><span class="key">TAP TEMPO</span> in the Scan view</td></tr>
+  <tr><td><b>Nudge</b> <span class="new">v19.0</span></td><td>Bends the Deluge's tempo for a moment, like a jog wheel bends a record, so that its beat lands on the track's.</td><td>While playing: hold <span class="key">◀▶</span> pressed, turn <span class="key">TEMPO</span></td></tr>
+  <tr><td><b>DJ filter</b> <span class="new">v19.0</span></td><td>One knob for the whole song: low-pass to the left, off in the middle, high-pass to the right.</td><td>Song view, filter section: the upper gold knob</td></tr>
+</table>
+
+<p><b>The big picture.</b> Beatmatching has two parts: the <b>same tempo</b>, and the beats at the <b>same moment</b> (the phase). Sync does the first with one press. The second is done by ear: start the Deluge on the track's first beat of a bar, then nudge until the kick drums land together. The DJ filter then gives you the classic moves for transitions and build-ups. The track comes from any player with a line-level output: a phone, a laptop, a CDJ or a media player.</p>
+
+<figure class="figure">
+<svg width="660" height="243" viewBox="0 0 680 250" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="10.5">
+  <defs>
+    <marker id="f1g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#5f6368"/></marker>
+    <marker id="f1b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2d5bd7"/></marker>
+  </defs>
+  <text x="5" y="16" font-weight="bold" fill="#5f6368">Sound</text>
+  <text x="5" y="240" font-weight="bold" fill="#5f6368">Tempo</text>
+  <!-- row 1: sound -->
+  <rect x="5" y="30" width="85" height="50" rx="6" fill="#fff" stroke="#1d1d1f"/>
+  <text x="47.5" y="52" text-anchor="middle" font-weight="bold">Player</text>
+  <text x="47.5" y="66" text-anchor="middle" fill="#5f6368">phone, CDJ …</text>
+  <rect x="115" y="30" width="110" height="50" rx="6" fill="#fff" stroke="#1d1d1f"/>
+  <text x="170" y="52" text-anchor="middle" font-weight="bold">Audio track</text>
+  <text x="170" y="66" text-anchor="middle" fill="#5f6368">input, monitoring</text>
+  <rect x="250" y="30" width="85" height="50" rx="6" fill="#fff" stroke="#1d1d1f"/>
+  <text x="292.5" y="59" text-anchor="middle" font-weight="bold">Song mix</text>
+  <rect x="360" y="30" width="95" height="50" rx="6" fill="#fff" stroke="#1d1d1f"/>
+  <text x="407.5" y="52" text-anchor="middle" font-weight="bold">Song effects</text>
+  <text x="407.5" y="66" text-anchor="middle" fill="#5f6368">delay, reverb</text>
+  <rect x="480" y="30" width="85" height="50" rx="6" fill="#eaf0fd" stroke="#2d5bd7" stroke-width="1.6"/>
+  <text x="522.5" y="52" text-anchor="middle" font-weight="bold" fill="#2d5bd7">DJ filter</text>
+  <text x="522.5" y="66" text-anchor="middle" fill="#2d5bd7">LPF · off · HPF</text>
+  <rect x="590" y="30" width="85" height="50" rx="6" fill="#fff" stroke="#1d1d1f"/>
+  <text x="632.5" y="52" text-anchor="middle" font-weight="bold">Output</text>
+  <text x="632.5" y="66" text-anchor="middle" fill="#5f6368">headphones</text>
+  <line x1="90" y1="55" x2="113" y2="55" stroke="#5f6368" stroke-width="1.4" marker-end="url(#f1g)"/>
+  <text x="102" y="24" text-anchor="middle" font-size="9" fill="#5f6368">LINE IN</text>
+  <line x1="102" y1="27" x2="102" y2="52" stroke="#5f6368" stroke-width="0.6" stroke-dasharray="2,2"/>
+  <line x1="225" y1="55" x2="248" y2="55" stroke="#5f6368" stroke-width="1.4" marker-end="url(#f1g)"/>
+  <line x1="335" y1="55" x2="358" y2="55" stroke="#5f6368" stroke-width="1.4" marker-end="url(#f1g)"/>
+  <line x1="455" y1="55" x2="478" y2="55" stroke="#5f6368" stroke-width="1.4" marker-end="url(#f1g)"/>
+  <line x1="565" y1="55" x2="588" y2="55" stroke="#5f6368" stroke-width="1.4" marker-end="url(#f1g)"/>
+  <rect x="250" y="100" width="85" height="40" rx="6" fill="#fff" stroke="#1d1d1f"/>
+  <text x="292.5" y="124" text-anchor="middle" font-weight="bold">Your clips</text>
+  <line x1="292.5" y1="100" x2="292.5" y2="82" stroke="#5f6368" stroke-width="1.4" marker-end="url(#f1g)"/>
+  <!-- row 2: tempo -->
+  <polyline points="47.5,80 47.5,195 113,195" fill="none" stroke="#5f6368" stroke-width="1.4" marker-end="url(#f1g)"/>
+  <text x="54" y="120" font-size="9" fill="#5f6368">the same</text>
+  <text x="54" y="131" font-size="9" fill="#5f6368">input</text>
+  <rect x="115" y="170" width="110" height="50" rx="6" fill="#eaf0fd" stroke="#2d5bd7" stroke-width="1.6"/>
+  <text x="170" y="192" text-anchor="middle" font-weight="bold" fill="#2d5bd7">Scan view</text>
+  <text x="170" y="206" text-anchor="middle" fill="#2d5bd7">BPM · key</text>
+  <rect x="250" y="170" width="85" height="50" rx="6" fill="#fff" stroke="#1d1d1f"/>
+  <text x="292.5" y="199" text-anchor="middle" font-weight="bold">Song tempo</text>
+  <line x1="225" y1="195" x2="248" y2="195" stroke="#2d5bd7" stroke-width="1.6" marker-end="url(#f1b)"/>
+  <text x="237" y="150" text-anchor="middle" font-size="9" font-weight="bold" fill="#2d5bd7">TAP</text>
+  <text x="237" y="161" text-anchor="middle" font-size="9" font-weight="bold" fill="#2d5bd7">TEMPO</text>
+  <line x1="292.5" y1="170" x2="292.5" y2="142" stroke="#5f6368" stroke-width="1.4" stroke-dasharray="4,3" marker-end="url(#f1g)"/>
+  <text x="299" y="160" font-size="9" fill="#5f6368">they play at it</text>
+  <rect x="360" y="170" width="95" height="50" rx="6" fill="#eaf0fd" stroke="#2d5bd7" stroke-width="1.6"/>
+  <text x="407.5" y="192" text-anchor="middle" font-weight="bold" fill="#2d5bd7">Nudge</text>
+  <text x="407.5" y="206" text-anchor="middle" fill="#2d5bd7">◀▶ held + TEMPO</text>
+  <line x1="360" y1="195" x2="337" y2="195" stroke="#2d5bd7" stroke-width="1.6" marker-end="url(#f1b)"/>
+  <rect x="480" y="170" width="195" height="50" rx="6" fill="#fff" stroke="#1d1d1f"/>
+  <text x="577.5" y="192" text-anchor="middle" font-weight="bold">MIDI and trigger clock out</text>
+  <text x="577.5" y="206" text-anchor="middle" fill="#5f6368">synced gear follows sync and nudge</text>
+  <polyline points="292.5,220 292.5,238 577.5,238 577.5,222" fill="none" stroke="#5f6368" stroke-width="1.4" stroke-dasharray="4,3" marker-end="url(#f1g)"/>
+</svg>
+<figcaption>Figure 1. The player through the Deluge (setup A). Blue: the DJ functions. The DJ filter works on the whole song, so on the player too.</figcaption>
+</figure>
+
+<h2>2. What you need</h2>
+<ul>
+  <li><b>Firmware v19.0 or newer</b> (latest: v19.0.1, <code>deluge-1.2.1-mastertune-v19.0.1-l2d-782cf068.bin</code>). Settings → Firmware version shows <span class="disp">V19.0.1-L2D</span>. <span class="key">SHIFT</span> + press <span class="key">SELECT</span> opens Settings.</li>
+  <li><b>A player with a line-level output</b> and a stereo cable to the Deluge's <b>LINE IN</b>. The Deluge has no input gain: you set the level at the player.</li>
+  <li><b>Headphones or speakers</b> on the Deluge. The headphones carry the same mix as the main outputs. The Deluge mixes in stereo only with headphones or the right line output plugged in; with only the internal speaker or the left output everything is mono.</li>
+  <li>Optional: <b>a DJ mixer</b> (setup B, chapter 3.2), and <b>gear that follows the Deluge's MIDI or trigger clock</b>: it follows sync and nudge.</li>
+</ul>
+
+<h2>3. Setting up</h2>
+<h3>3.1 Setup A: the player through the Deluge</h3>
+<p>The player comes into the Deluge and out with your song (figure 1). You hear everything from the Deluge, and the DJ filter works on the player as well.</p>
+<ol class="steps">
+  <li><b>Cable:</b> the player's output into the Deluge's <b>LINE IN</b>.</li>
+  <li><b>An audio track for the input:</b> in Song view press a pad in an <b>empty row</b> and keep holding it (a new clip appears), then press <span class="key">SELECT</span>: the clip becomes an audio clip on its own audio track. (This works only while the new clip is still empty.)</li>
+  <li><b>Its input:</b> hold <span class="key">LEARN</span> and press the audio clip's pad: the menu <span class="disp">AUDIO SOURCE</span> opens. Turn <span class="key">SELECT</span> to <span class="disp">STEREO INPUT (MONITORING)</span> (7-segment: <code>STER.</code>, with the dot) and leave with <span class="key">BACK</span>. Only the options with <i>(monitoring)</i> pass the input through. The same menu is in the audio clip's own menu (enter the clip, press <span class="key">SELECT</span>, <i>Audio source</i>).</li>
+  <li><b>Test:</b> start the player. You hear it from the Deluge at once, also while the song is stopped. Set the level at the player (chapter 3.3); the audio track's volume also works on it.</li>
+</ol>
+<p class="small">The monitored input passes the audio track's own effects, then the song's effects and the DJ filter. Save the song: the track and its input are kept, so next time only the cable and the player are needed.</p>
+
+<h3>3.2 Setup B: with a DJ mixer</h3>
+<p>The Deluge is one deck of the mixer, the player another. The Deluge only <i>listens</i> to the player to read its tempo, so <b>no</b> monitoring track: you would hear the player twice. The mixer's cue lets you pre-listen to the Deluge on headphones before you bring it in, which the Deluge alone cannot do. Here the DJ filter works on the Deluge's channel only.</p>
+<figure class="figure">
+<svg width="620" height="150" viewBox="0 0 680 165" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="10.5">
+  <defs><marker id="f2g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#5f6368"/></marker></defs>
+  <rect x="10" y="15" width="100" height="50" rx="6" fill="#fff" stroke="#1d1d1f"/>
+  <text x="60" y="37" text-anchor="middle" font-weight="bold">Player</text>
+  <text x="60" y="51" text-anchor="middle" fill="#5f6368">line out</text>
+  <rect x="190" y="98" width="160" height="56" rx="6" fill="#eaf0fd" stroke="#2d5bd7" stroke-width="1.6"/>
+  <text x="270" y="120" text-anchor="middle" font-weight="bold" fill="#2d5bd7">Deluge</text>
+  <text x="270" y="135" text-anchor="middle" fill="#2d5bd7">Scan · Sync · Nudge · DJ filter</text>
+  <rect x="420" y="15" width="135" height="139" rx="6" fill="#fff" stroke="#1d1d1f"/>
+  <text x="487.5" y="37" text-anchor="middle" font-weight="bold">DJ mixer</text>
+  <text x="432" y="62" fill="#5f6368">channel 1: player</text>
+  <text x="432" y="128" fill="#5f6368">channel 2: Deluge</text>
+  <text x="432" y="95" fill="#5f6368">cue: pre-listen</text>
+  <rect x="590" y="60" width="85" height="50" rx="6" fill="#fff" stroke="#1d1d1f"/>
+  <text x="632.5" y="89" text-anchor="middle" font-weight="bold">Output</text>
+  <line x1="110" y1="40" x2="418" y2="40" stroke="#5f6368" stroke-width="1.4" marker-end="url(#f2g)"/>
+  <polyline points="150,40 150,126 188,126" fill="none" stroke="#5f6368" stroke-width="1.4" marker-end="url(#f2g)"/>
+  <text x="157" y="78" font-size="9" fill="#5f6368">Y cable or a second</text>
+  <text x="157" y="89" font-size="9" fill="#5f6368">output: LINE IN</text>
+  <line x1="350" y1="126" x2="418" y2="126" stroke="#5f6368" stroke-width="1.4" marker-end="url(#f2g)"/>
+  <text x="384" y="119" text-anchor="middle" font-size="9" fill="#5f6368">Deluge out</text>
+  <line x1="555" y1="85" x2="588" y2="85" stroke="#5f6368" stroke-width="1.4" marker-end="url(#f2g)"/>
+</svg>
+<figcaption>Figure 2. Setup B: the player into the mixer and, split, into the Deluge's LINE IN for Scan. The Deluge's output into its own mixer channel.</figcaption>
+</figure>
+<p>For the split, a Y cable at the player's output works (a line output can feed two inputs), or a second output of the player or of the mixer (booth, record or send out).</p>
+
+<h3>3.3 The input level</h3>
+<p>Open the Scan view (chapter 5): its <b>sidebar</b> (the audition column, the rightmost) shows the input's level, from −60 dB at the bottom pad to 0 dB at the top, 7.5 dB a pad. Set the player so that the loud parts light <b>5 to 7 green pads</b> and the top pad, red, stays dark (it lights above about −4 dB). Too quiet (fewer than 3 pads) makes the tempo hard to read; into the red, the input clips.</p>
+
+<h2>4. Quick start</h2>
+<div class="box">
+<ol class="steps" style="margin-bottom:0">
+  <li>Set up as in chapter 3.1. Start the track on the player.</li>
+  <li>In Song view: <span class="key">SHIFT</span> + press <span class="key">SELECT</span> → <i>Tuning</i> → <i>Scan: note, BPM, key</i>. The OLED shows <span class="disp">SCAN LINE</span>.</li>
+  <li>Press <span class="key">SELECT</span> until the BPM is big. After about 4 to 5 s of music it shows the tempo, e.g. <span class="disp">128.0 BPM</span>.</li>
+  <li>If it shows half or double of what you hear, turn <span class="key">◀▶</span>: <span class="disp">BPM X2</span> or <span class="disp">BPM /2</span>.</li>
+  <li>Press <span class="key">TAP TEMPO</span>: <span class="disp">SYNC 128.0 BPM</span>. The song now has the track's tempo.</li>
+  <li><span class="key">BACK</span> to Song view. Count along with the track and press <span class="key">PLAY</span> on a <b>one</b> (the first beat of a bar).</li>
+  <li>Listen to the kick drums. The Deluge's comes <b>after</b> the track's: hold <span class="key">◀▶</span> pressed and turn <span class="key">TEMPO</span> to the <b>right</b>. It comes <b>before</b>: to the <b>left</b>. Each single detent moves the Deluge about 10 ms.</li>
+  <li>Mix: launch clips, set levels, and for transitions switch the filter section to <b>DJ</b> (chapter 8).</li>
+</ol>
+</div>
+
+<h2>5. The Scan view: tempo and key</h2>
+<p><b>Open it</b> from Song view: <span class="key">SHIFT</span> + press <span class="key">SELECT</span> → <i>Tuning</i> → <i>Scan: note, BPM, key</i> (7-segment: <code>TUNE</code>, <code>SCAN</code>). The item is there only when you open Settings from Song view. <b>Leave it</b> with <span class="key">BACK</span>, <span class="key">SONG</span> or <span class="key">SCALE</span> (lit while Scan is open): back to Song view. The song keeps playing meanwhile, but the pads can't launch clips in the Scan view.</p>
+
+<div class="shots two">
+  <div><img src="../screenshots/oled_dj_scan_bpm.png" alt="SCAN LINE, 128.0 BPM big">The BPM big. The small line: note and Hz (none here)</div>
+  <div><img src="../screenshots/oled_dj_scan_key.png" alt="SCAN LINE, A MINOR, CAMELOT 8A 128.0 BPM">The key big, with its Camelot number and the BPM</div>
+</div>
+<p class="small" style="text-align:center">The firmware's OLED in the emulator, with 128 BPM and A minor set as the analysis would find them.</p>
+
+<table>
+  <tr><th style="width:24%">Control</th><th>What it does</th></tr>
+  <tr><td>Turn <span class="key">SELECT</span></td><td>The input: <b>Auto</b>, Left, Right, Stereo. Auto takes both channels when a jack is plugged in (else the internal microphone). For a player use Auto or Stereo. Each change starts the analysis anew.</td></tr>
+  <tr><td>Press <span class="key">SELECT</span></td><td>What is big: note, Hz, BPM, key. For DJing the <b>key</b> page is handy: key, Camelot number and BPM at once.</td></tr>
+  <tr><td>Turn <span class="key">◀▶</span></td><td>The BPM shown doubled or halved: <span class="disp">BPM X2</span>, <span class="disp">BPM X1</span>, <span class="disp">BPM /2</span>. The choice stays until you change it or switch the Deluge off, also when you leave Scan and come back.</td></tr>
+  <tr><td><span class="key">TAP TEMPO</span></td><td>Sync (chapter 6). <span class="key">SHIFT</span> + <span class="key">TAP TEMPO</span>: the metronome, as everywhere.</td></tr>
+  <tr><td>Gold knobs</td><td>Keep working on the song, the DJ filter included <span class="tag">verify</span>.</td></tr>
+</table>
+
+<p><b>The title</b> names the input: <span class="disp">SCAN LINE</span> (a jack in the line input), <span class="disp">SCAN MIC IN</span>, <span class="disp">SCAN MIC</span> (the internal microphone), or the channel you chose. A master tune other than 440 Hz follows it, e.g. <span class="disp">SCAN LINE 432</span>. The 7-segment display shows the big value only: <code>128.0</code>, <code>AMIN</code>, or <code>----</code> for nothing yet.</p>
+
+<h3>5.1 Tempo</h3>
+<ul>
+  <li>Appears after <b>about 4 to 5 s</b> of music and is renewed every second: the middle of the last three estimates, each over the last 8 s. After a change of tempo it follows within several seconds.</li>
+  <li>Range <b>60 to 207 BPM</b>, weighted towards 120. It needs a beat: at least 4 clear hits in 8 s. A beatless intro or breakdown shows <span class="disp">-- BPM</span>.</li>
+  <li><b>Half or double:</b> the music doesn't always say which it is. Drum and bass at 174 often reads as 87, and a slow track can read double. Use <span class="key">◀▶</span> to show what you hear.</li>
+  <li>In the tests, drum loops read within 0.1 BPM of their tempo.</li>
+</ul>
+<h3>5.2 Key</h3>
+<ul>
+  <li>Appears after about 4 s of music with notes, follows the music over about 10 s, and goes away after 10 s without notes. Drums alone and a single held note give no key (<span class="disp">--</span>).</li>
+  <li>Major and minor only. On dense music expect some errors to neighbouring keys: the relative key (A minor for C major) or a fifth away.</li>
+  <li><b>Camelot:</b> A minor is 8A, C major 8B. Keys that mix well: the <b>same</b> number, <b>one up or down</b> (8A with 7A or 9A), or the same number with the <b>other letter</b> (8A with 8B).</li>
+</ul>
+<p class="small">The pads show the tuner's needle (for tuning an instrument); they are not needed for DJing. Scan costs about 2 % of the CPU while it is open and nothing when it is closed.</p>
+
+<div class="keep">
+<h2>6. Sync: the song at the track's tempo</h2>
+<p>In the Scan view, press <span class="key">TAP TEMPO</span>. The song's tempo becomes the BPM shown, with ×2 or ÷2 applied.</p>
+<div class="shots two">
+  <div><img src="../screenshots/oled_dj_sync_128.png" alt="SYNC 128.0 BPM">Synced: the song is now at 128 BPM</div>
+  <div><img src="../screenshots/oled_dj_sync_none.png" alt="NO TEMPO YET">No tempo heard yet: the tempo stays</div>
+</div>
+</div>
+<ul>
+  <li>7-segment: <code>SYNC</code>, or <code>----</code> when there is no tempo yet.</li>
+  <li><b>While playing</b> it works at once: the next ticks follow the new tempo, nothing restarts. So you can sync again at any time.</li>
+  <li>The song gets the tempo as measured, which can have more decimals than the one shown.</li>
+  <li><b>Undo:</b> back in Song view, <span class="key">BACK</span> undoes the sync, <span class="key">SHIFT</span> + <span class="key">BACK</span> redoes it. (In the Scan view <span class="key">BACK</span> leaves the view.)</li>
+  <li><span class="disp">EXTERNAL CLOCK</span> (7-segment <code>EXT</code>): the Deluge follows a MIDI or trigger clock, which sets the tempo. Sync changes nothing then.</li>
+</ul>
+<div class="box"><b>Whole numbers.</b> Most electronic tracks have a whole-number tempo. If Scan reads 127.9 and the track is at 128, set 128 exactly: in Song view turn <span class="key">TEMPO</span> one detent right and one left. With the community setting <i>Fine tempo knob</i> on (the default) the tempo encoder moves in whole BPM, so this lands on the nearest whole number. (On a 7-segment Deluge the first detent only shows the tempo.) An error of 0.1 BPM at 128 moves the beats apart by about 23 ms in 30 s.</div>
+
+<h2>7. Nudge: the beats together</h2>
+<p><b>While the song plays</b>, in any view, hold the horizontal encoder <span class="key">◀▶</span> <b>pressed</b> and turn the <span class="key">TEMPO</span> encoder. To the <b>right</b> the Deluge moves <b>ahead</b> (earlier), to the <b>left</b> it moves <b>back</b> (later). Each detent shows <span class="disp">SYNC NUDGED</span> (7-segment <code>NUDGE</code>). In Song view, pressing <span class="key">◀▶</span> first shows the zoom level (e.g. <span class="disp">16TH-NOTES</span>): that is normal.</p>
+
+<div class="grid2">
+<div>
+<h3>How it works</h3>
+<ul>
+  <li>Each detent makes the tempo <b>4 % faster</b> (right) or <b>slower</b> (left) for <b>0.25 s</b> after it, like a hand on a record. That moves the Deluge by <b>about 10 ms</b> at any tempo. Then the tempo is exactly what it was.</li>
+  <li><b>Keep turning:</b> the bend stays at 4 %, it doesn't add up. It lasts until 0.25 s after the last detent. So what counts is <b>how long</b> you turn: about 40 ms per second of turning, plus 10 ms for the last detent (figure 3).</li>
+  <li>For small corrections: single detents with a short pause between them, 10 ms each.</li>
+</ul>
+</div>
+<div>
+<div class="shots one" style="margin-top:14pt">
+  <div><img src="../screenshots/oled_dj_nudged.png" alt="SYNC NUDGED over Song view, 133.33">Song view during a nudge right: the bent tempo, 133.33 for 128</div>
+</div>
+</div>
+</div>
+
+<figure class="figure">
+<svg width="640" height="240" viewBox="0 0 680 255" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="10">
+  <!-- axes -->
+  <text x="8" y="44" font-weight="bold">Tempo</text>
+  <line x1="70" y1="92" x2="660" y2="92" stroke="#d9dce1"/>
+  <text x="64" y="95" text-anchor="end" fill="#5f6368">100 %</text>
+  <text x="64" y="55" text-anchor="end" fill="#5f6368">104 %</text>
+  <polyline points="70,92 157,92 157,52 229.5,52 229.5,92 418,92 418,52 548.5,52 548.5,92 660,92" fill="none" stroke="#2d5bd7" stroke-width="2"/>
+  <!-- detents -->
+  <g fill="#1d1d1f">
+    <path d="M157,20 l-5,-9 h10 z"/>
+    <path d="M418,20 l-5,-9 h10 z"/><path d="M447,20 l-5,-9 h10 z"/><path d="M476,20 l-5,-9 h10 z"/>
+  </g>
+  <text x="165" y="18" fill="#1d1d1f">one detent</text>
+  <text x="484" y="18" fill="#1d1d1f">three detents, 0.1 s apart</text>
+  <text x="193" y="47" text-anchor="middle" font-size="9" fill="#2d5bd7">0.25 s</text>
+  <text x="483" y="47" text-anchor="middle" font-size="9" fill="#2d5bd7">until 0.25 s after the last: 0.45 s</text>
+  <!-- offset -->
+  <text x="8" y="112" font-weight="bold">Deluge ahead</text>
+  <line x1="70" y1="222" x2="660" y2="222" stroke="#d9dce1"/>
+  <text x="64" y="225" text-anchor="end" fill="#5f6368">0 ms</text>
+  <text x="64" y="195" text-anchor="end" fill="#5f6368">10 ms</text>
+  <text x="64" y="141" text-anchor="end" fill="#5f6368">28 ms</text>
+  <line x1="70" y1="192" x2="660" y2="192" stroke="#eef0f3" stroke-dasharray="3,3"/>
+  <line x1="70" y1="138" x2="660" y2="138" stroke="#eef0f3" stroke-dasharray="3,3"/>
+  <polyline points="70,222 157,222 229.5,192 418,192 548.5,138 660,138" fill="none" stroke="#1a8f4a" stroke-width="2"/>
+  <text x="300" y="186" fill="#1a8f4a">+10 ms</text>
+  <text x="560" y="132" fill="#1a8f4a">+18 ms more</text>
+  <!-- time axis -->
+  <g fill="#5f6368" text-anchor="middle">
+    <line x1="70" y1="222" x2="70" y2="228" stroke="#5f6368"/><text x="70" y="240">0 s</text>
+    <line x1="215" y1="222" x2="215" y2="228" stroke="#5f6368"/><text x="215" y="240">0.5 s</text>
+    <line x1="360" y1="222" x2="360" y2="228" stroke="#5f6368"/><text x="360" y="240">1.0 s</text>
+    <line x1="505" y1="222" x2="505" y2="228" stroke="#5f6368"/><text x="505" y="240">1.5 s</text>
+    <line x1="650" y1="222" x2="650" y2="228" stroke="#5f6368"/><text x="650" y="240">2.0 s</text>
+  </g>
+</svg>
+<figcaption>Figure 3. Nudging to the right. A detent bends the tempo about 4 % for 0.25 s: about 10 ms. Three quick detents keep it bent for 0.45 s, not three times as long: about 18 ms.</figcaption>
+</figure>
+
+<table>
+  <tr><th style="width:36%">Situation</th><th>Right (clockwise)</th><th>Left</th></tr>
+  <tr><td><b>Internal clock</b> (the normal case) <span class="new">v19.0</span></td><td>The Deluge moves ahead</td><td>The Deluge moves back</td></tr>
+  <tr><td><span class="key">SHIFT</span> held too, and the Deluge sends MIDI clock</td><td>1.2.1's nudge: one MIDI and trigger clock skipped, the synced gear falls back; the Deluge stays</td><td>one clock sent extra, the gear moves ahead; the Deluge stays</td></tr>
+  <tr><td><b>External clock</b> (the Deluge follows one)</td><td>As in 1.2.1: one clock tick skipped, the Deluge falls back</td><td>one tick extra, the Deluge moves ahead</td></tr>
+</table>
+<ul>
+  <li><b>Clock outputs follow:</b> the MIDI clock and the trigger clock output are bent with the Deluge, so gear synced to it moves along.</li>
+  <li><b>Stopping</b> (<span class="key">PLAY</span>) ends a bend at once. A song <b>saved</b> during a bend saves the tempo without it. If you set the tempo during a bend (tempo encoder, sync), the new tempo stays.</li>
+  <li>When stopped, the nudge does nothing: there is no beat to move.</li>
+  <li><b>Far off?</b> At 128 BPM a beat lasts 469 ms. For more than about 100 ms, it is quicker to stop and press <span class="key">PLAY</span> again on the next one.</li>
+</ul>
+<div class="box"><b>Which way?</b> Listen to the kick drums. Two kicks close together sound like one smeared kick (a "flam"): the beats are 10 to 30 ms apart. If the Deluge's kick is the second of the two, turn right; if it is the first, turn left. When the flam is gone, stop. Check again after a minute.</div>
+
+<div class="keep">
+<h2>8. The DJ filter</h2>
+<p><b>Switch it on:</b> in Song view (<span class="key">AFFECT ENTIRE</span> lit, no clip pad held) the gold knobs work on the whole song. Select the filter section with its mod button (<i>Cutoff/Resonance</i>, lit). <b>Press the upper gold knob</b>: the filter type goes round <b>LPF → HPF → EQ → DJ</b> → LPF. At DJ the popup shows <span class="disp">DJ</span>. The DJ type exists only for the song: clips and synths go round LPF, HPF and EQ as before.</p>
+
+<figure class="figure">
+<svg width="640" height="252" viewBox="0 0 680 268" xmlns="http://www.w3.org/2000/svg" font-family="Liberation Sans, DejaVu Sans, sans-serif" font-size="10">
+  <!-- response icons -->
+  <g stroke-width="1.6" fill="none">
+    <rect x="20" y="6" width="80" height="40" rx="4" fill="#fff" stroke="#d9dce1"/>
+    <path d="M26,20 H44 Q52,20 58,40" stroke="#2d5bd7"/>
+    <rect x="160" y="6" width="80" height="40" rx="4" fill="#fff" stroke="#d9dce1"/>
+    <path d="M166,20 H198 Q206,20 212,40" stroke="#2d5bd7"/>
+    <rect x="300" y="6" width="80" height="40" rx="4" fill="#fff" stroke="#d9dce1"/>
+    <path d="M306,20 H374" stroke="#1d1d1f"/>
+    <rect x="440" y="6" width="80" height="40" rx="4" fill="#fff" stroke="#d9dce1"/>
+    <path d="M468,40 Q474,20 482,20 H514" stroke="#d9730d"/>
+    <rect x="580" y="6" width="80" height="40" rx="4" fill="#fff" stroke="#d9dce1"/>
+    <path d="M622,40 Q628,20 636,20 H654" stroke="#d9730d"/>
+  </g>
+  <g font-size="8" fill="#5f6368" text-anchor="middle">
+    <text x="60" y="56">only the lows</text><text x="200" y="56">highs cut</text><text x="340" y="56">all of it</text><text x="480" y="56">lows cut</text><text x="620" y="56">only the highs</text>
+  </g>
+  <!-- V plot -->
+  <text x="8" y="80" font-size="9" fill="#5f6368">cut</text>
+  <line x1="60" y1="170" x2="620" y2="170" stroke="#d9dce1"/>
+  <line x1="60" y1="70" x2="340" y2="170" stroke="#2d5bd7" stroke-width="2.4"/>
+  <line x1="340" y1="170" x2="620" y2="70" stroke="#d9730d" stroke-width="2.4"/>
+  <line x1="340" y1="169" x2="620" y2="169" stroke="#2d5bd7" stroke-width="1" stroke-dasharray="3,3"/>
+  <line x1="60" y1="172" x2="340" y2="172" stroke="#d9730d" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="80" y="140" fill="#2d5bd7" font-weight="bold">low-pass closes</text>
+  <text x="80" y="153" fill="#2d5bd7">(the high-pass off)</text>
+  <text x="600" y="140" text-anchor="end" fill="#d9730d" font-weight="bold">high-pass opens</text>
+  <text x="600" y="153" text-anchor="end" fill="#d9730d">(the low-pass off)</text>
+  <text x="340" y="160" text-anchor="middle" fill="#1d1d1f">off</text>
+  <!-- knob scale -->
+  <line x1="60" y1="196" x2="620" y2="196" stroke="#1d1d1f" stroke-width="1.2"/>
+  <g stroke="#1d1d1f">
+    <line x1="60" y1="191" x2="60" y2="201"/><line x1="200" y1="193" x2="200" y2="199"/><line x1="340" y1="189" x2="340" y2="203"/><line x1="480" y1="193" x2="480" y2="199"/><line x1="620" y1="191" x2="620" y2="201"/>
+  </g>
+  <g font-family="DejaVu Sans Mono, monospace" font-size="9" text-anchor="middle">
+    <text x="60" y="215">DJ: LPF 50</text><text x="200" y="215">DJ: LPF 25</text><text x="340" y="215">DJ: OFF</text><text x="480" y="215">DJ: HPF 25</text><text x="620" y="215">DJ: HPF 50</text>
+  </g>
+  <g font-family="DejaVu Sans Mono, monospace" font-size="8" fill="#5f6368" text-anchor="middle">
+    <text x="60" y="227">LP50</text><text x="200" y="227">LP25</text><text x="340" y="227">OFF</text><text x="480" y="227">HP25</text><text x="620" y="227">HP50</text>
+  </g>
+  <path d="M62,238 v6 H338 v-6" fill="none" stroke="#5f6368"/>
+  <path d="M342,238 v6 H618 v-6" fill="none" stroke="#5f6368"/>
+  <text x="200" y="258" text-anchor="middle" fill="#5f6368">← 64 detents to the left</text>
+  <text x="480" y="258" text-anchor="middle" fill="#5f6368">64 detents to the right →</text>
+</svg>
+<figcaption>Figure 4. The upper gold knob in DJ: popup on the OLED, below it the 7-segment display. Only one filter is on at a time, each over its whole range.</figcaption>
+</figure>
+</div>
+
+<div class="shots two">
+  <div><img src="../screenshots/oled_dj_lpf16.png" alt="DJ: LPF 16">20 detents left</div>
+  <div><img src="../screenshots/oled_dj_hpf16.png" alt="DJ: HPF 16">20 detents right of the middle</div>
+  <div><img src="../screenshots/oled_dj_off.png" alt="DJ: OFF">The middle: the song as it was</div>
+  <div><img src="../screenshots/oled_dj_resonance.png" alt="RESONANCE: 3">The lower knob: the resonance</div>
+</div>
+
+<table>
+  <tr><th style="width:24%">Control</th><th>In DJ</th></tr>
+  <tr><td>Upper gold knob, turn</td><td>Middle <span class="disp">DJ: OFF</span>. Left: the low-pass closes, <span class="disp">DJ: LPF 1</span> to <span class="disp">DJ: LPF 50</span> (closed). Right: the high-pass opens, <span class="disp">DJ: HPF 1</span> to <span class="disp">DJ: HPF 50</span>. The numbers use the Deluge's usual 0 to 50 scale. The LEDs at the knob show the position.</td></tr>
+  <tr><td>Lower gold knob, turn</td><td>The resonance of both filters, each from where it is; the popup <span class="disp">RESONANCE: 12</span> (0 to 50) shows the one of the filter that is on.</td></tr>
+  <tr><td>Upper gold knob, press</td><td>On to LPF (the filter type goes round).</td></tr>
+  <tr><td>Lower gold knob, press</td><td>Nothing in DJ. The filters' modes (12 dB, 24 dB …) are set in LPF and HPF: there the press chooses the mode. DJ uses them as set.</td></tr>
+</table>
+
+<h3>8.1 What it moves</h3>
+<p>The DJ knob has no filter of its own: it moves the song's own <b>LPF and HPF cutoff</b>, exactly as the gold knobs in LPF and HPF would. That is why it sounds like the v18 filters (no stepping, no zipper), and why <b>saving, undo and automation recording</b> work as for those knobs. The song saves its filter type as <code>dj</code>; an older firmware loads LPF there, with the same cutoffs.</p>
+<ul>
+  <li><b>Set apart before:</b> if both filters were on (a band-pass set in LPF and HPF, or by automation), the DJ knob goes on from there without a jump. To the right the low-pass opens first until it is off, then the high-pass opens. To the left the high-pass closes first, then the low-pass.</li>
+  <li><b>Automation</b> recorded with the DJ knob is automation of the LPF and HPF cutoffs. To delete it, switch to LPF, hold <span class="key">SHIFT</span> and press the upper knob: <span class="disp">AUTOMATION DELETED</span>; the same in HPF for the high-pass. Then press on to DJ.</li>
+  <li><b>What it filters:</b> the whole song after its delay and reverb, so their tails are filtered too, and in setup A the player as well. The frequency drone (v12) joins after the song's effects and is not filtered.</li>
+</ul>
+<div class="box"><b>Resonance.</b> A little resonance (about 10 to 25 of 50) gives the typical peak of a DJ filter. High values can make the filters sing by themselves, the 24 dB ladder most of all; the firmware doesn't limit it. Start low and raise it while listening.</div>
+
+<h3>8.2 Classic moves</h3>
+<ul>
+  <li><b>Build-up:</b> turn slowly right over 8 or 16 bars: the bass goes away, the mix gets thin and tense. On the drop, back to the middle in one quick turn.</li>
+  <li><b>Take out, bring in:</b> close the low-pass slowly (left) to make a part distant and dark, then fade it; bring the next one in from dark to open.</li>
+  <li><b>Hide the bass during a transition:</b> with a mixer (setup B), the Deluge's channel a little to the right (high-pass) while the player's bass plays, then swap on a phrase boundary.</li>
+</ul>
+
+<h2>9. Mixing with it</h2>
+<h3>9.1 Playing along with a track (setup A)</h3>
+<ol class="steps">
+  <li><b>Prepare a song:</b> your parts in clips (drums, bass, pads), the audio track for the input (chapter 3.1), the filter section on <b>DJ</b> and in the middle. Save it.</li>
+  <li><b>Start the track</b> on the player. Scan, then <span class="key">TAP TEMPO</span> (chapters 5, 6). Back to Song view.</li>
+  <li><b>Start the Deluge on the one</b> with a quiet part only (hi-hats, a single clip): mute the rest. Nudge until the kicks or hats land together.</li>
+  <li><b>Bring your parts in</b> by launching or unmuting clips at the start of a phrase (usually every 8 or 16 bars).</li>
+  <li><b>Transitions:</b> the DJ filter on everything, the player's own volume (or the audio track's) for the track alone.</li>
+  <li><b>Check the phase every minute</b> and nudge when it drifts (chapter 9.3).</li>
+</ol>
+<h3>9.2 With a DJ mixer (setup B)</h3>
+<ol class="steps">
+  <li>The player on channel 1, the Deluge on channel 2 with its fader down. Sync in Scan as above.</li>
+  <li>Start the Deluge on the one and <b>pre-listen</b> on the mixer's cue. Nudge until it sits.</li>
+  <li>Bring it in with the channel fader; the Deluge's DJ filter now works on its channel only, like a channel filter.</li>
+  <li>To go on from the Deluge to the next track, beatmatch the player to the Deluge on the player as usual (its pitch fader), or scan the next track and sync the Deluge to it.</li>
+</ol>
+<h3>9.3 Staying in time</h3>
+<ul>
+  <li>Sync gets the tempo to within about 0.1 BPM; that still drifts about 23 ms in 30 s at 128 BPM. Round to the whole number when the track has one (chapter 6), and nudge now and then.</li>
+  <li>If the player's tempo changes (a pitch fader moved, a tempo change in the track), sync again: in the Scan view while playing, then nudge.</li>
+  <li>A vinyl turntable is never quite steady: expect to nudge more often.</li>
+</ul>
+<h3>9.4 In key</h3>
+<p>The key page of the Scan view shows the track's key and Camelot number. Play your melodic parts in that key or a neighbour on the wheel (chapter 5.2): set your clips' scale and root note to it as usual on the Deluge. A one-press "song key from the key heard" is planned for v19.2.</p>
+
+<h2>10. Messages</h2>
+<table class="split">
+  <tr><th style="width:30%">OLED</th><th style="width:17%">7-segment</th><th>When</th></tr>
+  <tr><td><span class="disp">DJ</span></td><td><code>DJ</code></td><td>The upper gold knob pressed: the filter type DJ</td></tr>
+  <tr><td><span class="disp">DJ: OFF</span></td><td><code>OFF</code></td><td>The DJ knob in the middle: both filters off</td></tr>
+  <tr><td><span class="disp">DJ: LPF 1</span> … <span class="disp">50</span></td><td><code>LP1</code> … <code>LP50</code></td><td>The DJ knob left of the middle: the low-pass closing</td></tr>
+  <tr><td><span class="disp">DJ: HPF 1</span> … <span class="disp">50</span></td><td><code>HP1</code> … <code>HP50</code></td><td>The DJ knob right of the middle: the high-pass opening</td></tr>
+  <tr><td><span class="disp">RESONANCE: 12</span></td><td><code>12</code></td><td>The lower gold knob in DJ</td></tr>
+  <tr><td><span class="disp">SCAN LINE</span> (title)</td><td>the big value, e.g. <code>128.0</code></td><td>The Scan view open, the input named (7-segment: the menu item is <code>SCAN</code>)</td></tr>
+  <tr><td><span class="disp">BPM X2</span>, <span class="disp">BPM X1</span>, <span class="disp">BPM /2</span></td><td>the same text</td><td><span class="key">◀▶</span> turned in the Scan view</td></tr>
+  <tr><td><span class="disp">SYNC 128.0 BPM</span></td><td><code>SYNC</code></td><td><span class="key">TAP TEMPO</span> in the Scan view: the song at the tempo heard</td></tr>
+  <tr><td><span class="disp">NO TEMPO YET</span></td><td><code>----</code></td><td><span class="key">TAP TEMPO</span> before a tempo is heard; the tempo stays</td></tr>
+  <tr><td><span class="disp">EXTERNAL CLOCK</span></td><td><code>EXT</code></td><td><span class="key">TAP TEMPO</span> while an external clock sets the tempo; nothing changes</td></tr>
+  <tr><td><span class="disp">SYNC NUDGED</span></td><td><code>NUDGE</code></td><td>Each detent of a nudge</td></tr>
+  <tr><td><span class="disp">16TH-NOTES</span> (or another zoom)</td><td>—</td><td><span class="key">◀▶</span> pressed in Song view: the zoom level, before the nudge</td></tr>
+</table>
+
+<h2>11. Troubleshooting</h2>
+<table class="split">
+  <tr><th style="width:27%">Problem</th><th style="width:33%">Likely cause</th><th>What to do</th></tr>
+  <tr><td>No BPM (<span class="disp">-- BPM</span>)</td><td>No clear beat right now, the input too quiet, or less than 4 s since the start or since the input changed</td><td>Wait for a part with drums; check the level (chapter 3.3); for a player use Auto or Stereo</td></tr>
+  <tr><td>The BPM is half or double</td><td>The music allows both readings</td><td>Turn <span class="key">◀▶</span> in the Scan view</td></tr>
+  <tr><td>The BPM jumps between two values</td><td>A syncopated or broken rhythm</td><td>Sync during a steady part (a four-on-the-floor section), or set the tempo by hand</td></tr>
+  <tr><td>The beats drift apart after a while</td><td>The tempo is off by a fraction, or the player's tempo moved</td><td>Round to the whole BPM (chapter 6), sync again, nudge</td></tr>
+  <tr><td><span class="key">TAP TEMPO</span> starts the metronome</td><td><span class="key">SHIFT</span> held</td><td>Press it without SHIFT, in the Scan view</td></tr>
+  <tr><td><span class="disp">EXTERNAL CLOCK</span></td><td>The Deluge follows a MIDI or trigger clock</td><td>Sync the clock's source, or stop the external clock</td></tr>
+  <tr><td>The nudge does nothing</td><td>The song isn't playing, or <span class="key">◀▶</span> isn't held pressed</td><td>Start the song; hold <span class="key">◀▶</span> down while turning <span class="key">TEMPO</span></td></tr>
+  <tr><td>The nudge feels weak</td><td>A single detent is only 10 ms</td><td>Keep turning: about 40 ms per second</td></tr>
+  <tr><td>Scan is missing in Tuning</td><td>Settings was opened from a clip</td><td>Go to Song view first</td></tr>
+  <tr><td>I don't hear the player</td><td>No monitoring: the audio track's input without <i>(monitoring)</i>, or its volume down</td><td>Chapter 3.1, step 3</td></tr>
+  <tr><td>I hear the player twice</td><td>Setup B with a monitoring track as well</td><td>Set the audio track's source to one without monitoring, or delete the track</td></tr>
+  <tr><td>Everything is mono</td><td>Only the speaker or the left output plugged in</td><td>Headphones or the right line output as well</td></tr>
+  <tr><td>No DJ after EQ</td><td>You are in a clip: DJ is for the song only</td><td>Song view, no clip pad held</td></tr>
+  <tr><td>The filter whistles</td><td>Too much resonance</td><td>Lower gold knob to the left</td></tr>
+  <tr><td>The DJ knob starts somewhere unexpected</td><td>LPF and HPF were set apart before</td><td>Expected: it goes on from there without a jump (chapter 8.1)</td></tr>
+  <tr><td>An older firmware shows LPF</td><td>It doesn't know the DJ type</td><td>Expected; the cutoffs are the same</td></tr>
+</table>
+
+<h2>12. Limits and what comes next</h2>
+<ul>
+  <li><b>No cue on the Deluge itself:</b> the headphones carry the main mix, so pre-listening needs a DJ mixer (setup B).</li>
+  <li><b>The phase is by ear:</b> sync sets the tempo, not where the beat falls. There is no automatic beat alignment yet.</li>
+  <li><b>Tempo reading</b> needs a beat, 60 to 207 BPM (beyond that with ×2 and ÷2), and about 4 s.</li>
+  <li><b>Key reading:</b> major and minor only; some errors to neighbouring keys on dense music.</li>
+  <li><b>One DJ filter</b> for the whole song mix, not per deck. For one track alone, use that track's own filter.</li>
+  <li><b>Sync and the new nudge</b> need the Deluge's own clock. With an external clock the nudge works as in 1.2.1.</li>
+  <li><b>Not yet tested on a real Deluge</b> (see the status box on page 1).</li>
+</ul>
+<p><b>Planned</b> (<code>research/DJ-TOOL-PLAN.md</code>): <b>v19.1</b> the Deluge's own tracks as decks: a computer tool writes each track's tempo into its file, and audio clips then play whole tracks in sync, bar-exact. <b>v19.2</b> a crossfader and an isolator EQ (kills for bass, mids and treble) on the Deluge's own controls, and the song's key set from the key heard.</p>
+
+<div class="page-break"></div>
+<h2>13. Quick reference</h2>
+<table class="card split">
+  <tr><th>Action</th><th>Controls</th><th>Where, and what you see</th></tr>
+  <tr><td>Open Settings</td><td><span class="key">SHIFT</span> + press <span class="key">SELECT</span></td><td>Any view</td></tr>
+  <tr><td>Open Scan</td><td>Settings → <i>Tuning</i> → <i>Scan: note, BPM, key</i></td><td>From Song view; <span class="disp">SCAN LINE</span></td></tr>
+  <tr><td>Leave Scan</td><td><span class="key">BACK</span>, <span class="key">SONG</span> or <span class="key">SCALE</span></td><td>Back to Song view</td></tr>
+  <tr><td>Scan: input</td><td>Turn <span class="key">SELECT</span></td><td>Auto, Left, Right, Stereo</td></tr>
+  <tr><td>Scan: what is big</td><td>Press <span class="key">SELECT</span></td><td>Note, Hz, BPM, key</td></tr>
+  <tr><td>Scan: ×2 / ÷2</td><td>Turn <span class="key">◀▶</span></td><td><span class="disp">BPM X2</span>, <span class="disp">BPM X1</span>, <span class="disp">BPM /2</span></td></tr>
+  <tr><td><b>Sync</b></td><td><span class="key">TAP TEMPO</span></td><td>In the Scan view; <span class="disp">SYNC 128.0 BPM</span></td></tr>
+  <tr><td>Undo / redo the sync</td><td><span class="key">BACK</span> / <span class="key">SHIFT</span> + <span class="key">BACK</span></td><td>In Song view</td></tr>
+  <tr><td>Metronome</td><td><span class="key">SHIFT</span> + <span class="key">TAP TEMPO</span></td><td>Anywhere</td></tr>
+  <tr><td><b>Nudge</b> ahead / back</td><td>Hold <span class="key">◀▶</span> pressed, turn <span class="key">TEMPO</span> right / left</td><td>While playing, any view; <span class="disp">SYNC NUDGED</span>; about 10 ms a detent, 40 ms per second of turning</td></tr>
+  <tr><td>Nudge only the clock outputs</td><td><span class="key">SHIFT</span> + hold <span class="key">◀▶</span> + turn <span class="key">TEMPO</span></td><td>As 1.2.1 did, when the Deluge sends MIDI clock</td></tr>
+  <tr><td>Tempo to a whole BPM</td><td>Turn <span class="key">TEMPO</span> a detent right, then left</td><td>Song view (<i>Fine tempo knob</i> on)</td></tr>
+  <tr><td><b>DJ filter</b> on</td><td>Filter section; press the upper gold knob until <span class="disp">DJ</span></td><td>Song view: LPF → HPF → EQ → DJ</td></tr>
+  <tr><td>DJ filter</td><td>Turn the upper gold knob</td><td>Left <span class="disp">DJ: LPF 1…50</span>, middle <span class="disp">DJ: OFF</span>, right <span class="disp">DJ: HPF 1…50</span></td></tr>
+  <tr><td>Resonance</td><td>Turn the lower gold knob</td><td><span class="disp">RESONANCE: 0…50</span>; keep it low at first</td></tr>
+  <tr><td>Filter modes</td><td>In LPF or HPF: press the lower gold knob</td><td>12 dB, 24 dB …; DJ uses them</td></tr>
+  <tr><td>Delete filter automation</td><td>In LPF or HPF: <span class="key">SHIFT</span> + press the upper gold knob</td><td><span class="disp">AUTOMATION DELETED</span></td></tr>
+  <tr><td>Audio track for the input</td><td>Hold a new clip's pad in an empty row + press <span class="key">SELECT</span></td><td>Song view</td></tr>
+  <tr><td>Its input, with monitoring</td><td>Hold <span class="key">LEARN</span> + press the audio clip's pad</td><td><span class="disp">STEREO INPUT (MONITORING)</span></td></tr>
+</table>
+<p class="small">DJ with the Deluge · firmware 1.2.1-mastertune v19.0 and newer · the repository's <code>README.md</code> (section v19.0) has the technical details and the tests.</p>
+
+</body>
+</html>

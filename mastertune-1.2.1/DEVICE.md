@@ -98,6 +98,9 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
    - **Nudge:** with the song playing along with the track, hold the horizontal encoder pressed and turn the tempo encoder. Each detent moves the song 10 ms ahead (right) or back (left), `Sync nudged`; turning on keeps pushing. Can you bring the beats together by ear? Afterwards the tempo must be exactly what it was.
      - With gear following the Deluge's MIDI clock: it follows the nudge. SHIFT + horizontal encoder + tempo encoder nudges only the MIDI clock out, as 1.2.1 did.
      - Stop in the middle of a nudge, save the song: the tempo saved is the one without the nudge.
+   - **The manual:** `docs/DJ-manual.pdf` describes all of this step by step (setup with an audio track that monitors the line input, chapter 3.1). Note where the Deluge does something else than the manual says. Two points it marks as not tested yet:
+     - In the Scan view, do the gold knobs still turn the song's DJ filter?
+     - With the audio track on `Stereo input (monitoring)`, is the player heard while the song is stopped, and does the DJ filter work on it?
    - **Report:** a short report in English to `device/` (what worked, the tempos read, how the filter sounds), pushed to `device-results`.
 
 11. **v19.0.1: the arp mode Ball runs out, the preset PETTRA V1** (new on 29.09.2026; README section "v19.0.1"):

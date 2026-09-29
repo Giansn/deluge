@@ -28,7 +28,9 @@ Checks:
    far behind; a nudge, then STOP at once: the tempo back
 Throughout: no crash, fault, hang, error popup or access outside RAM and the peripherals.
 
-Usage: dj_emu.py <deluge.elf> [--out DIR] [--tools PREFIX] [--build DIR]
+Usage: dj_emu.py <deluge.elf> [--out DIR] [--tools PREFIX] [--build DIR] [--shots DIR]
+--shots also saves the OLED at the moments the DJ manual shows (docs/dj-manual.html) as <DIR>/oled_dj_*.png
+and .txt, and in the Scan view, for them only, the analysis' result set to 128 BPM and A minor.
 Needs python3 with unicorn 2 and numpy, a C compiler (blockcount.c), the toolchain's gdb. About 2 minutes.
 Exit status 0 when all checks pass.
 """
@@ -126,6 +128,17 @@ class DjRig(sv.ScanRig):
         return [p[3] for p in self.rig.popups[n:]]
 
 
+SHOT = None  # --shots: a screens.Oled
+PPR6, LINE_IN_DETECT_BIT = 0xFCFE3218, 1 << 6  # Port 6's pin levels; LINE_IN_DETECT is P6_6
+
+
+def snap(s, name, settle_s=0.05):
+    """--shots: the OLED as the firmware last sent it (with its popup), as <shots>/oled_dj_<name>.png and .txt."""
+    if SHOT:
+        s.rig.tm(settle_s)
+        SHOT.save_oled(f"dj_{name}")
+
+
 def knob_value(k):
     return (1 << 31) - 1 if k >= 64 else k << 25
 
@@ -141,6 +154,7 @@ def dj_filter(s):
     popups = s.popups_since(n)
     check("the upper gold knob pressed three times: HPF, EQ, DJ; the song's filter type DJ (3)",
           popups[-3:] == ["HPF", "EQ", "DJ"] and s.filter_type() == 3, f"popups {popups}, type {s.filter_type()}")
+    snap(s, "type")
 
     def state(what, detents, offset, lpf, hpf, popup):
         n = len(rig.popups)
@@ -158,8 +172,11 @@ def dj_filter(s):
         state(f"from the song's LPF knob {lpf0} and HPF knob {hpf0} (DJ {pos0:+d}) to the middle", abs(pos0),
               -1 if pos0 > 0 else 1, 64, -64, "DJ: OFF")
     state("20 detents left", 20, -1, 24, -64, "DJ: LPF 16")
+    snap(s, "lpf16")
     state("40 right", 40, 1, 64, -24, "DJ: HPF 16")
+    snap(s, "hpf16")
     state("20 left, the middle", 20, -1, 64, -64, "DJ: OFF")
+    snap(s, "off")
     def resonance(what, detents, want, popup=None):
         n = len(rig.popups)
         s.knob(0, 1, detents)
@@ -179,6 +196,7 @@ def dj_filter(s):
     res0 = [max(-64, min(64, round(s.param(p) / 2 ** 25))) for p in (LPF_RES, HPF_RES)]
     res1 = [min(64, r + 10) for r in res0]
     resonance(f"the lower knob 10 right (from {res0[0]} and {res0[1]})", 10, res1)
+    snap(s, "resonance")
     press("pressed once more: LPF", "LPF", 0)
 
     # Set apart as LPF and HPF mode set them (a band-pass), then DJ again: it goes on from there
@@ -204,6 +222,10 @@ def dj_filter(s):
 def sync(s):
     rig, emu, sym = s.rig, s.emu, s.sym
     log("== 3. sync: the Scan view, TAP TEMPO")
+    if SHOT:  # A jack in the line input for the shots (its detect pin, P6_6, and the flag inputRoutine() keeps)
+        ppr6 = int.from_bytes(emu.uc.mem_read(PPR6, 2), "little") | LINE_IN_DETECT_BIT
+        emu.uc.mem_write(PPR6, ppr6.to_bytes(2, "little"))
+        emu.uc.mem_write(sym[sv.LINE_IN], b"\x01")
     menu = screens.Settings(rig)
     menu.open()
     menu.enter("tuningSubmenu")
@@ -224,12 +246,37 @@ def sync(s):
     check("no tempo heard: TAP TEMPO shows 'No tempo yet', the tempo stays",
           "No tempo yet" in s.popups_since(n) and abs(s.bpm() - before) < 1e-6,
           f"popups {s.popups_since(n)}, {before:.3f} -> {s.bpm():.3f} BPM")
+    snap(s, "sync_none")
     emu.uc.mem_write(engine + s.bpm_off, struct.pack("<f", 128.0))
     n = len(rig.popups)
     s.press(TAP_TEMPO, 0.02)
     check("128.00 BPM heard: TAP TEMPO, 'Sync 128.0 BPM', the song at 128.00 BPM",
           "Sync 128.0 BPM" in s.popups_since(n) and abs(s.bpm() - 128.0) < 0.005,
           f"popups {s.popups_since(n)}, the song at {s.bpm():.4f} BPM")
+    if SHOT:
+        # The Scan view as the manual shows it: 128 BPM and A minor heard, set as the analysis would. The select
+        # encoder pressed: the big line Hz, BPM, then the key. The popup up, silence meanwhile forgets the tempo: it is
+        # set again once the popup is gone (with fewer than 4 s of onset values in, which it keeps) and the view drawn
+        # anew. Then TAP TEMPO once more, over the key and the tempo heard
+
+        def heard():
+            emu.uc.mem_write(engine + s.onsets_off, struct.pack("<I", 0))
+            emu.uc.mem_write(engine + s.bpm_off, struct.pack("<f", 128.0))
+            emu.uc.mem_write(engine + s.tonic_off, struct.pack("<i", 9))
+            emu.uc.mem_write(engine + s.minor_off, b"\x01")
+
+        for name in ("hz", "bpm", "key"):
+            heard()
+            s.press(ui.SELECT_ENC, 0.05)
+            if name != "hz":
+                screens.quiet(rig)
+                heard()
+                rig.action("the Scan view drawn anew", sym["_ZN8ScanView13focusRegainedEv"], s.view)
+                snap(s, f"scan_{name}")
+                log(f"  shot scan_{name}: the analysis' tempo {s.f32(engine + s.bpm_off):g} BPM")
+        heard()
+        s.press(TAP_TEMPO, 0.02)
+        snap(s, "sync_128")
     s.press(ui.BACK, 0.3)
     check("BACK: Song view", rig.ui_name(root=True) == "sessionView", f"root {rig.ui_name(root=True)}")
 
@@ -246,6 +293,8 @@ def nudge(s):
         n = len(rig.popups)
         rig.button(X_ENC, True)
         s.tempo_detent(offset)
+        if offset > 0:
+            snap(s, "nudged")  # While the encoder is held: releasing it takes the popup away
         rig.button(X_ENC, False)
         bent = s.tick_time()
         bend = base // 100 * 4
@@ -283,6 +332,10 @@ def run(a, out):
         check("boot and the song loaded", False, f"{e}")
         return
     rig = s.rig
+    if a.shots:
+        global SHOT
+        os.makedirs(a.shots, exist_ok=True)
+        SHOT = screens.Oled(s.emu, os.path.abspath(a.shots))
     try:
         rig.tm(0.5)
         check("Song view", rig.ui_name(root=True) == "sessionView", f"{rig.ui_name(root=True)}")
@@ -304,6 +357,7 @@ def main():
     ap.add_argument("--out", default=os.path.join(os.getcwd(), "dj"))
     ap.add_argument("--tools")
     ap.add_argument("--build", default=os.environ.get("BLOCKCOUNT_DIR"))
+    ap.add_argument("--shots", help="also save the OLED at the DJ manual's moments in this folder")
     a = ap.parse_args()
     a.elf, a.out = os.path.abspath(a.elf), os.path.abspath(a.out)
     a.tools = a.tools or os.path.join(os.path.dirname(a.elf),
