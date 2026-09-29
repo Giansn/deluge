@@ -77,6 +77,10 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
    - **CPU:** CPU monitor on. The load with Scan open, compared with Song view: about 2 % more expected. Nothing should crackle, also while a song plays.
    - **Ball:** load `presets/SYNTHS/PETTRA BALL.XML` (copy it into `SYNTHS` first), tempo 138, Latch on, hold A5. Does it sound like a ping-pong ball between two plates, the buzz on beats 2 and 4, as `presets/demo/PETTRA BALL.wav`? With the CPU monitor on: the load during the buzz (a hit every 15 ms). Stop playback in the middle of a buzz: no note may keep sounding.
    - **Report:** a short report in English to `device/` (what matched, what not, the numbers read), pushed to `device-results`.
+9. **The dull undertone of multisamples** (new on 29.09.2026; `device/analysis/2026-09-29-multisample-undertone.md`). In the emulator the firmware adds nothing low at the attacks: the samples are played far below the pitch they were recorded at, and some zones have a wrong root. On the device, with headphones:
+   - In "New Sitar Grii 10" play the oboe at note 86 (D5, its sample's own pitch) and at 77 (9 semitones down), and the sitar at 53 and at 41 (12 down). Does the thud grow with the distance?
+   - The same on v17 (`deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin`): the same thud expected.
+   - The piano and the pluck strings you heard it on: which presets and songs? Run `python3 device/analysis/multisample_zones.py <card>/SONGS/<song>.XML` (or a preset in `SYNTHS`) on them. It lists each zone's root against the note in the file name and how far the song's notes are from their sample, and it marks wrong roots. Push its output with the report.
 
 ### Done: "Rescue", the LPF has no effect (27.09.2026)
 
