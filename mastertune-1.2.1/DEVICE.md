@@ -81,6 +81,11 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
    - In "New Sitar Grii 10" play the oboe at note 86 (D5, its sample's own pitch) and at 77 (9 semitones down), and the sitar at 53 and at 41 (12 down). Does the thud grow with the distance?
    - The same on v17 (`deluge-1.2.1-mastertune-v17-l2d-b3385d83.bin`): the same thud expected.
    - The piano and the pluck strings you heard it on: which presets and songs? Run `python3 device/analysis/multisample_zones.py <card>/SONGS/<song>.XML` (or a preset in `SYNTHS`) on them. It lists each zone's root against the note in the file name and how far the song's notes are from their sample, and it marks wrong roots. Push its output with the report.
+   - **The corrected song:** copy `device/card/SONGS/New Sitar Grii 10 zones.XML` into `SONGS` on the card and load it.
+     - The oboe's notes 77 and 79 should have no thud now (in the emulator the bass in their attack is 6 to 10 dB lower), and be as loud as the other notes.
+     - Start the Kbass clip: before, its notes sounded about 38 cents out of tune; now they play in tune from their own samples.
+     - If it sounds right, save the corrected instruments as presets, so that new songs get the zones too: in the Oboe's clip press SAVE (it saves the synth preset) under the name `Oboe`; the same for `Kbass`.
+     - To correct another song or preset: `python device/analysis/multisample_zones.py <XML> --fix <new XML> --card <the card's folder>` (needs numpy and soxr, like DelugeTuner's script).
 
 ### Done: "Rescue", the LPF has no effect (27.09.2026)
 

@@ -33,6 +33,31 @@ This fits "not all multisamples": it depends on how far a note is from its sampl
 2. **Sitar:** lower samples, or the part an octave higher.
 3. **Firmware (an idea for v19):** take the root at import from the file name where it names one, or find it with the pitch detection of the Scan view (YIN), which is right on all 20 files.
 
+## The correction
+
+`multisample_zones.py --fix` measures each zone's file (the note in its name, the cents heard as DelugeTuner hears them) and corrects the zones that play their file more than 10 cents off. Every note of the song keeps the pitch it sounded at, to the nearest semitone. The result is `device/card/SONGS/New Sitar Grii 10 zones.XML`:
+
+- **Oboe:** the five lower zones get their measured roots, and each note goes to the nearest sample. Notes 73 to 80 now come from D4, 81 to 87 from D5.
+- **Double bass:**
+  - A#0, F#0 and G0 get their measured roots.
+  - E1 is re-tuned: it was 84 cents sharp, a detection error of nearly a semitone that the test above did not show.
+  - The clip's notes 83, 84 and 86 move to 39, 40 and 42, played from D1, E1 and F#1 near their own pitch. Before, they sounded about 38 cents flat of D#1, E1 and F#1, out of tune against the song. In the saved song the clip does not play.
+- **Sitar:** unchanged; its zones match their files within 15 cents.
+
+In the emulator (v18.4, 432 Hz, the same 4 bars):
+- The corrected song loads and plays the same 90 note-ons, and the sitar sounds bit for bit the same.
+- The oboe's attack below 300 Hz, relative to the whole band:
+
+  | Note | Before | After | Now from |
+  |---|---|---|---|
+  | 77 | −12.6 dB | −22.3 dB | D4, 3 up |
+  | 79 | −16.4 dB | −22.8 dB | D4, 5 up |
+  | 81, 82 | −19.2, −20.1 dB | the same | D5, 5 and 4 down, as before |
+  | 86 | −22.4 dB | the same | D5, its own pitch |
+
+- The thud of 77 and 79 is gone: they are now as low in the bass as a note at its own pitch. They are also 3 to 4 dB louder, as loud as the other notes.
+- What remains is the sitar's low register (41 to 50 from the sample at 53). Only lower sitar samples, or the part an octave higher, help there.
+
 ## Device check
 
 Play the oboe at note 86 and at 77, and the sitar at 53 and at 41, on v17 and on v18.x. The thud should grow with the distance from the sample and be the same on both firmwares.
