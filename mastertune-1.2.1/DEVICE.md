@@ -23,7 +23,7 @@ Run `git pull` before any work: the cloud session keeps delivering.
 - **Use Python 3.12.** `python-rtmidi` has no ready-made packages for newer versions.
 - **Port names:** The ports are called `Deluge 0`, `MIDIIN2 (Deluge) 1` and `MIDIIN3 (Deluge) 2`. From the commit after `0377a67` the script finds `MIDIIN3` by itself, `-p` is no longer needed.
 
-## Tasks (as of 29.09.2026, v19.0 is out)
+## Tasks (as of 29.09.2026, v19.0.1 is out)
 
 Done: the report on v16, l2d, the song for the emulator, the retune test on Windows, "Rescue". The tasks for v17 are dropped: v18.3 contains v17, v18 and v18.2, so everything now applies to v18.3. What it brings is in the README, in the sections "v18", "v18.2" and "v18.3".
 
@@ -75,7 +75,7 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
    - **Tempo:** play a track with a known tempo. After about 5 s the BPM appears, every second anew. If it shows half or double, the horizontal encoder corrects it (`BPM X2`, `BPM /2`). Try a few styles (house, hip-hop, drum and bass).
    - **Key:** play tracks with a known key (from the track's listing, Beatport or Mixed In Key; a few in major, a few in minor, with and without drums). After about 5 s the big line shows e.g. `A minor`, the small one `Camelot 8A`. Note what it shows and what the listing says; errors to the relative key or a fifth away count as near. Drums alone or silence should show `--`.
    - **CPU:** CPU monitor on. The load with Scan open, compared with Song view: about 2 % more expected. Nothing should crackle, also while a song plays.
-   - **Ball:** load `presets/SYNTHS/PETTRA BALL.XML` (copy it into `SYNTHS` first), tempo 138, Latch on, hold A5. Does it sound like a ping-pong ball between two plates, the buzz on beats 2 and 4, as `presets/demo/PETTRA BALL.wav`? With the CPU monitor on: the load during the buzz (a hit every 15 ms). Stop playback in the middle of a buzz: no note may keep sounding.
+   - **Ball:** see task 11 (the preset is now `PETTRA V1`, for v19.0.1).
    - **Report:** a short report in English to `device/` (what matched, what not, the numbers read), pushed to `device-results`.
 9. **The dull undertone of multisamples** (new on 29.09.2026; `device/analysis/2026-09-29-multisample-undertone.md`). In the emulator the firmware adds nothing low at the attacks: the samples are played far below the pitch they were recorded at, and some zones have a wrong root. On the device, with headphones:
    - In "New Sitar Grii 10" play the oboe at note 86 (D5, its sample's own pitch) and at 77 (9 semitones down), and the sitar at 53 and at 41 (12 down). Does the thud grow with the distance?
@@ -100,6 +100,12 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
      - Stop in the middle of a nudge, save the song: the tempo saved is the one without the nudge.
    - **Report:** a short report in English to `device/` (what worked, the tempos read, how the filter sounds), pushed to `device-results`.
 
+11. **v19.0.1: the arp mode Ball runs out, the preset PETTRA V1** (new on 29.09.2026; README section "v19.0.1"):
+   - **Flash** `deluge-1.2.1-mastertune-v19.0.1-l2d-782cf068.bin` (v19.0 plus the new Ball, nothing else changed). Settings → Firmware version shows `v19.0.1-l2d`. Tasks 1–10 apply to it as well.
+   - **PETTRA V1:** copy `presets/SYNTHS/PETTRA V1.XML` into `SYNTHS` on the card, load it into a synth clip, tempo 138, Latch on, hold A5. With headphones: does it sound like `presets/demo/PETTRA V1.wav` (once a bar into a rattle, then running out slower and slower over the rest of the bar, each hit somewhere else between left and right)?
+   - **CPU and notes:** the CPU monitor during the rattle. Stop playback in the middle of it: no note may keep sounding.
+   - **Report:** a short report in English to `device/`, pushed to `device-results`.
+
 ### Done: "Rescue", the LPF has no effect (27.09.2026)
 
 - **Finding** (emulator with the real XML, cross-checked): The LPF works. But the song LPF's resonance is at maximum, so from about knob 36 the filter oscillates by itself. Its tone moves down with the knob, is about 10 dB above the music and clips. At the bottom a tone below 60 Hz remains. v16 behaves the same.
@@ -111,7 +117,8 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
 
 | File | What |
 |---|---|
-| `deluge-1.2.1-mastertune-v19.0-l2d-1d2b400d.bin` | **current version**: v18.4 plus the DJ filter, sync to the tempo heard and the nudge, with L2 cache for code and data. In the README the section "v19.0". |
+| `deluge-1.2.1-mastertune-v19.0.1-l2d-782cf068.bin` | **current version**: v19.0 plus the arp mode Ball that runs out (the preset PETTRA V1), with L2 cache for code and data. In the README the section "v19.0.1". |
+| `deluge-1.2.1-mastertune-v19.0-l2d-1d2b400d.bin` | v19.0: v18.4 plus the DJ filter, sync to the tempo heard and the nudge, with L2 cache for code and data. In the README the section "v19.0". |
 | `deluge-1.2.1-mastertune-v18.4-l2d-cab8e666.bin` | v18.4: v18.3 plus Scan (tuner, tempo, key) and the arp mode Ball. In the README the section "v18.4". |
 | `deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin` | v18.3, with L2 cache for code and data. In the README the sections "v18.3", "v18.2" and "v18". |
 | `deluge-1.2.1-mastertune-v18.2-l2d-c9c65066.bin` | v18.2, Drive as in v18 |
