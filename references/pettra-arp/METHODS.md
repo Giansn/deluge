@@ -32,6 +32,16 @@ The question: in the finished mix of Pettra "You Are The Seeds", how does the br
 - That is what a random value per note on the pan does (on the Deluge: a patch cable Random → Pan). The renders before this were all in the centre; with Random → Pan at full depth, PETTRA BALL has 33 % hard left or right and 30 % near the centre.
 - **A pitfall of the emulator:** the firmware renders in stereo, and pans each voice, only with headphones or the right line output plugged in. In the emulator nothing is plugged in, so `tests/arp/pettra.py` sets that flag before it renders.
 
+**6. A net of resonators on the arp's notes (`net.py`): the exact gaps of the figure's ending**
+- **The net:** for each note of the arp's register (B4 to E6), a resonator on its fundamental, 2nd and 3rd harmonic. Each is a gammatone filter, the model of a place on the cochlea: four complex one-pole stages in a row, 26 Hz wide, 32 dB down 70 Hz away and 46 dB down 110 Hz away. A plain one-pole resonator lets so many of the bass's neighbouring partials through that it ticks with the bass's period (9 ms, the A2 bass) again.
+- **Live:** the audio runs through it as a stream in blocks of 23 ms, the filters keep their state, and a touch is reported 60 ms after its peak. `--live` plays it at the speed of the music (28 s in 28 s; the net itself needs 7 s).
+- **A touch:** a note's reading rises 8 dB within 40 ms to a peak and falls 4 dB within 60 ms after it (a pluck; a pad chord that rises when the sidechain lets go stays). The note is the loudest or within 6 dB of it, and within 20 dB of the loudest of the last second.
+  - Its time: where the amplitude climbs fastest, which comes the same delay after every onset, whatever tail it starts from.
+  - The note: the loudest reading at the peak.
+- **Checked on a render with known gaps:** gaps of 40 ms and more come out within 2.5 ms (154.5, 97.9, 64.3, 43.0, 107.5, 226.0 for 152.2, 98.9, 64.3, 41.8, 108.4, 228.3). Gaps under about 30 ms blur (the filters need ~15 ms to ring up). A reverb's onset can add a touch about 45 ms after a hit.
+- **Result:** after its fastest hits the song's figure slows down by about three times per hit, e.g. 9, 20, 68, 214 ms; 9, 18, 58, 151; 9, 46, 167; 11, 50, 276. So its last hits lie far apart. PETTRA BALL on v18.4 only doubled them (15, 22, 24, 52, 108, 228). Hence v18.5's steeper parting (1 − r_p = 1.9 × (1 − r)): 16, 32, 97, 289 ms.
+- **The limit:** the stem also holds the pad and other synths. The net therefore touches more than the arp, and the runs are read from many figures, not from one clean line.
+
 ## What did not work here
 
 **Basic Pitch** (Spotify, ICASSP 2022; ONNX model, runs with onnxruntime alone)

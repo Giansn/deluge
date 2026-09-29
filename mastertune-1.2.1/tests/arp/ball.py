@@ -4,8 +4,9 @@ the firmware itself (emulated), and demos rendered with it: A5 held, 8 bars at 1
 
 Ball: the plates close in and part again within the ratchet. The first half is a roll into its middle (each gap the
 one before times r, r from the ratchet bounce), where the ball buzzes at 15 ms; the second half a roll backwards with
-its own, faster ratio, so that the ball ends slower than it started. Over both excerpts of the song the gaps between
-25 and 180 ms sit on a ladder of x0.67 (references/pettra-arp/METHODS.md); the shortest gaps can't be measured under
+its own, faster ratio, so that the ball ends slower than it started: after the buzz each gap about triples, as the
+song's figure does (references/pettra-arp/net.py). Over both excerpts of the song the gaps between 25 and 180 ms sit
+on a ladder of x0.67 (references/pettra-arp/METHODS.md); the shortest gaps can't be measured under
 the song's bass, so the buzz is set by ear. Even velocity: the single hits at the start and the end as clear as the
 buzz.
 
@@ -22,10 +23,10 @@ import pettra  # noqa: E402
 
 BALL = 254  # kRatchetNotesBall
 VARIANTS = {
-    # One beat, +3 (x0.85): from 33 ms into the buzz on the offbeat, out with x0.775 to 49 ms
+    # One beat, +3 (x0.85): from 33 ms into the buzz on the offbeat, out with x0.715 to 62 ms
     "beat": dict(ratchetBounce=3, ratchetBounceLength=2),
     # Two beats, +7 (x0.65): 152, 99, 64, 42, 27, 18 ms into the buzz (15 ms) on beats 2 and 4, then out with the
-    # parting's own x0.475: 22, 24, 52, 108, 228 ms
+    # parting's own x0.335 (firmware v18.5): 16, 32, 97, 289 ms, each gap about three times the one before
     "two": dict(ratchetBounce=7, ratchetBounceLength=4),
 }
 NAMES = {"beat": "PETTRA BALL BUZZ", "two": "PETTRA BALL"}

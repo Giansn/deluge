@@ -22,7 +22,7 @@ SR = 44100
 STEP_8TH = SR * 60 // 120 // 2  # 11025 samples at 120 BPM
 MIN_GAP = 706  # kRollMinGapSamples
 BALL_MIN_GAP = 661  # kBallMinGapSamples (15 ms)
-BALL_PART_FACTOR = 1.5  # kBallPartFactor
+BALL_PART_FACTOR = 1.9  # kBallPartFactor
 
 CASES = {
     # name: arp attributes, sound params, bars to record
