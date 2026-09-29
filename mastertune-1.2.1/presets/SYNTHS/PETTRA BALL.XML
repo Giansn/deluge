@@ -100,6 +100,10 @@
 				source="note"
 				destination="lpfFrequency"
 				amount="0x06666666" />
+			<patchCable
+				source="random"
+				destination="pan"
+				amount="0x40000000" />
 		</patchCables>
 		<equalizer
 			bass="0x00000000"
@@ -145,7 +149,7 @@
 		lockedGateSpreadArray="00000000000000000000000000000000"
 		lastLockedOctaveSpread="0"
 		lockedOctaveSpreadArray="00000000000000000000000000000000"
-		notePattern="00000202030504030804090807090204" />
+		notePattern="00000202030503010709010507080C0F" />
 	<modKnobs>
 		<modKnob controlsParam="pan" />
 		<modKnob controlsParam="volumePostFX" />

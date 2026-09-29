@@ -47,6 +47,10 @@ def main():
     # A snappier pluck, so that the buzz's hits (15 ms apart) stay single hits instead of a held tone
     pettra.PARAMS["arpeggiatorGate"] = gen_presets.k(20)
     pettra.ENV1.update(decay=gen_presets.k(14), sustain=gen_presets.k(0), release=gen_presets.k(4))
+    # Every hit somewhere else in the stereo field: random (new at each note-on) on pan at full depth. In the song a
+    # third of the plucks with a bright attack lie hard left or right (12 dB or more), the rest between, left and
+    # right equally often and in no fixed order (references/pettra-arp/METHODS.md, method 5)
+    pettra.CABLES = pettra.CABLES + [("random", "pan", 50)]
     for v in variants:
         pettra.NAME, pettra.ARP = NAMES[v], arp(v)
         pettra.use_voice()

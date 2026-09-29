@@ -6,12 +6,12 @@ Three synth presets for the ratchet bounce of the arpeggiator, from **v13** on. 
 |---|---|---|
 | `SYNTHS/PETTRA ARP.XML` | **The arp of Pettra "You Are The Seeds"**, sound and arp: a bright, detuned saw pluck on 1/8, random notes over 2 octaves, and now and then (about once a bar) the song's figure: 3 equally loud hits into the next step, each gap ×0.7. | `demo/PETTRA ARP.wav` (138 BPM, A major held, 8 bars) |
 | `SYNTHS/PETTRA PINGPONG.XML` | Only the figure, on every step: 3 equally loud hits in one eighth, each gap ×0.7. | `demo/PETTRA PINGPONG.wav` |
-| `SYNTHS/PETTRA BALL.XML` | **The Pettra arp as the arp mode Ball** (needs firmware v18.4): a ping-pong ball between two plates that close in and part again, over 2 beats. At 138 BPM the hits speed up (152, 99, 64, 42, 27, 18 ms) into a buzz at 15 ms on beats 2 and 4, then slow down faster than they sped up (22, 24, 52, 108, 228 ms): the figure ends slower than it started. All hits equally loud, so the single hits at the start and the end stay clear. A5 held: the ball repeats one note, as the song's plucks mostly do. | `demo/PETTRA BALL.wav` (138 BPM, 8 bars) |
+| `SYNTHS/PETTRA BALL.XML` | **The Pettra arp as the arp mode Ball** (needs firmware v18.4): a ping-pong ball between two plates that close in and part again, over 2 beats. At 138 BPM the hits speed up (152, 99, 64, 42, 27, 18 ms) into a buzz at 15 ms on beats 2 and 4, then slow down faster than they sped up (22, 24, 52, 108, 228 ms): the figure ends slower than it started. All hits equally loud, so the single hits at the start and the end stay clear. Every hit lands somewhere else between left and right, as in the song (listen with headphones). A5 held: the ball repeats one note, as the song's plucks mostly do. | `demo/PETTRA BALL.wav` (138 BPM, 8 bars) |
 | `SYNTHS/PETTRA BALL BUZZ.XML` | The same over one beat with bounce +3: from 33 ms into the buzz on the offbeat and out to 49 ms, nearly all buzz. | (none) |
 | (no preset) | **The ping-pong ball between two plates** that close in slowly and part fast: computed (`tests/arp/pingpong.py`) and played as notes in a clip with the PETTRA ARP voice. Per 2 beats 5-6 hits: one long flight after the plates meet, then ever faster (x0.69 per hit) into the next meeting on beats 2 and 4, the last hits about 14 dB louder and brighter. The arp can't do this yet: its bounce either accelerates or slows down. | `demo/PETTRA PINGPONG BALL.wav` (138 BPM, 8 bars); `demo/PETTRA PINGPONG BALL B.wav`: x0.67 per hit and mostly one note, A5, as measured later (`references/pettra-arp/METHODS.md`) |
 | `SYNTHS/PINGPONG ROLL.XML` | A ping-pong ball between two paddles that close in. Per ratchet 16 hits over 4 eighths, ever faster and louder, up to the next hit. | `demo/PINGPONG ROLL.wav` |
 
-The audio examples are rendered with the real firmware in the emulator: PETTRA ARP at 138 BPM on A4 C#5 E5 as at 0:55 in the song, the other two at 120 BPM on A major.
+The audio examples are rendered with the real firmware in the emulator: PETTRA ARP at 138 BPM on A4 C#5 E5 as at 0:55 in the song, the other two at 120 BPM on A major. PETTRA BALL is rendered as with headphones plugged in (in stereo); the older examples as on the speaker.
 
 ## Onto the Deluge
 
@@ -32,7 +32,7 @@ Then on the Deluge: open a synth clip and load the preset like any other; the ar
 - Older firmware reads a Ball as 8 notes.
 - The 15 ms buzz is set by ear: under the song's bass the arp's shortest gaps can't be measured (`references/pettra-arp/METHODS.md`, "Reading the samples").
 
-PETTRA BALL: like PETTRA ARP (below), but ratchet notes **Ball**, bounce **+7**, bounce length **4**, bounce velocity **Even**, ratchet probability 100 %, note mode Up, 1 octave, gate 20, envelope 1 decay 14, sustain 0, release 4 (a snappier pluck, so the buzz's hits stay single hits). Hold one note, for example A5.
+PETTRA BALL: like PETTRA ARP (below), but ratchet notes **Ball**, bounce **+7**, bounce length **4**, bounce velocity **Even**, ratchet probability 100 %, note mode Up, 1 octave, gate 20, envelope 1 decay 14, sustain 0, release 4 (a snappier pluck, so the buzz's hits stay single hits), and a patch cable **Random → Pan** at +50: each hit gets its own place between left and right. In the song 45 % of the plucks lie hard left or right, in no fixed order (`references/pettra-arp/METHODS.md`, method 5). The Deluge pans each voice only when it renders in stereo: with headphones or both line outputs, not on the speaker. Hold one note, for example A5.
 
 ## PETTRA ARP: all settings
 

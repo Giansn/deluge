@@ -100,6 +100,10 @@
 				source="note"
 				destination="lpfFrequency"
 				amount="0x06666666" />
+			<patchCable
+				source="random"
+				destination="pan"
+				amount="0x40000000" />
 		</patchCables>
 		<equalizer
 			bass="0x00000000"

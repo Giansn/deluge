@@ -9,6 +9,8 @@
    put on a circle at the angle 2 pi log(x) / log(q); if the gaps sit on rungs g, gq, gq^2 ... the angles bunch.
    A metric grid (1/32, 1/16, 1/8) bunches at q = 2, a ping-pong ball between closing plates at q = 1/r.
 4. What rises at each pluck: the CQT 10-40 ms after it minus 1.2 x the 10-30 ms before it, folded to pitch classes.
+5. Where each pluck lies between left and right: the rise of its attack (1.5-8 kHz, 2-25 ms after it against the
+   20-2 ms before) in each channel's harmonic part; plucks without a rise are left out.
 
 Usage: analyse.py [folder with the two MP3 excerpts]   (needs numpy, scipy, librosa, soundfile)"""
 import os
@@ -17,6 +19,7 @@ from collections import Counter
 
 import librosa
 import numpy as np
+import scipy.signal as ss
 import soundfile as sf
 
 SR = 44100
@@ -80,9 +83,24 @@ def rising_classes(h, times):
     return sets
 
 
+def stereo(hl, hr, times):
+    """Left minus right of each pluck's rise in dB (clipped to +-20), for the plucks whose attack rises at all"""
+    sos = ss.butter(4, [1500, 8000], "band", fs=SR, output="sos")
+    bl, br = ss.sosfiltfilt(sos, hl), ss.sosfiltfilt(sos, hr)
+    out = []
+    for t in times:
+        i = int(t * SR)
+        after, before = slice(i + 88, i + 1100), slice(max(0, i - 880), i - 88)
+        rise_l = (bl[after] ** 2).mean() - (bl[before] ** 2).mean()
+        rise_r = (br[after] ** 2).mean() - (br[before] ** 2).mean()
+        if rise_l > 0 or rise_r > 0:
+            out.append(np.clip(10 * np.log10(max(rise_l, 1e-12) / max(rise_r, 1e-12)), -20, 20))
+    return np.array(out)
+
+
 def main():
     folder = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.abspath(__file__))
-    gaps, sets = [], []
+    gaps, sets, sides, flips = [], [], [], []
     for name in FILES:
         y, sr = sf.read(os.path.join(folder, name), always_2d=True)
         assert sr == SR
@@ -90,6 +108,10 @@ def main():
         t = plucks(h)
         gaps += list(np.diff(t) * 1000)
         sets += rising_classes(h, t)
+        side = stereo(harmonic_part(y[:, 0].astype(np.float32)), harmonic_part(y[:, 1].astype(np.float32)), t)
+        sides += list(side)
+        hard = side[np.abs(side) >= 12]
+        flips += list(np.sign(hard[1:]) != np.sign(hard[:-1]))
         print(f"{name}: {len(t)} plucks")
     gaps = np.array(gaps)
     fast = gaps[(gaps > 25) & (gaps < 180)]
@@ -97,6 +119,11 @@ def main():
     print(f"fast gaps (25-180 ms): {len(fast)}; best ladder q = {q:.2f} (each gap x{1 / q:.2f} of the one after it), "
           f"R = {r:.2f}, Rayleigh p = {p:.1e}; rungs " + ", ".join(f"{x:.0f}" for x in rungs) + " ms")
     print(f"  R at q = 1.5: {at[1.5]:.2f}, at q = 2 (a metric grid): {at[2.0]:.2f}")
+    sides = np.array(sides)
+    print(f"left and right: {len(sides)} plucks with a rising attack; {np.mean(np.abs(sides) >= 12) * 100:.0f} % hard "
+          f"left or right (12 dB or more: {np.sum(sides >= 12)} left, {np.sum(sides <= -12)} right), "
+          f"{np.mean(np.abs(sides) < 3) * 100:.0f} % within 3 dB of the centre; from one hard pluck to the next the "
+          f"side changes {np.mean(flips) * 100:.0f} % of the time")
     count = Counter(len(s.split()) for s in sets)
     print("pitch classes rising together per pluck:", dict(sorted(count.items())))
     print("most common:", Counter(sets).most_common(6))

@@ -44,6 +44,19 @@ CABLES = [("velocity", "volume", 10), ("envelope2", "lpfFrequency", 22), ("note"
 ARP = dict(arpMode="arp", noteMode="random", octaveMode="up", numOctaves=2, syncLevel=5,
            ratchetNotes=3, ratchetBounce=6, ratchetBounceLength=1, ratchetBounceFade=0)
 A_MAJOR = [69, 73, 76]  # A4 C#5 E5: with 2 octaves the arp spans A4 to E6, the register of the passage at 0:55
+# Headphones plugged in: the firmware renders in stereo only with headphones or the right line output plugged in
+# (AudioEngine::renderInStereo, set from the pins in deluge.cpp's inputRoutine()), and only then does a pan per voice
+# take effect. In the emulator the pins read 0, as with the speaker alone, and the player doesn't run inputRoutine(),
+# so the flags are set directly, and the pin too (HEADPHONE_DETECT, port 6 pin 5: PPR6, GPIO.PPR1 at 0xFCFE3204 plus
+# 4 bytes a port) in case something reads it again.
+PPR6 = 0xFCFE3218
+HEADPHONE_DETECT_BIT = 1 << 5
+
+
+def plug_headphones(emu):
+    emu.uc.mem_write(PPR6, HEADPHONE_DETECT_BIT.to_bytes(2, "little"))
+    for name in ("_ZN11AudioEngine19headphonesPluggedInE", "_ZN11AudioEngine14renderInStereoE"):
+        emu.uc.mem_write(emu.sym[name], b"\x01")
 
 
 def use_voice():
@@ -81,6 +94,7 @@ def render(elf, out_dir, bars=8):
     song_emu.boot(emu)
     emu.w32(emu.sym["jcong"], 1)
     song_emu.load_startup_song(emu)
+    plug_headphones(emu)
     player = song_emu.Player(emu)
     player.start()
     record = []

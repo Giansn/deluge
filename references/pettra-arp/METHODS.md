@@ -25,6 +25,13 @@ The question: in the finished mix of Pettra "You Are The Seeds", how does the br
 - **Result:** mostly one or two classes (155 of 228). The most common: **A** (30), C# + A (16), B (11), A + B (8), E + A (8). C# and E are the 5th and 3rd harmonic of an A.
 - So mostly **single notes, above all A**, with B, E, C# in between; full chords seldom. The ball mostly repeats one note, like a ratchet.
 
+**5. Left and right: each pluck somewhere else**
+- Per pluck, the rise of its attack (1.5–8 kHz, 2–25 ms after the onset against the 20–2 ms before) in each channel's harmonic part, as left minus right in dB. Plucks whose attack doesn't rise are left out.
+- **Result:** of 165 plucks, **45 % lie hard left or right** (12 dB or more; 37 left, 38 right), 25 % within 3 dB of the centre, the rest between.
+- From one hard pluck to the next the side changes 48 % of the time: no strict left-right alternation, rather a random place per pluck.
+- That is what a random value per note on the pan does (on the Deluge: a patch cable Random → Pan). The renders before this were all in the centre; with Random → Pan at full depth, PETTRA BALL has 33 % hard left or right and 30 % near the centre.
+- **A pitfall of the emulator:** the firmware renders in stereo, and pans each voice, only with headphones or the right line output plugged in. In the emulator nothing is plugged in, so `tests/arp/pettra.py` sets that flag before it renders.
+
 ## What did not work here
 
 **Basic Pitch** (Spotify, ICASSP 2022; ONNX model, runs with onnxruntime alone)
