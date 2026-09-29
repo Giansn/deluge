@@ -1,0 +1,637 @@
+From 18027513eafa294663fa3eab33661e9580ce2c1b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 29 Sep 2026 08:16:47 +0000
+Subject: [PATCH 119/119] DJ: a DJ filter on the song's gold knobs, sync to the
+ tempo heard, a nudge that bends the internal clock
+
+The first step of the DJ tool (research/DJ-TOOL-PLAN.md, v19.0): the Deluge played along with an external player.
+
+DJ filter (dsp/dj/dj_filter.h): the song's filter type DJ, after LPF, HPF and EQ when the upper gold knob is pressed
+in Song view (AFFECT ENTIRE, the filter row); clips and sounds go round as before. The upper knob drives the song's
+own LPF and HPF cutoff params as the gold knobs set them (automation recorded where it is being recorded): from -64
+(the low-pass closed) through the middle (both off) to +64 (the high-pass open). Left of the middle the low-pass
+closes over its whole range, two of its steps a detent, with the high-pass off; right of it the high-pass opens with
+the low-pass off. Where the two were set apart (both on, in LPF and HPF mode or by automation) a detent goes on from
+there without a jump: to the right the low-pass opens until it is off, then the high-pass opens; to the left the
+high-pass closes, then the low-pass. The lower knob turns both resonances, each from where it is, and shows the one
+of the filter that is on. Popups "DJ: LPF 16", "DJ: OFF", "DJ: HPF 16" (7 segments LP16, OFF, HP16). Saved as
+currentFilterType="dj"; a firmware without it loads LPF there. The filters themselves are unchanged.
+
+Sync (Scan view): TAP TEMPO sets the song's tempo to the BPM shown (halved or doubled as the horizontal encoder
+chose), undoable, "Sync 128.0 BPM"; "No tempo yet" before a tempo is heard, "External clock" where an external clock
+sets the tempo. SHIFT + TAP TEMPO: the metronome, as everywhere.
+
+Nudge (PlaybackHandler::nudgeInternalClock()): the horizontal encoder held and the tempo encoder turned nudged only
+the MIDI clock out in 1.2.1 (a clock sent extra or skipped), and on the internal clock without MIDI clock out it did
+nothing. Now it bends the Deluge's own clock as a jog wheel bends a record: each detent makes the time per timer tick
+4 % shorter (right) or longer (left) for 0.25 s after it, which moves the beat by about 10 ms at any tempo; turning
+on keeps it bent. The clock outputs (MIDI, trigger) follow, as setTimePerTimerTick() reschedules them. After it the
+tempo is exactly what it was, unless it was set meanwhile; STOP ends a bend at once; a song saved while bent saves
+its tempo without the bend. SHIFT keeps 1.2.1's nudge of the MIDI clock out alone. An external clock: as before.
+
+tests/dj/run.sh (PC, UBSan): the knob's curve, a detent at all 129 positions, and no jump from any LPF and HPF knob
+(33,282 starts). tests/dj/dj_emu.py drives it all on the whole firmware in the emulator (26 checks): the filter's
+positions and popups, set apart and taken on from there, the resonances; sync to 128.0000 BPM; a nudge 215.33 ->
+206.72 samples a tick, back exactly 0.3 s later with the beat 460 samples (10.4 ms) ahead, 423 behind the other way,
+and STOP at once puts the tempo back.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01K7Xj5xh88vep8LB7NbjzaE
+---
+ src/definitions_cxx.hpp                       |   3 +-
+ src/deluge/dsp/dj/dj_filter.h                 |  67 ++++++++++++
+ src/deluge/gui/l10n/english.json              |   1 +
+ src/deluge/gui/l10n/g_english.cpp             |   1 +
+ src/deluge/gui/l10n/g_seven_segment.cpp       |   1 +
+ src/deluge/gui/l10n/seven_segment.json        |   1 +
+ src/deluge/gui/l10n/strings.h                 |   1 +
+ src/deluge/gui/views/scan_view.cpp            |  31 ++++++
+ src/deluge/gui/views/scan_view.h              |   4 +-
+ .../global_effectable/global_effectable.cpp   | 102 ++++++++++++++++++
+ .../global_effectable/global_effectable.h     |   5 +
+ .../global_effectable_for_song.h              |   1 +
+ .../mod_controllable_audio.cpp                |   4 +-
+ src/deluge/model/song/song.cpp                |   5 +-
+ src/deluge/playback/playback_handler.cpp      |  39 ++++++-
+ src/deluge/playback/playback_handler.h        |  14 +++
+ src/deluge/util/functions.cpp                 |   6 ++
+ 17 files changed, 277 insertions(+), 9 deletions(-)
+ create mode 100644 src/deluge/dsp/dj/dj_filter.h
+
+diff --git a/src/definitions_cxx.hpp b/src/definitions_cxx.hpp
+index b9dc32a0..7395e76c 100644
+--- a/src/definitions_cxx.hpp
++++ b/src/definitions_cxx.hpp
+@@ -500,8 +500,9 @@ enum class FilterType {
+ 	LPF,
+ 	HPF,
+ 	EQ,
++	DJ, // mastertune-v19: the song's only (GlobalEffectable::allowsDjFilter()), dsp/dj/dj_filter.h
+ };
+-constexpr auto kNumFilterTypes = util::to_underlying(FilterType::EQ) + 1;
++constexpr auto kNumFilterTypes = util::to_underlying(FilterType::DJ) + 1;
+ 
+ constexpr int32_t kNumSources = 2; // That's sources as in oscillators - within a Sound (synth).
+ 
+diff --git a/src/deluge/dsp/dj/dj_filter.h b/src/deluge/dsp/dj/dj_filter.h
+new file mode 100644
+index 00000000..2a95ab71
+--- /dev/null
++++ b/src/deluge/dsp/dj/dj_filter.h
+@@ -0,0 +1,67 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++
++#include <algorithm>
++#include <cstdint>
++
++/// mastertune-v19: the DJ filter, one knob for the song's low-pass and high-pass (its filter type DJ, in Song view).
++/// The knob goes from -64 (low-pass closed) through 0 (both off) to +64 (high-pass open); it drives the song's own LPF
++/// and HPF cutoff params, as knob positions from -64 to +64 as the gold knobs set them.
++namespace deluge::dsp::dj {
++
++/// The knob's curve: the LPF's and HPF's cutoff knobs for a DJ knob position. Left of the middle the low-pass closes
++/// over its whole range (two of its steps a step) with the high-pass off; right of it the high-pass opens with the
++/// low-pass off
++constexpr void filterKnobs(int32_t dj, int32_t* lpf, int32_t* hpf) {
++	dj = std::clamp<int32_t>(dj, -64, 64);
++	*lpf = (dj < 0) ? 64 + 2 * dj : 64;
++	*hpf = (dj > 0) ? -64 + 2 * dj : -64;
++}
++
++/// The DJ knob's position for the LPF's and HPF's cutoff knobs: how far the low-pass is closed (to the left) plus how
++/// far the high-pass is open (to the right). On the curve, the inverse of filterKnobs()
++constexpr int32_t fromFilterKnobs(int32_t lpf, int32_t hpf) {
++	int32_t closed = (std::clamp<int32_t>(lpf, -64, 64) - 64) / 2; // -64 to 0
++	int32_t open = (std::clamp<int32_t>(hpf, -64, 64) + 64) / 2;   // 0 to 64
++	return std::clamp<int32_t>(closed + open, -64, 64);
++}
++
++/// One detent of the DJ knob (direction > 0: to the right): to the right the low-pass opens until it is off, then the
++/// high-pass opens; to the left the high-pass closes until it is off, then the low-pass closes; two of their steps a
++/// detent. On the curve this is filterKnobs(fromFilterKnobs() +- 1); where the two were set apart (both on, as the LPF
++/// and HPF knobs or automation can set them), it goes on from there without a jump
++constexpr void stepFilterKnobs(int32_t direction, int32_t* lpf, int32_t* hpf) {
++	if (direction > 0) {
++		if (*lpf < 64) {
++			*lpf = std::min<int32_t>(*lpf + 2, 64);
++		}
++		else {
++			*hpf = std::min<int32_t>(*hpf + 2, 64);
++		}
++	}
++	else if (direction < 0) {
++		if (*hpf > -64) {
++			*hpf = std::max<int32_t>(*hpf - 2, -64);
++		}
++		else {
++			*lpf = std::max<int32_t>(*lpf - 2, -64);
++		}
++	}
++}
++
++} // namespace deluge::dsp::dj
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index c3e1f796..a2fb8433 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -873,6 +873,7 @@
+         "STRING_FOR_TUNING": "Tuning",
+         "STRING_FOR_MASTER_TUNE": "Master tune (Hz)",
+         "STRING_FOR_SCAN": "Scan: note, BPM, key",
++        "STRING_FOR_DJ_FILTER": "DJ",
+         "STRING_FOR_FIFTH": "5th",
+         "STRING_FOR_SUS2": "Sus2",
+         "STRING_FOR_MINOR": "Min",
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index 03989c01..165f84ef 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -801,6 +801,7 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_TUNING, "Tuning"},
+         {STRING_FOR_MASTER_TUNE, "Master tune (Hz)"},
+         {STRING_FOR_SCAN, "Scan: note, BPM, key"},
++        {STRING_FOR_DJ_FILTER, "DJ"},
+         {STRING_FOR_FIFTH, "5th"},
+         {STRING_FOR_SUS2, "Sus2"},
+         {STRING_FOR_MINOR, "Min"},
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index b8b35c38..76e0977d 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -458,6 +458,7 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_TUNING, "TUNE"},
+         {STRING_FOR_MASTER_TUNE, "MTUN"},
+         {STRING_FOR_SCAN, "SCAN"},
++        {STRING_FOR_DJ_FILTER, "DJ"},
+         {STRING_FOR_FIFTH, "5TH"},
+         {STRING_FOR_SUS2, "SUS2"},
+         {STRING_FOR_MINOR, "MIN"},
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index 8db76aa0..a7b9e9c8 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -493,6 +493,7 @@
+         "STRING_FOR_TUNING": "TUNE",
+         "STRING_FOR_MASTER_TUNE": "MTUN",
+         "STRING_FOR_SCAN": "SCAN",
++        "STRING_FOR_DJ_FILTER": "DJ",
+         "STRING_FOR_FIFTH": "5TH",
+         "STRING_FOR_SUS2": "SUS2",
+         "STRING_FOR_MINOR": "MIN",
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index d4b82c23..d886faf5 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -914,6 +914,7 @@ enum class String : size_t {
+ 	STRING_FOR_TUNING,
+ 	STRING_FOR_MASTER_TUNE,
+ 	STRING_FOR_SCAN, // mastertune-v18.4: Settings > Tuning > Scan
++	STRING_FOR_DJ_FILTER, // mastertune-v19: the song's filter type DJ
+ 
+ 	// arpeggiator (from community 1.3)
+ 	STRING_FOR_FIFTH,
+diff --git a/src/deluge/gui/views/scan_view.cpp b/src/deluge/gui/views/scan_view.cpp
+index 2ec8f9e9..f2d107e2 100644
+--- a/src/deluge/gui/views/scan_view.cpp
++++ b/src/deluge/gui/views/scan_view.cpp
+@@ -28,6 +28,7 @@
+ #include "memory/general_memory_allocator.h"
+ #include "model/song/song.h"
+ #include "model/tuning/master_tune.h"
++#include "playback/playback_handler.h"
+ #include "processing/engines/audio_engine.h"
+ #include "util/functions.h"
+ #include <cmath>
+@@ -409,6 +410,14 @@ ActionResult ScanView::buttonAction(deluge::hid::Button b, bool on, bool inCardR
+ 		return ActionResult::DEALT_WITH;
+ 	}
+ 
++	// mastertune-v19: TAP TEMPO sets the song's tempo to the BPM shown (SHIFT + TAP: the metronome, as everywhere)
++	if (b == TAP_TEMPO && !Buttons::isShiftButtonPressed()) {
++		if (on && currentUIMode == UI_MODE_NONE) {
++			syncTempo();
++		}
++		return ActionResult::DEALT_WITH;
++	}
++
+ 	// What is big: note, Hz, BPM, key
+ 	if (b == SELECT_ENC && !Buttons::isShiftButtonPressed()) {
+ 		if (on && currentUIMode == UI_MODE_NONE) {
+@@ -424,6 +433,28 @@ ActionResult ScanView::buttonAction(deluge::hid::Button b, bool on, bool inCardR
+ 	return view.buttonAction(b, on, inCardRoutine);
+ }
+ 
++void ScanView::syncTempo() {
++	float bpm = shownBpm();
++	if (playbackHandler.isExternalClockActive()) {
++		display->displayPopup(display->haveOLED() ? "External clock" : "EXT"); // It sets the tempo
++		return;
++	}
++	if (bpm <= 0) {
++		display->displayPopup(display->haveOLED() ? "No tempo yet" : "----");
++		return;
++	}
++	currentSong->setBPM(bpm, true); // Undoable; playing, the next ticks follow
++	char buffer[24];
++	if (display->haveOLED()) {
++		int32_t tenths = (int32_t)std::lround(bpm * 10);
++		snprintf(buffer, sizeof(buffer), "Sync %d.%d BPM", (int)(tenths / 10), (int)(tenths % 10));
++	}
++	else {
++		snprintf(buffer, sizeof(buffer), "SYNC");
++	}
++	display->displayPopup(buffer);
++}
++
+ ActionResult ScanView::padAction(int32_t x, int32_t y, int32_t velocity) {
+ 	return ActionResult::DEALT_WITH; // The pads only show
+ }
+diff --git a/src/deluge/gui/views/scan_view.h b/src/deluge/gui/views/scan_view.h
+index ab7e8dcc..be7d8b9b 100644
+--- a/src/deluge/gui/views/scan_view.h
++++ b/src/deluge/gui/views/scan_view.h
+@@ -30,7 +30,8 @@
+ /// or the key (AMIN, C#MAJ); the pads are the needle (a column per 6.7 cents, green in tune, the middle two when within
+ /// 2 cents) and the sidebar the input's level.
+ /// Select encoder: the input (Auto, Left, Right, Stereo); pressed: what is big (note, Hz, BPM, key). Horizontal
+-/// encoder: the BPM halved or doubled (the music doesn't always say which it is). Back, Song or Scale: back to Song
++/// encoder: the BPM halved or doubled (the music doesn't always say which it is). TAP TEMPO (mastertune-v19): the
++/// song's tempo set to the BPM shown, so that the Deluge plays with what comes in. Back, Song or Scale: back to Song
+ /// view.
+ class ScanView final : public RootUI {
+ public:
+@@ -66,6 +67,7 @@ public:
+ 
+ private:
+ 	void exitToSongView();
++	void syncTempo();
+ 	void changed();
+ 	void showOnSevenSegment();
+ 	[[nodiscard]] const char* inputName() const;
+diff --git a/src/deluge/model/global_effectable/global_effectable.cpp b/src/deluge/model/global_effectable/global_effectable.cpp
+index a86a71ca..701b3bce 100644
+--- a/src/deluge/model/global_effectable/global_effectable.cpp
++++ b/src/deluge/model/global_effectable/global_effectable.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include "model/global_effectable/global_effectable.h"
+ #include "definitions_cxx.hpp"
++#include "dsp/dj/dj_filter.h"
+ #include "gui/l10n/l10n.h"
+ #include "gui/views/performance_session_view.h"
+ #include "gui/views/view.h"
+@@ -317,6 +318,9 @@ bool GlobalEffectable::modEncoderButtonAction(uint8_t whichModEncoder, bool on,
+ 			if (on) {
+ 				currentFilterType =
+ 				    static_cast<FilterType>((util::to_underlying(currentFilterType) + 1) % kNumFilterTypes);
++				if (currentFilterType == FilterType::DJ && !allowsDjFilter()) {
++					currentFilterType = FilterType::LPF;
++				}
+ 
+ 				// if mod button is pressed, update mod button pop up
+ 				if (Buttons::isButtonPressed(
+@@ -497,6 +501,9 @@ bool GlobalEffectable::modEncoderButtonAction(uint8_t whichModEncoder, bool on,
+ }
+ 
+ int32_t GlobalEffectable::getKnobPosForNonExistentParam(int32_t whichModEncoder, ModelStackWithAutoParam* modelStack) {
++	if (*getModKnobMode() == 1 && currentFilterType == FilterType::DJ && modelStack) {
++		return djKnobPos(whichModEncoder, modelStack);
++	}
+ 	int current = 0;
+ 	if (*getModKnobMode() == 4) {
+ 
+@@ -537,6 +544,9 @@ int32_t GlobalEffectable::getKnobPosForNonExistentParam(int32_t whichModEncoder,
+ 
+ ActionResult GlobalEffectable::modEncoderActionForNonExistentParam(int32_t offset, int32_t whichModEncoder,
+                                                                    ModelStackWithAutoParam* modelStack) {
++	if (*getModKnobMode() == 1 && currentFilterType == FilterType::DJ && modelStack) {
++		return djKnobAction(offset, whichModEncoder, modelStack);
++	}
+ 	if (*getModKnobMode() == 4) {
+ 		DEF_STACK_STRING_BUF(popupMsg, 40);
+ 		int current;
+@@ -672,6 +682,8 @@ int32_t GlobalEffectable::getParameterFromKnob(int32_t whichModEncoder) {
+ 			else {
+ 				return params::UNPATCHED_HPF_RES;
+ 			}
++		case FilterType::DJ: // The DJ filter's knobs drive the LPF and HPF: djKnobAction()
++			return 255;
+ 		default: // case FilterType::EQ:
+ 			if (whichModEncoder != 0) {
+ 				return params::UNPATCHED_TREBLE;
+@@ -746,6 +758,96 @@ ModelStackWithAutoParam* GlobalEffectable::getParamFromModEncoder(int32_t whichM
+ 	}
+ }
+ 
++namespace {
++
++/// A param of the unpatched set (the song's) in its own model stack, made in memory, or nullptr
++ModelStackWithAutoParam* unpatchedParam(char* memory, ModelStackWithThreeMainThings* modelStack, int32_t paramId) {
++	copyModelStack(memory, modelStack, sizeof(ModelStackWithThreeMainThings));
++	auto* stack = (ModelStackWithThreeMainThings*)memory;
++	ParamCollectionSummary* summary = stack->paramManager->getUnpatchedParamSetSummary();
++	ModelStackWithParamId* withId = stack->addParamCollectionAndId(summary->paramCollection, summary, paramId);
++	ModelStackWithAutoParam* param = summary->paramCollection->getAutoParamFromId(withId, true);
++	return (param && param->autoParam) ? param : nullptr;
++}
++
++/// A param's value as a knob position (-64 to 64)
++int32_t knobPosOf(ModelStackWithThreeMainThings* modelStack, int32_t paramId) {
++	char memory[MODEL_STACK_MAX_SIZE];
++	ModelStackWithAutoParam* param = unpatchedParam(memory, modelStack, paramId);
++	if (!param) {
++		return 0;
++	}
++	int32_t value = param->autoParam->getValuePossiblyAtPos(view.modPos, param);
++	return param->paramCollection->paramValueToKnobPos(value, param);
++}
++
++/// A param set to a knob position, as a gold knob sets it (automation recorded where it is being recorded)
++void setKnobPos(ModelStackWithThreeMainThings* modelStack, int32_t paramId, int32_t knobPos) {
++	char memory[MODEL_STACK_MAX_SIZE];
++	ModelStackWithAutoParam* param = unpatchedParam(memory, modelStack, paramId);
++	if (!param) {
++		return;
++	}
++	int32_t value = param->paramCollection->knobPosToParamValue(knobPos, param);
++	if (value != param->autoParam->getValuePossiblyAtPos(view.modPos, param)) {
++		param->autoParam->setValuePossiblyForRegion(value, param, view.modPos, view.modLength);
++	}
++}
++
++} // namespace
++
++int32_t GlobalEffectable::djKnobPos(int32_t whichModEncoder, ModelStackWithThreeMainThings* modelStack) {
++	int32_t dj = deluge::dsp::dj::fromFilterKnobs(knobPosOf(modelStack, params::UNPATCHED_LPF_FREQ),
++	                                              knobPosOf(modelStack, params::UNPATCHED_HPF_FREQ));
++	if (whichModEncoder == 1) { // Upper: low-pass closed, off, high-pass open
++		return dj;
++	}
++	// Lower: the resonance, as the one that is on has it
++	return knobPosOf(modelStack, (dj > 0) ? params::UNPATCHED_HPF_RES : params::UNPATCHED_LPF_RES);
++}
++
++ActionResult GlobalEffectable::djKnobAction(int32_t offset, int32_t whichModEncoder,
++                                            ModelStackWithThreeMainThings* modelStack) {
++	DEF_STACK_STRING_BUF(popupMsg, 40);
++	if (whichModEncoder == 1) {
++		int32_t lpf = knobPosOf(modelStack, params::UNPATCHED_LPF_FREQ);
++		int32_t hpf = knobPosOf(modelStack, params::UNPATCHED_HPF_FREQ);
++		for (int32_t i = std::abs(offset); i > 0; i--) {
++			deluge::dsp::dj::stepFilterKnobs(offset, &lpf, &hpf);
++		}
++		setKnobPos(modelStack, params::UNPATCHED_LPF_FREQ, lpf);
++		setKnobPos(modelStack, params::UNPATCHED_HPF_FREQ, hpf);
++		int32_t pos = deluge::dsp::dj::fromFilterKnobs(lpf, hpf);
++		int32_t displayLevel = (std::abs(pos) * kMaxMenuValue + 32) / 64;
++		// "DJ: LPF 25", "DJ: OFF", "DJ: HPF 25"; on 7 segments LP25, OFF, HP25
++		if (display->haveOLED()) {
++			popupMsg.append(deluge::l10n::get(deluge::l10n::String::STRING_FOR_DJ_FILTER));
++			popupMsg.append(": ");
++		}
++		if (pos == 0) {
++			popupMsg.append("OFF");
++		}
++		else {
++			popupMsg.append(display->haveOLED() ? ((pos < 0) ? "LPF " : "HPF ") : ((pos < 0) ? "LP" : "HP"));
++			popupMsg.appendInt(displayLevel);
++		}
++	}
++	else {
++		// Both resonances, each from where it is (no jump where they were set apart); shown as the one that is on
++		for (int32_t paramId : {params::UNPATCHED_LPF_RES, params::UNPATCHED_HPF_RES}) {
++			setKnobPos(modelStack, paramId, std::clamp<int32_t>(knobPosOf(modelStack, paramId) + offset, -64, 64));
++		}
++		int32_t pos = djKnobPos(whichModEncoder, modelStack);
++		if (display->haveOLED()) {
++			popupMsg.append(deluge::l10n::get(deluge::l10n::String::STRING_FOR_RESONANCE));
++			popupMsg.append(": ");
++		}
++		popupMsg.appendInt((pos + 64) * kMaxMenuValue / 128);
++	}
++	display->displayPopup(popupMsg.c_str());
++	return ActionResult::ACTIONED_AND_CAUSED_CHANGE;
++}
++
+ ModFXType GlobalEffectable::getModFXType() {
+ 	return modFXType;
+ }
+diff --git a/src/deluge/model/global_effectable/global_effectable.h b/src/deluge/model/global_effectable/global_effectable.h
+index a4c426ee..aeb32eb9 100644
+--- a/src/deluge/model/global_effectable/global_effectable.h
++++ b/src/deluge/model/global_effectable/global_effectable.h
+@@ -73,6 +73,8 @@ public:
+ 	Delay::State createDelayWorkingState(ParamManager& paramManager, bool shouldLimitDelayFeedback = false,
+ 	                                     bool soundComingIn = true);
+ 	bool isEditingComp() override { return editingComp; }
++	/// mastertune-v19: whether the filter types go round to DJ too (dsp/dj/dj_filter.h): the song's only
++	virtual bool allowsDjFilter() { return false; }
+ 	int32_t getKnobPosForNonExistentParam(int32_t whichModEncoder, ModelStackWithAutoParam* modelStack) override;
+ 	ActionResult modEncoderActionForNonExistentParam(int32_t offset, int32_t whichModEncoder,
+ 	                                                 ModelStackWithAutoParam* modelStack) override;
+@@ -90,6 +92,9 @@ protected:
+ 	ModFXType getActiveModFXType(ParamManager* paramManager);
+ 
+ private:
++	// mastertune-v19: the DJ filter's knobs, which drive the song's LPF and HPF params (dsp/dj/dj_filter.h)
++	int32_t djKnobPos(int32_t whichModEncoder, ModelStackWithThreeMainThings* modelStack);
++	ActionResult djKnobAction(int32_t offset, int32_t whichModEncoder, ModelStackWithThreeMainThings* modelStack);
+ 	void ensureModFXParamIsValid();
+ 	void displayCompressorAndReverbSettings(bool on);
+ 	char const* getCompressorModeDisplayName();
+diff --git a/src/deluge/model/global_effectable/global_effectable_for_song.h b/src/deluge/model/global_effectable/global_effectable_for_song.h
+index f3aa6574..c64ad800 100644
+--- a/src/deluge/model/global_effectable/global_effectable_for_song.h
++++ b/src/deluge/model/global_effectable/global_effectable_for_song.h
+@@ -24,6 +24,7 @@ public:
+ 	GlobalEffectableForSong();
+ 
+ 	uint8_t* getModKnobMode() { return &modKnobMode; }
++	bool allowsDjFilter() override { return true; }
+ 
+ 	uint8_t modKnobMode;
+ };
+diff --git a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+index 50989900..b32a5fb8 100644
+--- a/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
++++ b/src/deluge/model/mod_controllable/mod_controllable_audio.cpp
+@@ -1649,6 +1649,8 @@ char const* ModControllableAudio::getFilterTypeDisplayName(FilterType currentFil
+ 		return l10n::get(STRING_FOR_HPF);
+ 	case FilterType::EQ:
+ 		return l10n::get(STRING_FOR_EQ);
++	case FilterType::DJ:
++		return l10n::get(STRING_FOR_DJ_FILTER);
+ 	default:
+ 		return l10n::get(STRING_FOR_NONE);
+ 	}
+@@ -1854,7 +1856,7 @@ void ModControllableAudio::displayFilterSettings(bool on, FilterType currentFilt
+ 		if (on) {
+ 			DEF_STACK_STRING_BUF(popupMsg, 40);
+ 			popupMsg.append(getFilterTypeDisplayName(currentFilterType));
+-			if (currentFilterType != FilterType::EQ) {
++			if (currentFilterType != FilterType::EQ && currentFilterType != FilterType::DJ) {
+ 				popupMsg.append("\n");
+ 				popupMsg.append(getFilterModeDisplayName(currentFilterType));
+ 			}
+diff --git a/src/deluge/model/song/song.cpp b/src/deluge/model/song/song.cpp
+index 201d6935..704f635b 100644
+--- a/src/deluge/model/song/song.cpp
++++ b/src/deluge/model/song/song.cpp
+@@ -1103,8 +1103,9 @@ weAreInArrangementEditorOrInClipInstance:
+ 	writer.writeAttribute("yScrollArrangementView", arrangementYScroll);
+ 	writer.writeAttribute("xScrollArrangementView", xScroll[NAVIGATION_ARRANGEMENT]);
+ 	writer.writeAttribute("xZoomArrangementView", xZoom[NAVIGATION_ARRANGEMENT]);
+-	writer.writeAttribute("timePerTimerTick", timePerTimerTickBig >> 32);
+-	writer.writeAttribute("timerTickFraction", (uint32_t)timePerTimerTickBig);
++	uint64_t timePerTimerTickToSave = playbackHandler.timePerTimerTickWithoutNudge(this); // mastertune-v19: unbent
++	writer.writeAttribute("timePerTimerTick", timePerTimerTickToSave >> 32);
++	writer.writeAttribute("timerTickFraction", (uint32_t)timePerTimerTickToSave);
+ 	writer.writeAttribute("rootNote", key.rootNote);
+ 	writer.writeAttribute("inputTickMagnitude", getInputTickMagnitude());
+ 	writer.writeAttribute("swingAmount", swingAmount);
+diff --git a/src/deluge/playback/playback_handler.cpp b/src/deluge/playback/playback_handler.cpp
+index 9c58f89d..74a06617 100644
+--- a/src/deluge/playback/playback_handler.cpp
++++ b/src/deluge/playback/playback_handler.cpp
+@@ -125,6 +125,7 @@ extern "C" uint32_t triggerClockRisingEdgesProcessed;
+ 
+ // This function will be called repeatedly, at all times, to see if it's time to do a tick, and such
+ void PlaybackHandler::routine() {
++	endClockNudge(); // mastertune-v19: the tempo back after a nudge
+ 
+ 	// Check incoming USB MIDI
+ 	midiEngine.checkIncomingUsbMidi();
+@@ -518,6 +519,7 @@ void PlaybackHandler::setupPlayback(int32_t newPlaybackState, int32_t playFromPo
+ }
+ 
+ void PlaybackHandler::endPlayback() {
++	endClockNudge(true); // mastertune-v19: not left bent
+ 	if (isInternalClockActive() && currentlySendingMIDIOutputClocks()) {
+ 		midiEngine.sendStop(this);
+ 	}
+@@ -2065,7 +2067,9 @@ void PlaybackHandler::commandNudgeClock(int8_t offset) {
+ 		return;
+ 	}
+ 	if (isInternalClockActive()) {
+-		if (currentlySendingMIDIOutputClocks()) {
++		// mastertune-v19: the Deluge's own clock is nudged, its clock outputs with it; with SHIFT only the MIDI clock
++		// out, as 1.2.1 did whenever it sent MIDI clock
++		if (currentlySendingMIDIOutputClocks() && Buttons::isShiftButtonPressed()) {
+ 			if (offset < 0) {
+ 				// Send one extra clock
+ 				midiEngine.sendClock(this);
+@@ -2078,9 +2082,7 @@ void PlaybackHandler::commandNudgeClock(int8_t offset) {
+ 			}
+ 		}
+ 		else {
+-			// Nothing to nudge? TODO: Should we instead nudge the internal clock? Could be
+-			// useful for manual beat syncs.
+-			return;
++			nudgeInternalClock(offset); // Bend the tempo a moment, to bring the beat to another's
+ 		}
+ 	}
+ 	else if (isExternalClockActive()) {
+@@ -2094,6 +2096,35 @@ void PlaybackHandler::commandNudgeClock(int8_t offset) {
+ 	display->displayPopup(deluge::l10n::get(deluge::l10n::String::STRING_FOR_SYNC_NUDGED));
+ }
+ 
++void PlaybackHandler::nudgeInternalClock(int8_t offset) {
++	uint64_t now = currentSong->timePerTimerTickBig;
++	if (!clockNudging || now != clockNudgeTimePerTick) {
++		clockNudgeBaseTimePerTick = now; // Not bent, or the tempo was set meanwhile: bend from what it is
++	}
++	uint64_t bend = clockNudgeBaseTimePerTick / 100 * kNudgePercent;
++	clockNudgeTimePerTick = (offset > 0) ? clockNudgeBaseTimePerTick - bend : clockNudgeBaseTimePerTick + bend;
++	currentSong->setTimePerTimerTick(clockNudgeTimePerTick, false); // Faster: the ticks shorter
++	clockNudging = true;
++	clockNudgeUntil = AudioEngine::audioSampleTimer + kNudgeSamples;
++}
++
++void PlaybackHandler::endClockNudge(bool now) {
++	if (!clockNudging || (!now && (int32_t)(AudioEngine::audioSampleTimer - clockNudgeUntil) < 0)) {
++		return;
++	}
++	clockNudging = false;
++	if (currentSong && currentSong->timePerTimerTickBig == clockNudgeTimePerTick) { // Else it was set meanwhile
++		currentSong->setTimePerTimerTick(clockNudgeBaseTimePerTick, false);
++	}
++}
++
++uint64_t PlaybackHandler::timePerTimerTickWithoutNudge(Song* song) {
++	if (clockNudging && song == currentSong && song->timePerTimerTickBig == clockNudgeTimePerTick) {
++		return clockNudgeBaseTimePerTick;
++	}
++	return song->timePerTimerTickBig;
++}
++
+ void PlaybackHandler::commandEditClockOutScale(int8_t offset) {
+ 	// If playing synced, double or halve our own playing speed relative to the outside world
+ 	if (isExternalClockActive()) {
+diff --git a/src/deluge/playback/playback_handler.h b/src/deluge/playback/playback_handler.h
+index d144fe27..1660e4ff 100644
+--- a/src/deluge/playback/playback_handler.h
++++ b/src/deluge/playback/playback_handler.h
+@@ -221,6 +221,20 @@ public:
+ 	void commandDisplaySwingInterval();
+ 	void commandEditSwingInterval(int8_t offset);
+ 	void commandNudgeClock(int8_t offset);
++	/// mastertune-v19: the internal clock nudged as a DJ's jog wheel bends a record: each detent makes the tempo
++	/// kNudgePercent faster (offset > 0) or slower for kNudgeSamples after it, so that the beat moves by 10 ms, at any
++	/// tempo. Turning on keeps it bent; after it the tempo is what it was (unless it was set meanwhile)
++	void nudgeInternalClock(int8_t offset);
++	/// The bend's end where its time is up, or now
++	void endClockNudge(bool now = false);
++	/// The song's time per timer tick without a nudge's bend: what is saved
++	uint64_t timePerTimerTickWithoutNudge(Song* song);
++	static constexpr int32_t kNudgePercent = 4;
++	static constexpr uint32_t kNudgeSamples = 11025; // 0.25 s
++	bool clockNudging = false;
++	uint64_t clockNudgeBaseTimePerTick = 0; ///< The tempo before the bend
++	uint64_t clockNudgeTimePerTick = 0;     ///< The bent tempo, as set
++	uint32_t clockNudgeUntil = 0;           ///< AudioEngine::audioSampleTimer at the bend's end
+ 	void commandEditClockOutScale(int8_t offset);
+ 	void commandEditTempoCoarse(int8_t offset);
+ 	void commandEditTempoFine(int8_t offset);
+diff --git a/src/deluge/util/functions.cpp b/src/deluge/util/functions.cpp
+index 74832033..5e728919 100644
+--- a/src/deluge/util/functions.cpp
++++ b/src/deluge/util/functions.cpp
+@@ -950,6 +950,9 @@ char const* filterTypeToString(FilterType fxType) {
+ 	case FilterType::EQ:
+ 		return "eq";
+ 
++	case FilterType::DJ:
++		return "dj";
++
+ 	default:
+ 		return "lpf";
+ 	}
+@@ -962,6 +965,9 @@ FilterType stringToFilterType(char const* string) {
+ 	else if (!strcmp(string, "eq")) {
+ 		return FilterType::EQ;
+ 	}
++	else if (!strcmp(string, "dj")) {
++		return FilterType::DJ;
++	}
+ 	else {
+ 		return FilterType::LPF;
+ 	}
+-- 
+2.43.0
+

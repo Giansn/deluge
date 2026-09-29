@@ -39,9 +39,25 @@ What "DJ" can mean on a Deluge, what it already has, and the steps for v19. The 
 
 ## Steps (decided)
 
-1. **v19.0:** A (DJ filter) and B (sync to the input, nudge), with an external player. Small, cheap, useful at once.
+1. **v19.0:** A (DJ filter) and B (sync to the input, nudge), with an external player. Small, cheap, useful at once. Built (patch 0119), details below.
 2. **v19.1:** C and G (tracks as decks, the library tool). The biggest gain: DJing with the Deluge's own audio clips, in sync.
 3. **v19.2:** D and E (crossfader, isolator), F's next step (the song's scale from the key heard).
+
+## v19.0 in detail
+
+Built in v19.0 (patch 0119), tested in `tests/dj`.
+
+- **DJ filter** (Song view, AFFECT ENTIRE on, the filter mod button): pressing the upper gold knob goes round LPF, HPF, EQ and, for the song only, **DJ**.
+  - In DJ the upper knob goes from low-pass closed (left) through off (middle) to high-pass open (right). It writes the song's own LPF and HPF cutoffs: turning left closes the LPF with the HPF off, turning right opens the HPF with the LPF off. So saving, automation recording and v18's glides work as for the other knobs.
+  - Where LPF and HPF were set apart before (both on, e.g. in LPF and HPF mode), the knob goes on from there without a jump: to the right the LPF opens first, then the HPF; to the left the HPF closes first, then the LPF.
+  - The lower knob turns both resonances, each from where it is; the popup shows the one of the filter that is on.
+  - The knob's LEDs show the position, and a popup shows e.g. `DJ: LPF 16` (7-segment `LP16`, `OFF`, `HP16`).
+- **Sync** (Scan view): TAP TEMPO sets the song's tempo to the BPM shown (with the ×2/÷2), undoable, popup `Sync 128.0 BPM` (7-segment `SYNC`). Before a tempo is heard: `No tempo yet`. With an external clock nothing changes (popup `External clock`). SHIFT + TAP TEMPO: the metronome, as everywhere.
+- **Nudge** (any view, as 1.2.1 nudges clocks): hold the horizontal encoder and turn the tempo encoder.
+  - With the internal clock, each detent bends the tempo 4 % faster or slower for 0.25 s: 10 ms of phase at any tempo. Turning on keeps it bent; then the tempo is exactly what it was. The MIDI and trigger clock outputs follow the bend, so gear synced to the Deluge moves with it.
+  - STOP ends a bend at once; a song saved during a bend saves the tempo without it.
+  - **SHIFT** + horizontal encoder + tempo encoder: 1.2.1's nudge, only the MIDI clock out (a clock more or less for the gear that follows; the Deluge itself stays).
+  - With an external clock, as before.
 
 ## Decisions (29.09.2026)
 
