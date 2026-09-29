@@ -57,6 +57,7 @@ if [ "$WHAT" = pc ] || [ "$WHAT" = both ]; then
 	run "delay (v11)" sh "$HERE/delay/run.sh" "$FW"
 	[ -f "$FW/src/deluge/dsp/drone/drone.cpp" ] && run "drone (v12)" sh "$HERE/drone/run.sh" "$FW"
 	run "HPF resonance whistle (filter fix)" sh "$HERE/filters/run.sh" "$FW"
+	[ -f "$FW/src/deluge/dsp/scan/scan.cpp" ] && run "Scan: pitch, tempo, key (v18.4)" sh "$HERE/scan/run.sh" "$FW"
 fi
 if [ "$WHAT" = arm ] || [ "$WHAT" = both ]; then
 	echo "On the Deluge's Cortex-A9, in the emulator:"
@@ -69,6 +70,7 @@ if [ "$WHAT" = arm ] || [ "$WHAT" = both ]; then
 	run "delay (v11)" env ARM=1 sh "$HERE/delay/run.sh" "$FW"
 	[ -f "$FW/src/deluge/dsp/drone/drone.cpp" ] && run "drone (v12)" env ARM=1 sh "$HERE/drone/run.sh" "$FW"
 	run "HPF resonance whistle (filter fix)" env ARM=1 sh "$HERE/filters/run.sh" "$FW"
+	[ -f "$FW/src/deluge/dsp/scan/scan.cpp" ] && run "Scan: pitch, tempo, key (v18.4)" env ARM=1 sh "$HERE/scan/run.sh" "$FW"
 fi
 
 if [ -s "$LOG/costs" ]; then

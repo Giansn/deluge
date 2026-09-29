@@ -1,0 +1,1704 @@
+From fa4acd73295f94a9acf5ec42adc2c040befdaba2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 28 Sep 2026 23:30:44 +0000
+Subject: [PATCH 118/118] Scan: a tuner, tempo meter and key finder on the
+ audio input (Settings > Tuning > Scan)
+
+The Scan view (gui/views/scan_view.*, opened from Song view as the drone view is) listens to the internal
+microphone, or to what is plugged into the mic or line input, and shows the note with its cents against the master
+tune (so at 432 Hz too), its frequency, the tempo in BPM and the key, major or minor, with its Camelot number. The
+select encoder chooses the input (Auto, Left, Right, Stereo; Auto: the internal microphone's left channel, stereo
+with a jack plugged in; another input starts the analysis anew), pressed what is big on the OLED (note, Hz, BPM,
+key); the horizontal encoder halves or doubles the BPM. The pads are the needle (a column per 6.7 cents, the middle
+two green within 2 cents), the sidebar the input's level; the 7-segment display shows note, Hz, BPM or key (AMIN,
+C#MAJ).
+
+dsp/scan (deluge::dsp::Scan): the audio routine feeds it the input frames the recorders get (AudioEngine::startScan(),
+feedScan() after i2sRXBufferPos moves), mixed and halved to 22.05 kHz by a half-band filter; the UI's routine
+analyses them, one of the dearer parts per call (pitch and key take turns by how long each has waited, so neither
+starves where the UI comes seldom). Pitch every 93 ms: YIN at 11.025 kHz (30 Hz to 2.2 kHz, the first dip whose
+parabola's bottom is under 0.15), then the period measured again at 22.05 kHz over 1, 2, 4 ... periods up to 10 ms.
+Tempo every second: the spectral flux (512 points every 11.6 ms), its autocorrelation over 8 s at the lags a beat
+needs (the lag, its double and quadruple, its half), weighted towards 120 BPM, 60 to 207 BPM, nothing without 4 clear
+onsets. Key every 0.5 s: the input at 5.5 kHz (a 31-tap low-pass as it comes), a 2048-point FFT, the peaks standing
+three times above the bins around them (a note's partials: drums and noise have next to none, and a frame counts
+where they make 1 % of the band) into 12 pitch classes against the master tune, summed over about 10 s, and the
+major or minor key whose profile (Temperley's, with the notes' first four harmonics added) correlates best; nothing
+unless it matches with 0.5 and 3 pitch classes are strong (a held note is no key), gone after 10 s without notes.
+The object (95 kB) is allocated while the view is open; closed, nothing runs.
+
+tests/scan (PC and Cortex-A9): tones B0 to C7 at 440 and 432 Hz within 0.2 cents (noise -15 dB: 1.9), the card's
+20 multisamples on their note, 8 of 9 drum loops within 0.1 BPM (drum and bass at half), nothing for silence, noise
+and a held tone; the key of I-vi-IV-V and i-VI-iv-V in all 24 keys played from the card's oboe and double bass, at
+440 and 432 Hz, with a house loop as loud mixed in, and analysed only every 116 ms: 24 of 24 each; no key for
+silence, noise, drums or a held note. Cost on the Cortex-A9: 4,773 instructions per 128 input frames; the analysis
+about 2.1 % of the CPU while the view is open, its dearest call about 260,000 instructions (a pitch frame 251,000, a
+chroma frame 241,000, a tempo estimate 173,000). tests/scan/scan_view_emu.py drives the view on the whole firmware in
+the emulator (28 checks, the key of a chord in the input ring among them).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01K7Xj5xh88vep8LB7NbjzaE
+---
+ src/definitions_cxx.hpp                       |   1 +
+ src/deluge/dsp/scan/scan.cpp                  | 705 ++++++++++++++++++
+ src/deluge/dsp/scan/scan.h                    | 179 +++++
+ src/deluge/gui/l10n/english.json              |   1 +
+ src/deluge/gui/l10n/g_english.cpp             |   1 +
+ src/deluge/gui/l10n/g_seven_segment.cpp       |   1 +
+ src/deluge/gui/l10n/seven_segment.json        |   1 +
+ src/deluge/gui/l10n/strings.h                 |   1 +
+ src/deluge/gui/ui/menus.cpp                   |   4 +
+ src/deluge/gui/views/scan_view.cpp            | 465 ++++++++++++
+ src/deluge/gui/views/scan_view.h              |  95 +++
+ .../processing/engines/audio_engine.cpp       |  33 +
+ src/deluge/processing/engines/audio_engine.h  |   5 +
+ 13 files changed, 1492 insertions(+)
+ create mode 100644 src/deluge/dsp/scan/scan.cpp
+ create mode 100644 src/deluge/dsp/scan/scan.h
+ create mode 100644 src/deluge/gui/views/scan_view.cpp
+ create mode 100644 src/deluge/gui/views/scan_view.h
+
+diff --git a/src/definitions_cxx.hpp b/src/definitions_cxx.hpp
+index 3641d6a7..b9dc32a0 100644
+--- a/src/definitions_cxx.hpp
++++ b/src/definitions_cxx.hpp
+@@ -215,6 +215,7 @@ enum class UIType : uint8_t {
+ 	TIMELINE,
+ 	RENAME_CLIPNAME,
+ 	DRONE, // mastertune-v12
++	SCAN,  // mastertune-v18.4
+ 	NONE = 255,
+ };
+ 
+diff --git a/src/deluge/dsp/scan/scan.cpp b/src/deluge/dsp/scan/scan.cpp
+new file mode 100644
+index 00000000..295405ee
+--- /dev/null
++++ b/src/deluge/dsp/scan/scan.cpp
+@@ -0,0 +1,705 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#include "dsp/scan/scan.h"
++#include <algorithm>
++#include <cmath>
++#include <cstring>
++#if defined(__ARM_NEON)
++#include <arm_neon.h>
++#endif
++
++namespace deluge::dsp {
++
++/// The Scan's helpers, in their own namespace: dsp/ is built as a unity build, where the files' anonymous
++/// namespaces are one
++namespace scan_detail {
++
++constexpr float kPi = 3.14159265358979f;
++
++/// The half-band low-pass that halves the rate: a windowed sinc (Blackman, 23 taps), cut at a quarter of the rate it
++/// runs at. Symmetric, every other tap zero: the centre tap and these, at offsets 1, 3, 5 ... 11 on both sides.
++constexpr float kHalfBandCentre = 0.4999318f;
++constexpr std::array<float, 6> kHalfBandOdd = {0.309432992f,  -0.082065376f, 0.030561699f,
++                                               -0.010062152f, 0.002349748f,  -0.000182833f};
++
++/// The key profiles of Temperley (1999): how well each pitch class fits a major and a minor key, from its tonic
++constexpr std::array<float, 12> kMajorProfile = {5.0f, 2.0f, 3.5f, 2.0f, 4.5f, 4.0f,
++                                                 2.0f, 4.5f, 2.0f, 3.5f, 1.5f, 4.0f};
++constexpr std::array<float, 12> kMinorProfile = {5.0f, 2.0f, 3.5f, 4.5f, 2.0f, 4.0f,
++                                                 2.0f, 4.5f, 3.5f, 2.0f, 1.5f, 4.0f};
++
++/// The Pearson correlation of 12 values with a profile rotated to start at tonic
++float correlation(const float* x, const std::array<float, 12>& profile, int32_t tonic) {
++	float mx = 0, mp = 0;
++	for (int32_t i = 0; i < 12; i++) {
++		mx += x[i];
++		mp += profile[i];
++	}
++	mx /= 12;
++	mp /= 12;
++	float sxy = 0, sxx = 0, spp = 0;
++	for (int32_t i = 0; i < 12; i++) {
++		float dx = x[(tonic + i) % 12] - mx, dp = profile[i] - mp;
++		sxy += dx * dp;
++		sxx += dx * dx;
++		spp += dp * dp;
++	}
++	return (sxx > 0 && spp > 0) ? sxy / std::sqrt(sxx * spp) : 0;
++}
++
++/// The dot product of n values of a and b: on the Deluge sixteen at a time (NEON)
++float dot(const float* a, const float* b, int32_t n) {
++	const float* end = a + n;
++	float sum = 0;
++#if defined(__ARM_NEON)
++	float32x4_t acc0 = vdupq_n_f32(0), acc1 = vdupq_n_f32(0), acc2 = vdupq_n_f32(0), acc3 = vdupq_n_f32(0);
++	for (const float* stop = end - 15; a < stop; a += 16, b += 16) {
++		acc0 = vmlaq_f32(acc0, vld1q_f32(a), vld1q_f32(b));
++		acc1 = vmlaq_f32(acc1, vld1q_f32(a + 4), vld1q_f32(b + 4));
++		acc2 = vmlaq_f32(acc2, vld1q_f32(a + 8), vld1q_f32(b + 8));
++		acc3 = vmlaq_f32(acc3, vld1q_f32(a + 12), vld1q_f32(b + 12));
++	}
++	for (const float* stop = end - 3; a < stop; a += 4, b += 4) {
++		acc0 = vmlaq_f32(acc0, vld1q_f32(a), vld1q_f32(b));
++	}
++	float32x4_t acc = vaddq_f32(vaddq_f32(acc0, acc1), vaddq_f32(acc2, acc3));
++	float32x2_t pair = vadd_f32(vget_low_f32(acc), vget_high_f32(acc));
++	sum = vget_lane_f32(vpadd_f32(pair, pair), 0);
++#endif
++	while (a < end) {
++		sum += *a++ * *b++;
++	}
++	return sum;
++}
++
++/// log2(x) for x >= 1, to about 0.01: the exponent, and a parabola for the mantissa (the flux only compares them)
++float roughLog2(float x) {
++	int32_t bits;
++	std::memcpy(&bits, &x, 4);
++	float exponent = (float)((bits >> 23) - 127);
++	bits = (bits & 0x007FFFFF) | 0x3F800000; // The mantissa, 1 to 2
++	float m;
++	std::memcpy(&m, &bits, 4);
++	return exponent + (-0.34484843f * m + 2.02466578f) * m - 0.67487759f;
++}
++
++/// Where the parabola through (-1, a), (0, b), (1, c) has its extreme, -0.5 to 0.5 (0 if flat)
++float parabola(float a, float b, float c) {
++	float den = a - 2 * b + c;
++	if (den == 0) {
++		return 0;
++	}
++	return std::clamp(0.5f * (a - c) / den, -0.5f, 0.5f);
++}
++
++/// The median of n values (n at most 5), by insertion sort
++float median(const float* values, int32_t n) {
++	std::array<float, 5> v;
++	for (int32_t i = 0; i < n; i++) {
++		int32_t j = i;
++		while (j > 0 && v[j - 1] > values[i]) {
++			v[j] = v[j - 1];
++			j--;
++		}
++		v[j] = values[i];
++	}
++	return v[n / 2];
++}
++
++} // namespace scan_detail
++
++void Scan::makeTables() {
++	using scan_detail::kPi;
++	Tables& t = tables_;
++	for (int32_t i = 0; i < kOnsetFft; i++) {
++		t.hann512[i] = 0.5f - 0.5f * std::cos(2 * kPi * (float)i / kOnsetFft);
++	}
++	for (int32_t i = 0; i < kChromaFrame; i++) {
++		t.hann2048[i] = 0.5f - 0.5f * std::cos(2 * kPi * (float)i / kChromaFrame);
++	}
++	for (int32_t i = 0; i < 512; i++) {
++		t.cos1024[i] = std::cos(2 * kPi * (float)i / 1024);
++		t.sin1024[i] = std::sin(2 * kPi * (float)i / 1024);
++	}
++	for (int32_t i = 0; i <= 1024; i++) {
++		t.cos2048[i] = std::cos(2 * kPi * (float)i / 2048);
++		t.sin2048[i] = std::sin(2 * kPi * (float)i / 2048);
++	}
++	for (int32_t i = 0; i < 1024; i++) {
++		int32_t r = 0;
++		for (int32_t b = 0; b < 10; b++) {
++			r |= ((i >> b) & 1) << (9 - b);
++		}
++		t.reversed1024[i] = r;
++	}
++	for (int32_t i = 0; i < 256; i++) {
++		int32_t r = 0;
++		for (int32_t b = 0; b < 8; b++) {
++			r |= ((i >> b) & 1) << (7 - b);
++		}
++		t.reversed256[i] = r;
++	}
++	// The quarter band: a windowed sinc (Blackman, 31 taps) cut at 2.4 kHz, for 22.05 kHz
++	constexpr int32_t kMiddle = kQuarterBandTaps / 2;
++	float sum = 0;
++	for (int32_t i = 0; i < kQuarterBandTaps; i++) {
++		float n = (float)(i - kMiddle);
++		float cut = 2400.0f / kRate;
++		float sinc = (i == kMiddle) ? 2 * cut : std::sin(2 * kPi * cut * n) / (kPi * n);
++		float w = 0.42f - 0.5f * std::cos(kPi * (float)i / kMiddle) + 0.08f * std::cos(2 * kPi * (float)i / kMiddle);
++		t.quarterBand[i] = sinc * w;
++		sum += t.quarterBand[i];
++	}
++	for (int32_t i = 0; i < kQuarterBandTaps; i++) {
++		t.quarterBand[i] /= sum;
++	}
++	t.quarterBand[kQuarterBandTaps] = 0; // The padding: 32 taps, two NEON blocks of 16
++	// The key profiles as a chroma of real notes has them: each pitch class with its first four harmonics (the octave,
++	// the twelfth, two octaves), 0.6 as strong each, a harmonic between two classes shared (Essentia's Key does the
++	// same, "usePolyphony"). Else a note's twelfth pulls the key a fifth up
++	for (int32_t minor = 0; minor < 2; minor++) {
++		const std::array<float, 12>& base = minor ? scan_detail::kMinorProfile : scan_detail::kMajorProfile;
++		std::array<float, 12>& profile = minor ? t.minorProfile : t.majorProfile;
++		profile.fill(0);
++		for (int32_t pc = 0; pc < 12; pc++) {
++			float weight = base[pc];
++			for (int32_t harmonic = 1; harmonic <= 4; harmonic++) {
++				float at = (float)pc + 12.0f * std::log2((float)harmonic);
++				int32_t below = (int32_t)at;
++				float c = std::cos(0.5f * kPi * (at - (float)below));
++				profile[below % 12] += c * c * weight;
++				profile[(below + 1) % 12] += (1 - c * c) * weight;
++				weight *= 0.6f;
++			}
++		}
++	}
++}
++
++void Scan::reset() {
++	history_.fill(0);
++	historyPos_ = 0;
++	odd_ = false;
++	ring_.fill(0);
++	written_ = pitchDone_ = onsetDone_ = 0;
++	lastLog_.fill(0);
++	onsets_.fill(0);
++	onsetCount_ = sinceTempo_ = 0;
++	numBpms_ = numPitches_ = pitchMisses_ = 0;
++	pitchHz_ = bpm_ = 0;
++	levelDb_ = -120.0f;
++	quarter_.fill(0);
++	quarterNext_ = kQuarterBandTaps / 2; // The first window from sample 0
++	quarterCount_ = 0;
++	chroma_.fill(0);
++	chromaFrames_ = quietFrames_ = 0;
++	chromaDone_ = 0;
++	keyTonic_ = candidateTonic_ = -1;
++	keyMinor_ = candidateMinor_ = false;
++}
++
++void Scan::feed(const int32_t* frames, int32_t numFrames, Mix mix) {
++	using namespace scan_detail;
++	constexpr float kScale = 1.0f / 2147483648.0f;
++	// The channel, or both at half: once per block, not per sample
++	const int32_t* first = frames + (mix == Mix::RIGHT ? 1 : 0);
++	const int32_t* second = (mix == Mix::STEREO) ? frames + 1 : first;
++	const float scale = (mix == Mix::STEREO) ? 0.5f * kScale : kScale;
++	const float weight = (mix == Mix::STEREO) ? 1.0f : 0.0f;
++	for (int32_t i = 0; i < numFrames; i++) {
++		float x = ((float)first[2 * i] + weight * (float)second[2 * i]) * scale;
++		// The history twice over, so that the last kHalfBandTaps samples are always in one piece, oldest first
++		history_[historyPos_] = x;
++		history_[historyPos_ + kHalfBandTaps] = x;
++		historyPos_ = (historyPos_ == kHalfBandTaps - 1) ? 0 : historyPos_ + 1;
++		odd_ = !odd_;
++		if (odd_) {
++			continue; // Every second sample only
++		}
++		const float* p = &history_[historyPos_]; // p[11] the centre
++		float y = kHalfBandCentre * p[11] + kHalfBandOdd[0] * (p[10] + p[12]) + kHalfBandOdd[1] * (p[8] + p[14])
++		          + kHalfBandOdd[2] * (p[6] + p[16]) + kHalfBandOdd[3] * (p[4] + p[18])
++		          + kHalfBandOdd[4] * (p[2] + p[20]) + kHalfBandOdd[5] * (p[0] + p[22]);
++		ring_[written_ & (kRingSize - 1)] = y;
++		written_++;
++	}
++}
++
++float Scan::pitchOf(const float* x) {
++	using namespace scan_detail;
++	// The level: nothing below kSilenceDb
++	float energy = 0;
++	for (int32_t i = 0; i < kPitchFrame; i++) {
++		energy += x[i] * x[i];
++	}
++	levelDb_ = 10.0f * std::log10(std::max(energy / kPitchFrame, 1e-12f));
++	if (levelDb_ < kSilenceDb) {
++		return 0;
++	}
++
++	// Coarse: YIN at half the rate, 11.025 kHz (the frame halved through the half-band filter; the few outputs at
++	// the ends with the frame's missing samples as silence)
++	for (int32_t i = 0; i < kCoarseFrame; i++) {
++		int32_t centre = 2 * i + 1;
++		if (centre >= 11 && centre + 11 < kPitchFrame) {
++			const float* p = x + centre - 11;
++			coarse_[i] = kHalfBandCentre * p[11] + kHalfBandOdd[0] * (p[10] + p[12]) + kHalfBandOdd[1] * (p[8] + p[14])
++			             + kHalfBandOdd[2] * (p[6] + p[16]) + kHalfBandOdd[3] * (p[4] + p[18])
++			             + kHalfBandOdd[4] * (p[2] + p[20]) + kHalfBandOdd[5] * (p[0] + p[22]);
++			continue;
++		}
++		float y = kHalfBandCentre * x[centre];
++		for (int32_t k = 0; k < 6; k++) {
++			int32_t offset = 2 * k + 1;
++			float before = (centre - offset >= 0) ? x[centre - offset] : 0;
++			float after = (centre + offset < kPitchFrame) ? x[centre + offset] : 0;
++			y += kHalfBandOdd[k] * (before + after);
++		}
++		coarse_[i] = y;
++	}
++	// d(t) = sum over j < n of (x[j] - x[j + t])^2 = e0 + e(t) - 2 r(t): the energies e run along, r is a dot
++	// product. Lag by lag, as far as the first dip whose bottom (the parabola through it and its neighbours: a high
++	// note's period falls between two lags, where both can be well above it) is under the threshold: a note's period
++	// is found after its own lags only
++	constexpr int32_t n = kCoarseFrame - kCoarseTauMax;
++	constexpr float kThreshold = 0.15f;
++	const float* c = coarse_.data();
++	float e0 = dot(c, c, n);
++	float et = e0;
++	float running = 0;
++	float shift = 0;
++	difference_[0] = 1;
++	int32_t tau = 0;
++	for (int32_t t = 1; t <= kCoarseTauMax; t++) {
++		et += c[t + n - 1] * c[t + n - 1] - c[t - 1] * c[t - 1];
++		float d = std::max(e0 + et - 2 * dot(c, c + t, n), 0.0f);
++		running += d;
++		difference_[t] = (running > 0) ? d * (float)t / running : 1; // The cumulative mean normalised difference
++		int32_t m = t - 1; // A dip at the lag before, now that its neighbours are known
++		if (m >= kCoarseTauMin && difference_[m] <= difference_[m - 1] && difference_[m] <= difference_[t]) {
++			shift = parabola(difference_[m - 1], difference_[m], difference_[t]);
++			if (difference_[m] - 0.25f * (difference_[m - 1] - difference_[t]) * shift < kThreshold) {
++				tau = m;
++				break;
++			}
++		}
++	}
++	if (tau == 0) {
++		return 0; // No clear period: noise, drums, a chord
++	}
++	float period = 2.0f * ((float)tau + shift);
++
++	// Fine: at the full kRate, the period measured again over 1, 2, 4 ... periods up to 10 ms or more, each step from
++	// the one before (a window of +-2 samples, always under half a period)
++	int32_t periods = 1;
++	while (true) {
++		float lag = periods * period;
++		int32_t centre = (int32_t)std::lround(lag);
++		if (centre + 2 >= kPitchFrame / 2) {
++			break;
++		}
++		// d(k) = e0 + e(k) - 2 r(k) over count samples, as in the coarse search
++		int32_t count = kPitchFrame - (centre + 2);
++		float e0 = dot(x, x, count);
++		float ek = dot(x + centre - 2, x + centre - 2, count);
++		std::array<float, 5> d;
++		for (int32_t i = 0; i < 5; i++) {
++			int32_t k = centre - 2 + i;
++			if (i > 0) {
++				ek += x[k + count - 1] * x[k + count - 1] - x[k - 1] * x[k - 1];
++			}
++			d[i] = e0 + ek - 2 * dot(x, x + k, count);
++		}
++		int32_t best = (int32_t)(std::min_element(d.begin(), d.end()) - d.begin());
++		if (best == 0 || best == 4) {
++			break; // Not in the window: keep what there is
++		}
++		period = ((float)(centre - 2 + best) + parabola(d[best - 1], d[best], d[best + 1])) / (float)periods;
++		if (lag >= 0.01f * kRate) {
++			break;
++		}
++		periods *= 2;
++	}
++	return (float)kRate / period;
++}
++
++void Scan::pitchFrame(const float* x) {
++	float f = pitchOf(x);
++	if (f <= 0) {
++		if (++pitchMisses_ >= 3) { // About 140 ms without: gone
++			pitchHz_ = 0;
++			numPitches_ = 0;
++		}
++		return;
++	}
++	pitchMisses_ = 0;
++	// The median of the last three, if they are within a quarter tone of each other: steady on a held note, and a
++	// new note shows at once
++	if (numPitches_ > 0 && std::abs(std::log2(f / pitches_[(numPitches_ - 1) % 3])) > 1.0f / 24) {
++		numPitches_ = 0;
++	}
++	pitches_[numPitches_ % 3] = f;
++	numPitches_++;
++	pitchHz_ = (numPitches_ >= 3) ? scan_detail::median(pitches_.data(), 3) : f;
++}
++
++void Scan::fft(float* re, float* im, int32_t n) const {
++	// Pairs first, where the twiddle is 1
++	for (int32_t a = 0; a < n; a += 2) {
++		float r = re[a + 1], i = im[a + 1];
++		re[a + 1] = re[a] - r;
++		im[a + 1] = im[a] - i;
++		re[a] += r;
++		im[a] += i;
++	}
++	const int32_t stride = 1024 / n; // The twiddles are the 1024-point FFT's
++	for (int32_t size = 4; size <= n; size *= 2) {
++		int32_t half = size / 2;
++		int32_t step = (n / size) * stride;
++		for (int32_t k = 0; k < half; k++) { // Each twiddle once, for all its butterflies
++			float c = tables_.cos1024[k * step];
++			float s = -tables_.sin1024[k * step];
++			for (int32_t a = k; a < n; a += size) {
++				int32_t b = a + half;
++				float r = re[b] * c - im[b] * s;
++				float i = re[b] * s + im[b] * c;
++				re[b] = re[a] - r;
++				im[b] = im[a] - i;
++				re[a] += r;
++				im[a] += i;
++			}
++		}
++	}
++}
++
++void Scan::onsetFrame(const float* x) {
++	using namespace scan_detail;
++	constexpr int32_t half = kOnsetFft / 2;
++	// 512 real samples as 256 complex ones (even and odd), windowed, in bit-reversed order
++	for (int32_t i = 0; i < half; i++) {
++		int32_t j = tables_.reversed256[i];
++		fftRe_[j] = x[2 * i] * tables_.hann512[2 * i];
++		fftIm_[j] = x[2 * i + 1] * tables_.hann512[2 * i + 1];
++	}
++	fft(fftRe_.data(), fftIm_.data(), half);
++	// The real FFT's bins 0 to 256 from it, their power compressed (log), and how much each rose since the last frame
++	float flux = 0;
++	for (int32_t k = 0; k <= half; k++) {
++		int32_t kk = k & (half - 1);
++		int32_t mk = (half - k) & (half - 1);
++		float a = fftRe_[kk], b = fftIm_[kk], c = fftRe_[mk], d = fftIm_[mk];
++		float eRe = 0.5f * (a + c), eIm = 0.5f * (b - d);
++		float oRe = 0.5f * (b + d), oIm = -0.5f * (a - c);
++		float co = tables_.cos2048[4 * k], si = tables_.sin2048[4 * k]; // 2 pi k / 512
++		float re = eRe + co * oRe + si * oIm;
++		float im = eIm + co * oIm - si * oRe;
++		float compressed = roughLog2(1.0f + 100.0f * (re * re + im * im));
++		flux += std::max(0.0f, compressed - lastLog_[k]);
++		lastLog_[k] = compressed;
++	}
++	onsets_[onsetCount_ & (kOnsetRing - 1)] = flux;
++	onsetCount_++;
++}
++
++void Scan::chromaFrame() {
++	std::array<float, 12> frame{};
++	if (levelDb_ < kSilenceDb || !tonalChroma(frame.data())) {
++		// Silence, drums, noise: the key stays a while (a drum break), and is gone after kQuietFrames of them
++		if (++quietFrames_ >= kQuietFrames) {
++			chroma_.fill(0);
++			chromaFrames_ = 0;
++			keyTonic_ = candidateTonic_ = -1;
++		}
++		return;
++	}
++	quietFrames_ = 0;
++	// Summed, the older frames fading; a key (or none clear) shown when it wins twice in a row
++	for (int32_t i = 0; i < 12; i++) {
++		chroma_[i] = kChromaDecay * chroma_[i] + frame[i];
++	}
++	chromaFrames_++;
++	if (chromaFrames_ < 6) {
++		return; // 3 s of tonal frames at least
++	}
++	bool minor;
++	int32_t tonic = keyOf(chroma_.data(), &minor);
++	if (tonic == candidateTonic_ && (tonic < 0 || minor == candidateMinor_)) {
++		keyTonic_ = tonic;
++		keyMinor_ = minor;
++	}
++	candidateTonic_ = tonic;
++	candidateMinor_ = minor;
++}
++
++bool Scan::tonalChroma(float* chroma) {
++	using namespace scan_detail;
++	constexpr int32_t n = kChromaFrame / 2;               // The complex FFT's points
++	constexpr float kBinHz = kRate / 4.0f / kChromaFrame; // 2.69 Hz
++	// The FFT of the last kChromaFrame samples at a quarter of kRate: 2048 real points as 1024 complex ones, windowed,
++	// in bit-reversed order
++	const uint32_t first = quarterCount_ - kChromaFrame;
++	for (int32_t i = 0; i < n; i++) {
++		int32_t j = tables_.reversed1024[i];
++		fftRe_[j] = quarter_[(first + 2 * i) & (kChromaFrame - 1)] * tables_.hann2048[2 * i];
++		fftIm_[j] = quarter_[(first + 2 * i + 1) & (kChromaFrame - 1)] * tables_.hann2048[2 * i + 1];
++	}
++	fft(fftRe_.data(), fftIm_.data(), n);
++	// The magnitudes of bins 0 to 1024 (frame_ as scratch)
++	float* magnitude = frame_.data();
++	for (int32_t k = 0; k <= n; k++) {
++		int32_t kk = k & (n - 1);
++		int32_t mk = (n - k) & (n - 1);
++		float a = fftRe_[kk], b = fftIm_[kk], c = fftRe_[mk], d = fftIm_[mk];
++		float eRe = 0.5f * (a + c), eIm = 0.5f * (b - d);
++		float oRe = 0.5f * (b + d), oIm = -0.5f * (a - c);
++		float co = tables_.cos2048[k], si = tables_.sin2048[k];
++		float re = eRe + co * oRe + si * oIm;
++		float im = eIm + co * oIm - si * oRe;
++		magnitude[k] = std::sqrt(re * re + im * im);
++	}
++	// The peaks from 60 Hz to 2.5 kHz that stand out (kPeakContrast times the mean of the bins around), a note's
++	// partials, into the pitch classes (from the master tune's A): each by the root of its magnitude (the loud ones
++	// don't drown the rest), weighed down the further it is from the class's middle. Drums and noise have next to
++	// none: a frame counts where they make kTonal of the band (as roots of the magnitudes) at least
++	constexpr int32_t kLow = (int32_t)(60.0f / kBinHz), kHigh = (int32_t)(2500.0f / kBinHz);
++	constexpr int32_t kAround = 16; // Bins on each side: 43 Hz
++	float around = 0;
++	for (int32_t k = kLow - kAround - 1; k < kLow + kAround; k++) {
++		around += magnitude[k];
++	}
++	float total = 0, peaks = 0, band = 0;
++	for (int32_t k = kLow; k <= kHigh; k++) {
++		around += magnitude[k + kAround] - magnitude[k - kAround - 1]; // Bins k - kAround to k + kAround
++		float m = magnitude[k];
++		float root = std::sqrt(m);
++		band += root;
++		if (m <= magnitude[k - 1] || m < magnitude[k + 1] || m < kPeakContrast / (2 * kAround + 1) * around) {
++			continue;
++		}
++		float bin = (float)k + parabola(magnitude[k - 1], m, magnitude[k + 1]);
++		float semitones = 12.0f * std::log2(bin * kBinHz / referenceHz_) + 69.0f;
++		float nearest = std::round(semitones);
++		float weight = root * (1.0f - std::abs(semitones - nearest));
++		chroma[((int32_t)nearest % 12 + 12) % 12] += weight;
++		total += weight;
++		peaks += root;
++	}
++	if (total <= 0 || peaks < kTonal * band) {
++		return false;
++	}
++	for (int32_t i = 0; i < 12; i++) {
++		chroma[i] /= total;
++	}
++	return true;
++}
++
++int32_t Scan::keyOf(const float* chroma, bool* minor, float* match) const {
++	using namespace scan_detail;
++	int32_t best = -1;
++	float bestMatch = -1;
++	*minor = false;
++	for (int32_t tonic = 0; tonic < 12; tonic++) {
++		float major = correlation(chroma, tables_.majorProfile, tonic);
++		float minorMatch = correlation(chroma, tables_.minorProfile, tonic);
++		if (major > bestMatch) {
++			bestMatch = major;
++			best = tonic;
++			*minor = false;
++		}
++		if (minorMatch > bestMatch) {
++			bestMatch = minorMatch;
++			best = tonic;
++			*minor = true;
++		}
++	}
++	if (match) {
++		*match = bestMatch;
++	}
++	// Clear: the profile matches well, and 3 pitch classes at least are strong (a held note is not a key)
++	float strongest = *std::max_element(chroma, chroma + 12);
++	int32_t strong = (int32_t)std::count_if(chroma, chroma + 12, [&](float v) { return v > 0.4f * strongest; });
++	return (bestMatch >= 0.5f && strong >= 3) ? best : -1;
++}
++
++float Scan::tempoOf(float* x, int32_t n) {
++	using namespace scan_detail;
++	constexpr float kNotYet = -1000.0f;
++	// Smoothed a little (29 ms): a kick's onset is a frame or two wide, and the beat's lag isn't a whole number of
++	// frames
++	float a = x[0], b = x[0];
++	for (int32_t i = 0; i < n; i++) {
++		float c = x[i], d = x[std::min(i + 1, n - 1)], e = x[std::min(i + 2, n - 1)];
++		x[i] = (a + 2 * b + 3 * c + 2 * d + e) * (1.0f / 9);
++		a = b;
++		b = c;
++	}
++	float mean = 0, square = 0;
++	for (int32_t i = 0; i < n; i++) {
++		mean += x[i];
++		square += x[i] * x[i];
++	}
++	mean /= (float)n;
++	float sd = std::sqrt(std::max(square / (float)n - mean * mean, 0.0f));
++	// A beat needs onsets: at least 4 well above the rest (mean + 2 standard deviations), 0.1 s apart. A held tone
++	// has one, when it starts, and a flux that barely moves
++	int32_t onsets = 0, last = -1000;
++	for (int32_t i = 1; i + 1 < n; i++) {
++		if (x[i] > mean + 2 * sd && x[i] >= x[i - 1] && x[i] > x[i + 1] && i - last >= (int32_t)(0.1f * kOnsetRate)) {
++			onsets++;
++			last = i;
++		}
++	}
++	if (onsets < 4 || sd <= 0) {
++		return 0;
++	}
++	// The autocorrelation of the onsets less their mean, per lag as a share of the lag 0's, computed where the beats
++	// below look (a lag, its double and quadruple, its half), each once
++	for (int32_t i = 0; i < n; i++) {
++		x[i] -= mean;
++	}
++	correlations_.fill(kNotYet);
++	float variance = sd * sd;
++	auto r = [&](int32_t lag) {
++		if (lag >= n - 1 || lag >= (int32_t)correlations_.size()) {
++			return 0.0f;
++		}
++		if (correlations_[lag] == kNotYet) {
++			correlations_[lag] = dot(x, x + lag, n - lag) / (float)(n - lag) / variance;
++		}
++		return correlations_[lag];
++	};
++	// The beat: its lag, twice it (half a bar) and four times (a bar) correlate, and so does half of it where the beat
++	// is divided (eighths: that tells a beat from one and a half, of which the half doesn't repeat); weighted towards
++	// 120 BPM (an octave away counts 0.6)
++	int32_t best = 0;
++	float bestScore = 0;
++	for (int32_t lag = kTempoMinLag; lag <= kTempoMaxLag; lag++) {
++		float bpm = 60.0f * kOnsetRate / (float)lag;
++		float octaves = std::log2(bpm / 120.0f);
++		float half = (lag & 1) ? 0.5f * (r(lag / 2) + r(lag / 2 + 1)) : r(lag / 2);
++		float score = (r(lag) + 0.5f * r(2 * lag) + 0.25f * r(4 * lag) + 0.5f * std::max(half, 0.0f))
++		              * std::exp(-0.5f * octaves * octaves);
++		if (score > bestScore) {
++			bestScore = score;
++			best = lag;
++		}
++	}
++	if (best == 0 || r(best) < 0.05f) {
++		return 0; // Nothing repeats
++	}
++	return 60.0f * kOnsetRate / ((float)best + parabola(r(best - 1), r(best), r(best + 1)));
++}
++
++void Scan::tempoEstimate() {
++	int32_t n = (int32_t)std::min<uint32_t>(onsetCount_, kTempoWindow);
++	if (n < kTempoWindow / 2) {
++		return; // 4 s at least
++	}
++	float* x = frame_.data(); // As scratch: the pitch frame is taken anew each time
++	for (int32_t i = 0; i < n; i++) {
++		x[i] = onsets_[(onsetCount_ - n + i) & (kOnsetRing - 1)];
++	}
++	float bpm = tempoOf(x, n);
++	if (bpm <= 0) {
++		numBpms_ = 0;
++		bpm_ = 0;
++		return;
++	}
++	bpms_[numBpms_ % bpms_.size()] = bpm;
++	numBpms_++;
++	int32_t have = std::min<int32_t>(numBpms_, bpms_.size());
++	bpm_ = scan_detail::median(bpms_.data(), have); // Of the last three (3 s)
++}
++
++bool Scan::analyse() {
++	float pitchBefore = pitchHz_, bpmBefore = bpm_, levelBefore = levelDb_;
++	int32_t keyBefore = keyTonic_ * 2 + (keyMinor_ ? 1 : 0);
++	uint32_t written = written_;
++
++	// Behind by more than the ring holds (the UI held up): on from what's still there
++	if (written - onsetDone_ > (uint32_t)(kRingSize - kOnsetFft)) {
++		onsetDone_ = written - (uint32_t)(kRingSize - kOnsetFft);
++	}
++
++	// One of the dearer parts per call at most (a tempo estimate, a pitch frame, a chroma frame: about 0.5 ms each on
++	// the Deluge), one that is due as well a call (15 ms) later: the audio routine waits while the UI's routine runs
++	bool busy = false;
++
++	// Onsets, every kOnsetHop samples, and the tempo every kTempoEvery of them
++	while (onsetDone_ + kOnsetHop <= written) {
++		onsetDone_ += kOnsetHop;
++		if (onsetDone_ < (uint32_t)kOnsetFft) {
++			continue;
++		}
++		float* chunk = frame_.data(); // As scratch: the pitch frame is taken anew below
++		for (int32_t i = 0; i < kOnsetFft; i++) {
++			chunk[i] = at(onsetDone_ - kOnsetFft + i);
++		}
++		onsetFrame(chunk);
++		sinceTempo_++;
++		if (sinceTempo_ >= kTempoEvery && !busy) {
++			sinceTempo_ = 0;
++			tempoEstimate();
++			busy = true;
++		}
++	}
++
++	// The key's signal: every fourth sample through the quarter band (5.5 kHz), as they come, a window at a time (its
++	// middle at quarterNext_, which can be ahead of what came yet) where it is in the ring
++	if ((int32_t)(written - quarterNext_) > kRingSize - kQuarterBandTaps) {
++		quarterNext_ = written - (uint32_t)(kRingSize - kQuarterBandTaps); // Behind by more than the ring holds
++	}
++	while ((int32_t)(written - quarterNext_) > kQuarterBandTaps / 2) {
++		uint32_t from = quarterNext_ - kQuarterBandTaps / 2;
++		int32_t physical = (int32_t)(from & (kRingSize - 1));
++		float y;
++		if (physical + kQuarterBandPadded <= kRingSize) {
++			y = scan_detail::dot(&ring_[physical], tables_.quarterBand.data(), kQuarterBandPadded);
++		}
++		else {
++			y = 0;
++			for (int32_t m = 0; m < kQuarterBandTaps; m++) {
++				y += tables_.quarterBand[m] * at(from + m);
++			}
++		}
++		quarter_[quarterCount_ & (kChromaFrame - 1)] = y;
++		quarterCount_++;
++		quarterNext_ += 4;
++	}
++
++	// Pitch (the last kPitchFrame samples, every kPitchHop) or key (a chroma frame of the last kChromaFrame samples at
++	// the quarter rate, every kChromaEvery): one frame, however long the UI held up, and of the two the one waiting the
++	// longer for its time, so that neither waits for ever where the UI's routine comes seldom
++	uint32_t pitchWait = written - pitchDone_, chromaWait = written - chromaDone_;
++	bool pitchDue = !busy && written >= (uint32_t)kPitchFrame && pitchWait >= (uint32_t)kPitchHop;
++	bool chromaDue = !busy && quarterCount_ >= (uint32_t)kChromaFrame && chromaWait >= (uint32_t)kChromaEvery;
++	if (pitchDue && (!chromaDue || (uint64_t)pitchWait * kChromaEvery >= (uint64_t)chromaWait * kPitchHop)) {
++		pitchDone_ = written;
++		for (int32_t i = 0; i < kPitchFrame; i++) {
++			frame_[i] = at(written - kPitchFrame + i);
++		}
++		pitchFrame(frame_.data());
++	}
++	else if (chromaDue) {
++		chromaDone_ = written;
++		chromaFrame();
++	}
++
++	return pitchHz_ != pitchBefore || bpm_ != bpmBefore || std::abs(levelDb_ - levelBefore) >= 1.0f
++	       || keyTonic_ * 2 + (keyMinor_ ? 1 : 0) != keyBefore;
++}
++
++} // namespace deluge::dsp
+diff --git a/src/deluge/dsp/scan/scan.h b/src/deluge/dsp/scan/scan.h
+new file mode 100644
+index 00000000..167cdb35
+--- /dev/null
++++ b/src/deluge/dsp/scan/scan.h
+@@ -0,0 +1,179 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++
++#include <array>
++#include <cstdint>
++
++namespace deluge::dsp {
++
++/// mastertune-v18.4: what the Scan view hears at the audio input: the pitch of a tone, to tune an instrument by, the
++/// tempo of music and its key. The audio routine feeds it the input (feed(): the channels mixed as chosen and halved
++/// to 22.05 kHz, a few operations per sample); the UI's routine analyses what came in (analyse()):
++/// - Pitch, every 93 ms: YIN (de Cheveigné and Kawahara, 2002) on the last 93 ms at 11.025 kHz finds the period, 30 Hz
++///   to 2 kHz; then the period is measured again at 22.05 kHz over as many periods as make 10 ms at least, where a
++///   steady tone gives it to a small fraction of a cent. Nothing when the input is quieter than kSilenceDb or has no
++///   clear period (noise, drums).
++/// - Tempo, every second: the spectral flux (how much the log spectrum rises, 512 points every 11.6 ms), its
++///   autocorrelation over the last 8 s: the beat's lag, where it, its double and quadruple (half a bar, a bar) and
++///   its half (the eighths) repeat most, weighted towards 120 BPM, 60 to 200 BPM. Which of a tempo and its double is
++///   meant, the music doesn't always say: the view can halve or double what it shows. Nothing without at least 4 clear
++///   onsets.
++/// - Key, every 0.5 s: the last 371 ms at a quarter of kRate (5.5 kHz), a 2048-point FFT (2.7 Hz a bin); the peaks
++///   from 60 Hz to 2.5 kHz that stand out (a note's partials: drums and noise have next to none) counted into the 12
++///   pitch classes against the master tune (the chroma), summed over about the last 10 s, and the major or minor key
++///   whose profile (Temperley, 1999, with the notes' harmonics) matches best. Nothing until it matches clearly, with 3
++///   pitch classes at least (a held note is no key); gone after 10 s without notes.
++/// analyse() does one of the dearer parts per call (a pitch frame, a chroma frame or a tempo estimate, 0.65 ms at most
++/// on the Deluge); pitch and key take turns by how long each has waited. The object is about 95 kB: the view allocates
++/// it while open.
++class Scan {
++public:
++	enum class Mix : uint8_t { LEFT, RIGHT, STEREO };
++
++	static constexpr int32_t kRate = 22050;      ///< The analysis' rate: the input's 44.1 kHz halved
++	static constexpr int32_t kRingSize = 8192;   ///< 371 ms of input waiting for analyse()
++	static constexpr int32_t kPitchFrame = 2048; ///< 93 ms at kRate, the pitch's frame
++	static constexpr int32_t kPitchHop = 2048;   ///< 93 ms between two pitch frames
++	static constexpr int32_t kCoarseFrame = kPitchFrame / 2;
++	static constexpr int32_t kCoarseTauMin = 5;    ///< At 11.025 kHz: 2205 Hz
++	static constexpr int32_t kCoarseTauMax = 368;  ///< At 11.025 kHz: 30 Hz
++	static constexpr int32_t kOnsetFft = 512;      ///< 23 ms
++	static constexpr int32_t kOnsetHop = 256;      ///< 11.6 ms: 86.1 onset values a second
++	static constexpr int32_t kOnsetRing = 1024;    ///< 11.9 s of onset values
++	static constexpr int32_t kTempoWindow = 689;   ///< The last 8 s of them for the tempo
++	static constexpr int32_t kTempoEvery = 86;     ///< Onset values between two tempo estimates (1 s)
++	static constexpr int32_t kTempoMinLag = 25;    ///< 207 BPM
++	static constexpr int32_t kTempoMaxLag = 86;    ///< 60 BPM
++	static constexpr int32_t kChromaFrame = 2048;  ///< At kRate / 4 (5.5 kHz): 371 ms, 2.7 Hz between bins
++	static constexpr int32_t kChromaEvery = 11025; ///< Samples at kRate between two chroma frames (0.5 s)
++	static constexpr float kChromaDecay = 0.95f;   ///< Per chroma frame: the key hears about the last 10 s
++	static constexpr float kPeakContrast = 3.0f;   ///< A partial: that many times the bins around it
++	static constexpr float kTonal = 0.01f;         ///< A frame with notes: its partials' share of the band
++	static constexpr int32_t kQuietFrames = 20;    ///< Chroma frames without notes (10 s) until the key is gone
++	static constexpr float kSilenceDb = -60.0f;
++
++	Scan() {
++		makeTables();
++		reset();
++	}
++	/// Forgets what it heard: pitch, tempo and key start anew (the view's input changed)
++	void reset();
++
++	/// Audio routine: numFrames frames of the input, stereo interleaved, 32 bits (the codec's 24 at the top)
++	void feed(const int32_t* frames, int32_t numFrames, Mix mix);
++
++	/// UI routine: analyses what came in since the last call; true if a result changed
++	bool analyse();
++
++	[[nodiscard]] float pitchHz() const { return pitchHz_; } ///< 0: no pitch
++	[[nodiscard]] float bpm() const { return bpm_; }         ///< 0: no tempo (yet)
++	[[nodiscard]] float levelDb() const { return levelDb_; } ///< The input's level over the last 93 ms, dBFS (RMS)
++	[[nodiscard]] uint32_t fed() const { return written_; }  ///< Samples at kRate fed in all
++	/// The key's tonic, 0 (C) to 11 (B), or -1: no key (yet); keyMinor(): minor, else major
++	[[nodiscard]] int32_t keyTonic() const { return keyTonic_; }
++	[[nodiscard]] bool keyMinor() const { return keyMinor_; }
++	/// The master tune the chroma counts the pitch classes from, in tenths of Hz (the view sets it)
++	void setReference(int32_t tenthsHz) { referenceHz_ = (float)tenthsHz / 10.0f; }
++
++	/// The tempo of n onset values at kOnsetRate a second, or 0 (x is changed): separate for the tests
++	float tempoOf(float* x, int32_t n);
++	/// The pitch of kPitchFrame samples at kRate, or 0: separate for the tests
++	float pitchOf(const float* x);
++	/// The key of a chroma (12 values from C): its tonic (-1: none clear) and whether minor, and how well it matches
++	/// (the correlation with the key's profile): separate for the tests
++	int32_t keyOf(const float* chroma, bool* minor, float* match = nullptr) const;
++	/// A chroma frame of the last 371 ms, as analyse() takes one every kChromaEvery: separate for the tests
++	void chromaFrame();
++
++	static constexpr float kOnsetRate = (float)kRate / kOnsetHop;
++
++private:
++	void onsetFrame(const float* x);
++	void pitchFrame(const float* x);
++	void makeTables();
++	void tempoEstimate();
++	/// The chroma of the last kChromaFrame samples at the quarter rate into chroma (12 values, zero before, summing to
++	/// 1): false if the frame has no notes
++	bool tonalChroma(float* chroma);
++	/// A complex FFT of n = 256 or 1024 points in place, its input in bit-reversed order
++	void fft(float* re, float* im, int32_t n) const;
++	[[nodiscard]] float at(uint32_t i) const { return ring_[i & (kRingSize - 1)]; }
++
++	// Halving the rate: a half-band FIR (23 taps, of which 12 not zero), on the input's samples
++	static constexpr int32_t kHalfBandTaps = 23;
++	/// The key's low-pass before a quarter of the rate, and with a zero tap after them: two NEON blocks of 16
++	static constexpr int32_t kQuarterBandTaps = 31;
++	static constexpr int32_t kQuarterBandPadded = 32;
++	std::array<float, 2 * kHalfBandTaps> history_{}; ///< Twice over: the last kHalfBandTaps in one piece
++	int32_t historyPos_ = 0;
++	bool odd_ = false;
++
++	std::array<float, kRingSize> ring_{};
++	uint32_t written_ = 0;   ///< Samples at kRate written into ring_
++	uint32_t pitchDone_ = 0; ///< Up to where pitch frames were taken
++	uint32_t onsetDone_ = 0; ///< Up to where onset values were taken
++
++	std::array<float, kPitchFrame> frame_{}; ///< The pitch frame, and scratch for an onset frame and the tempo
++	std::array<float, kCoarseFrame> coarse_{};
++	std::array<float, kCoarseTauMax + 1> difference_{};
++
++	/// The FFTs' tables, made once: Hann windows, the twiddles of a 1024-point complex FFT (the 256-point one
++	/// takes every fourth), those for taking a real FFT of 2048 (or 512) points apart, the bit reversals
++	struct Tables {
++		std::array<float, kOnsetFft> hann512;
++		std::array<float, kChromaFrame> hann2048;
++		std::array<float, 512> cos1024, sin1024;
++		std::array<float, 1025> cos2048, sin2048;
++		std::array<uint16_t, 1024> reversed1024;
++		std::array<uint16_t, 256> reversed256;
++		std::array<float, kQuarterBandPadded> quarterBand; ///< The low-pass (2.4 kHz) before taking every fourth sample
++		std::array<float, 12> majorProfile, minorProfile;  ///< The key profiles with the notes' harmonics
++	};
++	Tables tables_;
++
++	std::array<float, kChromaFrame / 2> fftRe_{}; ///< Both FFTs': the onset's uses the first 256
++	std::array<float, kChromaFrame / 2> fftIm_{};
++	std::array<float, kOnsetFft / 2 + 1> lastLog_{};
++	std::array<float, kOnsetRing> onsets_{};
++	std::array<float, 4 * kTempoMaxLag + 2> correlations_{}; ///< tempoOf()'s, per lag, as it needs them
++	uint32_t onsetCount_ = 0;
++	uint32_t sinceTempo_ = 0;
++	std::array<float, 3> bpms_{};
++	int32_t numBpms_ = 0;
++	std::array<float, 3> pitches_{};
++	std::array<float, kChromaFrame> quarter_{}; ///< The input at a quarter of kRate, for the key: the last 371 ms
++	uint32_t quarterNext_ = 0;                  ///< The middle (at kRate) of the next quarter-rate sample's window
++	uint32_t quarterCount_ = 0;                 ///< Quarter-rate samples made
++	std::array<float, 12> chroma_{};            ///< Summed over the chroma frames, the older ones fading (kChromaDecay)
++	int32_t chromaFrames_ = 0;                  ///< Frames with notes summed into chroma_
++	int32_t quietFrames_ = 0;                   ///< Frames without notes since the last with
++	uint32_t chromaDone_ = 0;                   ///< Up to where chroma frames were taken
++	int32_t keyTonic_ = -1;
++	bool keyMinor_ = false;
++	int32_t candidateTonic_ = -1; ///< A new key is shown when it wins twice in a row
++	bool candidateMinor_ = false;
++	float referenceHz_ = 440.0f;
++	int32_t numPitches_ = 0;
++	int32_t pitchMisses_ = 0;
++
++	float pitchHz_ = 0;
++	float bpm_ = 0;
++	float levelDb_ = -120.0f;
++};
++
++} // namespace deluge::dsp
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index bac3b429..c3e1f796 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -872,6 +872,7 @@
+         "STRING_FOR_DEFAULT_USE_LAST_CLIP_TYPE": "Use Last Clip Type",
+         "STRING_FOR_TUNING": "Tuning",
+         "STRING_FOR_MASTER_TUNE": "Master tune (Hz)",
++        "STRING_FOR_SCAN": "Scan: note, BPM, key",
+         "STRING_FOR_FIFTH": "5th",
+         "STRING_FOR_SUS2": "Sus2",
+         "STRING_FOR_MINOR": "Min",
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index 01ea3de7..03989c01 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -800,6 +800,7 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_DEFAULT_USE_LAST_CLIP_TYPE, "Use Last Clip Type"},
+         {STRING_FOR_TUNING, "Tuning"},
+         {STRING_FOR_MASTER_TUNE, "Master tune (Hz)"},
++        {STRING_FOR_SCAN, "Scan: note, BPM, key"},
+         {STRING_FOR_FIFTH, "5th"},
+         {STRING_FOR_SUS2, "Sus2"},
+         {STRING_FOR_MINOR, "Min"},
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index 5e086c22..b8b35c38 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -457,6 +457,7 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_DEFAULT_USE_LAST_CLIP_TYPE, "LAST"},
+         {STRING_FOR_TUNING, "TUNE"},
+         {STRING_FOR_MASTER_TUNE, "MTUN"},
++        {STRING_FOR_SCAN, "SCAN"},
+         {STRING_FOR_FIFTH, "5TH"},
+         {STRING_FOR_SUS2, "SUS2"},
+         {STRING_FOR_MINOR, "MIN"},
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index 7a997e85..8db76aa0 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -492,6 +492,7 @@
+         "STRING_FOR_DEFAULT_USE_LAST_CLIP_TYPE": "LAST",
+         "STRING_FOR_TUNING": "TUNE",
+         "STRING_FOR_MASTER_TUNE": "MTUN",
++        "STRING_FOR_SCAN": "SCAN",
+         "STRING_FOR_FIFTH": "5TH",
+         "STRING_FOR_SUS2": "SUS2",
+         "STRING_FOR_MINOR": "MIN",
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index ce25bec8..d4b82c23 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -913,6 +913,7 @@ enum class String : size_t {
+ 	// master tune
+ 	STRING_FOR_TUNING,
+ 	STRING_FOR_MASTER_TUNE,
++	STRING_FOR_SCAN, // mastertune-v18.4: Settings > Tuning > Scan
+ 
+ 	// arpeggiator (from community 1.3)
+ 	STRING_FOR_FIFTH,
+diff --git a/src/deluge/gui/ui/menus.cpp b/src/deluge/gui/ui/menus.cpp
+index 8e330fe9..93860b0a 100644
+--- a/src/deluge/gui/ui/menus.cpp
++++ b/src/deluge/gui/ui/menus.cpp
+@@ -199,6 +199,7 @@
+ #include "gui/menu_item/voice/polyphony.h"
+ #include "gui/menu_item/voice/priority.h"
+ #include "gui/menu_item/volume_level.h"
++#include "gui/views/scan_view.h"
+ #include "io/midi/midi_device_manager.h"
+ #include "io/midi/midi_engine.h"
+ #include "model/song/song.h"
+@@ -1534,11 +1535,14 @@ menu_item::Submenu soundEditorRootMenuKitGlobalFX{
+ 
+ // Tuning
+ MasterTuneHz masterTuneMenu{STRING_FOR_MASTER_TUNE, STRING_FOR_MASTER_TUNE};
++// mastertune-v18.4: the Scan view, a tuner and tempo meter on the audio input (gui/views/scan_view.h)
++deluge::gui::menu_item::scan::OpenView scanViewMenu{STRING_FOR_SCAN};
+ 
+ Submenu tuningSubmenu{
+     STRING_FOR_TUNING,
+     {
+         &masterTuneMenu,
++        &scanViewMenu,
+     },
+ };
+ 
+diff --git a/src/deluge/gui/views/scan_view.cpp b/src/deluge/gui/views/scan_view.cpp
+new file mode 100644
+index 00000000..2ec8f9e9
+--- /dev/null
++++ b/src/deluge/gui/views/scan_view.cpp
+@@ -0,0 +1,465 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#include "gui/views/scan_view.h"
++#include "gui/l10n/l10n.h"
++#include "gui/ui/sound_editor.h"
++#include "gui/ui/ui.h"
++#include "gui/views/session_view.h"
++#include "gui/views/view.h"
++#include "hid/buttons.h"
++#include "hid/display/display.h"
++#include "hid/led/indicator_leds.h"
++#include "hid/led/pad_leds.h"
++#include "lib/printf.h" // Not stdio: the firmware's snprintf, which doesn't allocate
++#include "memory/general_memory_allocator.h"
++#include "model/song/song.h"
++#include "model/tuning/master_tune.h"
++#include "processing/engines/audio_engine.h"
++#include "util/functions.h"
++#include <cmath>
++#include <new>
++
++using deluge::dsp::Scan;
++
++ScanView scanView{};
++
++namespace {
++
++constexpr int32_t kHoldTicks = 100; ///< 1.5 s of UI ticks: the last note stays that long after the tone stops
++
++/// A frequency with as many decimals as fit in width characters: 55.003, 440.03, 1396.9
++void formatHz(float hz, char* buffer, size_t size) {
++	int32_t decimals = (hz < 100) ? 3 : (hz < 1000) ? 2 : 1;
++	int32_t scale = (decimals == 3) ? 1000 : (decimals == 2) ? 100 : 10;
++	int32_t value = (int32_t)std::lround(hz * (float)scale);
++	snprintf(buffer, size, "%d.%0*d", (int)(value / scale), (int)decimals, (int)(value % scale));
++}
++
++/// Cents with a sign and a decimal: +3.2, -0.4, 0.0
++void formatCents(float cents, char* buffer, size_t size) {
++	int32_t tenths = (int32_t)std::lround(cents * 10);
++	char sign = (tenths > 0) ? '+' : (tenths < 0) ? '-' : ' ';
++	tenths = std::abs(tenths);
++	snprintf(buffer, size, "%c%d.%d", sign, (int)(tenths / 10), (int)(tenths % 10));
++}
++
++/// The tempo with one decimal: 128.0
++void formatBpm(float bpm, char* buffer, size_t size) {
++	if (bpm <= 0) {
++		snprintf(buffer, size, "--");
++		return;
++	}
++	int32_t tenths = (int32_t)std::lround(bpm * 10);
++	snprintf(buffer, size, "%d.%d", (int)(tenths / 10), (int)(tenths % 10));
++}
++
++/// A key as the Deluge names notes (sharps): "A minor", "C# major"
++void formatKey(int32_t tonic, bool minor, char* buffer, size_t size) {
++	static constexpr const char* kNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
++	snprintf(buffer, size, "%s %s", kNames[tonic], minor ? "minor" : "major");
++}
++
++/// A key on the Camelot wheel DJs mix by: the major keys 1B to 12B a fifth apart (C is 8B), a minor key the number of
++/// its relative major (A minor is 8A)
++void formatCamelot(int32_t tonic, bool minor, char* buffer, size_t size) {
++	int32_t major = minor ? (tonic + 3) % 12 : tonic;
++	snprintf(buffer, size, "%d%c", (int)(((7 * major) % 12 + 7) % 12 + 1), minor ? 'A' : 'B');
++}
++
++/// Where the cents' pad column is: 0 at -50, 15 at +50
++int32_t centsColumn(float cents) {
++	int32_t x = (int32_t)std::lround(7.5f + cents * 7.5f / 50.0f);
++	return std::clamp<int32_t>(x, 0, kDisplayWidth - 1);
++}
++
++} // namespace
++
++bool ScanView::opened() {
++	if (!scan_) {
++		void* memory = GeneralMemoryAllocator::get().allocLowSpeed(sizeof(Scan));
++		if (!memory) {
++			display->displayError(Error::INSUFFICIENT_RAM);
++			return false;
++		}
++		scan_ = new (memory) Scan();
++	}
++	heldHz_ = 0;
++	heldTicks_ = 0;
++	AudioEngine::startScan(scan_, mix());
++	focusRegained();
++	return true;
++}
++
++void ScanView::focusRegained() {
++	view.focusRegained();
++	view.setActiveModControllableTimelineCounter(currentSong);
++
++	indicator_leds::setLedState(IndicatorLED::SYNTH, false);
++	indicator_leds::setLedState(IndicatorLED::KIT, false);
++	indicator_leds::setLedState(IndicatorLED::MIDI, false);
++	indicator_leds::setLedState(IndicatorLED::CV, false);
++	indicator_leds::setLedState(IndicatorLED::KEYBOARD, false);
++	indicator_leds::setLedState(IndicatorLED::CROSS_SCREEN_EDIT, false);
++	indicator_leds::setLedState(IndicatorLED::SESSION_VIEW, false);
++	indicator_leds::setLedState(IndicatorLED::SCALE_MODE, true); // Scale takes you back, as in the drone view
++	indicator_leds::setLedState(IndicatorLED::BACK, false);      // The menu leaves it blinking
++
++	changed();
++}
++
++void ScanView::exitToSongView() {
++	AudioEngine::startScan(nullptr);
++	if (scan_) {
++		scan_->~Scan();
++		delugeDealloc(scan_);
++		scan_ = nullptr;
++	}
++	indicator_leds::setLedState(IndicatorLED::SCALE_MODE, false);
++	changeRootUI(&sessionView);
++}
++
++Scan::Mix ScanView::mix() const {
++	switch (input_) {
++	case Input::LEFT:
++		return Scan::Mix::LEFT;
++	case Input::RIGHT:
++		return Scan::Mix::RIGHT;
++	case Input::STEREO:
++		return Scan::Mix::STEREO;
++	default: // With nothing plugged in, the internal microphone, on the left channel only
++		return (AudioEngine::lineInPluggedIn || AudioEngine::micPluggedIn) ? Scan::Mix::STEREO : Scan::Mix::LEFT;
++	}
++}
++
++const char* ScanView::inputName() const {
++	switch (input_) {
++	case Input::LEFT:
++		return "Left";
++	case Input::RIGHT:
++		return "Right";
++	case Input::STEREO:
++		return "Stereo";
++	default:
++		return AudioEngine::lineInPluggedIn ? "Line" : AudioEngine::micPluggedIn ? "Mic in" : "Mic";
++	}
++}
++
++void ScanView::noteOf(float hz, int32_t* note, float* cents) const {
++	float a = (float)MasterTune::getTenthsHz() / 10.0f;
++	float semitones = 69.0f + 12.0f * std::log2(hz / a);
++	*note = (int32_t)std::lround(semitones);
++	*cents = (semitones - (float)*note) * 100.0f;
++}
++
++float ScanView::shownBpm() const {
++	float bpm = scan_ ? scan_->bpm() : 0;
++	return (bpmOctave_ > 0) ? bpm * 2 : (bpmOctave_ < 0) ? bpm / 2 : bpm;
++}
++
++void ScanView::graphicsRoutine() {
++	if (!scan_) {
++		return;
++	}
++	AudioEngine::startScan(scan_, mix());           // Auto follows a jack plugged in or out
++	scan_->setReference(MasterTune::getTenthsHz()); // The key's pitch classes from the master tune's A
++	bool anew = scan_->analyse();
++	if (scan_->pitchHz() > 0) {
++		heldHz_ = scan_->pitchHz();
++		heldTicks_ = kHoldTicks;
++	}
++	else if (heldTicks_ > 0 && --heldTicks_ == 0) {
++		heldHz_ = 0;
++		anew = true;
++	}
++	if (anew) {
++		changed();
++	}
++}
++
++void ScanView::changed() {
++	uiNeedsRendering(this);
++	if (display->haveOLED()) {
++		renderUIsForOled();
++	}
++	else {
++		showOnSevenSegment();
++	}
++}
++
++void ScanView::showOnSevenSegment() {
++	char buffer[16];
++	if (show_ == Show::KEY) {
++		// The tonic and MAJ or MIN: AMIN, C#MAJ (the sharp as the dot)
++		int32_t tonic = scan_ ? scan_->keyTonic() : -1;
++		if (tonic < 0) {
++			display->setText("----");
++			return;
++		}
++		static constexpr const char* kNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
++		snprintf(buffer, sizeof(buffer), "%s%s", kNames[tonic], scan_->keyMinor() ? "MIN" : "MAJ");
++		display->setText(buffer);
++		return;
++	}
++	if (show_ == Show::BPM) {
++		float bpm = shownBpm();
++		if (bpm <= 0) {
++			display->setText("----");
++			return;
++		}
++		int32_t tenths = (int32_t)std::lround(bpm * 10);
++		snprintf(buffer, sizeof(buffer), "%d", (int)tenths);
++		display->setText(buffer, true, 1); // 128.0
++		return;
++	}
++	if (heldHz_ <= 0) {
++		display->setText("----");
++		return;
++	}
++	if (show_ == Show::HZ) {
++		// Four digits, with as many after the point as fit: 55.00, 440.0, 1397
++		int32_t hundredths = (int32_t)std::lround(heldHz_ * 100);
++		uint8_t dot = 255;
++		if (hundredths < 10000) {
++			snprintf(buffer, sizeof(buffer), "%d", (int)hundredths);
++			dot = 1;
++		}
++		else if (hundredths < 100000) {
++			snprintf(buffer, sizeof(buffer), "%d", (int)(hundredths / 10));
++			dot = 2;
++		}
++		else {
++			snprintf(buffer, sizeof(buffer), "%d", (int)(hundredths / 100));
++		}
++		display->setText(buffer, true, dot);
++		return;
++	}
++	int32_t note;
++	float cents;
++	noteOf(heldHz_, &note, &cents);
++	noteCodeToString(note, buffer); // The cents are on the pads
++	display->setText(buffer);
++}
++
++bool ScanView::renderMainPads(uint32_t whichRows, RGB image[][kDisplayWidth + kSideBarWidth],
++                              uint8_t occupancyMask[][kDisplayWidth + kSideBarWidth], bool drawUndefinedArea) {
++	if (!image) {
++		return true;
++	}
++	// The needle: the cents as a column, the middle two dim as the mark; within 2 cents both green
++	int32_t column = -1;
++	bool inTune = false;
++	RGB colour = RGB::monochrome(0);
++	if (heldHz_ > 0) {
++		int32_t note;
++		float cents;
++		noteOf(heldHz_, &note, &cents);
++		inTune = std::abs(cents) <= 2.0f;
++		column = centsColumn(cents);
++		colour = inTune ? RGB{0, 255, 0} : (std::abs(cents) <= 10.0f) ? RGB{255, 160, 0} : RGB{255, 0, 0};
++		if (heldTicks_ < kHoldTicks && scan_ && scan_->pitchHz() <= 0) {
++			colour = colour.dim(2); // Held: the tone has stopped
++		}
++	}
++	PadLEDs::renderingLock = true;
++	for (int32_t y = 0; y < kDisplayHeight; y++) {
++		if (!(whichRows & (1 << y))) {
++			continue;
++		}
++		for (int32_t x = 0; x < kDisplayWidth; x++) {
++			RGB pixel = RGB::monochrome(0);
++			bool middle = (x == kDisplayWidth / 2 - 1 || x == kDisplayWidth / 2);
++			if (middle) {
++				pixel = inTune ? colour : RGB::monochrome(24);
++			}
++			if (x == column && !inTune) {
++				pixel = colour;
++			}
++			image[y][x] = pixel;
++			if (occupancyMask) {
++				occupancyMask[y][x] = 64;
++			}
++		}
++	}
++	PadLEDs::renderingLock = false;
++	return true;
++}
++
++bool ScanView::renderSidebar(uint32_t whichRows, RGB image[][kDisplayWidth + kSideBarWidth],
++                             uint8_t occupancyMask[][kDisplayWidth + kSideBarWidth]) {
++	if (!image) {
++		return true;
++	}
++	// The input's level on the audition column, -60 to 0 dBFS from the bottom (7.5 dB a pad); the mute column dark
++	float level = scan_ ? scan_->levelDb() : -120.0f;
++	int32_t lit = std::clamp<int32_t>((int32_t)std::lround((level + 60.0f) / 7.5f), 0, kDisplayHeight);
++	for (int32_t y = 0; y < kDisplayHeight; y++) {
++		if (!(whichRows & (1 << y))) {
++			continue;
++		}
++		image[y][kDisplayWidth] = RGB::monochrome(0);
++		image[y][kDisplayWidth + 1] =
++		    (y < lit) ? ((y >= kDisplayHeight - 1) ? RGB{255, 0, 0} : RGB{0, 160, 0}) : RGB::monochrome(0);
++		if (occupancyMask) {
++			occupancyMask[y][kDisplayWidth] = 64;
++			occupancyMask[y][kDisplayWidth + 1] = 64;
++		}
++	}
++	return true;
++}
++
++void ScanView::renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas) {
++	char title[32];
++	int32_t tenthsHz = MasterTune::getTenthsHz();
++	if (tenthsHz == MasterTune::kDefaultTenthsHz) {
++		snprintf(title, sizeof(title), "Scan %s", inputName());
++	}
++	else if (tenthsHz % 10 == 0) {
++		snprintf(title, sizeof(title), "Scan %s %d", inputName(), (int)(tenthsHz / 10));
++	}
++	else {
++		snprintf(title, sizeof(title), "Scan %s %d.%d", inputName(), (int)(tenthsHz / 10), (int)(tenthsHz % 10));
++	}
++	canvas.drawScreenTitle(title);
++
++	char note[12] = "--", cents[12] = "", hz[16] = "--", bpm[12];
++	float centsValue = 0;
++	if (heldHz_ > 0) {
++		int32_t code;
++		noteOf(heldHz_, &code, &centsValue);
++		noteCodeToString(code, note);
++		formatCents(centsValue, cents, sizeof(cents));
++		formatHz(heldHz_, hz, sizeof(hz));
++	}
++	formatBpm(shownBpm(), bpm, sizeof(bpm));
++
++	char big[24], small[40];
++	int32_t tonic = scan_ ? scan_->keyTonic() : -1;
++	switch (show_) {
++	case Show::NOTE:
++		snprintf(big, sizeof(big), "%s %s", note, cents);
++		snprintf(small, sizeof(small), "%s Hz  %s BPM", hz, bpm);
++		break;
++	case Show::HZ:
++		snprintf(big, sizeof(big), "%s Hz", hz);
++		snprintf(small, sizeof(small), "%s %s  %s BPM", note, cents, bpm);
++		break;
++	case Show::BPM:
++		snprintf(big, sizeof(big), "%s BPM", bpm);
++		snprintf(small, sizeof(small), "%s %s  %s Hz", note, cents, hz);
++		break;
++	default: // The key, with its Camelot number and the tempo: a DJ's two
++		if (tonic >= 0) {
++			char camelot[8];
++			formatKey(tonic, scan_->keyMinor(), big, sizeof(big));
++			formatCamelot(tonic, scan_->keyMinor(), camelot, sizeof(camelot));
++			snprintf(small, sizeof(small), "Camelot %s%s%s BPM", camelot, (camelot[2] != 0) ? " " : "  ", bpm);
++		}
++		else {
++			snprintf(big, sizeof(big), "--");
++		}
++		break;
++	}
++	bool nothing = (show_ == Show::KEY) ? (tonic < 0) : (heldHz_ <= 0 && show_ != Show::BPM);
++	if (nothing && scan_) {
++		snprintf(small, sizeof(small), "Input %d dB  %s BPM", (int)std::lround(scan_->levelDb()), bpm);
++	}
++	// Below the title's line (a pixel apart), the needle below it, the small line at the bottom
++	canvas.drawStringCentred(big, OLED_MAIN_TOPMOST_PIXEL + 14, kTextBigSpacingX, kTextBigSizeY);
++
++	// The needle: -50 to +50 cents, a pixel a cent, the middle marked
++	constexpr int32_t kMiddle = OLED_MAIN_WIDTH_PIXELS / 2;
++	constexpr int32_t kY = OLED_MAIN_TOPMOST_PIXEL + 31;
++	canvas.drawHorizontalLine(kY, kMiddle - 50, kMiddle + 50);
++	canvas.drawVerticalLine(kMiddle, kY - 3, kY + 1);
++	canvas.drawVerticalLine(kMiddle - 50, kY - 1, kY);
++	canvas.drawVerticalLine(kMiddle + 50, kY - 1, kY);
++	if (heldHz_ > 0) {
++		int32_t x = kMiddle + std::clamp<int32_t>((int32_t)std::lround(centsValue), -50, 50);
++		canvas.drawRectangle(x - 1, kY - 4, x + 1, kY - 1);
++	}
++
++	canvas.drawStringCentred(small, OLED_MAIN_TOPMOST_PIXEL + 34, kTextSpacingX, kTextSizeYUpdated);
++}
++
++ActionResult ScanView::buttonAction(deluge::hid::Button b, bool on, bool inCardRoutine) {
++	using namespace deluge::hid::button;
++
++	// Back to Song view
++	if (b == BACK || b == SCALE_MODE || (b == SESSION_VIEW && !Buttons::isShiftButtonPressed())) {
++		if (on && currentUIMode == UI_MODE_NONE) {
++			if (inCardRoutine) {
++				return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
++			}
++			exitToSongView();
++		}
++		return ActionResult::DEALT_WITH;
++	}
++
++	// What is big: note, Hz, BPM, key
++	if (b == SELECT_ENC && !Buttons::isShiftButtonPressed()) {
++		if (on && currentUIMode == UI_MODE_NONE) {
++			static constexpr const char* kPopups[] = {"NOTE", "HZ", "BPM", "KEY"};
++			show_ = (Show)(((int32_t)show_ + 1) % 4);
++			display->displayPopup(kPopups[(int32_t)show_]);
++			changed();
++		}
++		return ActionResult::DEALT_WITH;
++	}
++
++	// Play, record, tempo, save, load, settings...
++	return view.buttonAction(b, on, inCardRoutine);
++}
++
++ActionResult ScanView::padAction(int32_t x, int32_t y, int32_t velocity) {
++	return ActionResult::DEALT_WITH; // The pads only show
++}
++
++ActionResult ScanView::horizontalEncoderAction(int32_t offset) {
++	// The BPM doubled or halved: at 88 or 176, 87 or 174, the music doesn't always say which
++	bpmOctave_ = std::clamp<int32_t>(bpmOctave_ + (offset > 0 ? 1 : -1), -1, 1);
++	display->displayPopup((bpmOctave_ > 0) ? "BPM X2" : (bpmOctave_ < 0) ? "BPM /2" : "BPM X1");
++	changed();
++	return ActionResult::DEALT_WITH;
++}
++
++ActionResult ScanView::verticalEncoderAction(int32_t offset, bool inCardRoutine) {
++	return ActionResult::DEALT_WITH;
++}
++
++void ScanView::selectEncoderAction(int8_t offset) {
++	int32_t next = ((int32_t)input_ + (offset > 0 ? 1 : 3)) % 4;
++	input_ = (Input)next;
++	if (scan_) {
++		scan_->reset(); // Another input: its pitch, tempo and key anew
++	}
++	heldHz_ = 0;
++	heldTicks_ = 0;
++	AudioEngine::startScan(scan_, mix()); // The new mix from now
++	display->displayPopup(inputName());
++	changed();
++}
++
++// Settings > Tuning > Scan opens the view, from Song view only: the view goes back there (as the drone view)
++bool deluge::gui::menu_item::scan::OpenView::isRelevant(ModControllableAudio*, int32_t) {
++	return getRootUI() == &sessionView;
++}
++
++MenuItem* deluge::gui::menu_item::scan::OpenView::selectButtonPress() {
++	soundEditor.exitCompletely();
++	changeRootUI(&scanView);
++	return NO_NAVIGATION;
++}
+diff --git a/src/deluge/gui/views/scan_view.h b/src/deluge/gui/views/scan_view.h
+new file mode 100644
+index 00000000..ab7e8dcc
+--- /dev/null
++++ b/src/deluge/gui/views/scan_view.h
+@@ -0,0 +1,95 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++
++#include "definitions_cxx.hpp"
++#include "dsp/scan/scan.h"
++#include "gui/menu_item/menu_item.h"
++#include "gui/ui/root_ui.h"
++#include "hid/button.h"
++
++/// mastertune-v18.4: the Scan view, a tuner, a tempo meter and a key finder on the audio input (Settings > Tuning >
++/// Scan, from Song view). It listens to the internal microphone, or to what is plugged into the mic or line input, and
++/// shows the note with its cents against the master tune (so at 432 Hz too), its frequency, the tempo in BPM and the
++/// key, major or minor, with its Camelot number (deluge::dsp::Scan does the analysis). The OLED shows one of note, Hz,
++/// BPM or key big and others small, with a needle for the cents; the 7-segment display shows the note, the Hz, the BPM
++/// or the key (AMIN, C#MAJ); the pads are the needle (a column per 6.7 cents, green in tune, the middle two when within
++/// 2 cents) and the sidebar the input's level.
++/// Select encoder: the input (Auto, Left, Right, Stereo); pressed: what is big (note, Hz, BPM, key). Horizontal
++/// encoder: the BPM halved or doubled (the music doesn't always say which it is). Back, Song or Scale: back to Song
++/// view.
++class ScanView final : public RootUI {
++public:
++	enum class Input : uint8_t { AUTO, LEFT, RIGHT, STEREO };
++	enum class Show : uint8_t { NOTE, HZ, BPM, KEY };
++
++	bool opened() override;
++	void focusRegained() override;
++
++	UIType getUIType() override { return UIType::SCAN; }
++	const char* getName() override { return "scan_view"; }
++	[[nodiscard]] bool supportsTriplets() const override { return false; }
++	/// Every 15 ms (the UI timer): analyses what came in, and shows it where it changed
++	void graphicsRoutine() override;
++
++	bool renderMainPads(uint32_t whichRows, RGB image[][kDisplayWidth + kSideBarWidth],
++	                    uint8_t occupancyMask[][kDisplayWidth + kSideBarWidth], bool drawUndefinedArea = true) override;
++	bool renderSidebar(uint32_t whichRows, RGB image[][kDisplayWidth + kSideBarWidth],
++	                   uint8_t occupancyMask[][kDisplayWidth + kSideBarWidth]) override;
++	void renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas) override;
++
++	ActionResult buttonAction(deluge::hid::Button b, bool on, bool inCardRoutine) override;
++	ActionResult padAction(int32_t x, int32_t y, int32_t velocity) override;
++	ActionResult horizontalEncoderAction(int32_t offset) override;
++	ActionResult verticalEncoderAction(int32_t offset, bool inCardRoutine) override;
++	void selectEncoderAction(int8_t offset) override;
++
++	/// The analysis the audio routine feeds while the view is open, else nullptr
++	deluge::dsp::Scan* listening() { return scan_; }
++	/// The mix of the input's channels the analysis gets now (Auto: stereo with a jack plugged in, else the
++	/// internal microphone's left channel)
++	[[nodiscard]] deluge::dsp::Scan::Mix mix() const;
++
++private:
++	void exitToSongView();
++	void changed();
++	void showOnSevenSegment();
++	[[nodiscard]] const char* inputName() const;
++	/// The note nearest the pitch at the master tune, and the cents from it
++	void noteOf(float hz, int32_t* note, float* cents) const;
++	[[nodiscard]] float shownBpm() const;
++
++	deluge::dsp::Scan* scan_ = nullptr;
++	Input input_ = Input::AUTO;
++	Show show_ = Show::NOTE;
++	int32_t bpmOctave_ = 0; ///< The BPM shown doubled (1) or halved (-1)
++	float heldHz_ = 0;      ///< The last pitch, shown a moment after the tone stops
++	int32_t heldTicks_ = 0; ///< UI ticks (15 ms) it is still shown
++};
++
++extern ScanView scanView;
++
++namespace deluge::gui::menu_item::scan {
++/// Settings > Tuning > Scan: opens the view, from Song view
++class OpenView final : public MenuItem {
++public:
++	using MenuItem::MenuItem;
++	MenuItem* selectButtonPress() override;
++	bool shouldEnterSubmenu() override { return false; }
++	bool isRelevant(ModControllableAudio*, int32_t) override;
++};
++} // namespace deluge::gui::menu_item::scan
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index d9c2c10f..4ea1045a 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -189,6 +189,34 @@ uint32_t audioSampleTimer = 0;
+ uint32_t i2sTXBufferPos;
+ uint32_t i2sRXBufferPos;
+ 
++// mastertune-v18.4: the Scan view's analysis (gui/views/scan_view.h), fed as the recorders are: from where it read last
++// up to where the output has got to
++deluge::dsp::Scan* scan = nullptr;
++deluge::dsp::Scan::Mix scanMix = deluge::dsp::Scan::Mix::LEFT;
++int32_t* scanSourcePos = nullptr;
++
++void startScan(deluge::dsp::Scan* s, deluge::dsp::Scan::Mix mix) {
++	if (s != scan) {
++		scanSourcePos = (int32_t*)i2sRXBufferPos; // What comes in from now
++	}
++	scan = s;
++	scanMix = mix;
++}
++
++/// The input frames since the last call, in at most two pieces where the ring wraps
++void feedScan() {
++	for (int32_t piece = 0; piece < 2 && scanSourcePos != (int32_t*)i2sRXBufferPos; piece++) {
++		int32_t* stop =
++		    ((uint32_t)i2sRXBufferPos < (uint32_t)scanSourcePos) ? getRxBufferEnd() : (int32_t*)i2sRXBufferPos;
++		int32_t frames = (int32_t)(stop - scanSourcePos) >> NUM_MONO_INPUT_CHANNELS_MAGNITUDE;
++		scan->feed(scanSourcePos, frames, scanMix);
++		scanSourcePos += frames << NUM_MONO_INPUT_CHANNELS_MAGNITUDE;
++		if (scanSourcePos >= getRxBufferEnd()) {
++			scanSourcePos -= SSI_RX_BUFFER_NUM_SAMPLES << NUM_MONO_INPUT_CHANNELS_MAGNITUDE;
++		}
++	}
++}
++
+ bool headphonesPluggedIn;
+ bool micPluggedIn;
+ bool lineInPluggedIn;
+@@ -1537,6 +1565,11 @@ bool doSomeOutputting() {
+ 			i2sRXBufferPos -= (SSI_RX_BUFFER_NUM_SAMPLES << (NUM_MONO_INPUT_CHANNELS_MAGNITUDE + 2));
+ 		}
+ 
++		// mastertune-v18.4: the Scan view's analysis gets the same input frames
++		if (scan) {
++			feedScan();
++		}
++
+ 		// Go through each SampleRecorder, feeding them audio
+ 		for (SampleRecorder* recorder = firstRecorder; recorder; recorder = recorder->next) {
+ 
+diff --git a/src/deluge/processing/engines/audio_engine.h b/src/deluge/processing/engines/audio_engine.h
+index 6c6e1c8f..48d20331 100644
+--- a/src/deluge/processing/engines/audio_engine.h
++++ b/src/deluge/processing/engines/audio_engine.h
+@@ -20,6 +20,7 @@
+ #include "definitions_cxx.hpp"
+ #include "dsp/compressor/rms_feedback.h"
+ #include "dsp/envelope_follower/absolute_value.h"
++#include "dsp/scan/scan.h"
+ #include "model/output.h"
+ #include <cstdint>
+ 
+@@ -206,6 +207,10 @@ extern bool mustUpdateReverbParamsBeforeNextRender;
+ extern bool bypassCulling;
+ extern uint32_t i2sTXBufferPos;
+ extern uint32_t i2sRXBufferPos;
++
++/// mastertune-v18.4: the analysis the Scan view reads, fed with the input from now on as the recorders are (nullptr:
++/// none), in that mix of the channels; the same analysis again only changes the mix
++void startScan(deluge::dsp::Scan* scan, deluge::dsp::Scan::Mix mix = deluge::dsp::Scan::Mix::LEFT);
+ extern int32_t cpuDireness;
+ extern InputMonitoringMode inputMonitoringMode;
+ extern bool audioRoutineLocked;
+-- 
+2.43.0
+
