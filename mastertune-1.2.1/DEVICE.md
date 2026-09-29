@@ -75,7 +75,7 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
    - **Tempo:** play a track with a known tempo. After about 5 s the BPM appears, every second anew. If it shows half or double, the horizontal encoder corrects it (`BPM X2`, `BPM /2`). Try a few styles (house, hip-hop, drum and bass).
    - **Key:** play tracks with a known key (from the track's listing, Beatport or Mixed In Key; a few in major, a few in minor, with and without drums). After about 5 s the big line shows e.g. `A minor`, the small one `Camelot 8A`. Note what it shows and what the listing says; errors to the relative key or a fifth away count as near. Drums alone or silence should show `--`.
    - **CPU:** CPU monitor on. The load with Scan open, compared with Song view: about 2 % more expected. Nothing should crackle, also while a song plays.
-   - **Ball:** load `presets/SYNTHS/PETTRA BALL.XML` (copy it into `SYNTHS` first), tempo 138, Latch on, hold A5. Does it sound like a ping-pong ball between two plates, the buzz on beats 2 and 4, as `presets/demo/PETTRA BALL.wav`?
+   - **Ball:** load `presets/SYNTHS/PETTRA BALL.XML` (copy it into `SYNTHS` first), tempo 138, Latch on, hold A5. Does it sound like a ping-pong ball between two plates, the buzz on beats 2 and 4, as `presets/demo/PETTRA BALL.wav`? With the CPU monitor on: the load during the buzz (a hit every 15 ms). Stop playback in the middle of a buzz: no note may keep sounding.
    - **Report:** a short report in English to `device/` (what matched, what not, the numbers read), pushed to `device-results`.
 
 ### Done: "Rescue", the LPF has no effect (27.09.2026)
