@@ -2,7 +2,7 @@
 
 ## In short
 
-**mastertune** is my fork of the official Deluge community firmware **1.2.1**: lighter on the CPU, with a CPU monitor, the Deluge as a USB audio interface, a master tune and a few tools around it. Latest: **v18.3**, [`deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin`](https://github.com/Giansn/deluge/raw/claude/wizardly-brahmagupta-nnrk07/mastertune-1.2.1/deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin). Install it like any Deluge firmware: the .bin in the SD card's root folder (only one .bin there), then switch the Deluge on while holding SHIFT. Every version, the details and the measurements are further down.
+**mastertune** is my fork of the official Deluge community firmware **1.2.1**: lighter on the CPU, with a CPU monitor, the Deluge as a USB audio interface, a master tune and a few tools around it. Latest: **v18.4**, [`deluge-1.2.1-mastertune-v18.4-l2d-cab8e666.bin`](https://github.com/Giansn/deluge/raw/claude/wizardly-brahmagupta-nnrk07/mastertune-1.2.1/deluge-1.2.1-mastertune-v18.4-l2d-cab8e666.bin). Install it like any Deluge firmware: the .bin in the SD card's root folder (only one .bin there), then switch the Deluge on while holding SHIFT. Every version, the details and the measurements are further down.
 
 **Manual:** [English](mastertune-1.2.1/docs/mastertune-manual-en.pdf) (56 pages) or [German](mastertune-1.2.1/docs/mastertune-manual-de.pdf) (59 pages): every change explained, where to find it on the Deluge and how to use it, with diagrams, the frequency drone in full and a reference of all menus, buttons and messages.
 
@@ -16,8 +16,10 @@
 | Frequency drone: a binaural tone | Song browser: a song's versions under one name |
 | ![Song change armed: 2 bars remaining](mastertune-1.2.1/screenshots/oled_songchange.png) | ![The song's volume knob: master level −8.5 dB](mastertune-1.2.1/screenshots/oled_volume_db.png) |
 | Song-change countdown | Volume in 0.5 dB steps, shown in dB |
+| ![Scan at 432 Hz: A4, 5.4 cents flat, with the needle](mastertune-1.2.1/screenshots/oled_scan_note.png) | ![Scan: the key of a C major chord at the input, Camelot 8B](mastertune-1.2.1/screenshots/oled_scan_key.png) |
+| Scan: the note and its cents at 432 Hz | Scan: the key, with its Camelot number |
 
-<sub>The OLED of the real v18.3 firmware, run in the emulator (`mastertune-1.2.1/tests/screenshots`).</sub>
+<sub>The OLED of the real firmware (v18.3, the Scan screens v18.4), run in the emulator (`mastertune-1.2.1/tests/screenshots`, `tests/scan`).</sub>
 
 **Lighter on the CPU**
 - **About 20–25% less CPU work per sample than stock 1.2.1**, measured the same way for both in the emulator on three songs. At moderate load the audio routine's time can roughly halve, because a scheduling bug from 1.2.1 is fixed; near full load that advantage disappears. In a full-load test song 32 voices stay on average instead of 20 before any are cut. Method, numbers and caveats: [`tests/vs121/README.md`](mastertune-1.2.1/tests/vs121/README.md).
@@ -32,13 +34,14 @@
 
 **Tuning**
 - **Master tune** from 415.3 to 466.2 Hz in 0.1 Hz steps (Settings → Tuning → Master tune), for example 432 Hz. Everything that sounds follows: synths, kits, samples, FM and DX7, audio clips (time-stretched, the tempo stays), held notes, CV outputs and external MIDI gear (RPN 1 fine tuning). Recordings remember the tuning they were made in, so they are never tuned twice.
+- **Scan** (v18.4, Settings → Tuning → Scan): a tuner, tempo meter and key finder on the microphone or the line input. The note and its cents against the master tune (so at 432 Hz too), the frequency, the BPM, and the key (major or minor) with its Camelot number; the pads are the needle.
 
 **Sound**
 - **Filters** (v18–v18.3): no rustle at low cutoff, cutoff and resonance glide sample by sample (no zipper), mode and routing changes without clicks, Drive with 2× oversampling where 1.2.1 had it.
 - **EQ and volume:** real shelving EQ, volume in 0.5 dB steps shown in dB, an optional output limiter and filter crossing guard.
 - **Reverb:** a new Digital model, Mutable and Freeverb repaired, HPF and LPF, no wobble. **Delay:** clean repeats, no clicks or pitch jumps when the time changes (Fade or Tape), LPF and HPF in the feedback.
 - **Frequency drone:** up to 16 tones, binaural, monaural or isochronic, tempo sync, sidechain, Life, FM and Pulse; drone tracks in song and arranger view.
-- **Arpeggiator from 1.3** with latch, ratchet bounce and ping-pong.
+- **Arpeggiator from 1.3** with latch, ratchet bounce and ping-pong, and the Ball mode (v18.4): a ping-pong ball between two plates.
 
 **Workflow and fixes**
 - Song-change countdown, song browser with versions, readable firmware version, OLED brightness, flicker-free pad dimming, SD card over USB (DEx, deluge-editor).
@@ -56,13 +59,13 @@ The newest version of each tool is always in its release: [deluge-rec](https://g
 
 **Tested:** every release is built twice with the same SHA-256. The firmware's own ARM code runs in an emulator: it boots, loads songs, renders audio and goes through hundreds of checks and stress tests. The emulator is not the hardware, though: timing, the SD card and USB can still behave differently on a real Deluge.
 
-**Source:** `mastertune-1.2.1/patches/0001`–`0116` against `release_1_2_1`, plus `mastertune-1.2.1/l2test/0001`–`0003` for the L2 build.
+**Source:** `mastertune-1.2.1/patches/0001`–`0118` against `release_1_2_1`, plus `mastertune-1.2.1/l2test/0001`–`0003` for the L2 build.
 
 ## All versions
 
 All files named below are in the folder [`mastertune-1.2.1/`](mastertune-1.2.1/): the firmware `.bin` files, `patches/`, `tools/`, `tests/`, `docs/` and the rest.
 
-This is a personal fork of the official community firmware **1.2.1** (tag `release_1_2_1`, commit `c23bc2fe`) with an adjustable master tuning, in several stages. v5 adds the arpeggiator from 1.3, v6 a second bounce version, v7 access to the SD card over USB, v8 the Deluge as a USB audio input on the computer, v9 smarter sample streaming and a RAM saver for kits, v10 a better reverb, v11 a better delay and no more crackle when saving, v12 a frequency drone with up to 16 tones, v13 more performance, a ping-pong arp, flicker-free pad dimming, more precise MIDI and a reworked drone, v14 a reverb without wobble, a delay without pitch jumps and a countdown on song change, v15 a living drone (Life, FM, Pulse), a CPU monitor in one line and three fixes from the community, v16 drone tracks for song and arranger view and a profiler, v17 a lighter load (20–25% less DSP work per sample, see the comparison with 1.2.1), a song browser with expandable versions, a shortcut for the CPU monitor and the L2 cache in the main file, v18 filters without rustle and with clean transitions, volume controls in dB and a readable OLED, v18.2 filters, EQ and volume without leftovers after a silence, v18.3 Drive with oversampling as in 1.2.1 and settings that are kept when saving.
+This is a personal fork of the official community firmware **1.2.1** (tag `release_1_2_1`, commit `c23bc2fe`) with an adjustable master tuning, in several stages. v5 adds the arpeggiator from 1.3, v6 a second bounce version, v7 access to the SD card over USB, v8 the Deluge as a USB audio input on the computer, v9 smarter sample streaming and a RAM saver for kits, v10 a better reverb, v11 a better delay and no more crackle when saving, v12 a frequency drone with up to 16 tones, v13 more performance, a ping-pong arp, flicker-free pad dimming, more precise MIDI and a reworked drone, v14 a reverb without wobble, a delay without pitch jumps and a countdown on song change, v15 a living drone (Life, FM, Pulse), a CPU monitor in one line and three fixes from the community, v16 drone tracks for song and arranger view and a profiler, v17 a lighter load (20–25% less DSP work per sample, see the comparison with 1.2.1), a song browser with expandable versions, a shortcut for the CPU monitor and the L2 cache in the main file, v18 filters without rustle and with clean transitions, volume controls in dB and a readable OLED, v18.2 filters, EQ and volume without leftovers after a silence, v18.3 Drive with oversampling as in 1.2.1 and settings that are kept when saving, v18.4 a tuner, tempo meter and key finder on the audio input (Scan) and the arp mode Ball.
 
 | File | Version (Settings → Firmware version) | Contents |
 |---|---|---|
@@ -87,10 +90,11 @@ This is a personal fork of the official community firmware **1.2.1** (tag `relea
 | `deluge-1.2.1-mastertune-v18-124aeaa2.bin` | `1.2.1-mastertune-v18` | the same without L2 cache, for switching back |
 | `deluge-1.2.1-mastertune-v18.2-l2d-c9c65066.bin` | `1.2.1-mastertune-v18.2-l2d` | v18 + filters, EQ and volume after a silence fixed; **with L2 cache for code and data**, only in this variant |
 | `deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin` | `1.2.1-mastertune-v18.3-l2d` | v18.2 + Drive oversampled like 1.2.1 (no cut voices in Drive-heavy songs), unknown settings and the reverb sidechain's sync level are kept; **with L2 cache for code and data**, only in this variant |
+| `deluge-1.2.1-mastertune-v18.4-l2d-cab8e666.bin` | `1.2.1-mastertune-v18.4-l2d` | v18.3 + Scan: a tuner (note, cents, Hz against the master tune), a tempo meter (BPM) and a key finder (major or minor, Camelot) on the audio input; the arp mode Ball; **with L2 cache for code and data**, only in this variant |
 
-SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7`, v14 `cb17bbb3…8e23e6e5`, v15 `cdce07f3…da7ca652`, v16 `7eed1a77…71897f9f`, v17-l2d `aad4d080…5ec32c4b`, v17 without L2 `ae6aedd4…be88ae64`, v18-l2d `03f55664…75098a8c`, v18 without L2 `ea2d606a…220d434f`, v18.2-l2d `7f45090c…0f8c29ef`, v18.3-l2d `f41f5639…8d8af97a` (in full: `sha256sum *.bin`).
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7`, v14 `cb17bbb3…8e23e6e5`, v15 `cdce07f3…da7ca652`, v16 `7eed1a77…71897f9f`, v17-l2d `aad4d080…5ec32c4b`, v17 without L2 `ae6aedd4…be88ae64`, v18-l2d `03f55664…75098a8c`, v18 without L2 `ea2d606a…220d434f`, v18.2-l2d `7f45090c…0f8c29ef`, v18.3-l2d `f41f5639…8d8af97a`, v18.4-l2d `3d61093c…6a27bf8b` (in full: `sha256sum *.bin`).
 Rechecked on 2026-09-26: every version v2–v12 was rebuilt from scratch from its commit in a separate working copy, with 441–448 recompiled files. Every SHA-256 matches the released file.
-Source code: `patches/0001` to `0116` against `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 are the performance version v12-perf, the same as `perf/0001`–`0003`), v14 = 0001–0035, v15 = 0001–0041, v16 = 0001–0055, v17 without L2 = 0001–0074, the main file v17-l2d adds `l2test/0001`–`0003`, v18 without L2 = 0001–0112, the main file v18-l2d likewise adds `l2test/0001`–`0003`, v18.2-l2d = 0001–0113 and `l2test/0001`–`0003`, v18.3-l2d = 0001–0116 and `l2test/0001`–`0003`.
+Source code: `patches/0001` to `0118` against `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 are the performance version v12-perf, the same as `perf/0001`–`0003`), v14 = 0001–0035, v15 = 0001–0041, v16 = 0001–0055, v17 without L2 = 0001–0074, the main file v17-l2d adds `l2test/0001`–`0003`, v18 without L2 = 0001–0112, the main file v18-l2d likewise adds `l2test/0001`–`0003`, v18.2-l2d = 0001–0113 and `l2test/0001`–`0003`, v18.3-l2d = 0001–0116 and `l2test/0001`–`0003`, v18.4-l2d = 0001–0118 and `l2test/0001`–`0003`.
 
 ## v3 and v4: Differences
 
@@ -714,6 +718,61 @@ v17 contains v16. **The main file has the L2 cache for code and data** (previous
 - **Still passing:** profiler 21 checks (all three variants), song change 131, clock, sections, L2 (all three), CPU monitor decoder 503 messages, drone on the PC 150, retune without access to address 0.
 - **Reviewers:** one each for the performance changes, the silent tracks, the song browser, the shortcut, the drone view and the filter. All their findings of severity "medium" and higher are fixed, each with a test.
 
+## v18.4: Scan (tuner, tempo and key on the audio input), arp mode Ball
+
+v18.4 contains v18.3 and adds two things: the Scan view (patch 0118), the first building block for the DJ tool (v19, plan in `mastertune-1.2.1/research/DJ-TOOL-PLAN.md`), and the arp mode Ball (patch 0117). Like v18.3, v18.4 exists only as the main file with L2 cache for code and data. **v18.4 has not been tested on the device yet**; it is tested on the PC, on the Cortex-A9 code and with the whole firmware in the emulator.
+
+**Scan** (patch 0118):
+- **Open it:** Settings → Tuning → Scan (7-segment `SCAN`), from Song view. Back, Song or Scale return to Song view.
+- **What it hears:** the internal microphone, or what is plugged into the mic or line input. The select encoder chooses Auto, Left, Right or Stereo; Auto takes the internal microphone's left channel, and both channels when a jack is plugged in. Another input starts the analysis anew.
+- **What it shows:**
+  - the note with its cents against the master tune, so at 432 Hz an instrument is tuned to 432 Hz;
+  - the frequency;
+  - the tempo in BPM;
+  - the key, major or minor, with its number on the Camelot wheel that DJs mix by (A minor is 8A, C major 8B; neighbours on the wheel mix well).
+
+  On the OLED one of them is big (press the select encoder: note, Hz, BPM, key), others small, with a needle for the cents (a pixel a cent). The 7-segment display shows the note, the Hz, the BPM or the key (`AMIN`, `C#MAJ`, the sharp as the dot). Note names as everywhere on the Deluge: middle C is C3, so 440 Hz is A3.
+- **Pads:** the needle as a column (6.7 cents a pad), the middle two green within 2 cents. The sidebar shows the input's level (−60 to 0 dB).
+- **Tempo:** after about 4 s of music, then every second. Whether a tempo or its double is meant, the music doesn't always say (drum and bass at 174 often reads as 87): the horizontal encoder halves or doubles what is shown.
+- **Key:** after about 4 s of music with notes; it follows the music over about 10 s and goes away after 10 s without notes. Drums, noise and a single held note give no key. Major and minor only: modes like Dorian can't be told apart this way reliably. On dense real music expect some errors to neighbouring keys (the relative key, a fifth away); the tools on the computer do better, and even the best reach about 75 % on electronic music (`mastertune-1.2.1/device/analysis/2026-09-28-music-analysis.md`).
+- **How it works** (`dsp/scan`):
+  - The audio routine hands the analysis the input frames the recorders get, mixed and halved to 22.05 kHz.
+  - Pitch: YIN at 11.025 kHz, then the period measured again at 22.05 kHz over several periods.
+  - Tempo: the spectral flux and its autocorrelation over 8 s, at the lags of the beat, half and whole bar and the eighths.
+  - Key: the input at 5.5 kHz, a 2048-point FFT every 0.5 s, the peaks standing out above the bins around them (the partials of notes; drums and noise have next to none) counted into 12 pitch classes against the master tune, summed over about 10 s, and the major or minor profile (Temperley's, with the notes' harmonics added) that matches best.
+  - The UI's routine runs one of the dearer parts per call, 0.65 ms at most; pitch and key take turns.
+  - Memory: 95 kB, only while the view is open.
+
+**Arp mode Ball** (patch 0117): Arpeggiator → Ratchet notes → Ball, after Roll. A ratchet becomes a ping-pong ball between two plates: the first half speeds up into a buzz at 15 ms (each gap the one before times r, r from the ratchet bounce), the second half slows down again, faster than it sped up, so the ball ends slower than it started, as the arp in Pettra "You Are The Seeds" does. Bounce velocity Even keeps the hits equally loud, Rise makes the buzz loudest. Presets `PETTRA BALL` and `PETTRA BALL BUZZ` with a demo in `mastertune-1.2.1/presets/` (details in its README). Older firmware reads a Ball as 8 notes.
+
+**Tested:**
+- **Build:** 475 files, no warnings. Two complete rebuilds give the same SHA-256. `patches/0001`–`0118` with `l2test/0001`–`0003` give exactly the source tree of v18.4-l2d. All the following checks ran on exactly this build.
+- **Pitch** (`tests/scan`, on the PC and on the Cortex-A9 code, the same results):
+  - Harmonic tones B0 to C7 at 440 and 432 Hz: every note right, within 0.2 cents. With a vibrato of ±10 cents: within 7.4. With noise at −30 dB: 0.2; at −15 dB: 1.9.
+  - The card's 20 multisamples (double bass, oboe): every note right, within 6 cents (the oboe's F5 is itself 6.2 cents flat, by a zero-padded FFT).
+  - Silence and white noise: no pitch.
+- **Tempo:**
+  - Loops of the card's drum hits within 0.1 BPM: house 120, 128 and 133; breakbeat 100 and 140; hip-hop 88; swing 96; a kick alone at 70.
+  - Drum and bass at 174 reads as 87 (halved).
+  - Silence and a held tone: no tempo.
+- **Key:** I–vi–IV–V and i–VI–iv–V in all 24 keys, oboe triads over double bass roots from the card's multisamples, as the music analysis tested the tools on the computer:
+  - at 440 and at 432 Hz: 24 of 24 each;
+  - with a house loop mixed in as loud: 24 of 24;
+  - analysed only every 116 ms, as when the UI is held up: 24 of 24. A first version starved the key there (0 of 24); now pitch and key take turns.
+  - Silence, white noise, drums alone and a held note: no key. 12 s of drums after a song: the key goes away.
+  - On the Cortex-A9 code 6 of the keys, with the same results (all of them would take hours in the emulator).
+- **Cost** (Cortex-A9 code, instructions counted):
+  - 4,773 per 128 input frames in the audio routine (0.41 % of the CPU).
+  - The analysis about 2.1 % while the view is open. Its dearest call is about 260,000 instructions (0.65 ms): a pitch frame 251,000, a chroma frame for the key 241,000, a tempo estimate 173,000.
+  - Nothing while the view is closed.
+- **Whole firmware in the emulator** (`tests/scan/scan_view_emu.py`, 28 checks):
+  - The menu opens the view; the analysis is allocated, and freed again on the way back.
+  - A tone of 861.33 Hz in the input ring reads `A4 -37.1` at 440 Hz and `A4 -5.4` at 432 Hz (the master tune set through the menu), then `861.32 Hz` and `-- BPM` (a steady tone has no beat).
+  - A C major chord in the input ring reads `C major` and `Camelot 8B`; the input turned to Left starts the analysis anew.
+  - No crash, no error popup, no access outside RAM.
+- **Sound:** The full-load song sounds bit for bit like v18.3 in all three runs (`47053032…`, `8bdf172e…`, and with the device's culling), at 91.4% CPU (v18.3: 91.5%) and with the same number of cut voices (111). Closed, the Scan view costs nothing.
+- **Arp Ball** (`tests/arp`): every note-on of 3 Ball cases within the render window of the formula, the existing cases unchanged.
+
 ## v18.3: Drive oversampled like 1.2.1, settings and sync level are kept
 
 v18.3 contains v18.2 and fixes three findings from the stress test in the emulator. Like v18.2, v18.3 exists only as the main file with L2 cache for code and data. **v18.3 has not been tested on the device yet**; everything is tested in the emulator with the firmware's machine code.
@@ -960,8 +1019,8 @@ Version 1 is still in the git history of the folder `mastertune-1.2.1/`.
 ```sh
 git clone https://github.com/SynthstromAudible/DelugeFirmware && cd DelugeFirmware
 git checkout release_1_2_1
-git am /path/to/patches/*.patch        # all = v18.3 without L2 (not released) (the state of each version: see "Source code" above); for the main file also: git am /path/to/l2test/*.patch
-./dbt configure -DRELEASE_TYPE:STRING=mastertune-v18.3-l2d   # name in the version display
+git am /path/to/patches/*.patch        # all = v18.4 without L2 (not released) (the state of each version: see "Source code" above); for the main file also: git am /path/to/l2test/*.patch
+./dbt configure -DRELEASE_TYPE:STRING=mastertune-v18.4-l2d   # name in the version display
 ./dbt build release                      # result: build/Release/deluge.bin
 # Bit-identical to the released file: the firmware contains the commit hash (up to v17 in the version name, always in the crash display), but git am
 # creates new hashes. Before the build, in build/src/deluge/version/version.cmake replace the execute_process with
@@ -994,6 +1053,11 @@ python3 /path/to/tests/run_neon_shift_test.py .
 
 # Drone (v12): tones, beats and transitions measured on the PC, with UndefinedBehaviorSanitizer
 /path/to/tests/drone/run.sh .
+
+# Scan (v18.4): pitch, tempo and key of the input on the PC (ARM=1: on the Cortex-A9 code, with the instructions per call)
+/path/to/tests/scan/run.sh .
+# The Scan view on the whole firmware in the emulator (the .elf of the build)
+python3 /path/to/tests/scan/scan_view_emu.py build/Release/deluge.elf --tools toolchain/v16/linux-x86_64/arm-none-eabi-gcc/bin/arm-none-eabi-
 ```
 
 ## Tests in the emulator (Cortex-A9)

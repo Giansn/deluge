@@ -23,7 +23,7 @@ Run `git pull` before any work: the cloud session keeps delivering.
 - **Use Python 3.12.** `python-rtmidi` has no ready-made packages for newer versions.
 - **Port names:** The ports are called `Deluge 0`, `MIDIIN2 (Deluge) 1` and `MIDIIN3 (Deluge) 2`. From the commit after `0377a67` the script finds `MIDIIN3` by itself, `-p` is no longer needed.
 
-## Tasks (as of 28.09.2026, v18.3 is out)
+## Tasks (as of 29.09.2026, v18.4 is out)
 
 Done: the report on v16, l2d, the song for the emulator, the retune test on Windows, "Rescue". The tasks for v17 are dropped: v18.3 contains v17, v18 and v18.2, so everything now applies to v18.3. What it brings is in the README, in the sections "v18", "v18.2" and "v18.3".
 
@@ -66,6 +66,17 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
    - On the Deluge: a new synth clip, load PETTRA ARP, tempo 138, Arpeggiator → Latch on, hold A4 C#5 E5. Let it run for 8 bars.
    - Compare with `references/pettra-arp/Pettra_arp_0m48-1m16.mp3` at 0:55–0:58 and with `presets/demo/PETTRA ARP.wav` (the emulator's render). Does the figure (3 hits into the next step, faster each time) sound like the song's? Is the pluck too bright or too dark, the figure too frequent or too rare? Does it sound closer with whole chords (Randomizer → Chord Polyphony 3, Chord Probability 100 %)?
    - Optionally record 8 bars with DelugeRec. Write a short report in English to `device/` and push it to `device-results`; no WAV needed.
+8. **v18.4: Scan (tuner, tempo, key) and the arp mode Ball** (new on 29.09.2026; README section "v18.4"):
+   - **Flash** `deluge-1.2.1-mastertune-v18.4-l2d-cab8e666.bin` (v18.3 plus Scan and Ball, nothing else changed). Settings → Firmware version shows `v18.4-l2d`. Tasks 1–7 apply to v18.4 as well.
+   - **Open Scan:** in Song view, Settings → Tuning → Scan (7-segment: `SCAN`). The OLED shows `Scan Mic`; Back returns to Song view.
+   - **Tuner with the internal microphone:** sing or play a held note near the Deluge. The note, its cents and a needle appear; the pads show the needle, the sidebar the level. Compare with a tuner app on a phone: within about 2 cents? Note names as on the Deluge: A3 is 440 Hz.
+   - **At 432 Hz:** Settings → Tuning → Master tune 432.0, then Scan again: the same note now reads about 31.8 cents higher (the reference is the master tune).
+   - **Line in:** plug a phone or a player into the line input. The title shows `Scan Line`. Turn the select encoder: Left, Right, Stereo, Auto, each with its name (each turn starts the analysis anew). Press it: the big line goes round note, Hz, BPM, key.
+   - **Tempo:** play a track with a known tempo. After about 5 s the BPM appears, every second anew. If it shows half or double, the horizontal encoder corrects it (`BPM X2`, `BPM /2`). Try a few styles (house, hip-hop, drum and bass).
+   - **Key:** play tracks with a known key (from the track's listing, Beatport or Mixed In Key; a few in major, a few in minor, with and without drums). After about 5 s the big line shows e.g. `A minor`, the small one `Camelot 8A`. Note what it shows and what the listing says; errors to the relative key or a fifth away count as near. Drums alone or silence should show `--`.
+   - **CPU:** CPU monitor on. The load with Scan open, compared with Song view: about 2 % more expected. Nothing should crackle, also while a song plays.
+   - **Ball:** load `presets/SYNTHS/PETTRA BALL.XML` (copy it into `SYNTHS` first), tempo 138, Latch on, hold A5. Does it sound like a ping-pong ball between two plates, the buzz on beats 2 and 4, as `presets/demo/PETTRA BALL.wav`?
+   - **Report:** a short report in English to `device/` (what matched, what not, the numbers read), pushed to `device-results`.
 
 ### Done: "Rescue", the LPF has no effect (27.09.2026)
 
@@ -74,11 +85,12 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
 - **The user's decision:** The firmware does not limit the resonance; self-oscillation stays possible, as in the original. v18 makes it 6 dB quieter and without the hum at the bottom.
 - **On the device:** in song view, with the filter button on LPF, turn the lower gold knob (resonance) below about 35, then save. To get rid of the automation too: hold SHIFT, then press the upper gold knob ("Automation deleted"). Without SHIFT the press changes the filter type.
 
-## Status (28.09.2026)
+## Status (29.09.2026)
 
 | File | What |
 |---|---|
-| `deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin` | **current version**, with L2 cache for code and data. In the README the sections "v18.3", "v18.2" and "v18". |
+| `deluge-1.2.1-mastertune-v18.4-l2d-cab8e666.bin` | **current version**: v18.3 plus Scan (tuner, tempo, key) and the arp mode Ball, with L2 cache for code and data. In the README the section "v18.4". |
+| `deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin` | v18.3, with L2 cache for code and data. In the README the sections "v18.3", "v18.2" and "v18". |
 | `deluge-1.2.1-mastertune-v18.2-l2d-c9c65066.bin` | v18.2, Drive as in v18 |
 | `deluge-1.2.1-mastertune-v18-l2d-6fa0875b.bin` | v18, with the bug after a silence |
 | `deluge-1.2.1-mastertune-v18-124aeaa2.bin` | v18 without L2, to switch back |
