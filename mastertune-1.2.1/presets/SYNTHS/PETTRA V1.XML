@@ -149,7 +149,7 @@
 		lockedGateSpreadArray="00000000000000000000000000000000"
 		lastLockedOctaveSpread="0"
 		lockedOctaveSpreadArray="00000000000000000000000000000000"
-		notePattern="00010001030304030801050102090407" />
+		notePattern="00000202030503010709010507080C0F" />
 	<modKnobs>
 		<modKnob controlsParam="pan" />
 		<modKnob controlsParam="volumePostFX" />

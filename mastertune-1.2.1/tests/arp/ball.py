@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PETTRA BALL: the Pettra arp as the arp mode Ball (ratchet notes = Ball, firmware v18.4), a synth preset saved by
+"""PETTRA V1: the Pettra arp as the arp mode Ball (ratchet notes = Ball, firmware v19.0.1), a synth preset saved by
 the firmware itself (emulated), and demos rendered with it: A5 held, 8 bars at 138 BPM.
 
 Ball: the plates close in and part again within the ratchet. The first step is a roll into the meeting point (each
@@ -10,7 +10,7 @@ beat (102, 67, 52 ms, references/pettra-arp/ANALYSIS.md); over both excerpts the
 ladder of x0.67 (METHODS.md). The shortest gaps can't be measured under the song's bass, so the buzz is set by ear.
 Even velocity: the single hits at the start and the end as clear as the buzz.
 
-Usage: ball.py <deluge.elf> <out dir> [variant ...]   variants: two (+7 over a bar, PETTRA BALL), beat (+3 over a
+Usage: ball.py <deluge.elf> <out dir> [variant ...]   variants: two (+7 over a bar, PETTRA V1), beat (+3 over a
 beat, PETTRA BALL BUZZ: nearly all buzz)
 (BLOCKCOUNT_DIR: where blockcount.so is, see run.sh)"""
 import os
@@ -26,10 +26,10 @@ VARIANTS = {
     # One beat, +3 (x0.85): from 33 ms into the buzz over the first step, out over the second to 33 ms
     "beat": dict(ratchetBounce=3, ratchetBounceLength=2),
     # One bar, +7 (x0.65): 76, 49, 32, 21 ms into the buzz (15 ms) over the first step, then out over the other
-    # seven: 15, 17, 26, 40, 62, 95, 146, 225, 346, 533 ms, each hit slower than the one before (patch 0120)
+    # seven: 15, 17, 26, 40, 62, 95, 146, 225, 346, 533 ms, each hit slower than the one before (v19.0.1, patch 0120)
     "two": dict(ratchetBounce=7, ratchetBounceLength=8),
 }
-NAMES = {"beat": "PETTRA BALL BUZZ", "two": "PETTRA BALL"}
+NAMES = {"beat": "PETTRA BALL BUZZ", "two": "PETTRA V1"}
 
 
 def arp(variant):

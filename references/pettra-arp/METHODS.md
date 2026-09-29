@@ -29,7 +29,7 @@ The question: in the finished mix of Pettra "You Are The Seeds", how does the br
 - Per pluck, the rise of its attack (1.5–8 kHz, 2–25 ms after the onset against the 20–2 ms before) in each channel's harmonic part, as left minus right in dB. Plucks whose attack doesn't rise are left out.
 - **Result:** of 165 plucks, **45 % lie hard left or right** (12 dB or more; 37 left, 38 right), 25 % within 3 dB of the centre, the rest between.
 - From one hard pluck to the next the side changes 48 % of the time: no strict left-right alternation, rather a random place per pluck.
-- That is what a random value per note on the pan does (on the Deluge: a patch cable Random → Pan). The renders before this were all in the centre; with Random → Pan at full depth, PETTRA BALL has 33 % hard left or right and 30 % near the centre.
+- That is what a random value per note on the pan does (on the Deluge: a patch cable Random → Pan). The renders before this were all in the centre; with Random → Pan at full depth, PETTRA BALL (now PETTRA V1) has 33 % hard left or right and 30 % near the centre.
 - **A pitfall of the emulator:** the firmware renders in stereo, and pans each voice, only with headphones or the right line output plugged in. In the emulator nothing is plugged in, so `tests/arp/pettra.py` sets that flag before it renders.
 
 **6. A net of resonators on the arp's notes (`net.py`): the exact gaps of the figure's ending**
@@ -40,7 +40,7 @@ The question: in the finished mix of Pettra "You Are The Seeds", how does the br
   - The note: the loudest reading at the peak.
 - **Checked on a render with known gaps:** gaps of 40 ms and more come out within 2.5 ms (154.5, 97.9, 64.3, 43.0, 107.5, 226.0 for 152.2, 98.9, 64.3, 41.8, 108.4, 228.3). Gaps under about 30 ms blur (the filters need ~15 ms to ring up). A reverb's onset can add a touch about 45 ms after a hit.
 - **Result:** after its fastest hits the song's figure slows down by about three times per hit, e.g. 9, 20, 68, 214 ms; 9, 18, 58, 151; 9, 46, 167; 11, 50, 276. So its last hits lie far apart. PETTRA BALL on v18.4 only doubled them (15, 22, 24, 52, 108, 228).
-- **What followed:** first a steeper parting (×3 per hit: 16, 32, 97, 289). By ear that stopped too soon: "the last hits must get slower". The Ball's two halves were the problem: the parting had no more time than the closing, so however it grew, it was over after a few hits. First patch 0120 let the plates meet after a third and part over two thirds (…, 56, 86, 132, 203 ms); by ear it should run out longer still. Now the plates meet after the ratchet's first step, so the closing takes one eighth, as the song's figure into the beat does (102 + 67 + 52 = 221 ms, `ANALYSIS.md`), and the parting all the other steps with the closing's own ratio (after the kick the song slows down by ×1.5 a hit: 49, 70, 110 ms). PETTRA BALL over a bar: 76, 49, 32, 21 ms in, then 15, 17, 26, 40, 62, 95, 146, 225, 346, 533 ms out.
+- **What followed:** first a steeper parting (×3 per hit: 16, 32, 97, 289). By ear that stopped too soon: "the last hits must get slower". The Ball's two halves were the problem: the parting had no more time than the closing, so however it grew, it was over after a few hits. First patch 0120 let the plates meet after a third and part over two thirds (…, 56, 86, 132, 203 ms); by ear it should run out longer still. Now the plates meet after the ratchet's first step, so the closing takes one eighth, as the song's figure into the beat does (102 + 67 + 52 = 221 ms, `ANALYSIS.md`), and the parting all the other steps with the closing's own ratio (after the kick the song slows down by ×1.5 a hit: 49, 70, 110 ms). PETTRA V1 (by ear the right one) over a bar: 76, 49, 32, 21 ms in, then 15, 17, 26, 40, 62, 95, 146, 225, 346, 533 ms out.
 - **The limit:** the stem also holds the pad and other synths. The net therefore touches more than the arp, and the runs are read from many figures, not from one clean line.
 
 ## What did not work here
@@ -81,7 +81,7 @@ Instead of a spectrogram, the samples themselves: a 3 kHz high-pass, the peak pe
 - **So:** in this mix the arp's gaps under about 25 ms can't be measured with these methods. What holds:
   - the ladder of ×0.67 for 25–180 ms (method 3, whose 46 ms window sees the bass as a steady spectrum);
   - the figures in `ANALYSIS.md`.
-- The buzz of PETTRA BALL (15 ms) is therefore set by ear. So is its shape: the hits at the start and the end as clear as the buzz, and an end slower than the start.
+- The buzz of PETTRA V1 (15 ms) is therefore set by ear. So is its shape: the hits at the start and the end as clear as the buzz, and an end slower than the start.
 
 ## Analysis by synthesis (`compare.py`)
 
