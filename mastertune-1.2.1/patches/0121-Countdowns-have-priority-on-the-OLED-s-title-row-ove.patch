@@ -1,0 +1,625 @@
+From b194ed86fb07a938522ca0ad4ca849ea94410c66 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 29 Sep 2026 15:38:38 +0000
+Subject: [PATCH] Countdowns have priority: on the OLED's title row over
+ everything, popups below them
+
+A user's report: a gold knob's popup covered the countdown. Now, while a countdown runs, nothing covers it
+(gui/ui/countdown.h). The countdowns: the song change's in the song browser while the song to come is armed (v14: the
+loops, the bars of the last loop, the beats of the last bar), and the launch countdown in Song view (and the
+performance view and the arranger, which draw through it) while clips or a section are armed to launch, counted as the
+community firmware counted it there (the bars until the launch, in the last bar the beats; at least 1 until the launch).
+
+OLED (OLED::sendMainImage()): the countdown is drawn last, over the finished image, on the title row (its label, the
+number big on the right, the title's line under them), in a canvas of its own (overlayImage, which the CPU monitor's
+line used alone before), so no screen's image is changed and it is gone the moment the countdown is. A popup that
+would reach into the title row is moved down as far as the screen leaves room (a one-line popup entirely below it);
+the CPU monitor's line goes to the bottom while a countdown takes the top. countdown::routine(), every UI tick (15 ms),
+sends the OLED anew where the countdown's line has changed. The song browser no longer draws the countdown into its
+image (LoadSongUI::displayCountdown(), removeCountdown()); Song view no longer draws 1.2.1's "Loops remaining: N" box
+(SessionView::renderOLED()) nor the community's "Bars Remaining: N" box (displayLoopsRemainingPopup()), both in the
+middle of the image, where every popup covered them: the song's name stays visible under the countdown.
+
+7-segment display: while it shows a countdown, a gold knob turned or pressed or a mod button pressed shows no popup
+(countdown::KnobPopupGuard in View::modEncoderAction(), modEncoderButtonAction(), modButtonAction();
+display::popupsHeld in SevenSegment::displayPopup()); the knob still does all it does.
+
+Tested (tests/songchange/songchange_emu.py, the firmware in the emulator): in the song browser while armed the upper
+gold knob pressed (popup "HPF") and the DJ filter turned ("DJ: LPF 15"): the OLED's title row pixel for pixel as before,
+the popup below it; on the 7-segment display the filter type changes and no popup comes; the countdown right in all
+5,088 windows while armed; a new scenario launch: Song view, clips armed to stop after 2 loops, the countdown from 8 bars
+to 1 beat on the title row in every window, a gold knob's value popup below it, the CPU monitor's line at the bottom,
+nothing left after the launch. All six scenarios pass.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/ui/countdown.cpp          | 135 +++++++++++++++++++++++
+ src/deluge/gui/ui/countdown.h            |  54 +++++++++
+ src/deluge/gui/ui/load/load_song_ui.cpp  |  26 +----
+ src/deluge/gui/ui/load/load_song_ui.h    |   8 +-
+ src/deluge/gui/ui_timer_manager.cpp      |   2 +
+ src/deluge/gui/views/session_view.cpp    |  29 ++---
+ src/deluge/gui/views/view.cpp            |   4 +
+ src/deluge/hid/display/display.cpp       |   1 +
+ src/deluge/hid/display/display.h         |   2 +
+ src/deluge/hid/display/oled.cpp          |  83 ++++++++++++--
+ src/deluge/hid/display/seven_segment.cpp |   3 +
+ 11 files changed, 289 insertions(+), 58 deletions(-)
+ create mode 100644 src/deluge/gui/ui/countdown.cpp
+ create mode 100644 src/deluge/gui/ui/countdown.h
+
+diff --git a/src/deluge/gui/ui/countdown.cpp b/src/deluge/gui/ui/countdown.cpp
+new file mode 100644
+index 00000000..0e2c8f5a
+--- /dev/null
++++ b/src/deluge/gui/ui/countdown.cpp
+@@ -0,0 +1,135 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#include "gui/ui/countdown.h"
++#include "definitions_cxx.hpp"
++#include "gui/ui/load/load_song_ui.h"
++#include "gui/ui/ui.h"
++#include "gui/views/arranger_view.h"
++#include "gui/views/performance_session_view.h"
++#include "gui/views/session_view.h"
++#include "hid/display/display.h"
++#include "hid/display/oled.h"
++#include "model/song/song.h"
++#include "playback/mode/session.h"
++#include "playback/playback_handler.h"
++#include "processing/stem_export/stem_export.h"
++#include "util/functions.h"
++#include <algorithm>
++#include <cstring>
++
++namespace deluge::gui::countdown {
++
++namespace {
++
++enum class Where : uint8_t { NONE, SONG_CHANGE, LAUNCH };
++
++/// Which countdown the current UI shows, if any. Asked anew each time, so that nothing can stay up after it
++Where where() {
++	if (!currentSong || stemExport.processStarted) {
++		return Where::NONE;
++	}
++	UI* ui = getCurrentUI();
++	if (ui == &loadSongUI) {
++		return (currentUIMode == UI_MODE_LOADING_SONG_UNESSENTIAL_SAMPLES_ARMED) ? Where::SONG_CHANGE : Where::NONE;
++	}
++	// The views that draw through SessionView::renderOLED(), where 1.2.1 showed the launch
++	bool drawsThroughSongView = (ui == &sessionView || ui == &performanceSessionView || ui == &arrangerView);
++	if (drawsThroughSongView && currentPlaybackMode == &session && session.launchEventAtSwungTickCount
++	    && playbackHandler.isEitherClockActive()) {
++		return Where::LAUNCH;
++	}
++	return Where::NONE;
++}
++
++// What routine() last saw
++bool lastShown = false;
++char const* lastLabel = nullptr;
++char lastNumber[12] = "";
++
++} // namespace
++
++bool line(char const** label, char* number, size_t size) {
++	Where now = where();
++	if (now == Where::NONE || size < 12) {
++		return false;
++	}
++	if (now == Where::LAUNCH) {
++		// As Song view counted it (SessionView::displayLoopsRemainingPopup(), community firmware): the bars until the
++		// launch, in the last bar the beats. At least 1 until the launch: its sixteenths are rounded, and an external
++		// clock's position is an estimate between its ticks
++		int32_t sixteenths = std::max<int32_t>(session.getNumSixteenthNotesRemainingTilLaunch(), 1);
++		bool bars = (sixteenths > 16);
++		*label = bars ? "Bars remaining" : "Beats remaining";
++		intToString(bars ? (sixteenths - 1) / 16 + 1 : (sixteenths - 1) / 4 + 1, number);
++		return true;
++	}
++	using Unit = Session::LaunchCountdown::Unit;
++	Session::LaunchCountdown countdown = session.getLaunchCountdown(); // The song change's (v14)
++	*label = (countdown.unit == Unit::LOOPS)   ? "Loops remaining"
++	         : (countdown.unit == Unit::BARS)  ? "Bars remaining"
++	         : (countdown.unit == Unit::BEATS) ? "Beats remaining"
++	                                           : "Song will begin...";
++	number[0] = 0;
++	if (countdown.unit != Unit::NONE) {
++		intToString(countdown.count, number);
++	}
++	return true;
++}
++
++void routine() {
++	if (!display->haveOLED()) {
++		return;
++	}
++	char const* label = nullptr;
++	char number[12];
++	bool shown = line(&label, number, sizeof(number));
++	if (shown != lastShown || (shown && (label != lastLabel || strcmp(number, lastNumber) != 0))) {
++		lastShown = shown;
++		lastLabel = label;
++		strcpy(lastNumber, shown ? number : "");
++		deluge::hid::display::OLED::markChanged();
++	}
++}
++
++bool knobPopupAllowed() {
++	if (display->haveOLED()) {
++		return true; // The OLED moves popups below the countdown
++	}
++	switch (where()) {
++	case Where::SONG_CHANGE:
++		return false;
++	case Where::LAUNCH:
++		// As SessionView::redrawNumericDisplay() shows it: the arranger only while it will switch to the arrangement
++		return getCurrentUI() == &arrangerView && !session.switchToArrangementAtLaunchEvent;
++	default:
++		return true;
++	}
++}
++
++KnobPopupGuard::KnobPopupGuard() : held_(!knobPopupAllowed() && !deluge::hid::display::popupsHeld) {
++	if (held_) {
++		deluge::hid::display::popupsHeld = true;
++	}
++}
++
++KnobPopupGuard::~KnobPopupGuard() {
++	if (held_) {
++		deluge::hid::display::popupsHeld = false;
++	}
++}
++
++} // namespace deluge::gui::countdown
+diff --git a/src/deluge/gui/ui/countdown.h b/src/deluge/gui/ui/countdown.h
+new file mode 100644
+index 00000000..2c435af5
+--- /dev/null
++++ b/src/deluge/gui/ui/countdown.h
+@@ -0,0 +1,54 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++
++#include <cstddef>
++
++/// mastertune-v19.0.2: a countdown has priority on the display. While one runs, the OLED draws it on its title row over
++/// everything else and moves popups below it (OLED::sendMainImage()), and on the 7-segment display the gold knobs'
++/// popups don't take the countdown's place. The countdowns: the song change's in the song browser while the song to come
++/// is armed (mastertune-v14: the loops, then the bars of the last loop, then the beats of the last bar), and the launch
++/// countdown in Song view (and the performance view and the arranger, which draw through it) while clips or a section
++/// are armed to launch, counted as Song view counted it: the bars until the launch, in the last bar the beats. 1.2.1 and
++/// the community firmware drew that one as a box in the middle ("Loops remaining: 2", "Bars Remaining: 8"), where every
++/// popup covered it
++namespace deluge::gui::countdown {
++
++/// The countdown shown now: its label ("Bars remaining") and number ("" while the song change has none: "Song will
++/// begin..."), or false when there is none
++bool line(char const** label, char* number, size_t size);
++
++/// Every UI tick (15 ms): the OLED sent anew where the countdown's line has changed, so that it follows the playback
++void routine();
++
++/// Whether a gold knob's (or mod button's) popup may take the 7-segment display now: not while it shows a countdown
++bool knobPopupAllowed();
++
++/// While alive (a gold knob turned or pressed, a mod button pressed), the 7-segment display takes no popup where it
++/// shows a countdown (knobPopupAllowed()); the knob still does all it does
++class KnobPopupGuard {
++public:
++	KnobPopupGuard();
++	~KnobPopupGuard();
++	KnobPopupGuard(const KnobPopupGuard&) = delete;
++	KnobPopupGuard& operator=(const KnobPopupGuard&) = delete;
++
++private:
++	bool held_;
++};
++
++} // namespace deluge::gui::countdown
+diff --git a/src/deluge/gui/ui/load/load_song_ui.cpp b/src/deluge/gui/ui/load/load_song_ui.cpp
+index f60ca776..56e57797 100644
+--- a/src/deluge/gui/ui/load/load_song_ui.cpp
++++ b/src/deluge/gui/ui/load/load_song_ui.cpp
+@@ -267,16 +267,9 @@ void LoadSongUI::enterKeyPress() {
+ 	}
+ }
+ 
+-char loopsRemainingText[] = "Loops remaining: xxxxxxxxxxx";
+-
+-namespace {
+-// The OLED's title row (Canvas::drawScreenTitle()): the title's top, and the line under it
+-constexpr int32_t kTitleY = OLED_MAIN_TOPMOST_PIXEL + ((OLED_MAIN_HEIGHT_PIXELS == 64) ? 0 : 1);
+-constexpr int32_t kTitleLineY = kTitleY + 11;
+-} // namespace
+-
+ // mastertune-v14: replaces 1.2.1's popups ("Song will begin...", "Loops remaining: N"), which covered the browser: on
+-// the OLED the countdown takes the title row, so the browser stays as it was, with the song to come selected
++// the OLED the countdown takes the title row, so the browser stays as it was, with the song to come selected. Since
++// v19.0.2 the OLED draws it there over everything, popups below it (gui/ui/countdown.h, OLED::sendMainImage())
+ void LoadSongUI::displayCountdown(bool force) {
+ 	if (currentUIMode != UI_MODE_LOADING_SONG_UNESSENTIAL_SAMPLES_ARMED) {
+ 		return;
+@@ -292,16 +285,6 @@ void LoadSongUI::displayCountdown(bool force) {
+ 	intToString(countdown.count, number);
+ 
+ 	if (display->haveOLED()) {
+-		deluge::hid::display::oled_canvas::Canvas& canvas = deluge::hid::display::OLED::main;
+-		canvas.clearAreaExact(0, OLED_MAIN_TOPMOST_PIXEL, OLED_MAIN_WIDTH_PIXELS - 1, kTitleLineY - 1);
+-		char const* label = (countdown.unit == Unit::LOOPS)   ? "Loops remaining"
+-		                    : (countdown.unit == Unit::BARS)  ? "Bars remaining"
+-		                    : (countdown.unit == Unit::BEATS) ? "Beats remaining"
+-		                                                      : "Song will begin...";
+-		canvas.drawString(label, 0, kTitleY + 2, kTextSpacingX, kTextSpacingY);
+-		if (countdown.unit != Unit::NONE) {
+-			canvas.drawStringAlignRight(number, kTitleY, kTextTitleSpacingX, kTextTitleSizeY);
+-		}
+ 		countdownOnOLED = true;
+ 		deluge::hid::display::OLED::markChanged();
+ 	}
+@@ -318,12 +301,9 @@ void LoadSongUI::displayCountdown(bool force) {
+ }
+ 
+ // The title back where the countdown was, once the song has changed (the 7-segment display then shows the loading
+-// animation, PlaybackHandler::doSongSwap())
++// animation, PlaybackHandler::doSongSwap()): the countdown was drawn over it, not into it
+ void LoadSongUI::removeCountdown() {
+ 	if (countdownOnOLED) {
+-		deluge::hid::display::oled_canvas::Canvas& canvas = deluge::hid::display::OLED::main;
+-		canvas.clearAreaExact(0, OLED_MAIN_TOPMOST_PIXEL, OLED_MAIN_WIDTH_PIXELS - 1, kTitleLineY - 1);
+-		canvas.drawScreenTitle(title);
+ 		countdownOnOLED = false;
+ 		deluge::hid::display::OLED::markChanged();
+ 	}
+diff --git a/src/deluge/gui/ui/load/load_song_ui.h b/src/deluge/gui/ui/load/load_song_ui.h
+index 41fc4f30..c3e96f23 100644
+--- a/src/deluge/gui/ui/load/load_song_ui.h
++++ b/src/deluge/gui/ui/load/load_song_ui.h
+@@ -35,8 +35,9 @@ public:
+ 	void selectEncoderAction(int8_t offset);
+ 	void renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas) override;
+ 	void performLoad(StorageManager& bdsm);
+-	// mastertune-v14: the song-change countdown while the loaded song is armed to start (OLED: on the title row,
+-	// 7-segment: the number); without force only when what it shows has changed
++	// mastertune-v14: the song-change countdown while the loaded song is armed to start (OLED: on the title row, drawn
++	// over everything by gui/ui/countdown.h since v19.0.2; 7-segment: the number); without force only when what it
++	// shows has changed
+ 	void displayCountdown(bool force = true);
+ 
+ 	bool deletedPartsOfOldSong;
+@@ -94,7 +95,7 @@ private:
+ 	bool selectionShownFolded();
+ 
+ 	Session::LaunchCountdown shownCountdown;
+-	bool countdownOnOLED = false; // The title row shows the countdown instead of the title
++	bool countdownOnOLED = false; // The OLED shows the countdown over the title (gui/ui/countdown.h)
+ 
+ 	bool scrollingIntoSlot;
+ 	// int32_t findNextFile(int32_t offset);
+@@ -104,4 +105,3 @@ private:
+ };
+ extern LoadSongUI loadSongUI;
+ 
+-extern char loopsRemainingText[];
+diff --git a/src/deluge/gui/ui_timer_manager.cpp b/src/deluge/gui/ui_timer_manager.cpp
+index 288eea25..c6cd023e 100644
+--- a/src/deluge/gui/ui_timer_manager.cpp
++++ b/src/deluge/gui/ui_timer_manager.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include "gui/ui_timer_manager.h"
+ #include "definitions_cxx.hpp"
++#include "gui/ui/countdown.h"
+ #include "gui/ui/keyboard/keyboard_screen.h"
+ #include "gui/ui/sound_editor.h"
+ #include "gui/views/automation_view.h"
+@@ -212,6 +213,7 @@ void UITimerManager::routine() {
+ 					if (uartGetTxBufferSpace(UART_ITEM_PIC_PADS) > kNumBytesInColUpdateMessage) {
+ 						getCurrentUI()->graphicsRoutine();
+ 					}
++					deluge::gui::countdown::routine(); // mastertune-v19.0.2: the countdown follows the playback
+ 					setTimer(TimerName::GRAPHICS_ROUTINE, 15);
+ 					break;
+ 
+diff --git a/src/deluge/gui/views/session_view.cpp b/src/deluge/gui/views/session_view.cpp
+index 44657967..bca45e52 100644
+--- a/src/deluge/gui/views/session_view.cpp
++++ b/src/deluge/gui/views/session_view.cpp
+@@ -1951,8 +1951,6 @@ void SessionView::setLedStates() {
+ #endif
+ }
+ 
+-extern char loopsRemainingText[];
+-
+ void SessionView::renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas) {
+ 	if (stemExport.processStarted) {
+ 		stemExport.displayStemExportProgressOLED(StemExportType::CLIP);
+@@ -1968,16 +1966,9 @@ void SessionView::renderOLED(deluge::hid::display::oled_canvas::Canvas& canvas)
+ 	}
+ 
+ 	if (playbackHandler.isEitherClockActive()) {
+-		// Session playback
+-		if (currentPlaybackMode == &session) {
+-			if (session.launchEventAtSwungTickCount) {
+-				intToString(session.numRepeatsTilLaunch, &loopsRemainingText[17]);
+-				deluge::hid::display::OLED::clearMainImage();
+-				deluge::hid::display::OLED::drawPermanentPopupLookingText(loopsRemainingText);
+-			}
+-		}
+-
+-		else { // Arrangement playback
++		// Session playback: a launch's countdown (1.2.1: "Loops remaining: 2" as a box in the middle, which every popup
++		// covered) goes on the title row over everything, gui/ui/countdown.h (mastertune-v19.0.2)
++		if (currentPlaybackMode != &session) { // Arrangement playback
+ 			if (playbackHandler.stopOutputRecordingAtLoopEnd) {
+ 				deluge::hid::display::OLED::clearMainImage();
+ 				deluge::hid::display::OLED::drawPermanentPopupLookingText("Resampling will end...");
+@@ -2430,6 +2421,11 @@ int32_t SessionView::displayLoopsRemainingPopup(bool ephemeral) {
+ 	int32_t sixteenthNotesRemaining = session.getNumSixteenthNotesRemainingTilLaunch();
+ 	// only show pop-up if you're not in any other UI mode
+ 	if (currentUIMode == UI_MODE_NONE) {
++		// mastertune-v19.0.2: on the OLED the countdown is on the title row, drawn over everything (gui/ui/countdown.h),
++		// no longer as a box in the middle of the image, which every popup covered
++		if (display->haveOLED() && !ephemeral) {
++			return sixteenthNotesRemaining;
++		}
+ 		if (sixteenthNotesRemaining > 0) {
+ 			DEF_STACK_STRING_BUF(popupMsg, 40);
+ 			if (sixteenthNotesRemaining > 16) {
+@@ -2446,14 +2442,7 @@ int32_t SessionView::displayLoopsRemainingPopup(bool ephemeral) {
+ 				}
+ 				popupMsg.appendInt(quarterNotesRemaining);
+ 			}
+-			if (display->haveOLED() && !ephemeral) {
+-				deluge::hid::display::OLED::clearMainImage();
+-				deluge::hid::display::OLED::drawPermanentPopupLookingText(popupMsg.c_str());
+-				deluge::hid::display::OLED::sendMainImage();
+-			}
+-			else {
+-				display->displayPopup(popupMsg.c_str(), 1, true);
+-			}
++			display->displayPopup(popupMsg.c_str(), 1, true);
+ 		}
+ 	}
+ 	return sixteenthNotesRemaining;
+diff --git a/src/deluge/gui/views/view.cpp b/src/deluge/gui/views/view.cpp
+index 0780fc3a..fa6fe6e2 100644
+--- a/src/deluge/gui/views/view.cpp
++++ b/src/deluge/gui/views/view.cpp
+@@ -25,6 +25,7 @@
+ #include "gui/context_menu/clip_settings/clip_settings.h"
+ #include "gui/l10n/l10n.h"
+ #include "gui/menu_item/colour.h"
++#include "gui/ui/countdown.h"
+ #include "gui/ui/keyboard/keyboard_screen.h"
+ #include "gui/ui/load/load_instrument_preset_ui.h"
+ #include "gui/ui/load/load_song_ui.h"
+@@ -778,6 +779,7 @@ void View::midiLearnFlash() {
+ }
+ 
+ void View::modEncoderAction(int32_t whichModEncoder, int32_t offset) {
++	deluge::gui::countdown::KnobPopupGuard countdownFirst; // mastertune-v19.0.2: a countdown keeps the 7-segment display
+ 	// this routine used to exit if shift was held, but the shift+encoder combo does not seem used anywhere else either
+ 	//  if (Buttons::isShiftButtonPressed()) {
+ 	//  	return;
+@@ -1168,6 +1170,7 @@ void View::instrumentBeenEdited() {
+ }
+ 
+ void View::modEncoderButtonAction(uint8_t whichModEncoder, bool on) {
++	deluge::gui::countdown::KnobPopupGuard countdownFirst; // mastertune-v19.0.2: a countdown keeps the 7-segment display
+ 
+ 	// If the learn button is pressed, user is trying to copy or paste, and the fact that we've ended up here means they
+ 	// can't
+@@ -1334,6 +1337,7 @@ static const uint32_t modButtonUIModes[] = {UI_MODE_AUDITIONING,
+                                             0};
+ 
+ void View::modButtonAction(uint8_t whichButton, bool on) {
++	deluge::gui::countdown::KnobPopupGuard countdownFirst; // mastertune-v19.0.2: a countdown keeps the 7-segment display
+ 	RootUI* rootUI = getRootUI();
+ 
+ 	// ignore modButtonAction when in the Automation View Automation Editor
+diff --git a/src/deluge/hid/display/display.cpp b/src/deluge/hid/display/display.cpp
+index 30450f51..e51337c3 100644
+--- a/src/deluge/hid/display/display.cpp
++++ b/src/deluge/hid/display/display.cpp
+@@ -80,6 +80,7 @@ std::string_view getErrorMessage(Error error) {
+ }
+ 
+ bool have_oled_screen = false;
++bool popupsHeld = false;
+ 
+ void swapDisplayType() {
+ 	using ::display; // this is c++
+diff --git a/src/deluge/hid/display/display.h b/src/deluge/hid/display/display.h
+index 365ad3f7..be8aba90 100644
+--- a/src/deluge/hid/display/display.h
++++ b/src/deluge/hid/display/display.h
+@@ -109,6 +109,8 @@ namespace deluge::hid::display {
+ void swapDisplayType();
+ // physical screen is oled
+ extern bool have_oled_screen;
++/// mastertune-v19.0.2: the 7-segment display takes no popup while this is set (gui/ui/countdown.h's KnobPopupGuard)
++extern bool popupsHeld;
+ } // namespace deluge::hid::display
+ 
+ extern "C" void consoleTextIfAllBootedUp(char const* text);
+diff --git a/src/deluge/hid/display/oled.cpp b/src/deluge/hid/display/oled.cpp
+index 94ef0a96..53066688 100644
+--- a/src/deluge/hid/display/oled.cpp
++++ b/src/deluge/hid/display/oled.cpp
+@@ -20,6 +20,7 @@
+ #include "definitions_cxx.hpp"
+ #include "drivers/dmac/dmac.h"
+ #include "drivers/pic/pic.h"
++#include "gui/ui/countdown.h"
+ #include "gui/ui_timer_manager.h"
+ #include "hid/display/display.h"
+ #include "hid/display/oled.h"
+@@ -31,6 +32,7 @@
+ #include "processing/engines/cpu_stats.h"
+ #include "util/cfunctions.h"
+ #include "util/d_string.h"
++#include <algorithm>
+ #include <string.h>
+ #include <string_view>
+ 
+@@ -54,8 +56,9 @@ uint8_t (*OLED::oledCurrentImage)[OLED_MAIN_WIDTH_PIXELS];
+ oled_canvas::Canvas OLED::main;
+ oled_canvas::Canvas OLED::popup;
+ oled_canvas::Canvas OLED::console;
+-/// The finished image with the CPU monitor line on it (mastertune-diag)
+-static oled_canvas::Canvas cpuMonitorImage;
++/// The finished image with what goes over it: a popup moved below the countdown, the CPU monitor line (mastertune-diag),
++/// the countdown (mastertune-v19.0.2)
++static oled_canvas::Canvas overlayImage;
+ 
+ bool OLED::needsSending;
+ 
+@@ -490,6 +493,30 @@ void copyBackgroundAroundForeground(ImageStore backgroundImage, ImageStore foreg
+ 	}
+ }
+ 
++// mastertune-v19.0.2: the countdown's title row, where Canvas::drawScreenTitle() draws a title: its top, its line
++constexpr int32_t kCountdownTitleY = OLED_MAIN_TOPMOST_PIXEL + ((OLED_MAIN_HEIGHT_PIXELS == 64) ? 0 : 1);
++constexpr int32_t kCountdownLineY = kCountdownTitleY + 11;
++
++/// The popup's box (minX to maxX, minY to maxY in from) onto to, dy pixels lower; cut at the bottom of the screen
++void copyBoxDown(ImageStore from, ImageStore to, int32_t minX, int32_t minY, int32_t maxX, int32_t maxY, int32_t dy) {
++	maxX = std::min<int32_t>(maxX, OLED_MAIN_WIDTH_PIXELS - 1);
++	for (int32_t y = maxY; y >= minY; y--) {
++		int32_t toY = y + dy;
++		if (toY < 0 || toY >= OLED_MAIN_HEIGHT_PIXELS) {
++			continue;
++		}
++		uint8_t toBit = 1 << (toY & 7);
++		for (int32_t x = std::max<int32_t>(minX, 0); x <= maxX; x++) {
++			if ((from[y >> 3][x] >> (y & 7)) & 1) {
++				to[toY >> 3][x] |= toBit;
++			}
++			else {
++				to[toY >> 3][x] &= ~toBit;
++			}
++		}
++	}
++}
++
+ void OLED::sendMainImage() {
+ 	if (!needsSending) {
+ 		return;
+@@ -503,23 +530,57 @@ void OLED::sendMainImage() {
+ 		                               OLED_MAIN_HEIGHT_PIXELS - 1);
+ 		oledCurrentImage = &console.hackGetImageStore()[0];
+ 	}
++	// mastertune-v19.0.2: a countdown has priority (gui/ui/countdown.h): on the title row over everything else, a popup
++	// moved below it, the CPU monitor at the bottom. Nothing of it is drawn into a screen's own image, so it's gone as
++	// soon as the countdown is
++	char const* countdownLabel = nullptr;
++	char countdownNumber[12];
++	bool countdown = deluge::gui::countdown::line(&countdownLabel, countdownNumber, sizeof(countdownNumber));
++
+ 	if (oledPopupWidth) {
+-		copyBackgroundAroundForeground(oledCurrentImage, popup.hackGetImageStore(), popupMinX, popupMinY, popupMaxX,
+-		                               popupMaxY);
+-		oledCurrentImage = &popup.hackGetImageStore()[0];
++		// Where the box would reach into the countdown's row: as far down as the screen leaves room for
++		int32_t dy = 0;
++		if (countdown) {
++			dy = std::clamp<int32_t>(kCountdownLineY + 2 - popupMinY, 0, OLED_MAIN_HEIGHT_PIXELS - 1 - popupMaxY);
++		}
++		if (dy == 0) {
++			copyBackgroundAroundForeground(oledCurrentImage, popup.hackGetImageStore(), popupMinX, popupMinY,
++			                               popupMaxX, popupMaxY);
++			oledCurrentImage = &popup.hackGetImageStore()[0];
++		}
++		else {
++			memcpy(overlayImage.hackGetImageStore(), oledCurrentImage, sizeof(ImageStore));
++			copyBoxDown(popup.hackGetImageStore(), overlayImage.hackGetImageStore(), popupMinX, popupMinY, popupMaxX,
++			            popupMaxY, dy);
++			oledCurrentImage = &overlayImage.hackGetImageStore()[0];
++		}
+ 	}
+ 
+ 	// mastertune-diag: the CPU monitor (Settings > CPU monitor) goes on top of the finished image, in a canvas of its
+ 	// own, so no screen's image is changed and it's gone as soon as the monitor is switched off
+-	// mastertune-v15: one short line in the top left corner, white on black just behind the letters
++	// mastertune-v15: one short line in the top left corner, white on black just behind the letters; at the bottom
++	// while a countdown takes the top (v19.0.2)
+ 	char const* info = cpu_stats::oledInfo();
++	if ((info || countdown) && oledCurrentImage != &overlayImage.hackGetImageStore()[0]) {
++		memcpy(overlayImage.hackGetImageStore(), oledCurrentImage, sizeof(ImageStore));
++		oledCurrentImage = &overlayImage.hackGetImageStore()[0];
++	}
+ 	if (info) {
+-		memcpy(cpuMonitorImage.hackGetImageStore(), oledCurrentImage, sizeof(ImageStore));
+-		int32_t y = OLED_MAIN_TOPMOST_PIXEL;
++		int32_t y = countdown ? OLED_MAIN_HEIGHT_PIXELS - 9 : OLED_MAIN_TOPMOST_PIXEL;
+ 		int32_t width = (int32_t)strlen(info) * kTextSpacingX + 2;
+-		cpuMonitorImage.clearAreaExact(0, y, std::min<int32_t>(width, OLED_MAIN_WIDTH_PIXELS) - 1, y + 8);
+-		cpuMonitorImage.drawString(info, 1, y + 1, kTextSpacingX, 7);
+-		oledCurrentImage = &cpuMonitorImage.hackGetImageStore()[0];
++		// At the bottom a little more cleared above it, so no letters of the line there peek out over it
++		overlayImage.clearAreaExact(0, countdown ? y - 3 : y, std::min<int32_t>(width, OLED_MAIN_WIDTH_PIXELS) - 1,
++		                            y + 8);
++		overlayImage.drawString(info, 1, y + 1, kTextSpacingX, 7);
++	}
++	// The countdown last: the label, the number big on the right, the title's line under them
++	if (countdown) {
++		overlayImage.clearAreaExact(0, OLED_MAIN_TOPMOST_PIXEL, OLED_MAIN_WIDTH_PIXELS - 1, kCountdownLineY);
++		overlayImage.drawString(countdownLabel, 0, kCountdownTitleY + 2, kTextSpacingX, kTextSpacingY);
++		if (countdownNumber[0]) {
++			overlayImage.drawStringAlignRight(countdownNumber, kCountdownTitleY, kTextTitleSpacingX, kTextTitleSizeY);
++		}
++		overlayImage.drawHorizontalLine(kCountdownLineY, 0, OLED_MAIN_WIDTH_PIXELS - 1);
+ 	}
+ 
+ #if OLED_LOG_TIMING
+diff --git a/src/deluge/hid/display/seven_segment.cpp b/src/deluge/hid/display/seven_segment.cpp
+index 57abbc5b..707c4b78 100644
+--- a/src/deluge/hid/display/seven_segment.cpp
++++ b/src/deluge/hid/display/seven_segment.cpp
+@@ -550,6 +550,9 @@ void SevenSegment::setNextTransitionDirection(int8_t thisDirection) {
+ 
+ void SevenSegment::displayPopup(char const* newText, int8_t numFlashes, bool alignRight, uint8_t drawDot,
+                                 int32_t blinkSpeed, PopupType type) {
++	if (popupsHeld) {
++		return; // mastertune-v19.0.2: a countdown keeps the display while the gold knobs are turned
++	}
+ 	encodeText(newText, popup.segments, alignRight, drawDot);
+ 	memset(&popup.blinkedSegments, 0, kNumericDisplayLength);
+ 	if (numFlashes == 0) {
+-- 
+2.43.0
+

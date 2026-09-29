@@ -45,6 +45,18 @@
   <li><b>7-Segment-Anzeige:</b> die Zahl, blinkend, solange sie Durchläufe zählt. Beats tragen einen Punkt, so unterscheidest du sie von Takten.</li>
   <li><b>Bis zum Wechsel</b> steuern die Goldknöpfe und Mod-Tasten die Master-Effekte des <b>laufenden</b> Songs, ab dem Moment, in dem du <span class="key">LOAD</span> drückst, auch mit Affect Entire aus. Der neue Song behält seine eigenen Werte.</li>
 </ul>
+<div class="box"><b>Der Countdown hat Vorrang</b> <span class="tag">v19.0.2</span>. Solange ein Countdown läuft, verdeckt ihn nichts:
+<ul>
+  <li><b>OLED:</b> Er bleibt in der Titelzeile, über allem anderen gezeichnet. Ein Popup, etwa der Wert eines Goldknopfs, der Filtertyp oder der DJ-Filter, erscheint darunter.</li>
+  <li><b>Auch im Song-View:</b> Sind Clips oder eine Section zum Start vorgemerkt, steht der Countdown (die Takte bis zum Start, im letzten Takt die Beats) in der Titelzeile. Bisher war er ein Kasten in der Bildmitte, den jeder Knopf verdeckte; jetzt bleibt der Songname darunter sichtbar.</li>
+  <li>Die Zeile des CPU-Monitors rückt nach unten, solange ein Countdown oben steht.</li>
+  <li><b>7-Segment-Anzeige:</b> Goldknöpfe und Mod-Tasten zeigen kein Popup, solange sie einen Countdown zeigt. Sie wirken aber wie gewohnt.</li>
+</ul>
+</div>
+<div class="shots">
+  <figure class="figure"><img class="shot oled" src="../../../screenshots/oled_countdown_popup.png" alt="Bars remaining 3, darunter das Popup des DJ-Filters"><figcaption>Songwechsel vorgemerkt, DJ-Filter gedreht: sein Popup unter dem Countdown.</figcaption></figure>
+  <figure class="figure"><img class="shot oled" src="../../../screenshots/oled_countdown_songview.png" alt="Bars remaining im Song-View, darunter das Popup eines Knopfs"><figcaption>Song-View, Clips zum Stoppen vorgemerkt: der Countdown in der Titelzeile, der Wert eines Goldknopfs darunter.</figcaption></figure>
+</div>
 
 <h3 id="wf-save">7.3 Speichern ohne Knacken <span class="tag">v11, v13</span></h3>
 <ul>

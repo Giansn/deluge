@@ -4,7 +4,8 @@ armed to start, and the gold knobs and mod buttons on the playing song's master 
 
 Usage: songchange_emu.py <deluge.elf> [--scenario NAME ...] [--out DIR] [--tools PREFIX] [--build DIR] [--baseline]
   Scenarios (default all): oled, 7seg (the 7-segment display), swing (song A with quarter swing 25; song B with affect
-  entire off), extclock (following an external MIDI clock, 123 BPM), stop (PLAY pressed while armed). --baseline: the
+  entire off), extclock (following an external MIDI clock, 123 BPM), stop (PLAY pressed while armed), launch (no song
+  change: in Song view song A's clips armed to stop after 2 loops, the launch countdown). --baseline: the
   ELF is a build without the change (1.2.1, mastertune-v13): nothing is checked, it's only reported, for comparison.
   EMU_DEBUG=1: where the firmware is every 5 s of host time, and every yield.
 
@@ -37,7 +38,15 @@ Checks (not with --baseline):
   remain, then bars, then beats (the swung ticks remaining, rounded up), at most one graphics routine period (15 ms)
   late at a change; the changes and their ticks relative to the swap are printed; the select encoder's repeats show at
   once, also back and forth in the last loop; BACK changes nothing
-- the swap happens at the launch event (or at once when stopped), the countdown is gone after it (the title back)
+- the swap happens at the launch event (or at once when stopped), the countdown is gone after it
+- a countdown has priority (mastertune-v19.0.2, gui/ui/countdown.h): on the OLED it is drawn on the title row over
+  everything else (the canvas overlayImage), a popup that would reach into it moved below it: while armed, the upper
+  gold knob pressed (the filter type's popup, "HPF") and the DJ filter turned ("DJ: LPF ..."), the OLED's title row
+  stays exactly as it was and the popup shows under it. On the 7-segment display the knobs' popups don't take the
+  countdown's place (the filter type still changes). Scenario launch: the launch countdown in Song view on the title
+  row, counted as the community firmware's box in the middle of the image counted it (the bars until the launch, in
+  the last bar the beats), no box any more; a gold knob's value popup under it; the CPU monitor's line at the bottom
+  while the countdown takes the top; after the launch the countdown is gone
 - knobs: from LOAD on, the gold knob changes song A's LPF (the playing song's master FX, though A's affect entire is
   off), not song B's and not A's synth (whose clip view A was in); the mod button changes A's section; mod LEDs and
   knob indicators show A's section and values. At the swap the knobs are on nothing (the view's model stack holds no
@@ -82,6 +91,7 @@ def button_xy(x, y):  # hid/button.h fromXY(): 9 * (y + kDisplayHeight * 2) + x
 
 BUTTON_LOAD = button_xy(6, 1)
 BUTTON_BACK = button_xy(7, 1)
+BUTTON_AFFECT_ENTIRE = button_xy(3, 0)
 MOD_BUTTON = [button_xy(x, y) for x, y in zip((1, 1, 1, 1, 2, 2, 2, 2), (0, 1, 2, 3, 0, 1, 2, 3))]
 MOD_LED = [x + 9 * y for x, y in zip((1, 1, 1, 1, 2, 2, 2, 2), (0, 1, 2, 3, 0, 1, 2, 3))]  # indicator_leds fromXY()
 UNPATCHED_DELAY_AMOUNT, UNPATCHED_LPF_FREQ = 29, 32
@@ -153,7 +163,10 @@ OFFSET_QUERIES = [
     ("list Song::Song", [("song_name", "(int)&((Song*)0)->name"),
                          ("song_global_effectable", "(int)&((Song*)0)->globalEffectable"),
                          ("song_param_manager", "(int)&((Song*)0)->paramManager"),
-                         ("mod_knob_mode", "(int)&((GlobalEffectableForSong*)0)->modKnobMode")]),
+                         ("mod_knob_mode", "(int)&((GlobalEffectableForSong*)0)->modKnobMode"),
+                         ("filter_type", "(int)&((GlobalEffectable*)0)->currentFilterType"),
+                         # Quoted: gdb doesn't find the namespace deluge::hid::display (a variable is named display)
+                         ("seven_popup_active", "(int)&(('deluge::hid::display::SevenSegment'*)0)->popupActive")]),
     ("list PlaybackHandler::PlaybackHandler", [("last_swung_tick", "(int)&((PlaybackHandler*)0)->lastSwungTickActioned")]),
     ("list View::View", [("view_model_stack", "(int)&((View*)0)->activeModControllableModelStack")]),
 ]
@@ -202,7 +215,10 @@ class Deluge:
                                         "_ZN14indicator_leds19knobIndicatorLevelsE", "_ZN14indicator_leds9ledStatesE",
                                         "_ZN6deluge3hid7display4OLED4mainE", "_ZN6deluge3hid7display4OLED5popupE",
                                         "_ZN6deluge3hid7display4OLED16oledCurrentImageE", "numUIsOpen",
-                                        "_ZN6deluge3hid7display14oledPopupWidthE")}
+                                        "_ZN6deluge3hid7display14oledPopupWidthE", "sessionView", "display",
+                                        "_ZN6deluge3hid7display4OLED12needsSendingE")}
+        # mastertune-v19.0.2: the canvas the countdown is drawn on, over everything (0 in builds without it)
+        self.overlay = sym.by_name.get("_ZN6deluge3hid7displayL12overlayImageE", (0, 0))[0]
         # The task list emptied, the task manager's tasks are called from here (song_emu.Player)
         start, size = sym.by_name["taskManager"]
         emu.uc.mem_write(start, bytes(size))
@@ -237,6 +253,8 @@ class Deluge:
         return uc.reg_read(UC_ARM_REG_R0)
 
     def call(self, name_or_address, *args):
+        if isinstance(name_or_address, str) and name_or_address not in self.a:
+            self.a[name_or_address] = self.sym.find(name_or_address)
         address = self.a.get(name_or_address, name_or_address)
         return self.emu.call(address, *args, timeout_s=5 if os.environ.get("EMU_DEBUG") else 0)
 
@@ -374,6 +392,31 @@ class Deluge:
         self.drain_pic()
         self.call("_ZN10LoadSongUI19selectEncoderActionEa", self.var["loadSongUI"], offset)
 
+    def sent(self):
+        """Since v19.0.2 the countdown is drawn as the image is sent to the OLED (OLED::sendMainImage(), at the end of
+        each pass of the UI rendering), over it, not into a screen's image: one window for that. Before, at once."""
+        if self.overlay:
+            self.step()
+
+    def knob_press(self, which, ui=None):
+        """A gold knob pressed and released: getCurrentUI()->modEncoderButtonAction()."""
+        for on in (1, 0):
+            self.drain_pic()
+            self.call("_ZN2UI22modEncoderButtonActionEhb", ui or self.var["loadSongUI"], which, on)
+
+    def filter_type(self, song):
+        return self.emu.u8(song + self.off["song_global_effectable"] + self.off["filter_type"])
+
+    def seven_popup(self):
+        """Whether the 7-segment display shows a popup (SevenSegment::popupActive)."""
+        return self.emu.u8(self.u32(self.var["display"]) + self.off["seven_popup_active"])
+
+    def popup_width(self):
+        return self.i32(self.var["_ZN6deluge3hid7display14oledPopupWidthE"])
+
+    def mark_oled_changed(self):
+        self.emu.uc.mem_write(self.var["_ZN6deluge3hid7display4OLED12needsSendingE"], b"\x01")
+
     def drain_pic(self):
         """No transfer-end interrupt here: whatever the firmware put in the PIC's UART ring counts as sent."""
         item = self.var["uartItems"]
@@ -414,13 +457,13 @@ class Deluge:
 
         def on_draw(e):
             canvas = e.uc.reg_read(UC_ARM_REG_R0)
-            if canvas in (main, popup):
+            if canvas in (main, popup) or (self.overlay and canvas == self.overlay):
                 sp = e.uc.reg_read(UC_ARM_REG_SP)
                 x = struct.unpack("<i", struct.pack("<I", e.uc.reg_read(UC_ARM_REG_R3)))[0]
                 y = struct.unpack("<i", e.uc.mem_read(sp, 4))[0]
                 height = struct.unpack("<i", e.uc.mem_read(sp + 8, 4))[0]
-                self.events.append((self.window_index, "main" if canvas == main else "popup",
-                                    dict(text=string_view(e), x=x, y=y, h=height)))
+                kind = "main" if canvas == main else "popup" if canvas == popup else "overlay"
+                self.events.append((self.window_index, kind, dict(text=string_view(e), x=x, y=y, h=height)))
 
         def on_popup_text(e):
             p = e.uc.reg_read(UC_ARM_REG_R0)
@@ -446,7 +489,10 @@ class Deluge:
         emu.intercept(sym["_ZN6deluge3hid7display4OLED9popupTextEPKcb9PopupType"], on_popup_text)
         emu.intercept(sym.find("_ZN6deluge3hid7display4OLED11removePopupEv"), on_remove_popup)
         emu.intercept(sym.find("_ZN6deluge3hid7display12SevenSegment7setText"), on_7seg_text)
-        emu.intercept(sym.find("_ZN6deluge3hid7display12SevenSegment12displayPopup"), on_7seg_popup)
+        # Its entry (since v19.0.2 GCC splits it: the check for held popups, then displayPopup(...).part.0)
+        seven_popup = "_ZN6deluge3hid7display12SevenSegment12displayPopupEPKcabhl9PopupType"
+        emu.intercept(sym[seven_popup] if seven_popup in sym.by_name else
+                      sym.find("_ZN6deluge3hid7display12SevenSegment12displayPopup"), on_7seg_popup)
 
     def oled_image(self):
         """What the OLED got last (OLED::oledCurrentImage: main, or main with the popup)."""
@@ -487,12 +533,22 @@ def expected_countdown(launch, repeats, tick):
     return ("beats", max(-(-remaining // BEAT_TICKS), 1))
 
 
+def expected_song_view(launch, repeats, loop, tick):
+    """Song view's countdown (SessionView::displayLoopsRemainingPopup(), community firmware; since v19.0.2 on the
+    OLED's title row): the bars until the launch, in the last bar the beats, from the sixteenths remaining."""
+    if not launch:
+        return None
+    sixteenths = max(round((launch - tick) / 24) + (repeats - 1) * loop // 24, 1)  # v19.0.2: at least 1 until then
+    return ("bars", (sixteenths - 1) // 16 + 1) if sixteenths > 16 else ("beats", (sixteenths - 1) // 4 + 1)
+
+
 LABELS = {"Loops remaining": "loops", "Bars remaining": "bars", "Beats remaining": "beats"}
 
 
 class Scenario:
-    def __init__(self, name, args, oled=True, swing=None, ext_clock=None, stop=False, b_affect_entire=1):
+    def __init__(self, name, args, oled=True, swing=None, ext_clock=None, stop=False, b_affect_entire=1, launch=False):
         self.name, self.args = name, args
+        self.launch = launch
         self.b_affect_entire = b_affect_entire
         self.oled, self.swing, self.ext_clock, self.stop = oled, swing, ext_clock, stop
         self.out = os.path.join(args.out, name)
@@ -513,7 +569,8 @@ class Scenario:
         if self.oled:
             label = number = None
             for w, kind, e in d.events[since:]:
-                if kind == "main" and 5 <= e["y"] <= 9:  # the title row: title/label at y 6 or 8, number at 6
+                # The title row: title/label at y 6 or 8, number at 6; on the overlay since v19.0.2
+                if kind in ("main", "overlay") and 5 <= e["y"] <= 9:
                     t = e["text"]
                     if t in LABELS or t.startswith("Song will begin"):
                         label, number = t, None
@@ -538,6 +595,8 @@ class Scenario:
                     and (shown[2] == 3) == (expected[0] == "beats"))
 
     def run(self):
+        if self.launch:
+            return self.run_launch()
         a = self.args
         log(f"== {self.name}: " + ("OLED" if self.oled else "7-segment display")
             + (f", swing {self.swing}" if self.swing else "") + (", external clock" if self.ext_clock else "")
@@ -621,6 +680,7 @@ class Scenario:
         d.button(BUTTON_LOAD, False)
         self.check("LOAD released: armed", d.mode() == UI_MODE_LOADING_SONG_UNESSENTIAL_SAMPLES_ARMED,
                    f"mode {d.mode()}, launch at tick {d.launch_tick()}, loop {d.loop_length()} ticks")
+        d.sent()
         first = self.shown(d, mark)
         tick = d.swung_tick()
         self.check("countdown shown at once", self.matches(first, self.expect(d, tick)) or self.baseline,
@@ -628,6 +688,7 @@ class Scenario:
         d.save_oled("armed")
         # One more loop, with the select encoder
         d.select_encoder(1)
+        d.sent()
         self.check("select encoder +1: 2 loops", self.matches(self.shown(d, mark), self.expect(d, d.swung_tick()))
                    or self.baseline, f"{self.shown(d, mark)}, repeats {d.repeats()}")
 
@@ -669,8 +730,10 @@ class Scenario:
                 # In the last loop: one more repeat and back, the countdown must follow at once
                 changed_repeats = True
                 d.select_encoder(1)
+                d.sent()
                 s1 = self.shown(d, mark_armed)
                 d.select_encoder(-1)
+                d.sent()
                 s2 = self.shown(d, mark_armed)
                 self.check("select encoder in the last loop: +1 shows loops 2, -1 back to bars 3",
                            self.matches(s1, ("loops", 2)) and self.matches(s2, ("bars", 3)) or self.baseline,
@@ -678,6 +741,10 @@ class Scenario:
                 a0 = d.song_param(song_a, UNPATCHED_LPF_FREQ)
                 d.mod_encoder(1, -3)
                 knob_armed = (a0, d.song_param(song_a, UNPATCHED_LPF_FREQ), d.song_param(song_b, UNPATCHED_LPF_FREQ))
+            elif changed_repeats and ex == ("bars", 3) and "priority" not in swap and not self.stop \
+                    and not self.baseline and (d.overlay or not self.oled):
+                swap["priority"] = True
+                self.countdown_priority(d, song_a)
             if not back_pressed and ex == ("bars", 2):
                 back_pressed = True
                 before, n = self.shown(d, mark_armed), len(d.events)
@@ -753,6 +820,144 @@ class Scenario:
             d.step()
         raise SystemExit(f"{self.name}: condition not reached (mode {d.mode()}, paused {bool(d.paused)})")
 
+    def quiet(self, d, limit=1000):
+        """The windows until no popup is up (OLED or 7-segment)."""
+        for _ in range(limit):
+            if not (d.popup_width() if self.oled else d.seven_popup()):
+                return
+            d.step()
+
+    def popup_below(self, d, what, action, ui=None, want=None):
+        """mastertune-v19.0.2: what action pops up goes below the countdown, whose title row stays as it was."""
+        for _ in range(12):  # The countdown as it is now: a change shows at the next graphics routine (15 ms)
+            d.step()
+        before = d.oled_image()
+        n = len(d.events)
+        action()
+        for _ in range(3):
+            d.step()
+        after = d.oled_image()
+        popups = [e["text"] for w, k, e in d.events[n:] if k == "popupText"]
+        top = all(before[y] == after[y] for y in range(5, 18))
+        below = [y for y in range(18, 48) if before[y] != after[y]]
+        shown = (not want or any(p.startswith(want) for p in popups))
+        self.check(f"{what}: its popup ({', '.join(popups) or 'none'}) below the countdown, the title row as it was",
+                   d.popup_width() and shown and top and below and min(below) >= 18,
+                   f"popup width {d.popup_width()}, title row rows 5-17 {'unchanged' if top else 'CHANGED'}, "
+                   f"rows changed below: {below[:1]}..{below[-1:]}")
+        return before
+
+    def countdown_priority(self, d, song_a):
+        """While armed: popups don't cover the countdown (OLED: below it; 7-segment: not shown)."""
+        f0 = d.filter_type(song_a)
+        if self.oled:
+            self.popup_below(d, "the upper gold knob pressed while armed (the filter type)", lambda: d.knob_press(1),
+                             want="HPF")
+            d.save_oled("armed_popup")
+            # On to DJ (EQ, DJ) and the DJ filter a detent to the left, as a DJ takes the old song out
+            d.knob_press(1)
+            d.knob_press(1)
+            self.popup_below(d, "the DJ filter turned while armed", lambda: d.mod_encoder(1, -1), want="DJ: LPF")
+            d.save_oled("armed_dj_popup")
+            d.mod_encoder(1, 1)
+        else:
+            self.quiet(d)
+            d.knob_press(1)
+            d.step()
+            self.check("7-segment: the upper gold knob pressed while armed changes the filter type, but its popup "
+                       "doesn't take the countdown's place", d.filter_type(song_a) != f0 and not d.seven_popup(),
+                       f"filter type {f0} -> {d.filter_type(song_a)}, popup up {d.seven_popup()}")
+            d.knob_press(1)
+            d.knob_press(1)
+        d.knob_press(1)  # Round to LPF again
+        self.check("... the filter type round to LPF again", d.filter_type(song_a) == f0,
+                   f"{f0} -> {d.filter_type(song_a)}")
+
+    def run_launch(self):
+        """Scenario launch (mastertune-v19.0.2): no song change. In Song view, song A's clips armed to stop after 2
+        loops: the launch countdown on the OLED's title row over everything, a gold knob's popup below it, the CPU
+        monitor at the bottom, and gone after the launch."""
+        a = self.args
+        log(f"== {self.name}: Song view, song A's clips armed to stop after 2 loops")
+        sd = os.path.join(self.out, "sd.img")
+        build_sd(sd)
+        d = Deluge(a.elf, sd, a.tools, a.build, True, self.out)
+        self.d = d
+        self.start_playback(d)
+        self.play_until(d, lambda: d.swung_tick() >= 150)
+        sv = d.var["sessionView"]
+        d.drain_pic()
+        d.call("_Z12changeRootUIP2UI", sv)
+        for _ in range(20):
+            d.step()
+        # Song A is saved with affect entire off: in Song view its knobs are then on nothing. AFFECT ENTIRE pressed
+        d.button(BUTTON_AFFECT_ENTIRE, True)
+        d.button(BUTTON_AFFECT_ENTIRE, False)
+        for _ in range(5):
+            d.step()
+        mark = len(d.events)
+        d.call("_ZN7Session17armAllClipsToStopEl", d.var["session"], 2)
+        for _ in range(12):
+            d.step()
+        shown = self.shown(d, mark)
+        due = expected_song_view(d.launch_tick(), d.repeats(), d.loop_length(), d.swung_tick())
+        box = [e["text"] for w, k, e in d.events[mark:] if k == "main" and "emaining" in e["text"]]
+        self.check("clips armed to stop after 2 loops: the countdown on the title row, the bars until the launch "
+                   "(not a box in the middle)", shown == due and due[0] == "bars" and due[1] > 4 and not box,
+                   f"shown {shown}, due {due}, main drew {box[:2]}")
+        d.save_oled("launch_countdown")
+        before = self.popup_below(d, "a gold knob turned in Song view during the countdown (the song's LPF)",
+                                  lambda: d.call("_ZN11SessionView16modEncoderActionEll", sv, 1, -1))
+        d.save_oled("launch_popup")
+        # The CPU monitor's line (cpu_stats::oledInfo()) at the bottom while the countdown takes the top
+        self.quiet(d)
+        line = d.sym.find("_ZN9cpu_stats12_GLOBAL__N_14lineE")
+        enabled = d.sym["_ZN9cpu_stats7enabledE"]
+        plain = d.oled_image()
+        d.emu.uc.mem_write(line, b"CPU 50% 12V\0")
+        d.emu.uc.mem_write(enabled, b"\x01")
+        d.mark_oled_changed()
+        for _ in range(2):
+            d.step()
+        mon = d.oled_image()
+        top = all(plain[y] == mon[y] for y in range(5, 18))
+        bottom = [y for y in range(36, 48) if plain[y] != mon[y]]
+        self.check("the CPU monitor on during the countdown: its line at the bottom, the title row as it was",
+                   top and bottom and all(plain[y] == mon[y] for y in range(18, 36)),
+                   f"title row {'unchanged' if top else 'CHANGED'}, rows changed at the bottom {bottom}")
+        d.save_oled("launch_cpu_monitor")
+        d.emu.uc.mem_write(enabled, b"\x00")
+        d.mark_oled_changed()
+        # Through the countdown: loops, bars, beats, each as it is due; then the launch, and the countdown gone
+        seen, rows = [], []
+        while d.launch_tick():
+            d.step()
+            if not d.launch_tick():
+                break
+            s = self.shown(d, mark)
+            rows.append((d.swung_tick(), s, expected_song_view(d.launch_tick(), d.repeats(), d.loop_length(),
+                                                                d.swung_tick())))
+            if not seen or seen[-1] != s:
+                seen.append(s)
+            self.trace.append((d.window_index, d.timer(), d.swung_tick(), 0, d.repeats(), d.launch_tick(), s))
+        # A change shows at the next graphics routine (every 15 ms, 5 windows) and the OLED's sending after it; the
+        # sixteenths are rounded from the swung ticks with their fraction, so a change may also come a window early
+        due = [r[2] for r in rows]
+        bad = [(tick, ex, s) for i, (tick, s, ex) in enumerate(rows) if s not in due[max(0, i - 8):i + 2]]
+        n = len(d.events)
+        for _ in range(20):
+            d.step()
+        drawn = [e["text"] for w, k, e in d.events[n:] if k == "overlay"]
+        self.check(f"the countdown in Song view as due in every window ({len(seen)} changes: {seen[:3]} .. "
+                   f"{seen[-2:]})", not bad and all(s in seen for s in (("bars", 8), ("bars", 2), ("beats", 4),
+                                                                        ("beats", 1))),
+                   f"wrong: {bad[:4]}")
+        self.check("after the launch the countdown is gone (nothing drawn over the image)", not drawn, f"{drawn[:4]}")
+        d.save_oled("launch_after")
+        json.dump(dict(checks=self.checks, trace=self.trace, events=[(w, k, e) for w, k, e in d.events[mark:]]),
+                  open(os.path.join(self.out, "result.json"), "w"), indent=1)
+        return all(c["ok"] for c in self.checks)
+
     def synth_state(self, d):
         """currentValue of the first 40 params of the synth's unpatched and patched ParamSets (its ParamManager's
         summaries[0] and [1], ParamCollectionSummary 20 bytes)."""
@@ -808,11 +1013,13 @@ class Scenario:
                        k2["mod"] == 0 and k2["params"] == 0 and d.mod_leds() == [],
                        f"{ {n: hex(v) for n, v in k2.items()} }, LEDs {d.mod_leds()}, levels {lvl}")
         after_events = d.events[swap.get("events_at", len(d.events)):]
-        drawn = [e["text"] for w, kind, e in after_events if kind == "main" and 5 <= e["y"] <= 9]
+        drawn = [e["text"] for w, kind, e in after_events if kind in ("main", "overlay") and 5 <= e["y"] <= 9]
         countdown_after = [t for t in drawn if t in LABELS]
-        self.check("after the swap no countdown is drawn; the title comes back",
-                   not countdown_after and ("Load song" in drawn or not self.oled) or self.baseline,
-                   f"title row drawn after the swap: {drawn[:6]}")
+        # Since v19.0.2 the countdown is drawn over the title (OLED::sendMainImage()), not into it: no title to bring
+        # back. Before, LoadSongUI::removeCountdown() drew "Load song" again
+        title_back = "Load song" in drawn or bool(d.overlay) or not self.oled
+        self.check("after the swap no countdown is drawn" + ("" if d.overlay else "; the title comes back"),
+                   not countdown_after and title_back or self.baseline, f"title row drawn after the swap: {drawn[:6]}")
 
     def report_countdown(self, d, swap):
         """The changes of what's shown, with their tick relative to the swap, and the check against the expected
@@ -875,8 +1082,9 @@ def main():
         "swing": dict(oled=True, swing=(25, 4), b_affect_entire=0),
         "stop": dict(oled=True, stop=True),
         "extclock": dict(oled=True, ext_clock=7),
+        "launch": dict(oled=True, launch=True),
     }
-    names = args.scenario or ["oled", "7seg", "swing", "extclock", "stop"]
+    names = args.scenario or ["oled", "7seg", "swing", "extclock", "stop", "launch"]
     results = {}
     for n in names:
         results[n] = Scenario(n, args, **scenarios[n]).run()

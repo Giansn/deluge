@@ -45,6 +45,18 @@
   <li><b>7-segment display:</b> the number, blinking while it counts loops. Beats carry a dot, so you can tell them from bars.</li>
   <li><b>Until the change</b> the gold knobs and mod buttons control the master effects of the <b>playing</b> song, from the moment you press <span class="key">LOAD</span>, even with Affect Entire off. The new song keeps its own values.</li>
 </ul>
+<div class="box"><b>The countdown has priority</b> <span class="tag">v19.0.2</span>. While a countdown runs, nothing covers it:
+<ul>
+  <li><b>OLED:</b> it stays on the title line, drawn over everything else. A popup, such as a gold knob's value, the filter type or the DJ filter, appears below it.</li>
+  <li><b>In Song view too:</b> when clips or a section are armed to launch, the countdown (the bars until the launch, in the last bar the beats) is on the title line. Before, it was a box in the middle of the screen, which every knob covered; now the song's name stays visible below it.</li>
+  <li>The CPU monitor's line moves to the bottom while a countdown takes the top.</li>
+  <li><b>7-segment display:</b> the gold knobs and mod buttons show no popup while it shows a countdown. They still do what they do.</li>
+</ul>
+</div>
+<div class="shots">
+  <figure class="figure"><img class="shot oled" src="../../../screenshots/oled_countdown_popup.png" alt="Bars remaining 3, the DJ filter's popup below"><figcaption>Song change armed, the DJ filter turned: its popup below the countdown.</figcaption></figure>
+  <figure class="figure"><img class="shot oled" src="../../../screenshots/oled_countdown_songview.png" alt="Bars remaining in Song view, a knob's popup below"><figcaption>Song view, clips armed to stop: the countdown on the title line, a gold knob's value below it.</figcaption></figure>
+</div>
 
 <h3 id="wf-save">7.3 Saving without crackle <span class="tag">v11, v13</span></h3>
 <ul>

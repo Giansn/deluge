@@ -3,10 +3,12 @@
 # checked): the countdown while a loaded song is armed to start (loops, then bars, then beats), on the OLED and the
 # 7-segment display, with swing, following an external MIDI clock, and stopped while armed; the gold knobs and mod
 # buttons on the playing song's master FX until the song changes, and nothing of the old song left at the swap.
+# Since v19.0.2 also: a countdown has priority (popups below it on the OLED, none on the 7-segment display), and
+# scenario launch: Song view's launch countdown on the OLED's title line.
 #
 # Usage: ./run.sh <firmware tree | deluge.elf> [out dir] [scenario ...]
 #   With a tree, it takes build/Release/deluge.elf and the tree's toolchain. Scenarios: oled 7seg swing extclock stop
-#   (default: all). Results: <out>/<scenario>/result.json (checks, per window while armed the swung tick, repeats,
+#   launch (default: all). Results: <out>/<scenario>/result.json (checks, per window while armed the swung tick, repeats,
 #   launch event and what's shown, every display event), oled_*.png/.txt (the OLED at checkpoints).
 #   BASE=<1.2.1 or mastertune-v13 tree | deluge.elf> ./run.sh ... also runs that build (--baseline: reported, not
 #   checked), for comparison: its popups instead of the countdown, its knobs on the selected clip.
