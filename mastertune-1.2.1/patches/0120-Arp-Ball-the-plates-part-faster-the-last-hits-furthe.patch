@@ -1,4 +1,4 @@
-From cd45d5ea9d1faac13e4ab76248fa6365424be866 Mon Sep 17 00:00:00 2001
+From 0abd4aee7fbb42d949b3e64337327227892cf307 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 29 Sep 2026 08:34:02 +0000
 Subject: [PATCH] Arp Ball: the plates part faster, the last hits further apart

@@ -39,7 +39,7 @@ The question: in the finished mix of Pettra "You Are The Seeds", how does the br
   - Its time: where the amplitude climbs fastest, which comes the same delay after every onset, whatever tail it starts from.
   - The note: the loudest reading at the peak.
 - **Checked on a render with known gaps:** gaps of 40 ms and more come out within 2.5 ms (154.5, 97.9, 64.3, 43.0, 107.5, 226.0 for 152.2, 98.9, 64.3, 41.8, 108.4, 228.3). Gaps under about 30 ms blur (the filters need ~15 ms to ring up). A reverb's onset can add a touch about 45 ms after a hit.
-- **Result:** after its fastest hits the song's figure slows down by about three times per hit, e.g. 9, 20, 68, 214 ms; 9, 18, 58, 151; 9, 46, 167; 11, 50, 276. So its last hits lie far apart. PETTRA BALL on v18.4 only doubled them (15, 22, 24, 52, 108, 228). Hence v18.5's steeper parting (1 − r_p = 1.9 × (1 − r)): 16, 32, 97, 289 ms.
+- **Result:** after its fastest hits the song's figure slows down by about three times per hit, e.g. 9, 20, 68, 214 ms; 9, 18, 58, 151; 9, 46, 167; 11, 50, 276. So its last hits lie far apart. PETTRA BALL on v18.4 only doubled them (15, 22, 24, 52, 108, 228). Hence the steeper parting of patch 0120 (1 − r_p = 1.9 × (1 − r)): 16, 32, 97, 289 ms.
 - **The limit:** the stem also holds the pad and other synths. The net therefore touches more than the arp, and the runs are read from many figures, not from one clean line.
 
 ## What did not work here

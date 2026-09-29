@@ -26,7 +26,7 @@ VARIANTS = {
     # One beat, +3 (x0.85): from 33 ms into the buzz on the offbeat, out with x0.715 to 62 ms
     "beat": dict(ratchetBounce=3, ratchetBounceLength=2),
     # Two beats, +7 (x0.65): 152, 99, 64, 42, 27, 18 ms into the buzz (15 ms) on beats 2 and 4, then out with the
-    # parting's own x0.335 (firmware v18.5): 16, 32, 97, 289 ms, each gap about three times the one before
+    # parting's own x0.335 (patch 0120): 16, 32, 97, 289 ms, each gap about three times the one before
     "two": dict(ratchetBounce=7, ratchetBounceLength=4),
 }
 NAMES = {"beat": "PETTRA BALL BUZZ", "two": "PETTRA BALL"}
