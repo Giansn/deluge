@@ -22,7 +22,7 @@ SR = 44100
 STEP_8TH = SR * 60 // 120 // 2  # 11025 samples at 120 BPM
 MIN_GAP = 706  # kRollMinGapSamples
 BALL_MIN_GAP = 661  # kBallMinGapSamples (15 ms)
-BALL_MEET = 1 / 3  # kBallMeet
+BALL_MEET = 1 / 3  # kBallMeet (a ball of one step; longer ones meet after the first step)
 BALL_PART_FACTOR = 1.0  # kBallPartFactor
 
 CASES = {
@@ -112,11 +112,12 @@ def expected_roll(span, ratio, mirrored, even_gap=None, min_gap=MIN_GAP):
     return acc
 
 
-def expected_ball(span, ratio, mirrored):
-    """The roll into the meeting point (over a third), a hit on it, the parting roll (its own ratio, over the rest)
-    backwards; mirrored: the parting roll backwards out of the start, the roll into the end
-    (ArpeggiatorBase::getRatchetNoteStart)"""
-    close_span, part_span = span * BALL_MEET, span * (1 - BALL_MEET)
+def expected_ball(span, ratio, mirrored, steps):
+    """The roll into the meeting point (over the first step; a third of a ratchet of one step), a hit on it, the
+    parting roll (its own ratio, over the rest) backwards; mirrored: the parting roll backwards out of the start, the
+    roll into the end (ArpeggiatorBase::getRatchetNoteStart)"""
+    close_span = span / steps if steps >= 2 else span * BALL_MEET
+    part_span = span - close_span
     acc = expected_roll(close_span, ratio, False, min_gap=BALL_MIN_GAP)
     part = expected_roll(part_span, max(0.3, 1 - BALL_PART_FACTOR * (1 - ratio)), False, min_gap=BALL_MIN_GAP)
     h, p = len(acc), len(part)
@@ -153,7 +154,8 @@ def main():
         if step:
             span = step * arp["ratchetBounceLength"]
             if arp["ratchetNotes"] == 254:
-                exp = expected_ball(span, 1 - 0.05 * abs(arp["ratchetBounce"]), arp["ratchetBounce"] < 0)
+                exp = expected_ball(span, 1 - 0.05 * abs(arp["ratchetBounce"]), arp["ratchetBounce"] < 0,
+                                    arp["ratchetBounceLength"])
             elif arp["ratchetNotes"] == 255:
                 amount = arp["ratchetBounce"]
                 exp = expected_roll(span, 1 - 0.05 * abs(amount), amount < 0,

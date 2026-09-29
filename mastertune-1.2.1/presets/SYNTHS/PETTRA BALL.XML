@@ -126,7 +126,7 @@
 		latch="0"
 		ratchetBounce="7"
 		ratchetBounceFade="0"
-		ratchetBounceLength="4"
+		ratchetBounceLength="8"
 		ratchetNotes="254"
 		kitArp="1"
 		lastLockedNoteProb="0"
@@ -149,7 +149,7 @@
 		lockedGateSpreadArray="00000000000000000000000000000000"
 		lastLockedOctaveSpread="0"
 		lockedOctaveSpreadArray="00000000000000000000000000000000"
-		notePattern="00000202030503010709010507080C0F" />
+		notePattern="00010001030304030801050102090407" />
 	<modKnobs>
 		<modKnob controlsParam="pan" />
 		<modKnob controlsParam="volumePostFX" />
