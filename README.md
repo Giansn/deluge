@@ -2,11 +2,11 @@
 
 ## In short
 
-**mastertune** is my fork of the official Deluge community firmware **1.2.1**: lighter on the CPU, with a CPU monitor, the Deluge as a USB audio interface, a master tune and a few tools around it. Latest: **v18.4**, [`deluge-1.2.1-mastertune-v18.4-l2d-cab8e666.bin`](https://github.com/Giansn/deluge/raw/claude/wizardly-brahmagupta-nnrk07/mastertune-1.2.1/deluge-1.2.1-mastertune-v18.4-l2d-cab8e666.bin). Install it like any Deluge firmware: the .bin in the SD card's root folder (only one .bin there), then switch the Deluge on while holding SHIFT. Every version, the details and the measurements are further down.
+**mastertune** is my fork of the official Deluge community firmware **1.2.1**: lighter on the CPU, with a CPU monitor, the Deluge as a USB audio interface, a master tune and a few tools around it. Latest: **v19.0**, [`deluge-1.2.1-mastertune-v19.0-l2d-1d2b400d.bin`](https://github.com/Giansn/deluge/raw/claude/wizardly-brahmagupta-nnrk07/mastertune-1.2.1/deluge-1.2.1-mastertune-v19.0-l2d-1d2b400d.bin). Install it like any Deluge firmware: the .bin in the SD card's root folder (only one .bin there), then switch the Deluge on while holding SHIFT. Every version, the details and the measurements are further down.
 
 **Manual:** [English](mastertune-1.2.1/docs/mastertune-manual-en.pdf) (56 pages) or [German](mastertune-1.2.1/docs/mastertune-manual-de.pdf) (59 pages): every change explained, where to find it on the Deluge and how to use it, with diagrams, the frequency drone in full and a reference of all menus, buttons and messages.
 
-**Written with Claude (AI).** This is a personal fork, not a contribution to the official firmware: please don't report its bugs to the community developers, report them in this repository's [issues](https://github.com/Giansn/deluge/issues). Every change is tested in an emulator that runs the firmware's real ARM code (below), but **v18.x has not been played on a real Deluge yet.** Keep a copy of your card.
+**Written with Claude (AI).** This is a personal fork, not a contribution to the official firmware: please don't report its bugs to the community developers, report them in this repository's [issues](https://github.com/Giansn/deluge/issues). Every change is tested in an emulator that runs the firmware's real ARM code (below), but **v18.x and v19.0 have not been played on a real Deluge yet.** Keep a copy of your card.
 
 | | |
 |:-:|:-:|
@@ -36,6 +36,11 @@
 - **Master tune** from 415.3 to 466.2 Hz in 0.1 Hz steps (Settings → Tuning → Master tune), for example 432 Hz. Everything that sounds follows: synths, kits, samples, FM and DX7, audio clips (time-stretched, the tempo stays), held notes, CV outputs and external MIDI gear (RPN 1 fine tuning). Recordings remember the tuning they were made in, so they are never tuned twice.
 - **Scan** (v18.4, Settings → Tuning → Scan): a tuner, tempo meter and key finder on the microphone or the line input. The note and its cents against the master tune (so at 432 Hz too), the frequency, the BPM, and the key (major or minor) with its Camelot number; the pads are the needle.
 
+**DJ** (v19.0, the first step: playing along with a track in the line input; plan in [`DJ-TOOL-PLAN.md`](mastertune-1.2.1/research/DJ-TOOL-PLAN.md))
+- **DJ filter** on the song's gold knobs: one knob from low-pass through off to high-pass, as on a DJ mixer.
+- **Sync:** in Scan, TAP TEMPO sets the song's tempo to the BPM heard at the input.
+- **Nudge:** hold the horizontal encoder and turn the tempo encoder. Each detent moves the song 10 ms ahead or back; the tempo stays.
+
 **Sound**
 - **Filters** (v18–v18.3): no rustle at low cutoff, cutoff and resonance glide sample by sample (no zipper), mode and routing changes without clicks, Drive with 2× oversampling where 1.2.1 had it.
 - **EQ and volume:** real shelving EQ, volume in 0.5 dB steps shown in dB, an optional output limiter and filter crossing guard.
@@ -59,13 +64,13 @@ The newest version of each tool is always in its release: [deluge-rec](https://g
 
 **Tested:** every release is built twice with the same SHA-256. The firmware's own ARM code runs in an emulator: it boots, loads songs, renders audio and goes through hundreds of checks and stress tests. The emulator is not the hardware, though: timing, the SD card and USB can still behave differently on a real Deluge.
 
-**Source:** `mastertune-1.2.1/patches/0001`–`0118` against `release_1_2_1`, plus `mastertune-1.2.1/l2test/0001`–`0003` for the L2 build.
+**Source:** `mastertune-1.2.1/patches/0001`–`0119` against `release_1_2_1`, plus `mastertune-1.2.1/l2test/0001`–`0003` for the L2 build.
 
 ## All versions
 
 All files named below are in the folder [`mastertune-1.2.1/`](mastertune-1.2.1/): the firmware `.bin` files, `patches/`, `tools/`, `tests/`, `docs/` and the rest.
 
-This is a personal fork of the official community firmware **1.2.1** (tag `release_1_2_1`, commit `c23bc2fe`) with an adjustable master tuning, in several stages. v5 adds the arpeggiator from 1.3, v6 a second bounce version, v7 access to the SD card over USB, v8 the Deluge as a USB audio input on the computer, v9 smarter sample streaming and a RAM saver for kits, v10 a better reverb, v11 a better delay and no more crackle when saving, v12 a frequency drone with up to 16 tones, v13 more performance, a ping-pong arp, flicker-free pad dimming, more precise MIDI and a reworked drone, v14 a reverb without wobble, a delay without pitch jumps and a countdown on song change, v15 a living drone (Life, FM, Pulse), a CPU monitor in one line and three fixes from the community, v16 drone tracks for song and arranger view and a profiler, v17 a lighter load (20–25% less DSP work per sample, see the comparison with 1.2.1), a song browser with expandable versions, a shortcut for the CPU monitor and the L2 cache in the main file, v18 filters without rustle and with clean transitions, volume controls in dB and a readable OLED, v18.2 filters, EQ and volume without leftovers after a silence, v18.3 Drive with oversampling as in 1.2.1 and settings that are kept when saving, v18.4 a tuner, tempo meter and key finder on the audio input (Scan) and the arp mode Ball.
+This is a personal fork of the official community firmware **1.2.1** (tag `release_1_2_1`, commit `c23bc2fe`) with an adjustable master tuning, in several stages. v5 adds the arpeggiator from 1.3, v6 a second bounce version, v7 access to the SD card over USB, v8 the Deluge as a USB audio input on the computer, v9 smarter sample streaming and a RAM saver for kits, v10 a better reverb, v11 a better delay and no more crackle when saving, v12 a frequency drone with up to 16 tones, v13 more performance, a ping-pong arp, flicker-free pad dimming, more precise MIDI and a reworked drone, v14 a reverb without wobble, a delay without pitch jumps and a countdown on song change, v15 a living drone (Life, FM, Pulse), a CPU monitor in one line and three fixes from the community, v16 drone tracks for song and arranger view and a profiler, v17 a lighter load (20–25% less DSP work per sample, see the comparison with 1.2.1), a song browser with expandable versions, a shortcut for the CPU monitor and the L2 cache in the main file, v18 filters without rustle and with clean transitions, volume controls in dB and a readable OLED, v18.2 filters, EQ and volume without leftovers after a silence, v18.3 Drive with oversampling as in 1.2.1 and settings that are kept when saving, v18.4 a tuner, tempo meter and key finder on the audio input (Scan) and the arp mode Ball, v19.0 a DJ filter, sync to the tempo heard and a nudge of the Deluge's own clock.
 
 | File | Version (Settings → Firmware version) | Contents |
 |---|---|---|
@@ -91,10 +96,11 @@ This is a personal fork of the official community firmware **1.2.1** (tag `relea
 | `deluge-1.2.1-mastertune-v18.2-l2d-c9c65066.bin` | `1.2.1-mastertune-v18.2-l2d` | v18 + filters, EQ and volume after a silence fixed; **with L2 cache for code and data**, only in this variant |
 | `deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin` | `1.2.1-mastertune-v18.3-l2d` | v18.2 + Drive oversampled like 1.2.1 (no cut voices in Drive-heavy songs), unknown settings and the reverb sidechain's sync level are kept; **with L2 cache for code and data**, only in this variant |
 | `deluge-1.2.1-mastertune-v18.4-l2d-cab8e666.bin` | `1.2.1-mastertune-v18.4-l2d` | v18.3 + Scan: a tuner (note, cents, Hz against the master tune), a tempo meter (BPM) and a key finder (major or minor, Camelot) on the audio input; the arp mode Ball; **with L2 cache for code and data**, only in this variant |
+| `deluge-1.2.1-mastertune-v19.0-l2d-1d2b400d.bin` | `1.2.1-mastertune-v19.0-l2d` | v18.4 + the DJ tool's first step: a DJ filter on the song's gold knobs, sync to the tempo Scan hears, a nudge that bends the Deluge's own clock; **with L2 cache for code and data**, only in this variant |
 
-SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7`, v14 `cb17bbb3…8e23e6e5`, v15 `cdce07f3…da7ca652`, v16 `7eed1a77…71897f9f`, v17-l2d `aad4d080…5ec32c4b`, v17 without L2 `ae6aedd4…be88ae64`, v18-l2d `03f55664…75098a8c`, v18 without L2 `ea2d606a…220d434f`, v18.2-l2d `7f45090c…0f8c29ef`, v18.3-l2d `f41f5639…8d8af97a`, v18.4-l2d `3d61093c…6a27bf8b` (in full: `sha256sum *.bin`).
+SHA-256: v2 `05b457a0…d2ce7e0cb`, v3 `7858013f…35d4d73`, v4 `cc9127a0…61128209`, v5 `65607a5d…c745251b`, v6 `83974fd2…617ef692`, v7 `48c55bae…f9581a21`, v8 `6cfda14b…99441298`, v9 `032898cf…7c673745`, v10 `1b4ac767…46e8a6ac62`, v11 `e4d1062e…10c9a0ad`, v12 `97288329…5e7360ac`, v13 `9ff41174…7c4c50e7`, v14 `cb17bbb3…8e23e6e5`, v15 `cdce07f3…da7ca652`, v16 `7eed1a77…71897f9f`, v17-l2d `aad4d080…5ec32c4b`, v17 without L2 `ae6aedd4…be88ae64`, v18-l2d `03f55664…75098a8c`, v18 without L2 `ea2d606a…220d434f`, v18.2-l2d `7f45090c…0f8c29ef`, v18.3-l2d `f41f5639…8d8af97a`, v18.4-l2d `3d61093c…6a27bf8b`, v19.0-l2d `b52c02d7…0c798fe1` (in full: `sha256sum *.bin`).
 Rechecked on 2026-09-26: every version v2–v12 was rebuilt from scratch from its commit in a separate working copy, with 441–448 recompiled files. Every SHA-256 matches the released file.
-Source code: `patches/0001` to `0118` against `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 are the performance version v12-perf, the same as `perf/0001`–`0003`), v14 = 0001–0035, v15 = 0001–0041, v16 = 0001–0055, v17 without L2 = 0001–0074, the main file v17-l2d adds `l2test/0001`–`0003`, v18 without L2 = 0001–0112, the main file v18-l2d likewise adds `l2test/0001`–`0003`, v18.2-l2d = 0001–0113 and `l2test/0001`–`0003`, v18.3-l2d = 0001–0116 and `l2test/0001`–`0003`, v18.4-l2d = 0001–0118 and `l2test/0001`–`0003`.
+Source code: `patches/0001` to `0119` against `release_1_2_1`. v2 = 0001, v3 = 0001–0003, v4 = 0001–0004, v5 = 0001–0005, v6 = 0001–0006, v7 = 0001–0007, v8 = 0001–0008, v9 = 0001–0009, v10 = 0001–0010, v11 = 0001–0011, v12 = 0001–0012, v13 = 0001–0028 (0013–0015 are the performance version v12-perf, the same as `perf/0001`–`0003`), v14 = 0001–0035, v15 = 0001–0041, v16 = 0001–0055, v17 without L2 = 0001–0074, the main file v17-l2d adds `l2test/0001`–`0003`, v18 without L2 = 0001–0112, the main file v18-l2d likewise adds `l2test/0001`–`0003`, v18.2-l2d = 0001–0113 and `l2test/0001`–`0003`, v18.3-l2d = 0001–0116 and `l2test/0001`–`0003`, v18.4-l2d = 0001–0118 and `l2test/0001`–`0003`, v19.0-l2d = 0001–0119 and `l2test/0001`–`0003`.
 
 ## v3 and v4: Differences
 
@@ -717,6 +723,44 @@ v17 contains v16. **The main file has the L2 cache for code and data** (previous
 - **Performance** (`tests/sdload` and the song "New Sitar Grii 10"): the numbers above. No dropouts, not even at 0.5 instructions per clock cycle.
 - **Still passing:** profiler 21 checks (all three variants), song change 131, clock, sections, L2 (all three), CPU monitor decoder 503 messages, drone on the PC 150, retune without access to address 0.
 - **Reviewers:** one each for the performance changes, the silent tracks, the song browser, the shortcut, the drone view and the filter. All their findings of severity "medium" and higher are fixed, each with a test.
+
+## v19.0: DJ filter, sync to the tempo heard, nudge
+
+v19.0 contains v18.4 and adds the DJ tool's first step (patch 0119): the Deluge playing along with an external player, its track in the line input. The next steps are in `mastertune-1.2.1/research/DJ-TOOL-PLAN.md`: the Deluge's own tracks as decks (v19.1), crossfader and isolator (v19.2). Like v18.4, v19.0 exists only as the main file with L2 cache for code and data. **v19.0 has not been tested on the device yet**; it is tested on the PC and with the whole firmware in the emulator.
+
+**DJ filter** (Song view, AFFECT ENTIRE on, the filter mod button):
+- **Switch it on:** press the upper gold knob: LPF, HPF, EQ, then **DJ**. This is for the song only; clips and synths go round as before.
+- **Upper knob:** in the middle `DJ: OFF`, the song as it was. To the left the low-pass closes (`DJ: LPF 1` to `DJ: LPF 50`), to the right the high-pass opens (`DJ: HPF 1` to `50`); on the 7-segment display `LP16`, `OFF`, `HP16`. Only one of the two is on at a time, each over its whole range, 64 detents a side.
+- **Lower knob:** the resonance of both.
+- **What it moves:** the song's own LPF and HPF. So it sounds like v18's filters (no rustle, no zipper), and saving, undo and automation recording work as for the other knobs.
+- **Set apart before:** where LPF and HPF were both on (set in LPF and HPF mode, or by automation), the DJ knob goes on from there without a jump. To the right the LPF opens first, then the HPF; to the left the other way round. The lower knob turns each resonance from where it is.
+- Saved as the song's filter type `dj`; an older firmware loads LPF there.
+
+**Sync** (Scan view): TAP TEMPO sets the song's tempo to the BPM shown, halved or doubled as chosen with the horizontal encoder: `Sync 128.0 BPM` (7-segment `SYNC`), undoable.
+- Before a tempo is heard: `No tempo yet`, and the tempo stays.
+- With an external clock the clock sets the tempo: `External clock`.
+- SHIFT + TAP TEMPO stays the metronome.
+
+**Nudge** (any view): hold the horizontal encoder pressed and turn the tempo encoder.
+- Each detent bends the Deluge's tempo 4 % faster (right) or slower (left) for 0.25 s, like a DJ's jog wheel. That moves the song 10 ms ahead or back at any tempo. Turning on keeps it bent; afterwards the tempo is exactly what it was.
+- The MIDI and trigger clock outputs follow, so gear synced to the Deluge moves with it.
+- STOP ends a nudge at once. A song saved during a nudge saves the tempo without it.
+- **Changed from 1.2.1:** there this nudged only the MIDI clock out (a clock more or less for the gear that follows), and without MIDI clock out it did nothing. That is now **SHIFT** + horizontal encoder + tempo encoder. With an external clock: as before.
+
+**Tested:**
+- **Build:** 475 files, no warnings. Two complete rebuilds give the same SHA-256. `patches/0001`–`0119` with `l2test/0001`–`0003` give exactly the source tree of v19.0-l2d. All the following checks ran on exactly this build.
+- **DJ knob** (`tests/dj/run.sh`, on the PC with UBSan):
+  - the curve from −64 to 64, and a detent at all 129 positions;
+  - from every combination of LPF and HPF knob (33,282 starts), no jump: one of the two moves by 2 knob steps at most, and the position shown by 1 at most, only the way turned.
+- **Whole firmware in the emulator** (`tests/dj/dj_emu.py`, 26 checks):
+  - The upper gold knob goes round HPF, EQ, DJ and back to LPF.
+  - 20 detents left: the LPF at knob 24, `DJ: LPF 16`. 40 right: the HPF at −24, `DJ: HPF 16`. Back to the middle: both off. The lower knob: both resonances 10 up.
+  - Set apart (the LPF at 32, the HPF at −32, a band-pass): a detent right opens the LPF by 2 only (`DJ: HPF 1`). 20 left close the HPF first, then the LPF. The resonances each go on from where they were.
+  - Sync: `No tempo yet` leaves the tempo. With 128 BPM heard, TAP TEMPO sets the song to 128.0000 BPM.
+  - Nudge while playing: a detent right shortens the timer tick from 215.33 to 206.72 samples. 0.3 s later it is exactly 215.33 again, and the beat is 460 samples (10.4 ms) ahead; to the left it is 423 samples behind. STOP right after a nudge puts the tempo back.
+  - No crash, no error popup, no access outside RAM.
+- **Scan** (`tests/scan`): on the PC the same results as v18.4 (every tone and multisample on its note, 8 of 9 tempos with drum and bass halved, the keys 24 of 24 in all four runs). On the whole firmware in the emulator `scan_view_emu.py` passes 28 of 28, TAP TEMPO's sync included in `dj_emu.py`.
+- **Sound:** the full-load song sounds bit for bit like v18.4 in all three runs (`47053032…`, `8bdf172e…`, and with the device's culling). It runs at 91.5% CPU (v18.4: 91.4%, 133 instructions more per 128 samples) with the same number of cut voices (111). The DJ filter adds no DSP: it moves the song's own filters.
 
 ## v18.4: Scan (tuner, tempo and key on the audio input), arp mode Ball
 

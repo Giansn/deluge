@@ -23,7 +23,7 @@ Run `git pull` before any work: the cloud session keeps delivering.
 - **Use Python 3.12.** `python-rtmidi` has no ready-made packages for newer versions.
 - **Port names:** The ports are called `Deluge 0`, `MIDIIN2 (Deluge) 1` and `MIDIIN3 (Deluge) 2`. From the commit after `0377a67` the script finds `MIDIIN3` by itself, `-p` is no longer needed.
 
-## Tasks (as of 29.09.2026, v18.4 is out)
+## Tasks (as of 29.09.2026, v19.0 is out)
 
 Done: the report on v16, l2d, the song for the emulator, the retune test on Windows, "Rescue". The tasks for v17 are dropped: v18.3 contains v17, v18 and v18.2, so everything now applies to v18.3. What it brings is in the README, in the sections "v18", "v18.2" and "v18.3".
 
@@ -87,6 +87,19 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
      - If it sounds right, save the corrected instruments as presets, so that new songs get the zones too: in the Oboe's clip press SAVE (it saves the synth preset) under the name `Oboe`; the same for `Kbass`.
      - To correct another song or preset: `python device/analysis/multisample_zones.py <XML> --fix <new XML> --card <the card's folder>` (needs numpy and soxr, like DelugeTuner's script).
 
+10. **v19.0: the DJ tool's first step** (new on 29.09.2026; README section "v19.0", plan in `research/DJ-TOOL-PLAN.md`). Playing along with a track from a phone in the line input (the computer only records the Deluge, as always):
+   - **Flash** `deluge-1.2.1-mastertune-v19.0-l2d-1d2b400d.bin` (v18.4 plus the DJ filter, sync and the nudge, nothing else changed). Settings → Firmware version shows `v19.0-l2d`. Tasks 1–9 apply to v19.0 as well.
+   - **DJ filter:** in Song view, AFFECT ENTIRE on, the filter mod button lit (the LPF/HPF row). Press the upper gold knob until the OLED shows `DJ` (after LPF, HPF, EQ; 7-segment `DJ`). While a song plays:
+     - Turn it left: darker, `DJ: LPF 16` and so on down to `DJ: LPF 50`, closed. Right of the middle: thinner, `DJ: HPF …`. In the middle `DJ: OFF`: the song as it was. The lower knob: the resonance of both.
+     - Does it sound like a DJ mixer's filter? Is the travel right, or is the useful part squeezed into a few detents? Any click or zipper while turning fast?
+     - Set apart: in LPF mode close the LPF a little, in HPF mode open the HPF a little, then back to DJ. The first detent must not jump.
+     - Save the song and load it again: the filter type is still DJ, the sound the same.
+   - **Sync:** play a track with a known tempo into the line input and open Scan (Settings → Tuning → Scan). Wait for the BPM, halve or double it with the horizontal encoder if needed, then press TAP TEMPO: `Sync 128.0 BPM` (7-segment `SYNC`), and the song's tempo is now that. Without a tempo heard it shows `No tempo yet`. Back in Song view start the song: does it keep to the track's tempo over a minute?
+   - **Nudge:** with the song playing along with the track, hold the horizontal encoder pressed and turn the tempo encoder. Each detent moves the song 10 ms ahead (right) or back (left), `Sync nudged`; turning on keeps pushing. Can you bring the beats together by ear? Afterwards the tempo must be exactly what it was.
+     - With gear following the Deluge's MIDI clock: it follows the nudge. SHIFT + horizontal encoder + tempo encoder nudges only the MIDI clock out, as 1.2.1 did.
+     - Stop in the middle of a nudge, save the song: the tempo saved is the one without the nudge.
+   - **Report:** a short report in English to `device/` (what worked, the tempos read, how the filter sounds), pushed to `device-results`.
+
 ### Done: "Rescue", the LPF has no effect (27.09.2026)
 
 - **Finding** (emulator with the real XML, cross-checked): The LPF works. But the song LPF's resonance is at maximum, so from about knob 36 the filter oscillates by itself. Its tone moves down with the knob, is about 10 dB above the music and clips. At the bottom a tone below 60 Hz remains. v16 behaves the same.
@@ -98,7 +111,8 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
 
 | File | What |
 |---|---|
-| `deluge-1.2.1-mastertune-v18.4-l2d-cab8e666.bin` | **current version**: v18.3 plus Scan (tuner, tempo, key) and the arp mode Ball, with L2 cache for code and data. In the README the section "v18.4". |
+| `deluge-1.2.1-mastertune-v19.0-l2d-1d2b400d.bin` | **current version**: v18.4 plus the DJ filter, sync to the tempo heard and the nudge, with L2 cache for code and data. In the README the section "v19.0". |
+| `deluge-1.2.1-mastertune-v18.4-l2d-cab8e666.bin` | v18.4: v18.3 plus Scan (tuner, tempo, key) and the arp mode Ball. In the README the section "v18.4". |
 | `deluge-1.2.1-mastertune-v18.3-l2d-3581f019.bin` | v18.3, with L2 cache for code and data. In the README the sections "v18.3", "v18.2" and "v18". |
 | `deluge-1.2.1-mastertune-v18.2-l2d-c9c65066.bin` | v18.2, Drive as in v18 |
 | `deluge-1.2.1-mastertune-v18-l2d-6fa0875b.bin` | v18, with the bug after a silence |
