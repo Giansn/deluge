@@ -78,7 +78,9 @@ class Inputs:
             base = sym["_ZN6deluge3hid8encoders8encodersE"]
             self.enc = {k: (base + 14 * i + (0 if i >= 4 else 1), "<b") for i, k in enumerate(ENCODERS)}
 
-    def button(self, name, on, limit_s=10):
+    def button(self, name, on, limit_s=None):
+        if limit_s is None:  # a song load while playing waits for the playing clips to reach their end
+            limit_s = 60 if name in ("LOAD", "SELECT_ENC") else 10
         self.rig.action(f"{name} {'on' if on else 'off'}", self.button_fn, B[name], 1 if on else 0, 0,
                         limit_s=limit_s)
 
@@ -176,6 +178,28 @@ class ModalRecorder:
         emu.intercept(sym.find("_Z18readButtonsAndPadsv"), on_read)
 
 
+class QuickLoadTap:
+    """Loading a song while playing: if LOAD is still held when the song has loaded, LoadSongUI::performLoad() waits
+    (inside the press) until LOAD is released, and only then arms the song swap. The fuzzer's inputs are calls, so the
+    release can't come while the press is still running: a false hang. Here performLoad() sees LOAD as released, as
+    after a quick tap: the swap is armed at once and launches when the playing clips reach their end."""
+
+    def __init__(self, emu):
+        sym = emu.sym
+        name = next((n for n in sym.by_name if n.startswith("_ZN10LoadSongUI11performLoadEv")), None)
+        if name is None:  # 1.2.1 names it differently; its loop reads LOAD the same way only in the v1.3 code
+            return
+        self.lo, size = sym.by_name[name]
+        self.hi = self.lo + size
+        from unicorn.arm_const import UC_ARM_REG_LR
+
+        def on_pressed(e):
+            if self.lo <= (e.uc.reg_read(UC_ARM_REG_LR) & ~1) < self.hi:
+                return 0  # not pressed
+            return None
+        emu.intercept(sym.find("_ZN7Buttons15isButtonPressed"), on_pressed)
+
+
 def boot(firmware, elf, tools, build, image, oled):
     if firmware == "v13":
         import rig13
@@ -267,7 +291,7 @@ def step_deep(rng, inp, rig, log):
         b = rng.choice([n for n in THEN_PRESS if n != a])
         inp.button(a, True)
         tm(0.05, f"{a} held")
-        inp.button(b, True, limit_s=300 if (a, b) in SLOW else 10)
+        inp.button(b, True, limit_s=300 if (a, b) in SLOW else None)
         tm(rng.uniform(0.02, 0.1), f"{a}+{b} held")
         inp.button(b, False)
         inp.button(a, False)
@@ -412,7 +436,8 @@ def main():
         inp = Inputs(rig, a.firmware)
         null = NullPage(rig.emu)
         modal = ModalRecorder(rig.emu)
-        rig.emu.uc.ctl_flush_tb()  # The new hook also for code already translated
+        QuickLoadTap(rig.emu)
+        rig.emu.uc.ctl_flush_tb()  # The new hooks also for code already translated
         if a.mode == "browser":
             inp.button("LOAD", True)
             inp.button("LOAD", False)
