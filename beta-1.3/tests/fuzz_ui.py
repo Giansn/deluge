@@ -59,7 +59,13 @@ class Inputs:
         sym = emu.sym
         self.button_fn = sym.find("_ZN7Buttons12buttonActionEhbb")
         self.pad_fn = sym.find("_ZN12MatrixDriver9padActionElll")  # A clone without this: (x, y, velocity)
+        self.unblock = None
         if firmware == "v13":
+            # v1.3's encoder task blocks itself (interpretEncodersTask(): blockTask(EncoderTaskID)) until the encoder
+            # interrupt unblocks it after applyEdges(): a turn written into the encoder alone is never acted on, so
+            # turn() completes it as the interrupt does. (Before 1 October 2026 the v13 runs turned no encoder.)
+            self.unblock = sym["unblockTask"]
+            self.encoder_task_id = sym["_ZN6deluge3hid8encoders13EncoderTaskIDE"]
             # deluge::hid::encoders::scrollY etc.: DetentedEncoder (edgeAccumulator, then the detents: an atomic int32
             # at +4), ContinuousEncoder for the gold ones (the ticks: an atomic int8 at +0)
             names = {"scrollY": "7scrollY", "scrollX": "7scrollX", "tempo": "5tempo", "select": "6select",
@@ -86,6 +92,9 @@ class Inputs:
         v = struct.unpack(fmt, emu.uc.mem_read(address, size))[0] + n
         lo, hi = (-128, 127) if size == 1 else (-(1 << 31), (1 << 31) - 1)
         emu.uc.mem_write(address, struct.pack(fmt, max(lo, min(hi, v))))
+        if self.unblock:
+            task_id = struct.unpack("<b", emu.uc.mem_read(self.encoder_task_id, 1))[0]
+            self.rig.action(f"turn {name} {n:+d}", self.unblock, task_id & 0xFF)
 
 
 def make_card(image, synths, template):

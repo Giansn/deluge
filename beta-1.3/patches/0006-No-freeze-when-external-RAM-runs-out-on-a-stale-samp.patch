@@ -1,0 +1,192 @@
+From 5fbe270137a0325efc5b173b00dac67c66fba05e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 14:54:04 +0000
+Subject: [PATCH 6/6] No freeze when external RAM runs out, on a stale sample
+ cluster, or on an OLED handshake hiccup
+
+- operator new and deluge::vector's allocator used only allocExternal(), with no fallback to the
+  stealable region, then threw BAD_ALLOC, caught almost nowhere: std::terminate froze the Deluge
+  (a menu, the song browser). They now fall back to GeneralMemoryAllocator::alloc(), which can
+  steal cache memory, before throwing.
+- SampleCluster: a cluster pointer outside the stealable region froze (always on, #4952). It is
+  now dropped and the cluster created again; the index is checked before getElement().
+- OLED low level (beta-only freezes): an empty frame slot is skipped, a SELECT reply with nothing
+  queued deselects again, a new SELECT replaces a pending handshake, and a full frame queue drops
+  the frame instead of freezing.
+
+Test (beta-1.3/tests): oom_robust_emu.py; on 62a516c2 all six cases freeze.
+---
+ src/RZA1/oled/oled_low_level.c             | 39 +++++++++++++---------
+ src/deluge/drivers/oled/oled.c             |  6 ++--
+ src/deluge/memory/external_allocator.h     |  5 +++
+ src/deluge/memory/operators.cpp            |  6 ++++
+ src/deluge/model/sample/sample_cluster.cpp | 24 +++++++++++--
+ 5 files changed, 58 insertions(+), 22 deletions(-)
+
+diff --git a/src/RZA1/oled/oled_low_level.c b/src/RZA1/oled/oled_low_level.c
+index d1639e3a..30eeac5f 100644
+--- a/src/RZA1/oled/oled_low_level.c
++++ b/src/RZA1/oled/oled_low_level.c
+@@ -142,15 +142,28 @@ sendMessageToPIC:
+     }
+ }
+ 
++// Moves the read position past any empty slot and says whether a frame is waiting to be sent. Neither an empty slot
++// before the write position nor a select completing with nothing queued (a duplicate or late PIC reply, a lost or late
++// DMA interrupt) should happen; beta builds used to freeze on them, and release builds would send a frame from address
++// 0 and move the read position past the write position, which then made the queue look full.
++static bool oledFrameQueueHasFrame()
++{
++    while (oledFrameQueueReadPos != oledFrameQueueWritePos && oledFrameQueue[oledFrameQueueReadPos] == NULL)
++    {
++        oledFrameQueueReadPos = (oledFrameQueueReadPos + 1) & (OLED_FRAME_QUEUE_SIZE - 1);
++    }
++    return oledFrameQueueReadPos != oledFrameQueueWritePos;
++}
++
+ void oledSelectingComplete()
+ {
+     oledWaitingForMessage = OLED_MESSAGE_NONE;
+-#if ALPHA_OR_BETA_VERSION
+-    if (oledFrameQueue[oledFrameQueueReadPos] == NULL)
++    if (!oledFrameQueueHasFrame())
+     {
+-        FREEZE_WITH_ERROR("OLED frame queue slot is empty");
++        // Nothing to send after all: deselect again, which frees the bus and sends whatever gets queued meanwhile.
++        oledPendingMessageToSend = OLED_MESSAGE_DESELECT;
++        return;
+     }
+-#endif
+     RSPI(SPI_CHANNEL_OLED_MAIN).SPDCR       = 0x20u;              // 8-bit
+     RSPI(SPI_CHANNEL_OLED_MAIN).SPCMD0      = 0b0000011100000010; // 8-bit
+     RSPI(SPI_CHANNEL_OLED_MAIN).SPBFCR.BYTE = 0b01100000;         // 0b00100000;
+@@ -203,13 +216,9 @@ bool sendPriorityCVIfPending()
+ 
+ void initiateSelectingOled()
+ {
+-#if ALPHA_OR_BETA_VERSION
+-
+-    if (oledWaitingForMessage != OLED_MESSAGE_NONE)
+-    {
+-        FREEZE_WITH_ERROR("OLED message already pending");
+-    }
+-#endif
++    // Should a handshake still be waiting for the PIC's reply, this supersedes it: oledRoutine() sends the SELECT and
++    // waits for that reply instead, and a late reply to the old message no longer matches. Beta builds used to freeze
++    // here; release builds have always just gone on.
+     oledPendingMessageToSend = OLED_MESSAGE_SELECT;
+ 
+     // Actual queue position gets moved along in oledSelectingComplete() when that gets called.
+@@ -224,12 +233,12 @@ void sendSPITransferFromQueue()
+     {
+         return;
+     }
+-#if ALPHA_OR_BETA_VERSION
+-    if (oledFrameQueue[oledFrameQueueReadPos] == NULL)
++    if (!oledFrameQueueHasFrame())
+     {
+-        FREEZE_WITH_ERROR("OLED frame queue slot is empty");
++        // Nothing queued after all: the bus is idle again.
++        spiBusCurrentlySending = false;
++        return;
+     }
+-#endif
+ 
+     // The queue only ever holds OLED frames now.
+     oled_sending = true;
+diff --git a/src/deluge/drivers/oled/oled.c b/src/deluge/drivers/oled/oled.c
+index 01ada233..20bdf3e3 100644
+--- a/src/deluge/drivers/oled/oled.c
++++ b/src/deluge/drivers/oled/oled.c
+@@ -103,11 +103,9 @@ uint8_t oledFrameQueueWritePos = 0;
+ /// Enqueue an OLED frame for DMA out. Not safe to call from an interrupt. Identical frames already
+ /// in flight or queued are deduplicated to avoid redundant full-frame transfers.
+ void enqueueOLEDFrame(const uint8_t* image) {
+-	// arguably should always be on but there's a chance it works out if a duplicate frame is already queued
++	// The queue only holds distinct images (see below), of which there are a handful, so it can't really fill up. If it
++	// does anyway, drop this frame (the next render sends another) instead of freezing, as release builds did.
+ 	if (((oledFrameQueueWritePos + 1) & (OLED_FRAME_QUEUE_SIZE - 1)) == oledFrameQueueReadPos) {
+-#if ALPHA_OR_BETA_VERSION
+-		FREEZE_WITH_ERROR("FULL");
+-#endif
+ 		return;
+ 	}
+ 
+diff --git a/src/deluge/memory/external_allocator.h b/src/deluge/memory/external_allocator.h
+index ac4b5c95..44d62095 100644
+--- a/src/deluge/memory/external_allocator.h
++++ b/src/deluge/memory/external_allocator.h
+@@ -29,6 +29,11 @@ public:
+ 			return nullptr;
+ 		}
+ 		void* addr = GeneralMemoryAllocator::get().allocExternal(n * sizeof(T));
++		if (addr == nullptr) [[unlikely]] {
++			// Same fallback as operator new: the stealable region can make room by stealing cached audio data.
++			// deallocExternal() frees from whichever region the address is in.
++			addr = GeneralMemoryAllocator::get().alloc(n * sizeof(T), false, false, nullptr);
++		}
+ 		if (addr == nullptr) [[unlikely]] {
+ 			throw deluge::exception::BAD_ALLOC;
+ 		}
+diff --git a/src/deluge/memory/operators.cpp b/src/deluge/memory/operators.cpp
+index d4e5c82e..1c2115b7 100644
+--- a/src/deluge/memory/operators.cpp
++++ b/src/deluge/memory/operators.cpp
+@@ -7,6 +7,12 @@
+ void* operator new(std::size_t n) noexcept(false) {
+ 	// allocate on external RAM
+ 	void* addr = GeneralMemoryAllocator::get().allocExternal(n);
++	if (addr == nullptr) [[unlikely]] {
++		// External RAM is full (or too fragmented): fall back to the stealable region, which makes room by stealing
++		// cached audio data, as delugeAlloc() and every other non-stealable allocation already do. Otherwise a
++		// std::string in a menu throws (and, uncaught, freezes in std::terminate) while plenty of RAM is reclaimable.
++		addr = GeneralMemoryAllocator::get().alloc(n, false, false, nullptr);
++	}
+ 	if (addr == nullptr) [[unlikely]] {
+ 		// The throwing operator new must never return null: std::string / std::vector and friends assume a non-null
+ 		// buffer, so returning null silently corrupts them. Throw the same lightweight exception the custom STL
+diff --git a/src/deluge/model/sample/sample_cluster.cpp b/src/deluge/model/sample/sample_cluster.cpp
+index 31541039..6271318c 100644
+--- a/src/deluge/model/sample/sample_cluster.cpp
++++ b/src/deluge/model/sample/sample_cluster.cpp
+@@ -70,6 +70,27 @@ Cluster* SampleCluster::getCluster(Sample* sample, uint32_t clusterIndex, int32_
+ 		*error = Error::NONE;
+ 	}
+ 
++	// A Cluster always lives in the stealable region (Cluster::create() allocates it there), so a pointer anywhere
++	// else is garbage. This used to be an always-on freeze; forget the pointer and create the Cluster afresh instead.
++	// The range is checked directly because getRegion() itself freezes (E339) on an address outside every region.
++	if (cluster != nullptr) {
++		MemoryRegion& stealableRegion = GeneralMemoryAllocator::get().regions[MEMORY_REGION_STEALABLE];
++		uintptr_t address = reinterpret_cast<uintptr_t>(cluster);
++		if (address < stealableRegion.start || address >= stealableRegion.end) [[unlikely]] {
++			D_PRINTLN("cluster pointer outside the stealable region:  %d", clusterIndex);
++			// If we aren't even this Sample's SampleCluster for clusterIndex (an index out of range), we are garbage
++			// too - write nothing, just fail
++			uint32_t numClusters = sample->clusters.getNumElements();
++			if (clusterIndex >= numClusters || sample->clusters.getElement(clusterIndex) != this) {
++				if (error != nullptr) {
++					*error = Error::UNSPECIFIED;
++				}
++				return nullptr;
++			}
++			cluster = nullptr;
++		}
++	}
++
+ 	// If the Cluster hasn't been created yet
+ 	if (!cluster) {
+ 
+@@ -172,9 +193,6 @@ justEnqueue:
+ 	else {
+ 
+ #if 1 || ALPHA_OR_BETA_VERSION // Switching permanently on for now, as users on V4.1.3 have been getting E341.
+-		if (GeneralMemoryAllocator::get().getRegion(cluster) != MEMORY_REGION_STEALABLE) {
+-			FREEZE_WITH_ERROR("invalid");
+-		}
+ 		if (cluster && cluster->numReasonsToBeLoaded < 0) {
+ 			FREEZE_WITH_ERROR("i028"); // bnhrsch got this!!
+ 		}
+-- 
+2.43.0
+

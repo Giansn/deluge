@@ -1,0 +1,68 @@
+From 2e4935f775dddec4e177c8e44d6848c28b9c8ec5 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 14:02:56 +0000
+Subject: [PATCH 1/6] Undo keeps every note still in a scale-mode clip in the
+ scale (SM01)
+
+An undo set the scale back to the action's snapshot, but a note the action didn't add
+could still be in a scale-mode clip (found by the random-input test: recording in the
+keyboard view, then BACK, left D# in a CV clip and out of the scale). The next
+SHIFT+SCALE froze in ScaleMapper::computeChangeFrom() with SM01, which requires the
+clips' notes to lie in the current scale.
+
+- ActionLogger::revertAction(): after the consequences are reverted, add any note still
+  present in a scale-mode clip back to the scale.
+- Song::setScaleNotes(): should the rule be broken some other way, take the present notes
+  into the current scale before mapping instead of freezing.
+
+Replay of the run (seed 1): before, the scale lost D# at step 842 and step 908 froze with
+SM01; now the rule holds at every step and SHIFT+SCALE changes the scale.
+---
+ src/deluge/model/action/action_logger.cpp | 12 ++++++++++++
+ src/deluge/model/song/song.cpp            |  7 +++++++
+ 2 files changed, 19 insertions(+)
+
+diff --git a/src/deluge/model/action/action_logger.cpp b/src/deluge/model/action/action_logger.cpp
+index 07f1ed68..f27978ea 100644
+--- a/src/deluge/model/action/action_logger.cpp
++++ b/src/deluge/model/action/action_logger.cpp
+@@ -591,6 +591,18 @@ currentClipSwitchedOver:
+ 
+ 	Error error = action->revert(time, modelStack);
+ 
++	// The scale was set back to the action's snapshot above, but a note can still be in a scale-mode clip that the
++	// action didn't add (one recorded with no Action to log it, or in a clip the action doesn't cover). The scale must
++	// hold every such note: ScaleMapper::computeChangeFrom() freezes with SM01 on the next scale change otherwise.
++	// So add any note still present back to the scale.
++	{
++		NoteSet present = currentSong->notesInScaleModeClips();
++		present.add(0); // the root, as Song::setScaleNotes() counts it
++		if (!present.isSubsetOf(currentSong->key.modeNotes)) {
++			currentSong->key.modeNotes = currentSong->key.modeNotes | present;
++		}
++	}
++
+ 	// Some "animations", we prefer to do after we've reverted the action
+ 	if (whichAnimation == Animation::ENTER_KEYBOARD_VIEW) {
+ 		changeRootUI(&keyboardScreen);
+diff --git a/src/deluge/model/song/song.cpp b/src/deluge/model/song/song.cpp
+index d7602d80..1c9a8c1b 100644
+--- a/src/deluge/model/song/song.cpp
++++ b/src/deluge/model/song/song.cpp
+@@ -3052,6 +3052,13 @@ bool Song::setScaleNotes(NoteSet newScaleNotes) {
+ 		return false;
+ 	}
+ 
++	// ScaleMapper needs every note present to be in the current scale (it freezes with SM01 otherwise). An undo used
++	// to break that (see ActionLogger::revertAction()); should anything else, take the notes into the current scale
++	// first rather than freeze: the mapping then starts from the scale the clips really use
++	if (!notesWithinOctavePresent.isSubsetOf(key.modeNotes)) {
++		key.modeNotes = key.modeNotes | notesWithinOctavePresent;
++	}
++
+ 	ScaleChange changes;
+ 	scaleMapper.computeChangeFrom(notesWithinOctavePresent, key.modeNotes, newScaleNotes, changes);
+ 
+-- 
+2.43.0
+
