@@ -11,6 +11,8 @@
 #   export_abort_hang_emu.py  0011: a track export / mixdown whose stem recording is aborted (RAM short) ends
 #   export_abort_file_emu.py  0012: an aborted stem leaves no broken 5-second file on the card
 #   (export_repeat_emu.py: the probe both use; 16+ exports in a row with song changes)
+#   arranger_automation_emu.py  0013: CV, MIDI, KIT, SYNTH, SCALE in the arranger's automation view: no E369
+#   recorder_threshold_emu.py   0014: RECORD AUDIO with threshold recording on: BACK ends the recorder
 #   savekitrow_emu.py     0101: audition pad + SAVE opens the kit-row save only for a kit's sound row
 #   automation_type_emu.py 0102: a clip made CV or MIDI in song view opens its automation view without the synth's
 #                         parameter (CV: no E411)
@@ -24,7 +26,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ELF=$1 TOOLS=$2 BUILD=$3 OUT=${4:-/tmp/beta-repro}
 mkdir -p "$OUT"
 cd /tmp || exit 1
-tests="save_4917 songswap_e455 kitrow save_name oom_robust cluster_cache abandon_load export_abort_hang export_abort_file savekitrow automation_type"
+tests="save_4917 songswap_e455 kitrow save_name oom_robust cluster_cache abandon_load export_abort_hang export_abort_file arranger_automation recorder_threshold savekitrow automation_type"
 [ "${LONG:-0}" = 1 ] && tests="$tests sm01_replay"
 fails=0
 for t in $tests; do

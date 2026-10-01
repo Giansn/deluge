@@ -1,0 +1,44 @@
+From 2b69ce14f7e747e4449276aca6bad7db2e9b07de Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 19:31:41 +0000
+Subject: [PATCH 14/14] RECORD AUDIO with threshold recording on: BACK ends the
+ recorder again
+
+Since #4678 feedAudio() keeps a margin before the threshold, so numSamplesCaptured isn't 0 while threshold
+recording still waits for the input; it resets it to that margin every cycle. endSyncedRecording() then
+went to WAITING_TO_STOP instead of aborting, the stop never completed, and the sound editor's audio
+recorder stayed open (SampleRecorder::feedAudio() for ever, BACK did nothing). While the threshold hasn't
+been passed nothing has been recorded: abort, as before #4678.
+---
+ src/deluge/model/sample/sample_recorder.cpp | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/src/deluge/model/sample/sample_recorder.cpp b/src/deluge/model/sample/sample_recorder.cpp
+index ff0e5ecd..4a9941a2 100644
+--- a/src/deluge/model/sample/sample_recorder.cpp
++++ b/src/deluge/model/sample/sample_recorder.cpp
+@@ -1107,7 +1107,11 @@ void SampleRecorder::endSyncedRecording(int32_t buttonLatencyForTempolessRecordi
+ 	}
+ #endif
+ 
+-	if (numSamplesCaptured) {
++	// While threshold recording still waits for the input to pass the threshold, nothing has been recorded yet: since
++	// #4678, feedAudio() keeps the margin before the threshold, so numSamplesCaptured isn't 0 then, but it resets it to
++	// that margin every cycle, so a stop could never complete (the audio recorder stayed open, BACK did nothing).
++	// Abort, as it did before
++	if (numSamplesCaptured && !thresholdRecording) {
+ 		int32_t numMoreSamplesTilEndLoopPoint =
+ 		    numSamplesExtraToCaptureAtEndSyncingWise - buttonLatencyForTempolessRecording;
+ 		int32_t numMoreSamplesToCapture = numMoreSamplesTilEndLoopPoint;
+@@ -1134,7 +1138,7 @@ void SampleRecorder::endSyncedRecording(int32_t buttonLatencyForTempolessRecordi
+ 		}
+ 	}
+ 	else {
+-		// if we haven't captured any samples (which can happen with threshold recording), abort
++		// if we haven't captured any samples (or threshold recording hasn't detected any audio yet), abort
+ 		abort();
+ 	}
+ }
+-- 
+2.43.0
+

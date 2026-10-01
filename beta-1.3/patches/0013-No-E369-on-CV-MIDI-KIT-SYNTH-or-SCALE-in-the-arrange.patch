@@ -1,0 +1,55 @@
+From 295fc859b3ca9f369254641362a46080e723e6b0 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 19:30:13 +0000
+Subject: [PATCH 13/14] No E369 on CV, MIDI, KIT, SYNTH or SCALE in the
+ arranger's automation view
+
+AutomationView::buttonAction() handled the clip-type buttons on the song's current clip even in the
+arranger's automation view (arranger view, CLIP). After a song load there is no current clip:
+View::changeOutputType()'s model stack froze with E369 (song loaded, SONG, CLIP, CV). With a current clip
+they changed a clip the arranger doesn't show. They are now ignored there, as in an audio clip's
+automation view; BACK + horizontal encoder checks onArrangerView before the clip.
+---
+ src/deluge/gui/views/automation_view.cpp | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/src/deluge/gui/views/automation_view.cpp b/src/deluge/gui/views/automation_view.cpp
+index 0a42de35..e96a1b7a 100644
+--- a/src/deluge/gui/views/automation_view.cpp
++++ b/src/deluge/gui/views/automation_view.cpp
+@@ -1140,17 +1140,19 @@ ActionResult AutomationView::buttonAction(hid::Button b, bool on, bool inCardRou
+ 
+ 	using namespace hid::button;
+ 
++	// The arranger's automation view may have no current clip at all (a song just loaded, no clip entered yet)
+ 	Clip* clip = getCurrentClip();
+-	bool isAudioClip = clip->type == ClipType::AUDIO;
++	bool isAudioClip = clip != nullptr && clip->type == ClipType::AUDIO;
+ 
+-	// these button actions are not used in the audio clip automation view
+-	if (isAudioClip) {
++	// these button actions are not used in the audio clip automation view, nor in the arranger's: there they would
++	// change the type or scale of a clip the arranger doesn't show, or with no current clip freeze (E369)
++	if (isAudioClip || onArrangerView) {
+ 		if (b == SCALE_MODE || b == KIT || b == SYNTH || b == MIDI || b == CV) {
+ 			return ActionResult::DEALT_WITH;
+ 		}
+ 	}
+ 
+-	OutputType outputType = clip->output->type;
++	OutputType outputType = clip != nullptr ? clip->output->type : OutputType::NONE;
+ 
+ 	// Scale mode button
+ 	if (b == SCALE_MODE) {
+@@ -1543,7 +1545,7 @@ bool AutomationView::handleHorizontalEncoderButtonAction(bool on, bool isAudioCl
+ bool AutomationView::handleBackAndHorizontalEncoderButtonComboAction(Clip* clip, bool on) {
+ 	// only allow clearing of a clip if you're on the automation overview
+ 	if (on && onAutomationOverview()) {
+-		if (clip->type == ClipType::AUDIO || onArrangerView) {
++		if (onArrangerView || clip->type == ClipType::AUDIO) {
+ 			// clear all arranger automation
+ 			if (onArrangerView) {
+ 				Action* action = actionLogger.getNewAction(ActionType::ARRANGEMENT_CLEAR, ActionAddition::NOT_ALLOWED);
+-- 
+2.43.0
+
