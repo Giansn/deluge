@@ -1,0 +1,48 @@
+From d578c53cbc71c7f8f28b08654399cb0b09b9f601 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 16:24:21 +0000
+Subject: [PATCH 7/9] No crash on a transpose note during a song change
+
+While a song swap is under way there is no root UI (getRootUI() returns null, by design), but
+MIDITranspose::doTranspose() called it unchecked: a MIDI clip on the transpose channel still playing
+(or MIDI input on it) when the user loaded another song made a call through a null object and the
+Deluge crashed (found twice by the random-input test, both times on loading a song while playing).
+A transpose note is now left out while there is no root UI: the old song's clips are being deleted
+then, so transposing them would be wrong anyway. exitScaleModeForMIDITransposeClips() checks too.
+
+Test: the random-input runs seed 11 (--mode deep, crashed at input 344) and seed 21 (input 376) now
+pass these inputs.
+---
+ src/deluge/io/midi/midi_transpose.cpp | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/src/deluge/io/midi/midi_transpose.cpp b/src/deluge/io/midi/midi_transpose.cpp
+index 2504099c..26b68ede 100644
+--- a/src/deluge/io/midi/midi_transpose.cpp
++++ b/src/deluge/io/midi/midi_transpose.cpp
+@@ -16,6 +16,12 @@ namespace MIDITranspose {
+ MIDITransposeControlMethod controlMethod;
+ 
+ void doTranspose(bool on, int32_t newNoteOrCC) {
++	// While a song swap is under way there is no root UI (getRootUI() is null), and the old song's clips are being
++	// deleted: a transpose note arriving then (a MIDI clip on the transpose channel still playing, or MIDI input) would
++	// transpose clips on their way out and then call the missing root UI. Leave it out until the new song is set up
++	if (!getRootUI()) {
++		return;
++	}
+ 	bool doRender = false;
+ 
+ 	if (on) {
+@@ -93,7 +99,8 @@ void doTranspose(bool on, int32_t newNoteOrCC) {
+ }
+ 
+ void exitScaleModeForMIDITransposeClips() {
+-	if (currentUIMode == UI_MODE_NONE && getRootUI()->getUIContextType() == UIType::INSTRUMENT_CLIP) {
++	RootUI* rootUI = getRootUI(); // Null during a song swap
++	if (currentUIMode == UI_MODE_NONE && rootUI && rootUI->getUIContextType() == UIType::INSTRUMENT_CLIP) {
+ 		InstrumentClip* clip = getCurrentInstrumentClip();
+ 
+ 		if (clip != nullptr) {
+-- 
+2.43.0
+

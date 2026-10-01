@@ -1,7 +1,7 @@
 From 5fbe270137a0325efc5b173b00dac67c66fba05e Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 14:54:04 +0000
-Subject: [PATCH 6/6] No freeze when external RAM runs out, on a stale sample
+Subject: [PATCH 6/9] No freeze when external RAM runs out, on a stale sample
  cluster, or on an OLED handshake hiccup
 
 - operator new and deluge::vector's allocator used only allocExternal(), with no fallback to the

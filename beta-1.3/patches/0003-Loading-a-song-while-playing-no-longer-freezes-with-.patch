@@ -1,7 +1,7 @@
 From bc6f34635d244ee80f76ccba2964e2f6284a1bfe Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 14:54:03 +0000
-Subject: [PATCH 3/6] Loading a song while playing no longer freezes with E455
+Subject: [PATCH 3/9] Loading a song while playing no longer freezes with E455
  when the old song has an arrangement
 
 Song::deleteSoundsWhichWontSound() emptied every Output's clipInstances only after its two loops

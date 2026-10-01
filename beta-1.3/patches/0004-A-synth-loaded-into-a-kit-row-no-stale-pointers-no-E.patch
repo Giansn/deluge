@@ -1,7 +1,7 @@
 From adae0d677a17b4b9b4838fe11759b08951ff6799 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 14:54:04 +0000
-Subject: [PATCH 4/6] A synth loaded into a kit row: no stale pointers, no E412
+Subject: [PATCH 4/9] A synth loaded into a kit row: no stale pointers, no E412
  on knob learn (#4518, #4951)
 
 From the open upstream PRs #4951 and #4518, adapted to 62a516c2:

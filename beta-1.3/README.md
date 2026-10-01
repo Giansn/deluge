@@ -42,3 +42,26 @@ python3 beta-1.3/tests/fuzz_ui.py <mastertune tree>/build/Release/deluge.elf --f
 
 `--7seg` runs the 7-segment display (v13 only), `--mode browser` only the song browser. Results go to
 `<out>/fuzz.json`; NIGHTLY.md section 5 has the runs of 1 October 2026.
+
+## How the beta handles sample clusters
+
+A sample is read from the card in clusters of 32 KB (`Cluster::size`). Each cluster lives in the *stealable* part of
+SDRAM and carries a count of *reasons* to stay loaded (`numReasonsToBeLoaded`):
+- **Who claims reasons.** A sound's sample holder claims the first clusters from its start point
+  (`clustersForStart`, 2) and, for a loop, from its loop start (`clustersForLoopStart`); a playing voice claims the
+  clusters just ahead of its play position. A cluster with reasons can't be stolen.
+- **Loading.** A cluster needed but not in RAM is queued in `ClusterPriorityQueue` (a `std::priority_queue`, the most
+  urgent first) and loaded by the card routine. The beta rewrote this queue; 1.2.1's queue ordered by address instead
+  of priority (mastertune fixed that separately).
+- **Stealing.** When memory runs short, clusters without reasons are freed (stolen), least recently used first.
+- **#4952 (30 September 2026)** meant to hold short samples whole (up to 2 + 8 clusters), so they never wait for the
+  card. It had four faults: it counted samples instead of clusters (samples 2-6 times too long counted as short), it
+  claimed only 2 clusters whatever it was asked, it then skipped a short sample's loop start (a sample up to ~7 s
+  mono with a loop point read its loop start from the card at every pass), and it claimed forwards for a reversed
+  sample. It also added an always-on freeze ("invalid") for a cluster pointer outside stealable memory.
+- **Our patches:** 0009 corrects the caching (a 9-cluster sample now held whole instead of 4 clusters; a 19-cluster
+  sample's loop start held again; test `tests/repro/cluster_cache_emu.py`); 0006 turns the "invalid" freeze into
+  dropping the stale pointer and loading the cluster again.
+- **RAM:** holding short samples whole pins up to 320 KB per sample. With the beta's ~6 MB less free SDRAM than
+  1.2.1 (same song), out-of-memory is a real risk; 0006 lets `operator new` and the menus' vectors steal clusters
+  before failing, instead of freezing.

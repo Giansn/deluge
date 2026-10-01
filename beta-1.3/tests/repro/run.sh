@@ -6,6 +6,9 @@
 #   kitrow_emu.py         0004: a synth into a kit row: the view not on the freed drum, LEARN + knob no E412
 #   save_name_emu.py      0005: SAVE proposes no existing name and overwrites nothing
 #   oom_robust_emu.py     0006: out of external RAM, a stale cluster, OLED handshake hiccups: no freeze
+#   cluster_cache_emu.py  0009: a short sample held in RAM whole, a longer one's loop start held
+#   (0007, the transpose note during a song change, and 0008, a kit row saved without params: the fuzzer's
+#   seeds 11 and 1011 in --mode deep, see beta-1.3/README.md)
 #   sm01_replay_emu.py    0001: the 908-input run that froze with SM01 (about 35 minutes; LONG=1 to include it)
 # Usage: ./run.sh <deluge.elf> <toolchain v22 prefix> <blockcount dir> [out dir]
 # Exit status: the number of failed tests.
@@ -14,7 +17,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ELF=$1 TOOLS=$2 BUILD=$3 OUT=${4:-/tmp/beta-repro}
 mkdir -p "$OUT"
 cd /tmp || exit 1
-tests="save_4917 songswap_e455 kitrow save_name oom_robust"
+tests="save_4917 songswap_e455 kitrow save_name oom_robust cluster_cache"
 [ "${LONG:-0}" = 1 ] && tests="$tests sm01_replay"
 fails=0
 for t in $tests; do

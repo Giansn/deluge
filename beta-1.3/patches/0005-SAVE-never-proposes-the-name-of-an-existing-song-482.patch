@@ -1,7 +1,7 @@
 From 52b8078d19b41f886416081b78d1a23df263cd56 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 14:54:04 +0000
-Subject: [PATCH 5/6] SAVE never proposes the name of an existing song (#4825,
+Subject: [PATCH 5/9] SAVE never proposes the name of an existing song (#4825,
  upstream PR #4810)
 
 BrowserFileListView::contains() only searched the window of at most 20 file items around the

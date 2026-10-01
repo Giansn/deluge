@@ -1,7 +1,7 @@
 From 02cbdf94d4cb2e5883b5ef7f921eef0a22678883 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 14:54:03 +0000
-Subject: [PATCH 2/6] Save songs without duplicate audio clip attributes, keep
+Subject: [PATCH 2/9] Save songs without duplicate audio clip attributes, keep
  a named CV track's channel; guard allowNoteTails (#4917, #4938)
 
 - AudioClip::writeDataToFile() called Clip::writeDataToFile() twice: six attributes of every

@@ -1,0 +1,68 @@
+From 730e364bcec0857f7d6bd422214c65580b65c91d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 16:24:21 +0000
+Subject: [PATCH 9/9] Short samples held whole and loop starts held again: the
+ cluster caching of #4952 corrected
+
+#4952 (30 September) meant to keep samples that fit in ten clusters in RAM whole, but:
+- it compared the duration in samples shifted by the cluster size's magnitude, so samples 2-6 times
+  too long (by channels and bit depth) counted as short;
+- claimClusterReasonsForMarker() set its count to 2 whatever it was asked, so "whole" was two more
+  clusters;
+- for a sample counted as short, the loop start was no longer claimed, so a sample up to ~7 s (mono)
+  with a loop point read its loop start from the card at every pass;
+- the rest was claimed forwards even when the sample plays reversed.
+Now: the sample's clusters with audio are counted; claimClusterReasonsForMarker() claims as many as
+asked (the size of the caller's array); the rest of a short sample is claimed in the direction of play,
+which includes its loop start; longer samples claim their loop start as before.
+
+Test (beta-1.3/tests/repro/cluster_cache_emu.py): a 9-cluster sample held [0-3] before, all 9 now; a
+19-cluster sample looping from cluster 12 held [0-3] before, its loop start [12, 13] now.
+---
+ src/deluge/model/sample/sample_holder.cpp           |  3 ++-
+ src/deluge/model/sample/sample_holder_for_voice.cpp | 13 +++++++++----
+ 2 files changed, 11 insertions(+), 5 deletions(-)
+
+diff --git a/src/deluge/model/sample/sample_holder.cpp b/src/deluge/model/sample/sample_holder.cpp
+index 97db9c72..70b2a635 100644
+--- a/src/deluge/model/sample/sample_holder.cpp
++++ b/src/deluge/model/sample/sample_holder.cpp
+@@ -190,7 +190,8 @@ void SampleHolder::claimClusterReasons(bool reversed, int32_t clusterLoadInstruc
+ void SampleHolder::claimClusterReasonsForMarker(Cluster** clusters, uint32_t startPlaybackAtByte, int32_t playDirection,
+                                                 int32_t clusterLoadInstruction, int32_t numClustersToClaim) {
+ 
+-	numClustersToClaim = 2;
++	// numClustersToClaim is the size of the caller's array: 2 for a start, up to 8 for the rest of a short sample.
++	// (#4952 set it to 2 here unconditionally, so "caching whole sample" claimed 2 clusters)
+ 	int32_t clusterIndex = startPlaybackAtByte >> Cluster::size_magnitude;
+ 
+ 	uint32_t posWithinCluster = startPlaybackAtByte & (Cluster::size - 1);
+diff --git a/src/deluge/model/sample/sample_holder_for_voice.cpp b/src/deluge/model/sample/sample_holder_for_voice.cpp
+index 32f52d27..bbe1340e 100644
+--- a/src/deluge/model/sample/sample_holder_for_voice.cpp
++++ b/src/deluge/model/sample/sample_holder_for_voice.cpp
+@@ -88,12 +88,17 @@ void SampleHolderForVoice::claimClusterReasons(bool reversed, int32_t clusterLoa
+ 		}
+ 	}
+ 
+-	uint32_t duration = getDurationInSamples();
+-	auto duration_clusters = duration >> Cluster::size_magnitude;
+-	if (duration_clusters <= kMaxNumClustersLoadedAhead + kNumClustersLoadedAhead) {
++	// A sample that fits in the start's clusters plus kMaxNumClustersLoadedAhead more is held in RAM whole (its loop
++	// start included). Count its clusters, not its duration in samples shifted by the cluster size's magnitude: that
++	// mixed samples and bytes (4-6 times too many clusters passed as short). The rest starts after the start's
++	// clusters, in the direction of play
++	Sample* sample = (Sample*)audioFile;
++	int32_t numClustersWithAudio =
++	    sample->getFirstClusterIndexWithNoAudioData() - sample->getFirstClusterIndexWithAudioData();
++	if (numClustersWithAudio <= kMaxNumClustersLoadedAhead + kNumClustersLoadedAhead) {
+ 		D_PRINTLN("caching whole sample");
+ 		// claim the next few reasons for the sample instead since we can keep it all cached
+-		uint32_t nextClusterStartByte = startPlaybackAtByte + (2 * Cluster::size);
++		uint32_t nextClusterStartByte = startPlaybackAtByte + playDirection * kNumClustersLoadedAhead * Cluster::size;
+ 
+ 		claimClusterReasonsForMarker(clustersForLoopStart, nextClusterStartByte, playDirection, clusterLoadInstruction,
+ 		                             kMaxNumClustersLoadedAhead);
+-- 
+2.43.0
+
