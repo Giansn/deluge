@@ -1,0 +1,48 @@
+From 3ef7b8dea8088ec6d96717c5b397a75ef69c46b2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 21:31:12 +0000
+Subject: [PATCH] No memory corruption from a MIDI clip with MPE output and the
+ arp on
+
+With the arpeggiator on, every note-off reached MIDIInstrument::noteOffPostArp() a second time with member
+channel MIDI_CHANNEL_NONE (255): Arpeggiator::noteOff() hands back the notes[] entry's outputMemberChannel,
+which is never set (switchNoteOn() copies the entry into active_note, and noteOnPostArp() writes the
+channel there only). The MPE branch then wrote mpeOutputMemberChannels[255], 2 KB past the 16-entry array,
+into whatever object lay there; in the fuzz run a CVInstrument's arpeggiator, whose notes array then wrote
+over a synth's voices, and Sound::render() crashed in Patcher::performPatching(). A member channel outside
+the array is now ignored there and in polyphonicExpressionEventPostArpeggiator(); the arp's render
+already sends the real note-off on the valid member channel.
+---
+ src/deluge/model/instrument/midi_instrument.cpp | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/src/deluge/model/instrument/midi_instrument.cpp b/src/deluge/model/instrument/midi_instrument.cpp
+index 03cd7e1b..76af69bb 100644
+--- a/src/deluge/model/instrument/midi_instrument.cpp
++++ b/src/deluge/model/instrument/midi_instrument.cpp
+@@ -1127,6 +1127,12 @@ void MIDIInstrument::noteOffPostArp(int32_t noteCodePostArp, int32_t oldOutputMe
+ 
+ 	// Or, MPE
+ 	else {
++		// No member channel (MIDI_CHANNEL_NONE): nothing was sent for this note on one, or it's already off. With the
++		// arp on, Arpeggiator::noteOff() hands back the notes[] entry's channel, which is never set (noteOnPostArp()
++		// sets the active_note copy). Indexing mpeOutputMemberChannels[255] would write 2 KB past this object.
++		if ((uint32_t)oldOutputMemberChannel >= std::size(mpeOutputMemberChannels)) {
++			return;
++		}
+ 
+ 		mpeOutputMemberChannels[oldOutputMemberChannel].lastNoteCode = noteCodePostArp;
+ 		mpeOutputMemberChannels[oldOutputMemberChannel].noteOffOrder = lastNoteOffOrder++;
+@@ -1223,6 +1229,9 @@ void MIDIInstrument::polyphonicExpressionEventPostArpeggiator(int32_t value32, i
+ 	// Or if we do have MPE output...
+ 	else {
+ 		int32_t memberChannel = arpNote->outputMemberChannel[noteIndex];
++		if ((uint32_t)memberChannel >= std::size(mpeOutputMemberChannels)) {
++			return; // MIDI_CHANNEL_NONE: the note isn't sounding on a member channel
++		}
+ 
+ 		// Are multiple notes sharing the same output member channel?
+ 		ArpeggiatorSettings* settings = getArpSettings();
+-- 
+2.43.0
+
