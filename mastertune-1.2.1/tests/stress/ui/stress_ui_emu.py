@@ -423,7 +423,7 @@ class Rig:
 
     def turn(self, offset, settle_s=0.02):
         """The select encoder in the song browser (waits up to 0.3 s for an animation to end first, as a turn during
-        it is ignored; then forces the mode off as tests/browser's browse_audio_emu.py does)."""
+        it is ignored; then forces the mode off)."""
         forced = False
         if self.mode() not in (UI_MODE_NONE, UI_MODE_HORIZONTAL_SCROLL):
             self.wait_mode_none(0.3)

@@ -3,7 +3,7 @@
 # lowest-priority detection. Runs the firmware's own ClusterPriorityQueue and OrderedResizeableArray code, built for
 # 32-bit x86 (the container code assumes 32-bit pointers), with UndefinedBehaviorSanitizer.
 # Needs a 32-bit capable g++ (Debian/Ubuntu: apt install g++-multilib).
-# Usage: ./run.sh /path/to/DelugeFirmware (checked out at mastertune-v9)
+# Usage: ./run.sh /path/to/DelugeFirmware (mastertune-v9 or later)
 set -e
 FW=$(cd "$1" && pwd)
 HERE=$(cd "$(dirname "$0")" && pwd)

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Host tests for USB audio (v8): the descriptors against the USB 2.0, USB Audio Class 1.0 and USB MIDI rules, and the
 # ring buffer / packet sizes against clock drift, a computer that stops reading and an engine stall (with sanitizers).
-# Usage: ./run.sh /path/to/DelugeFirmware (checked out at mastertune-v8)
+# Usage: ./run.sh /path/to/DelugeFirmware (mastertune-v8 or later)
 set -e
 FW=$(cd "$1" && pwd)
 HERE=$(cd "$(dirname "$0")" && pwd)

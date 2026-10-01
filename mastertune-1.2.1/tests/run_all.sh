@@ -1,6 +1,7 @@
 #!/bin/sh
-# Runs all tests of this folder against a firmware tree: on the PC and on the Deluge's Cortex-A9 in the emulator
-# (unicorn, see arm/). The Cortex-A9 runs are built with the firmware's own toolchain and flags, so they run the same
+# Runs the unit tests of this folder against a firmware tree: on the PC and on the Deluge's Cortex-A9 in the emulator
+# (unicorn, see arm/). The tests of the whole firmware in the emulator (song, songchange, stress, v1904, ...) run
+# separately, see SETUP.md. The Cortex-A9 runs are built with the firmware's own toolchain and flags, so they run the same
 # machine code as the Deluge, and they report what the DSP costs per block of 128 samples.
 #
 # Usage: ./run_all.sh /path/to/DelugeFirmware [pc|arm|both]   (default both; the tree at the newest mastertune version)
@@ -56,7 +57,7 @@ if [ "$WHAT" = pc ] || [ "$WHAT" = both ]; then
 	run "reverb (v10)" sh "$HERE/reverb/run.sh" "$FW"
 	run "delay (v11)" sh "$HERE/delay/run.sh" "$FW"
 	[ -f "$FW/src/deluge/dsp/drone/drone.cpp" ] && run "drone (v12)" sh "$HERE/drone/run.sh" "$FW"
-	run "HPF resonance whistle (filter fix)" sh "$HERE/filters/run.sh" "$FW"
+	run "filters (v16-v19)" sh "$HERE/filters/run.sh" "$FW"
 	[ -f "$FW/src/deluge/dsp/scan/scan.cpp" ] && run "Scan: pitch, tempo, key (v18.4)" sh "$HERE/scan/run.sh" "$FW"
 	[ -f "$FW/src/deluge/dsp/dj/dj_filter.h" ] && run "DJ filter knob (v19.0)" sh "$HERE/dj/run.sh" "$FW"
 	run "song file checker (tools)" python3 "$HERE/song_check_test.py"
@@ -71,7 +72,7 @@ if [ "$WHAT" = arm ] || [ "$WHAT" = both ]; then
 	run "reverb (v10)" env ARM=1 sh "$HERE/reverb/run.sh" "$FW"
 	run "delay (v11)" env ARM=1 sh "$HERE/delay/run.sh" "$FW"
 	[ -f "$FW/src/deluge/dsp/drone/drone.cpp" ] && run "drone (v12)" env ARM=1 sh "$HERE/drone/run.sh" "$FW"
-	run "HPF resonance whistle (filter fix)" env ARM=1 sh "$HERE/filters/run.sh" "$FW"
+	run "filters (v16-v19)" env ARM=1 sh "$HERE/filters/run.sh" "$FW"
 	[ -f "$FW/src/deluge/dsp/scan/scan.cpp" ] && run "Scan: pitch, tempo, key (v18.4)" env ARM=1 sh "$HERE/scan/run.sh" "$FW"
 fi
 

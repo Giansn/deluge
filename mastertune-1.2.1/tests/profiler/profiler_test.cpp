@@ -1,4 +1,4 @@
-// Host test of the sampling profiler's core (mastertune-v15-prof): the ring the timer interrupt fills (order, full,
+// Host test of the sampling profiler's core (patch 0053): the ring the timer interrupt fills (order, full,
 // dropped samples, wrap of the indices), the context packing and the three SysEx messages. Writes the messages with
 // what they hold to the JSON file given as argument; decode_test.py decodes them with tools/deluge_profiler.py and
 // decode_test.js with tools/profiler.html, and both must read exactly that.

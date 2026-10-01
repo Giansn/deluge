@@ -1,4 +1,4 @@
-// Host test of the CPU monitor core (mastertune-v12-diag): the collector with a simulated timer (including a wrap of
+// Host test of the CPU monitor core (in every release since v13): the collector with a simulated timer (including a wrap of
 // the 32-bit counter), merging, the OLED line and the SysEx encoding. Writes the SysEx test cases to the file given
 // as argument, which decode_test.js decodes with the code of tools/cpu_monitor.html.
 //

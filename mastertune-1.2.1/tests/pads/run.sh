@@ -1,9 +1,9 @@
 #!/bin/sh
-# Flicker-free pad dimming (pad-dim branch): the host unit test of hid/led/pad_dimming.h, then the real firmware in the
+# Flicker-free pad dimming (patches 0027/0028, since v13): the host unit test of hid/led/pad_dimming.h, then the real firmware in the
 # emulator (tests/song's Emulator): what goes to the PIC at every pad brightness, both ways of the community feature
 # "Flicker-free dimming" and, with a second ELF, against 1.2.1 (mastertune-v13). See pad_dim_emu.py's docstring.
 #
-# Usage: ./run.sh <pad-dim firmware tree> [1.2.1 deluge.elf to compare with] [work dir]
+# Usage: ./run.sh <firmware tree (v13 or later)> [1.2.1 deluge.elf to compare with] [work dir]
 #   The tree's build/Release/deluge.elf (built with symbols) and its toolchain (nm, gdb). About 15 seconds.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)

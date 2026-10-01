@@ -1,5 +1,5 @@
 #!/bin/sh
-# Sampling profiler (mastertune-v15-prof): host test of the firmware's ring and SysEx encoders, then the computer's
+# Sampling profiler (patch 0053): host test of the firmware's ring and SysEx encoders, then the computer's
 # decoders on the same messages: tools/deluge_profiler.py and (if node is there) tools/profiler.html.
 # Usage: ./run.sh /path/to/DelugeFirmware   Needs: g++, python3 (node for the page)
 set -e
