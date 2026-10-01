@@ -13,7 +13,9 @@ manager not back within its limit), wild accesses outside RAM and the peripheral
 then. After a problem: the last inputs are kept, the Deluge boots again and the run goes on with the next seed.
 
 Usage: fuzz_ui.py <deluge.elf> --firmware v13|121 --tools PREFIX --build DIR --out DIR [--steps N] [--seed S]
-                  [--synths N] [--7seg] [--minutes M]
+                  [--synths N] [--7seg] [--minutes M] [--mode all|browser|deep]
+  --mode deep    half plain steps, half two-finger ones (a button held + another, an audition pad held + SYNTH,
+                 LEARN + a knob, a pad held + a type button, undo/redo, SHIFT+SCALE): the paths of the open crashes
 Results: <out>/fuzz.json (problems with their last inputs, heap samples, counts) and a summary on stdout."""
 import argparse
 import collections
@@ -70,8 +72,9 @@ class Inputs:
             base = sym["_ZN6deluge3hid8encoders8encodersE"]
             self.enc = {k: (base + 14 * i + (0 if i >= 4 else 1), "<b") for i, k in enumerate(ENCODERS)}
 
-    def button(self, name, on):
-        self.rig.action(f"{name} {'on' if on else 'off'}", self.button_fn, B[name], 1 if on else 0, 0)
+    def button(self, name, on, limit_s=10):
+        self.rig.action(f"{name} {'on' if on else 'off'}", self.button_fn, B[name], 1 if on else 0, 0,
+                        limit_s=limit_s)
 
     def pad(self, x, y, velocity):
         self.rig.action(f"pad {x},{y} {velocity}", self.pad_fn, x, y, velocity)
@@ -234,6 +237,90 @@ def step(rng, inp, rig, log):
     return d
 
 
+# --mode deep: what a hand does with two fingers, which the plain steps never do: one button held while another is
+# pressed (SAVE + RECORD exports stems, RECORD + PLAY records the whole song, LEARN + a knob learns it, SHIFT + BACK
+# redoes), an audition pad held while a button is pressed (SYNTH, KIT, MIDI, CV, LOAD: a preset into that row), a clip's
+# pad held while its type is changed, and the scale buttons and undo more often (SM01 came from undo and SHIFT+SCALE).
+HOLD_FIRST = ["SAVE", "RECORD", "LEARN", "SHIFT", "AFFECT", "SONG", "CLIP", "LOAD", "CROSS", "SYNC"]
+THEN_PRESS = ["RECORD", "PLAY", "SYNTH", "KIT", "MIDI", "CV", "SCALE", "BACK", "LOAD", "SAVE", "SELECT_ENC", "CROSS",
+              "TRIPLETS", "KEYBOARD", "SONG", "CLIP", "AFFECT"] + [f"MOD{i}" for i in range(8)]
+SLOW = {("SAVE", "RECORD"), ("RECORD", "PLAY")}  # a stem export or a whole-song recording runs inside the press
+
+
+def step_deep(rng, inp, rig, log):
+    """One input of --mode deep: half the time a plain step(), else a two-finger one."""
+    tm = lambda s, what: rig.tm(s, what)  # noqa: E731
+    r = rng.random()
+    if r < 0.5:
+        return step(rng, inp, rig, log)
+    if r < 0.68:  # A button held, another pressed
+        a = rng.choice(HOLD_FIRST)
+        b = rng.choice([n for n in THEN_PRESS if n != a])
+        inp.button(a, True)
+        tm(0.05, f"{a} held")
+        inp.button(b, True, limit_s=300 if (a, b) in SLOW else 10)
+        tm(rng.uniform(0.02, 0.1), f"{a}+{b} held")
+        inp.button(b, False)
+        inp.button(a, False)
+        d = f"{a} held + {b}"
+    elif r < 0.78:  # An audition pad held, a button pressed: a preset into that row, the row's menu
+        y = rng.randrange(8)
+        b = rng.choice(["SYNTH", "KIT", "MIDI", "CV", "LOAD", "SAVE", "SELECT_ENC", "LEARN"])
+        inp.pad(17, y, 100)
+        tm(0.05, "audition pad held")
+        inp.button(b, True)
+        tm(0.05, f"audition + {b}")
+        inp.button(b, False)
+        inp.pad(17, y, 0)
+        d = f"pad 17,{y} held + {b}"
+    elif r < 0.84:  # LEARN held, a gold knob or a pad: knob or note learn
+        inp.button("LEARN", True)
+        tm(0.05, "LEARN held")
+        if rng.random() < 0.6:
+            name = rng.choice(("mod0", "mod1"))
+            n = rng.choice((-2, -1, 1, 2))
+            inp.turn(name, n)
+            tm(0.05, "LEARN + turn")
+            d = f"LEARN held + turn {name} {n:+d}"
+        else:
+            x, y = rng.randrange(18), rng.randrange(8)
+            inp.pad(x, y, 100)
+            tm(0.05, "LEARN + pad")
+            inp.pad(x, y, 0)
+            d = f"LEARN held + pad {x},{y}"
+        inp.button("LEARN", False)
+    elif r < 0.90:  # A clip's or a row's pad held, its type changed (SYNTH, KIT, MIDI, CV)
+        x, y = rng.randrange(16), rng.randrange(8)
+        b = rng.choice(["SYNTH", "KIT", "MIDI", "CV"])
+        inp.pad(x, y, 100)
+        tm(0.05, "pad held")
+        inp.button(b, True)
+        tm(0.05, f"pad + {b}")
+        inp.button(b, False)
+        inp.pad(x, y, 0)
+        d = f"pad {x},{y} held + {b}"
+    elif r < 0.95:  # Undo and redo
+        shift = rng.random() < 0.3
+        if shift:
+            inp.button("SHIFT", True)
+        inp.button("BACK", True)
+        inp.button("BACK", False)
+        if shift:
+            inp.button("SHIFT", False)
+        d = "SHIFT+BACK (redo)" if shift else "BACK (undo)"
+    else:  # The scale: SCALE or SHIFT + SCALE (next scale)
+        shift = rng.random() < 0.6
+        if shift:
+            inp.button("SHIFT", True)
+        inp.button("SCALE", True)
+        inp.button("SCALE", False)
+        if shift:
+            inp.button("SHIFT", False)
+        d = "SHIFT+SCALE" if shift else "SCALE"
+    tm(rng.uniform(0.02, 0.15), "between inputs")
+    return d
+
+
 def step_browser(rng, inp, rig, log):
     """--mode browser: the song browser (LOAD) only, as in #4846 (a crash scrolling with <> on a numeric song name,
     7-segment display): the horizontal encoder (with and without SHIFT, which edits the name's number), the select
@@ -290,7 +377,7 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--synths", type=int, default=2)
     ap.add_argument("--7seg", dest="seven", action="store_true")
-    ap.add_argument("--mode", choices=("all", "browser"), default="all")
+    ap.add_argument("--mode", choices=("all", "browser", "deep"), default="all")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     import stress_ui_emu as su
@@ -324,7 +411,7 @@ def main():
         n = 0
         try:
             while done < a.steps and not (a.minutes and time.time() - t0 > a.minutes * 60):
-                d = (step_browser if a.mode == "browser" else step)(rng, inp, rig, print)
+                d = dict(browser=step_browser, deep=step_deep).get(a.mode, step)(rng, inp, rig, print)
                 recent.append(f"{rig.emu.seconds():.2f}s {d}")
                 null.check(d)
                 n += 1
