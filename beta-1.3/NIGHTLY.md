@@ -269,8 +269,8 @@ How the faults were found:
   restart of the container. Round 7 (all 22 patches; deep seed 211 OLED, all seed 8001 7-segment): none in about
   3,100 inputs (46 of 60 minutes, again cut off by a restart; the counts are from the logs, which report every 100
   inputs and every problem at once).
-- **The whole series together**: `tests/repro/run.sh` on the build with all 22 patches: all 19 tests pass (the
-  35-minute SM01 replay separately).
+- **The whole series together**: `tests/repro/run.sh` on the build with all 22 patches: all 19 tests pass (not counting the
+  35-minute SM01 replay, run on its own).
 - **Probes** for the areas the issue tracker names: `tests/menu_walk_emu.py` (every menu of nine contexts, horizontal
   menus on and off: about 900 items, clean with 0014) and `tests/repro/export_repeat_emu.py` (16-28 stem exports in a row
   with song changes and injected RAM failures: no leak, clean with 0011 and 0012).
