@@ -53,7 +53,9 @@ SDRAM and carries a count of *reasons* to stay loaded (`numReasonsToBeLoaded`):
 - **Loading.** A cluster needed but not in RAM is queued in `ClusterPriorityQueue` (a `std::priority_queue`, the most
   urgent first) and loaded by the card routine. The beta rewrote this queue; 1.2.1's queue ordered by address instead
   of priority (mastertune fixed that separately).
-- **Stealing.** When memory runs short, clusters without reasons are freed (stolen), least recently used first.
+- **Stealing.** When memory runs short, clusters without reasons are freed (stolen) from queues in a fixed order
+  (`StealableQueue`): first data no song uses (samples, converted samples, wavetables, caches), then the current
+  song's, its percussion cache last; within a queue, the one released longest ago first.
 - **#4952 (30 September 2026)** meant to hold short samples whole (up to 2 + 8 clusters), so they never wait for the
   card. It had four faults: it counted samples instead of clusters (samples 2-6 times too long counted as short), it
   claimed only 2 clusters whatever it was asked, it then skipped a short sample's loop start (a sample up to ~7 s
