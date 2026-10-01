@@ -1,0 +1,43 @@
+From 882d000b49077b47c17c175d1c7eaae65c27d3a9 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 19:34:59 +0000
+Subject: [PATCH 105/106] A new Song doesn't play "reversed": initialize the
+ TimelineCounter's direction
+
+PR #4445 moved currentlyPlayingReversed and sequenceDirectionMode from Clip
+to TimelineCounter, so that recording song automation reads the Song's own
+flags instead of casting the Song to a Clip (the old E445 in arranger view).
+But only Clip sets them; nothing initializes them for the Song. A Song made
+in reused memory, as after song changes, took whatever was there: in the
+fuzzer's seed 108 (--mode deep, input 488) its flag held 0xED, so recording
+song automation from performance view took the "playing reversed" branch of
+AutoParam::homogenizeRegion() with the Song's cut point (INT32_MAX) and froze
+with E445. In a release build that branch builds a wrong region. Give both
+fields default initializers (false, FORWARD).
+
+Test (beta-1.3/tests/repro/song_reversed_emu.py): with 0xED written into the
+memory a new Song is made in, the loaded song's flags are false and FORWARD
+(before: 0xED).
+---
+ src/deluge/model/timeline_counter.h | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/deluge/model/timeline_counter.h b/src/deluge/model/timeline_counter.h
+index 7b01d0f3..4850b891 100644
+--- a/src/deluge/model/timeline_counter.h
++++ b/src/deluge/model/timeline_counter.h
+@@ -51,6 +51,9 @@ public:
+ 	ParamManagerForTimeline paramManager;
+ 	bool armedForRecording{true};
+ 
+-	bool currentlyPlayingReversed;
+-	SequenceDirection sequenceDirectionMode;
++	// Clip sets these; the Song, the other TimelineCounter (song automation), never does. Uninitialized, a Song made in
++	// reused memory could play "reversed": recording song automation then froze with E445 in
++	// AutoParam::homogenizeRegion() (the fuzzer's seed 108)
++	bool currentlyPlayingReversed{false};
++	SequenceDirection sequenceDirectionMode{SequenceDirection::FORWARD};
+ };
+-- 
+2.43.0
+

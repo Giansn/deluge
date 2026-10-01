@@ -18,6 +18,10 @@
 #   savekitrow_emu.py     0101: audition pad + SAVE opens the kit-row save only for a kit's sound row
 #   automation_type_emu.py 0102: a clip made CV or MIDI in song view opens its automation view without the synth's
 #                         parameter (CV: no E411)
+#   modknob_cv_emu.py     0103: the MOD buttons in a CV clip write nothing through a null pointer
+#   (0104 withdrawn: the same fix as 0016, found independently in seed 106)
+#   song_reversed_emu.py  0105: a new Song doesn't play "reversed" (song automation recorded: no E445)
+#   arranger_undo_emu.py  0106: undo in the arranger's automation view goes back to the arranger (no E369)
 #   (0007, the transpose note during a song change, and 0008, a kit row saved without params: the fuzzer's
 #   seeds 11 (and 21) and 1011 in --mode deep, see beta-1.3/NIGHTLY.md section 7)
 #   sm01_replay_emu.py    0001: the 908-input run that froze with SM01 (about 35 minutes; LONG=1 to include it)
@@ -28,7 +32,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ELF=$1 TOOLS=$2 BUILD=$3 OUT=${4:-/tmp/beta-repro}
 mkdir -p "$OUT"
 cd /tmp || exit 1
-tests="save_4917 songswap_e455 kitrow save_name oom_robust cluster_cache abandon_load export_abort_hang export_abort_file arranger_automation recorder_threshold hmenu_off_buttons qwerty_cursor savekitrow automation_type"
+tests="save_4917 songswap_e455 kitrow save_name oom_robust cluster_cache abandon_load export_abort_hang export_abort_file arranger_automation recorder_threshold hmenu_off_buttons qwerty_cursor savekitrow automation_type modknob_cv song_reversed arranger_undo"
 [ "${LONG:-0}" = 1 ] && tests="$tests sm01_replay"
 fails=0
 for t in $tests; do

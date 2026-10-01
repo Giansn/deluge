@@ -252,6 +252,11 @@ this session's, 0101 and up the helper session's (`reports/`).
 | 0016 | S004: a fast horizontal-encoder turn puts a browser's text cursor outside the text (since #4529) | fuzz seed 71 | `qwerty_cursor` |
 | 0101 | E411: audition pad + SAVE opened the kit-row save for a non-kit row | fuzz seed 1011 | `savekitrow` |
 | 0102 | E411: a clip made CV kept its synth parameter in the automation view | fuzz seed 101 | `automation_type` |
+| 0103 | Null writes: the MOD buttons in a CV clip wrote through a null `getModKnobMode()` (the fuzzer's "null writes") | write hook on the null page | `modknob_cv` |
+| 0105 | E445: a Song in reused memory "played reversed" when song automation was recorded (PR #4445's fields uninitialized) | fuzz seed 108 | `song_reversed` |
+| 0106 | E369: undo or redo in the arranger's automation view went into a Clip that isn't there | fuzz seed 109 | `arranger_undo` |
+
+0104 (the S004 of fuzz seed 106) was the same fix as 0016, found independently, and is withdrawn.
 
 How the faults were found:
 - **Fuzzer rounds** (`tests/fuzz_ui.py`, 50-60 minutes each, OLED and 7-segment, modes `all` and `deep` with held-button
@@ -262,9 +267,10 @@ How the faults were found:
   menus on and off: about 900 items, clean with 0014) and `tests/repro/export_repeat_emu.py` (16-28 stem exports in a row
   with song changes and injected RAM failures: no leak, clean with 0011 and 0012).
 - **Fuzzer artefacts fixed on the way**: the modal audio recorder (ended like BACK), a song load while playing (a quick
-  LOAD tap), v1.3's encoder task (each turn now wakes it).
+  LOAD tap), v1.3's encoder task (each turn now wakes it), the SSI's receive DMA (its position now moves with the
+  transmit DMA: without it a recorder recording an input froze with bbbb, fuzz seed 114).
 
 What mastertune 1.2.1 shares: the code of 0001 (SM01) and 0010 (the M000 free, from #588 in 2023) is the same in 1.2.1,
 so both are candidates for v19.0.5; v19.0.4 already has its own fixes for the faults behind 0002 and 0004 (section 4).
-Came with 1.3, so not in 1.2.1: 0006's `operator new` (#4598), 0009 (#4952), 0014 (#4678), 0016 (#4529). Not checked
-against 1.2.1 yet: the rest.
+Came with 1.3, so not in 1.2.1: 0006's `operator new` (#4598), 0009 (#4952), 0014 (#4678), 0016 (#4529). 1.2.1 has 0103's null write (`View::modButtonAction()`) and the older form of 0105's fault (it casts the Song to a
+`Clip` for the direction). Not checked against 1.2.1 yet: the rest.

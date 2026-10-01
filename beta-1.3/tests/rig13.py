@@ -86,6 +86,16 @@ class Rig13(su.Rig):
         if sd_latency and sd_latency != "instant":
             se.SdModel(emu, *(float(x) for x in sd_latency.split(",")), wait="yield")
         self.dma = su.LightDma(emu)
+        # The SSI's receive DMA (channel 7) writes the input in step with the transmit DMA. The firmware reads it 128 to
+        # 256 samples behind (AudioEngine::slowRoutine() keeps it there). Unmodelled, its CRDA stood still, and
+        # slowRoutine() kept pulling i2sRXBufferPos back by 128 samples: a SampleRecorder recording an input then read
+        # round the whole ring and got fed 0 samples (bbbb in SampleRecorder::feedAudio(); the fuzzer's seed 114).
+        # Here it runs 192 samples ahead of where the firmware reads now, at the sample rate.
+        rx_start = sym["ssiRxBuffer"]
+        rx_first = (emu.u32(sym["_ZN11AudioEngine14i2sRXBufferPosE"]) - se.UNCACHED_MIRROR_OFFSET - rx_start) // 8 + 192
+        dma = self.dma
+        emu.readers[se.dmac_channel_base(7) + 0x1C] = (
+            lambda size: rx_start + (rx_first + dma.position() - dma.start_position) % 2048 * 8)
         self.cpu = None
         self.cpu_seen = 0
         se.run_task_manager(emu, 0.001)

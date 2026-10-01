@@ -41,11 +41,13 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     rig, inp = kr.boot(a, "boot")
     emu = rig.emu
-    kind_off, id_off, output_off, otype_off, patched, none, midi, cv, lpf = se.gdb_values(emu, [
-        "(int)&((Clip*)0)->lastSelectedParamKind", "(int)&((Clip*)0)->lastSelectedParamID",
-        "(int)&((Clip*)0)->output", "(int)&((Output*)0)->type", "(int)'deluge::modulation::params::Kind::PATCHED'",
-        "(int)'deluge::modulation::params::Kind::NONE'", "(int)OutputType::MIDI_OUT", "(int)OutputType::CV",
-        "(int)'deluge::modulation::params::LOCAL_LPF_FREQ'"])  # (gdb finds the namespace's names only quoted)
+    kind_off, id_off, output_off, otype_off, patched, none, midi, cv, lpf = su.gdb_ints(emu, [
+        "list Song::Song",  # (a context in which gdb finds the types; quoted: the namespace's names)
+        "print (int)&((Clip*)0)->lastSelectedParamKind", "print (int)&((Clip*)0)->lastSelectedParamID",
+        "print (int)&((Clip*)0)->output", "print (int)&((Output*)0)->type",
+        "print (int)'deluge::modulation::params::Kind::PATCHED'", "print (int)'deluge::modulation::params::Kind::NONE'",
+        "print (int)OutputType::MIDI_OUT", "print (int)OutputType::CV",
+        "print (int)'deluge::modulation::params::LOCAL_LPF_FREQ'"])
     song = kr.Song(rig)
 
     def state(clip):

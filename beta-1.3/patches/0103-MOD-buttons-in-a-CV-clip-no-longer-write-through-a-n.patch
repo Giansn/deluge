@@ -1,0 +1,65 @@
+From 94bb711d0ddf3f86fa4c39da6855880007915b29 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 19:10:24 +0000
+Subject: [PATCH 103/104] MOD buttons in a CV clip no longer write through a
+ null pointer
+
+View::modButtonAction() stored the pressed MOD button in
+*modControllable->getModKnobMode(). A CV instrument has no mod knob modes:
+its getModKnobMode() is ModControllable's, which returns nullptr ("Return
+NULL if different modes not supported"), so the button's number went to
+address 0, at every MOD press in a CV clip. These are the fuzz campaign's
+"null writes" (one site, nearly every seed). On the Deluge address 0 is
+cacheable memory in the empty CS0 area, so it didn't fault, but later reads
+through null pointers could see the value. View::potentiallyRenderVUMeter()
+read through the same pointer. Both use View::getModKnobMode() (-1 when
+there are no modes) or check the pointer now.
+
+Test (beta-1.3/tests/repro/modknob_cv_emu.py): MOD0 to MOD7 in a CV clip
+write nothing to the null page (before: MOD1 to MOD7 wrote 1 to 7); in a
+synth clip MOD3 still sets the mode to 3.
+---
+ src/deluge/gui/views/view.cpp | 13 ++++++++-----
+ 1 file changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/src/deluge/gui/views/view.cpp b/src/deluge/gui/views/view.cpp
+index 0690e2bb..52bde253 100644
+--- a/src/deluge/gui/views/view.cpp
++++ b/src/deluge/gui/views/view.cpp
+@@ -1536,7 +1536,7 @@ void View::modButtonAction(uint8_t whichButton, bool on) {
+ 				// view
+ 				if (!rootUIIsClipMinderScreen()) {
+ 					// are we pressing the same button that is currently selected
+-					if (*activeModControllableModelStack.modControllable->getModKnobMode() == whichButton) {
++					if (getModKnobMode() == whichButton) {
+ 						// you just pressed the volume mod button and it was already selected previously
+ 						// toggle displaying VU Meter on / off
+ 						if (whichButton == 0) {
+@@ -1550,8 +1550,12 @@ void View::modButtonAction(uint8_t whichButton, bool on) {
+ 				}
+ 
+ 				// change the button selection before calling mod button action so that mod button action
+-				// knows the mod button parameter context
+-				*activeModControllableModelStack.modControllable->getModKnobMode() = whichButton;
++				// knows the mod button parameter context. A CV instrument has no modes (getModKnobMode() returns
++				// nullptr): this wrote the button's number to address 0
++				uint8_t* modKnobMode = activeModControllableModelStack.modControllable->getModKnobMode();
++				if (modKnobMode) {
++					*modKnobMode = whichButton;
++				}
+ 
+ 				activeModControllableModelStack.modControllable->modButtonAction(
+ 				    whichButton, true, (ParamManagerForTimeline*)activeModControllableModelStack.paramManager);
+@@ -1779,8 +1783,7 @@ bool View::potentiallyRenderVUMeter(RGB image[][kDisplayWidth + kSideBarWidth])
+ 	// 2) we've pressed a clip while vu meter was active
+ 	// then let's continue to render VU meter
+ 	if (displayVUMeter
+-	    && ((activeModControllableModelStack.modControllable
+-	         && *activeModControllableModelStack.modControllable->getModKnobMode() == 0)
++	    && ((activeModControllableModelStack.modControllable && getModKnobMode() == 0) // -1 for a CV instrument
+ 	        || (isClipContext() && renderedVUMeter))) {
+ 		PadLEDs::renderingLock = true;
+ 
+-- 
+2.43.0
+
