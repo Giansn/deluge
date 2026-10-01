@@ -264,7 +264,13 @@ How the faults were found:
   combinations). Every round runs on the build with all patches so far; each problem is replayed exactly (same seed)
   with a backtrace, then reduced to a short test. Round 4 (0001-0012): three problems in about 2,750 inputs (0013,
   0016, 0017). Round 5 (0001-0016, 0101, 0102; deep seed 81 and all seed 5001, OLED): none in 3,219 inputs, no wild
-  access, no error popup, free SDRAM steady.
+  access, no error popup, free SDRAM steady (0017's fault was still in that build; the inputs didn't reach it).
+  Round 6 (the same build, 7-segment, deep seed 91 and all seed 7001): none in about 2,100 inputs, cut off by a
+  restart of the container. Round 7 (all 22 patches; deep seed 211 OLED, all seed 8001 7-segment): none in about
+  3,100 inputs (46 of 60 minutes, again cut off by a restart; the counts are from the logs, which report every 100
+  inputs and every problem at once).
+- **The whole series together**: `tests/repro/run.sh` on the build with all 22 patches: all 19 tests pass (the
+  35-minute SM01 replay separately).
 - **Probes** for the areas the issue tracker names: `tests/menu_walk_emu.py` (every menu of nine contexts, horizontal
   menus on and off: about 900 items, clean with 0014) and `tests/repro/export_repeat_emu.py` (16-28 stem exports in a row
   with song changes and injected RAM failures: no leak, clean with 0011 and 0012).
