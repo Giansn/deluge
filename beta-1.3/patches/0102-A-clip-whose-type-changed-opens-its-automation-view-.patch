@@ -1,0 +1,117 @@
+From 82fdac6c5c56983dab60eaf643b1bd929d11817f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 18:06:06 +0000
+Subject: [PATCH 102/102] A clip whose type changed opens its automation view
+ without the old parameter
+
+The transitions into a clip that was left in the automation view (session view in rows and in grid,
+arranger view) pre-render that view before AutomationView::opened() checks whether the clip changed its
+type since. A synth clip with a patched parameter selected there (e.g. LPF frequency), made a CV clip in
+song view, had the parameter looked up in its CV params: E411 in
+ModelStackWithThreeMainThings::getPatchedAutoParamFromId() (in a release build a read through a null
+ParamCollection). This is the fuzzer's seed 101 (--mode deep --7seg, input 751: CLIP in song view). Made
+a MIDI clip, it doesn't freeze (MIDIInstrument takes any parameter ID for a CC), but the pre-render showed
+the CC of the same number. The check, now AutomationView::resetSelectionIfOutputTypeChanged(), also runs
+before each of these pre-renders; initializeView() calls the same function.
+
+Test (beta-1.3/tests/repro/automation_type_emu.py): a synth clip with LPF frequency selected, made CV (or
+MIDI) in song view, opens with CLIP in the automation view without a parameter selected (before: E411 for
+CV); without a type change the selection stays.
+---
+ src/deluge/gui/views/arranger_view.cpp   |  1 +
+ src/deluge/gui/views/automation_view.cpp | 26 ++++++++++++++++--------
+ src/deluge/gui/views/automation_view.h   |  1 +
+ src/deluge/gui/views/session_view.cpp    |  2 ++
+ 4 files changed, 21 insertions(+), 9 deletions(-)
+
+diff --git a/src/deluge/gui/views/arranger_view.cpp b/src/deluge/gui/views/arranger_view.cpp
+index 2c226082..c0c42fd4 100644
+--- a/src/deluge/gui/views/arranger_view.cpp
++++ b/src/deluge/gui/views/arranger_view.cpp
+@@ -1842,6 +1842,7 @@ void ArrangerView::transitionToClipView(ClipInstance* clipInstance) {
+ 		// accidentally render stale arranger automation state into the animation store.
+ 		automationView.onArrangerView = false;
+ 		automationView.navSysId = automationView.getNavSysId();
++		automationView.resetSelectionIfOutputTypeChanged(false); // Before the pre-render looks the parameter up
+ 		automationView.setAutomationParamType();
+ 
+ 		if (clip->type == ClipType::INSTRUMENT) {
+diff --git a/src/deluge/gui/views/automation_view.cpp b/src/deluge/gui/views/automation_view.cpp
+index 0a42de35..9974ad18 100644
+--- a/src/deluge/gui/views/automation_view.cpp
++++ b/src/deluge/gui/views/automation_view.cpp
+@@ -431,15 +431,7 @@ void AutomationView::initializeView() {
+ 		// only applies to instrument clips (not audio)
+ 		if (clip) {
+ 			// check if we for some reason, left the automation view, then switched clip types, then came back in
+-			// if you did that...reset the parameter selection and save the current parameter type selection
+-			// so we can check this again next time it happens
+-			if (outputType != clip->lastSelectedOutputType) {
+-				if (inAutomationEditor()) {
+-					initParameterSelection();
+-				}
+-
+-				clip->lastSelectedOutputType = outputType;
+-			}
++			resetSelectionIfOutputTypeChanged();
+ 
+ 			// if we're in a kit, we want to make sure the param selected is valid for current context
+ 			// e.g. only UNPATCHED_GLOBAL param kind's can be used with Kit Affect Entire enabled
+@@ -3197,6 +3189,22 @@ bool AutomationView::inAutomationEditor() {
+ 	return true;
+ }
+ 
++// If the current clip changed its type (e.g. from a synth to MIDI or CV) since the automation view last showed it, the
++// parameter selected then may not exist in the new type: reset the selection, and note the type for the next check.
++// initializeView() checks it when the view opens. The transitions into a clip that pre-render this view before it opens
++// (session view, arranger view) have to check it first: the pre-render looked the old parameter up in the new type (a
++// patched one froze with E411 in a CV clip; a MIDI clip took its ID for a CC).
++void AutomationView::resetSelectionIfOutputTypeChanged(bool updateDisplay) {
++	Clip* clip = getCurrentClip();
++	OutputType outputType = clip->output->type;
++	if (outputType != clip->lastSelectedOutputType) {
++		if (inAutomationEditor()) {
++			initParameterSelection(updateDisplay);
++		}
++		clip->lastSelectedOutputType = outputType;
++	}
++}
++
+ void AutomationView::setAutomationParamType() {
+ 	automationParamType = AutomationParamType::PER_SOUND;
+ 	if (!onArrangerView && !inAutomationEditor()) {
+diff --git a/src/deluge/gui/views/automation_view.h b/src/deluge/gui/views/automation_view.h
+index 663b5da5..05ca4914 100644
+--- a/src/deluge/gui/views/automation_view.h
++++ b/src/deluge/gui/views/automation_view.h
+@@ -69,6 +69,7 @@ public:
+ 	ClipMinder* toClipMinder() override { return getUIContextType() == UIType::ARRANGER ? nullptr : this; }
+ 
+ 	void setAutomationParamType();
++	void resetSelectionIfOutputTypeChanged(bool updateDisplay = true);
+ 
+ 	bool onAutomationOverview();
+ 	bool inAutomationEditor();
+diff --git a/src/deluge/gui/views/session_view.cpp b/src/deluge/gui/views/session_view.cpp
+index 6ff2f4d0..7409b365 100644
+--- a/src/deluge/gui/views/session_view.cpp
++++ b/src/deluge/gui/views/session_view.cpp
+@@ -2772,6 +2772,7 @@ void SessionView::transitionToViewForClip(Clip* clip) {
+ 		// accidentally render stale arranger automation state into the animation store.
+ 		automationView.onArrangerView = false;
+ 		automationView.navSysId = automationView.getNavSysId();
++		automationView.resetSelectionIfOutputTypeChanged(false); // Before the pre-render looks the parameter up
+ 		automationView.setAutomationParamType();
+ 
+ 		// Store rows 1..kDisplayHeight hold the visible clip rows; rows 0 and kDisplayHeight + 1 are reserved for
+@@ -4592,6 +4593,7 @@ void SessionView::gridTransitionToViewForClip(Clip* clip) {
+ 		// accidentally render stale arranger automation state into the animation store.
+ 		automationView.onArrangerView = false;
+ 		automationView.navSysId = automationView.getNavSysId();
++		automationView.resetSelectionIfOutputTypeChanged(false); // Before the pre-render looks the parameter up
+ 		automationView.setAutomationParamType();
+ 
+ 		if (clip->type == ClipType::INSTRUMENT) {
+-- 
+2.43.0
+
