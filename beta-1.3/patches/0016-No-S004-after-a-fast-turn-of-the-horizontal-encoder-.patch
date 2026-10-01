@@ -1,0 +1,41 @@
+From 5b9620328fe948cc2f490f7e914bfc37d663121b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 20:16:16 +0000
+Subject: [PATCH 16/16] No S004 after a fast turn of the horizontal encoder in
+ a browser or save screen
+
+Since the encoder overhaul (#4529) horizontalEncoderAction() gets the whole turn since the last read, not
++-1. QwertyUI::horizontalEncoderAction() only checked for the cursor already at the end or at 0, then added
+the offset: +2 one character before the end put the cursor past the text, a fast turn left made it
+negative, and the next character typed froze in String::concatenateAtPos() with S004 (a release build
+writes outside the string). The cursor is now kept within the text.
+---
+ src/deluge/gui/ui/qwerty_ui.cpp | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/deluge/gui/ui/qwerty_ui.cpp b/src/deluge/gui/ui/qwerty_ui.cpp
+index fb93216b..a174c384 100644
+--- a/src/deluge/gui/ui/qwerty_ui.cpp
++++ b/src/deluge/gui/ui/qwerty_ui.cpp
+@@ -16,6 +16,7 @@
+  */
+ 
+ #include "gui/ui/qwerty_ui.h"
++#include <algorithm>
+ #include "definitions_cxx.hpp"
+ #include "extern.h"
+ #include "gui/colour/colour.h"
+@@ -488,7 +489,9 @@ ActionResult QwertyUI::horizontalEncoderAction(int32_t offset) {
+ 		}
+ 	}
+ 
+-	enteredTextEditPos += offset;
++	// Since the encoder overhaul (#4529) offset is the whole turn since the last read (+-2 or more when turned fast),
++	// not +-1: keep the cursor within the text, or the next character typed goes beyond it (S004)
++	enteredTextEditPos = std::clamp<int32_t>(enteredTextEditPos + offset, 0, enteredText.getLength());
+ 
+ doDisplayText:
+ 	displayText();
+-- 
+2.43.0
+

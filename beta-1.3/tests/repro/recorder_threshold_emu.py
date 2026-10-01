@@ -33,11 +33,16 @@ import stress_ui_emu as su  # noqa: E402
 
 
 def choose(w, menu, target, what):
-    """The select encoder turned until target is the menu's current item (in a vertical menu)."""
-    for _ in range(len(w.kids(menu)) + 2):
-        if w.cur(menu) == target:
+    """The select encoder turned until target is the menu's current item (in a vertical menu; most don't wrap
+    around, so towards it)."""
+    kids = w.kids(menu)
+    for _ in range(len(kids) + 2):
+        c = w.cur(menu)
+        if c == target:
             return
-        w.turn("select", 1)
+        if target not in kids or c not in kids:
+            break
+        w.turn("select", 1 if kids.index(target) > kids.index(c) else -1)
     raise mw.Lost(f"{what}: {w.name(target)} not reached (at {w.name(w.cur(menu) or 0)})")
 
 

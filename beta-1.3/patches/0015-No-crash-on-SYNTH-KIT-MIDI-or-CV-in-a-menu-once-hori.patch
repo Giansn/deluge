@@ -1,0 +1,50 @@
+From da3cbd662e4c2cd13de59ab101d1226265190130 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 20:06:04 +0000
+Subject: [PATCH 15/16] No crash on SYNTH, KIT, MIDI or CV in a menu once
+ horizontal menus are switched off
+
+HorizontalMenu::buttonAction() took the field buttons (and SCALE, CROSS) whatever the menu's rendering
+style. handleInstrumentButtonPress() picks the field from paging.visiblePageItems, which renderOLED()
+prepares only while the menu renders horizontally and which points into a vector every horizontal menu
+refills. With SETTINGS > COMMUNITY FEATURES > HORIZONTAL MENUS switched off at run time, the stale span
+held another menu's items, find() returned end(), and current_item_ = end() was dereferenced (a virtual
+call through the word after the vector). The buttons now act only while the menu renders horizontally,
+and current_item_ is never set to end().
+---
+ src/deluge/gui/menu_item/horizontal_menu.cpp | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/src/deluge/gui/menu_item/horizontal_menu.cpp b/src/deluge/gui/menu_item/horizontal_menu.cpp
+index f99813b2..fd52cd99 100644
+--- a/src/deluge/gui/menu_item/horizontal_menu.cpp
++++ b/src/deluge/gui/menu_item/horizontal_menu.cpp
+@@ -78,7 +78,10 @@ ActionResult HorizontalMenu::buttonAction(hid::Button b, bool on, bool inCardRou
+ 	constexpr double navigation_buttons_debounce_threshold = 0.14;
+ 	const double time = getSystemTime();
+ 
+-	if (util::one_of(b, SYNTH, KIT, MIDI, CV, CROSS_SCREEN_EDIT, SCALE_MODE)
++	// The field and page buttons only while this menu renders horizontally: its paging (visiblePageItems) is prepared by
++	// renderOLED() then, and points into a vector every horizontal menu refills, so with horizontal menus switched off
++	// (or on 7SEG) it is stale or empty
++	if (renderingStyle() == HORIZONTAL && util::one_of(b, SYNTH, KIT, MIDI, CV, CROSS_SCREEN_EDIT, SCALE_MODE)
+ 	    && time - last_navigation_buttons_press_time > navigation_buttons_debounce_threshold) {
+ 
+ 		// use SCALE / CROSS SCREEN buttons to switch between pages or chained horizontal menus
+@@ -409,7 +412,12 @@ void HorizontalMenu::handleInstrumentButtonPress(std::span<MenuItem*> visible_pa
+ 				return;
+ 			}
+ 
+-			current_item_ = std::ranges::find(items, item);
++			const auto found = std::ranges::find(items, item);
++			if (found == items.end()) {
++				// Not one of ours (a stale page): never leave current_item_ at end()
++				return;
++			}
++			current_item_ = found;
+ 
+ 			// is the item already selected?
+ 			if (*current_item_ == previous) {
+-- 
+2.43.0
+
