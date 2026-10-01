@@ -23,7 +23,7 @@ Run `git pull` before any work: the cloud session keeps delivering.
 - **Use Python 3.12.** `python-rtmidi` has no ready-made packages for newer versions.
 - **Port names:** The ports are called `Deluge 0`, `MIDIIN2 (Deluge) 1` and `MIDIIN3 (Deluge) 2`. From the commit after `0377a67` the script finds `MIDIIN3` by itself, `-p` is no longer needed.
 
-## Tasks (as of 01.10.2026, v19.0.3 is out)
+## Tasks (as of 01.10.2026, v19.0.4 is out)
 
 Done: the report on v16, l2d, the song for the emulator, the retune test on Windows, "Rescue". The tasks for v17 are dropped: v18.3 contains v17, v18 and v18.2, so everything now applies to v18.3. What it brings is in the README, in the sections "v18", "v18.2" and "v18.3".
 
@@ -121,6 +121,14 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
    - **"New Sitar Grii 10":** in the repository's copy its three Hihat rows point to `SAMPLES/PsyPack/hihat.wav`, `hihatlong.wav` and `hihatshort.wav`, which were not in the card backup. Are they on the card? If not, those rows play silent: find the files, or load other hi-hats into the rows and save.
    - **Report:** the output as `device/2026-10-0X-song-check.txt`, with a line on the hi-hats, pushed to `device-results`.
 
+14. **v19.0.4: five fixes, no new feature** (new on 01.10.2026; README section "v19.0.4"):
+   - **Flash** `deluge-1.2.1-mastertune-v19.0.4-l2d-92b7ebbe.bin` (v19.0.3 plus patch 0123, nothing else changed). Settings → Firmware version shows `v19.0.4-l2d`. Tasks 1–13 apply to it as well.
+   - **Stem export, the most important check:** in Song view hold SAVE and press RECORD (the clip stems, offline rendering is the default). Use a long, sample-heavy song ("New Sitar Grii 10") and export it three times in a row. Before v19.0.4 this could stop with `M123` or hang when RAM ran short; now every export must finish. Note how long each took, and check on the computer that every stem has its full length (none of only 5 seconds).
+   - **A long recording:** RECORD + PLAY in Song view over a whole song (several minutes, the case of upstream #3309). It must end normally when you stop it.
+   - **Saved songs:** save a song that has an audio track, then run `python mastertune-1.2.1/tools/song_check.py <card>` (task 13): that song must show no WARN for duplicate attributes any more. Load it again: the audio track's clip has its length, colour and section as before.
+   - **A synth into a kit row:** in a kit clip, hold a row's audition pad and press SYNTH, choose a preset with the select encoder, and while the browser is still open turn a gold knob a few times. Then leave the browser. Nothing may freeze; the knob acts on the new sound.
+   - **Report:** a short report in English to `device/`, pushed to `device-results`.
+
 ### Done: "Rescue", the LPF has no effect (27.09.2026)
 
 - **Finding** (emulator with the real XML, cross-checked): The LPF works. But the song LPF's resonance is at maximum, so from about knob 36 the filter oscillates by itself. Its tone moves down with the knob, is about 10 dB above the music and clips. At the bottom a tone below 60 Hz remains. v16 behaves the same.
@@ -132,7 +140,8 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
 
 | File | What |
 |---|---|
-| `deluge-1.2.1-mastertune-v19.0.3-l2d-20a9a6ef.bin` | **current version**: v19.0.2 plus the record count-in as a countdown that no popup covers, with L2 cache for code and data. In the README the sections "v19.0.3" and "v19.0.2". |
+| `deluge-1.2.1-mastertune-v19.0.4-l2d-92b7ebbe.bin` | **current version**: v19.0.3 plus five fixes (stem export and long recordings no longer crash with M123, songs saved without duplicate attributes, a named CV track keeps its channel, a memory leak, a synth loaded into a kit row), with L2 cache for code and data. In the README the section "v19.0.4". |
+| `deluge-1.2.1-mastertune-v19.0.3-l2d-20a9a6ef.bin` | v19.0.3: v19.0.2 plus the record count-in as a countdown that no popup covers, with L2 cache for code and data. In the README the sections "v19.0.3" and "v19.0.2". |
 | `deluge-1.2.1-mastertune-v19.0.2-l2d-b194ed86.bin` | v19.0.2: v19.0.1 plus a countdown that no popup covers (the song change's and Song view's; not yet the count-in), with L2 cache for code and data. In the README the section "v19.0.2". |
 | `deluge-1.2.1-mastertune-v19.0.1-l2d-782cf068.bin` | v19.0.1: v19.0 plus the arp mode Ball that runs out (the preset PETTRA V1), with L2 cache for code and data. In the README the section "v19.0.1". |
 | `deluge-1.2.1-mastertune-v19.0-l2d-1d2b400d.bin` | v19.0: v18.4 plus the DJ filter, sync to the tempo heard and the nudge, with L2 cache for code and data. In the README the section "v19.0". |
