@@ -1110,6 +1110,8 @@ Version 1 is still in the git history of the folder `mastertune-1.2.1/`.
 
 ## Building and testing it yourself
 
+In a new Claude Code session (or any Linux x86-64): `mastertune-1.2.1/tools/setup_firmware.sh` sets up everything from this repository (the community source at 1.2.1, the patches, the toolchain, a build that is bit for bit the release, the emulator's helper) and [`mastertune-1.2.1/SETUP.md`](mastertune-1.2.1/SETUP.md) says how to run the tests. By hand:
+
 ```sh
 git clone https://github.com/SynthstromAudible/DelugeFirmware && cd DelugeFirmware
 git checkout release_1_2_1

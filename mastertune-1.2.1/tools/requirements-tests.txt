@@ -1,0 +1,9 @@
+# Python packages for the emulator tests (tests/*/…_emu.py) and the tools around them. Installed by the session start
+# hook (.claude/hooks/session-start.sh) in Claude Code on the web; elsewhere: pip install -r this file.
+unicorn==2.1.4
+numpy
+scipy
+soundfile
+pillow
+pymupdf
+pyflakes
