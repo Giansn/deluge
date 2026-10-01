@@ -115,6 +115,11 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
    - **Count-in (v19.0.3):** Settings → Recording → Count-in bars: 1 (or 2). In a clip view press REC, then PLAY. The count-in (`COUNT-IN` with 4, 3, 2, 1 big on the right) is on the title line, no popup in the middle any more. Turn a gold knob during it: its popup below, the count stays readable and goes on. When the recording begins, the count-in is gone. Also try it with a menu open (the count-in over its title) and stop playback during the count-in: nothing may stay on the screen.
    - **CPU monitor on** during a countdown: its line at the bottom, not over the countdown.
    - **Report:** a short report in English to `device/`, pushed to `device-results`.
+13. **Check the card's song files** (new on 01.10.2026; the checker and what it does: `device/analysis/2026-10-01-song-check.md`):
+   - `git pull`, then on the card (or a full copy of it): `python mastertune-1.2.1/tools/song_check.py <card folder> -v`. Pure Python 3, nothing to install, read-only.
+   - **Expected:** every song with an audio track shows WARN for six attributes written twice (upstream #4917, in 1.2.1 and mastertune too). The Deluge loads such files without trouble; only strict XML tools refuse them. Note everything else: ERROR (a file cut short, missing samples), NOTE, and files saved by the 1.3 beta (`c1.3.0`), if it was ever on this card.
+   - **"New Sitar Grii 10":** in the repository's copy its three Hihat rows point to `SAMPLES/PsyPack/hihat.wav`, `hihatlong.wav` and `hihatshort.wav`, which were not in the card backup. Are they on the card? If not, those rows play silent: find the files, or load other hi-hats into the rows and save.
+   - **Report:** the output as `device/2026-10-0X-song-check.txt`, with a line on the hi-hats, pushed to `device-results`.
 
 ### Done: "Rescue", the LPF has no effect (27.09.2026)
 
