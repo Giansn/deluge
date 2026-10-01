@@ -1,8 +1,9 @@
 # The community firmware's nightly (v1.3 beta): why it crashes, and what it means for mastertune
 
 As of 1 October 2026. Upstream: `SynthstromAudible/DelugeFirmware`, branch `main`. Sources: the git history, GitHub's
-issue and pull request pages, the code at today's build, and the firmware itself in the emulator. The investigation's
-tools are in `tests/v13/` and its raw data in the session's scratchpad (summarised here).
+issue and pull request pages, the code and the documentation at today's build, and the firmware itself in the
+emulator. The investigation's tools are in `tests/v13/` and its raw data in the session's scratchpad (summarised
+here).
 
 ## 1. What "nightly" is today
 
@@ -61,6 +62,41 @@ Since today (#4955) the crash handler reports more.
 In short: v1.3 is a beta under heavy construction. Large parts were rewritten at once (menus, sound editor, the
 scheduler, memory ownership), and the crashes come from the seams between old and new code, above all from object
 lifetimes. The fixes land quickly, often within days, but new regressions keep coming in at about the same rate.
+
+### What the beta's own documentation says
+
+The beta's `README.md` is a pointer to delugecommunity.com. That site is built from `website/` in the same repository,
+and its pages at `62a516c2` were read for this section (paths below are under `website/src/content/docs/`).
+- **No list of known issues.** The download page has only the general caveats quoted above (`downloads.mdx:53,55`)
+  and the advice to photograph a crash (`downloads.mdx:79`). The c1.3.0 changelog (`changelogs/CHANGELOG.mdx:33-463`)
+  lists features; the rewrites of the scheduler and of memory ownership are not in it.
+- **The new menus can be switched off:** `SETTINGS > COMMUNITY FEATURES > HORIZONTAL MENUS`
+  (`features/community_features.mdx:40-42`). It is on by default. Whether this avoids the menu crashes of cause 2 is
+  not proven: the sound editor's rewrite underneath stays.
+- **Audio export has documented problems** (`features/audio_export.mdx`). On heavy arrangements, offline rendering
+  "fills up memory" and leaves files with 5 seconds of audio; the advice is to turn offline rendering off (191-201).
+  The tail of one export can bleed into the next, unsolved (225-227). Memory pressure during offline rendering fits the
+  repeated-export crashes (#4639, #4471, #3309), but no issue says so.
+- **What the project tests.** The developer guidelines say that CI checks compiling and formatting, "and in the future
+  possibly unit testing", and that authors test their changes "on a best effort basis" by hand
+  (`development/deluge/guidelines.md:50-55`). The repository is further along than the page: CI runs unit tests on
+  x86 and an ARM spec under QEMU (`.github/workflows/tests.yml`). They test isolated parts: the memory manager,
+  scheduler timing, LFO, scales, fixed-point maths, `memmove`. Nothing runs the whole firmware or a sequence of button
+  presses, and the documentation names no emulator. Object lifetimes across the UI (cause 1) and the menus (cause 2)
+  are therefore tested only by hand and by the beta's users. This is the main reason the regressions reach the beta.
+- **The release process on paper and in practice.** `docs/GOVERNANCE.md:16-25` still describes a `nightly` tag and a
+  release every three months, each prepared on a release-candidate branch that takes only bug fixes. In practice the
+  last release is 1.2.1 (May 2025) and the nightly tag stopped in July 2026. The signal that 1.3 is near is a
+  `release/1.3` branch (the naming of `release/1.2`, `features/community_features.mdx:18`).
+- **The docs are partly out of date.** The getting-started page still names toolchain v10 with GCC 13.2.1
+  (`development/deluge/getting_started.md:22,49`); `main` needs v22 (section 1).
+- **Switching between the beta and 1.2.1 (or mastertune).** 1.3 moves `MIDIDevices.XML`, `MIDIFollow.XML`,
+  `PerformanceView.XML` and `CommunityFeatures.XML` into a `SETTINGS/` folder. A firmware before 1.3 finds them only
+  if they are moved back to the card's root (`changelogs/CHANGELOG.mdx:452-456`). MIDI Follow settings left the flash
+  memory; old `MIDIFollow.XML` files are to be deleted when updating (`CHANGELOG.mdx:55-56`).
+- **Contributing upstream.** `docs/CONTRIBUTING.md:15-18`: "do not use an agent to open PRs or comment on them", "do
+  not use an LLM to write PR descriptions". mastertune's fixes can go upstream only through a person who writes the
+  pull request themselves.
 
 ## 3. In the emulator
 
@@ -121,7 +157,8 @@ Not now:
     `audio_engine.cpp`, the scheduler.
 - **Effort and risk:** an estimated 4-6 weeks. On top of that, mastertune's CPU savings would have to be measured
   again, the emulator tests rebuilt for 1.3, and the result would land on a beta that still crashes regularly.
-- **Advice:** look again once c1.3.0 has a release tag. Until then, take single fixes over (section 4).
+- **Advice:** look again once c1.3.0 has a release-candidate branch (`release/1.3`) or a release tag. Until then,
+  take single fixes over (section 4).
 
 What `main` has that mastertune doesn't:
 - sounds that send MIDI notes (#3313, task 25, a medium port)
@@ -129,10 +166,11 @@ What `main` has that mastertune doesn't:
 - stutter per clip with reverse
 - new mod FX
 - looper/sampler outputs
-- offline stem export
+- audio export of single kit rows and a mixdown (offline rendering itself is in 1.2.1 already)
 - 24 sections
-- MIDI Thru
+- MIDI Thru per device (1.2.1 has the global setting)
 
-What mastertune has that `main` doesn't: master tune, USB audio out, the tuner and Scan, the delay, filter and EQ
+What mastertune has that `main` doesn't: master tune (`main` only edits master transpose in decimal cents now,
+`CHANGELOG.mdx:91`), USB audio out, the tuner and Scan, the delay, filter and EQ
 quality work, the drone, the DJ tools, the countdowns, and 20-25 % less CPU than 1.2.1. For the open plans (USB audio
 in, master EQ, line-in tuner, DJ decks/crossfader/isolator), `main` has nothing to take over.
