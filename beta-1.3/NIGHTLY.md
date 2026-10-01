@@ -2,7 +2,7 @@
 
 As of 1 October 2026. Upstream: `SynthstromAudible/DelugeFirmware`, branch `main`. Sources: the git history, GitHub's
 issue and pull request pages, the code and the documentation at today's build, and the firmware itself in the
-emulator. The investigation's tools are in `tests/v13/` and its raw data in the session's scratchpad (summarised
+emulator. The investigation's tools are in `beta-1.3/tests/` and its raw data in the session's scratchpad (summarised
 here).
 
 ## 1. What "nightly" is today
@@ -104,7 +104,8 @@ and its pages at `62a516c2` were read for this section (paths below are under `w
 
 ## 3. In the emulator
 
-`tests/v13/` adapts the emulator rig of `tests/song` and `tests/stress/ui` to v1.3 (`emu13.py`, `rig13.py`):
+`beta-1.3/tests/` adapts mastertune's emulator rig (`mastertune-1.2.1/tests/song`, `tests/stress/ui`) to v1.3
+(`emu13.py`, `rig13.py`):
 
 - **SD card:** v1.3 inlines `sd_read_sect()` into `disk_read_without_streaming_first()`.
 - **Boot:** the stop is where `deluge_main()` starts the task manager. v1.3 calls `startClock()` earlier as well.
@@ -147,7 +148,34 @@ is one line (`audio_clip.cpp:1086`).
 
 ## 5. Results of the emulator runs
 
-(filled in below as the runs finish)
+Three runs on 1 October 2026, the same random inputs (seed 1, then 1001) for both firmwares. Between inputs the
+firmware's own task manager ran 20-150 ms, so an hour of the host is about 4-5 minutes of the Deluge.
+
+| Run | Firmware | Inputs (boots) | Problems |
+|---|---|---|---|
+| all inputs, OLED, 60 min | v1.3 beta `62a516c2` | 1,731 (2) | **1 freeze: `SM01`** at input 907 |
+| all inputs, OLED, 60 min | mastertune v19.0.3 | 1,892 (2) | none (one false hang, see below) |
+| the song browser, 7-segment, 45 min | v1.3 beta | 2,397 (1) | none |
+
+- **v1.3: `SM01` on SCALE.** `freezeWithError("SM01")` from `Song::setScaleNotes()`, when SCALE was pressed in the
+  keyboard view (input 907, seed 1). The cause is being analysed.
+- **mastertune: a false hang, found and fixed in the fuzzer.** SHIFT + pad 0,4 in a synth clip opens the sound
+  editor's RECORD AUDIO, which stays in its own loop (`AudioRecorder::process()`) and reads the buttons from the PIC
+  itself. The fuzzer's inputs are calls, so nothing ended the recording and the pad press never returned. The fuzzer
+  now ends such a recording after 1.5 s as BACK would; checked on v19.0.3: without that the same hang, with it the
+  recording ends, the file is finished and the clip view returns. 1.2.1 and v1.3 have the same loop.
+- **The song browser on the 7-segment display** (the area of #4846) held up for 2,397 inputs.
+- **Writes through a null pointer:** 18 in each firmware, all from the mod buttons (`View::modButtonAction()` writes
+  through a null mod-knob-mode pointer for some outputs). Harmless on the device (section 3); the same code in both.
+- **Memory:** no trend within a run. Free SDRAM stayed between 1.75 and 1.93 MB on v1.3 and between 7.95 and 8.30 MB on
+  mastertune, with the same song. v1.3 keeps about 6 MB more allocated; why (caches, the new effects, the menus'
+  tables) is not measured yet.
+- **Error popups:** one `Error 18` (file not found) on mastertune, from a browser on the test card. Expected.
+
+What this does and does not show: an hour of random input found one crash in the beta and none in mastertune. That
+fits the issue tracker (section 2), but such a run reaches few of the deep paths: it does not hold a button while
+pressing another, so it never exported stems, never loaded a synth into a kit row, and never learned a knob. The
+helper session's reviews of those paths (section 2) found faults that mastertune shares; v19.0.4 fixes them.
 
 ## 6. Moving mastertune onto v1.3?
 

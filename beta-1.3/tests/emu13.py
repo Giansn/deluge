@@ -9,7 +9,7 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "song"))
+sys.path.insert(0, os.path.join(HERE, "..", "..", "mastertune-1.2.1", "tests", "song"))  # mastertune 1.2.1's rig
 import song_emu  # noqa: E402
 from unicorn.arm_const import UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2  # noqa: E402
 

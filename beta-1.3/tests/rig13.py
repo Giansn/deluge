@@ -13,7 +13,8 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TESTS = os.path.normpath(os.path.join(HERE, ".."))
+# The emulator rig of mastertune 1.2.1, which this one builds on (tests/song, tests/stress/ui, make_sd.py)
+TESTS = os.path.normpath(os.path.join(HERE, "..", "..", "mastertune-1.2.1", "tests"))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(TESTS, "stress", "ui"))
 sys.path.insert(0, os.path.join(TESTS, "song"))
