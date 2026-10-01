@@ -271,6 +271,8 @@ How the faults were found:
   inputs and every problem at once). Round 8 (all 22 patches, 30-minute runs: deep seed 221 and all seed 10001 OLED,
   the song browser seed 9001 7-segment): none in about 4,500 inputs (cut off after about 23 minutes). On the build
   with all 22 patches that makes about 7,600 inputs without a problem.
+- **The delivered build** (`beta-1.3/deluge-1.3.0-beta-62a516c2-nightly-582a21a1.bin`, built by `tools/setup_beta.sh`):
+  all 20 tests pass on that very file, the SM01 replay included. See `README.md`.
 - **The whole series together**: `tests/repro/run.sh` on the build with all 22 patches: all 19 tests pass, and so does the
   SM01 replay (`LONG=1`, all 908 inputs).
 - **Probes** for the areas the issue tracker names: `tests/menu_walk_emu.py` (every menu of nine contexts, horizontal

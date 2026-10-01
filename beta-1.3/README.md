@@ -10,11 +10,30 @@ This branch, `nightly`, holds the work on the community firmware's daily build, 
 - **The community repository is read-only** (see `CLAUDE.md`): it is cloned and fetched to read and build, never
   committed or pushed to, and no pull requests, issues or comments are made there.
 
+## The stabilised build
+
+`deluge-1.3.0-beta-62a516c2-nightly-582a21a1.bin` (1,739,200 bytes, SHA-256
+`f02f42de5974c69369799ece14c952c6f4e22b4bc44cedf27e463b6bb8a81426`) is the beta `62a516c2` with the 22 patches in
+`patches/`; what each one fixes and how it was found is in `NIGHTLY.md` section 7. The Deluge shows it as
+`1.3.0-beta-582a21a1` (SETTINGS > FIRMWARE VERSION). Install it like any firmware: the .bin as the only .bin in the
+card's root folder, then switch the Deluge on with SHIFT held. Back up the card first, as for any beta.
+
+- **Tested in the emulator only, not yet on a Deluge.** On this very file every patch's test passes
+  (`tests/repro/run.sh`, and the SM01 replay with `LONG=1`). The fuzzer ran about 7,600 random inputs on the same
+  code without a problem (rounds 7 and 8 in `NIGHTLY.md` section 7; that build differs from this file only in the
+  CPU fault handler, which runs after a crash, and in the version string).
+- **Built by `tools/setup_beta.sh`**: the tree `dc8440bf` (62a516c2 plus the patches), commit `582a21a1`.
+
 | File | What |
 |---|---|
-| `NIGHTLY.md` | Why the beta crashes, what its own documentation says, the emulator runs, what it means for mastertune |
+| `NIGHTLY.md` | Why the beta crashes, what its own documentation says, the emulator runs, our patches (section 7) |
+| `patches/` | The fixes on 62a516c2: 0001-0099 this session's, 0101 and up the helper session's (`git am` in order) |
+| `tools/setup_beta.sh` | The patched beta from this repository alone: source, patches, toolchain v22, build, blockcount.so |
 | `tests/emu13.py`, `tests/rig13.py` | mastertune's emulator rig (`mastertune-1.2.1/tests/song`, `tests/stress/ui`) adapted to v1.3 |
 | `tests/fuzz_ui.py` | a random user on the real firmware in the emulator, for v1.3 or mastertune with the same inputs |
+| `tests/menu_walk_emu.py` | walks every menu of nine contexts (OLED or 7-segment, horizontal menus on or off) |
+| `tests/repro/` | one test per patch (fails on 62a516c2, passes with the patches); `run.sh` runs them all |
+| `reports/` | the helper session's write-ups of single findings |
 
 ## Setting it up in a new session
 
