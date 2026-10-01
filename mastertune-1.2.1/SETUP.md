@@ -12,7 +12,7 @@ soundfile, pillow, pymupdf, pyflakes) if they are missing. It does nothing else,
 ## The firmware: one command
 
 ```sh
-mastertune-1.2.1/tools/setup_firmware.sh            # v19.0.3; or v19.0.2, v19.0.1, v19.0, v18.4
+mastertune-1.2.1/tools/setup_firmware.sh            # v19.0.4; or v19.0.3, v19.0.2, v19.0.1, v19.0, v18.4
 ```
 
 In about 4 minutes (first time: plus the downloads) it:
@@ -20,8 +20,8 @@ In about 4 minutes (first time: plus the downloads) it:
 1. clones the community firmware (`SynthstromAudible/DelugeFirmware`, blob-less) to `/home/user/work/DelugeFirmware-121`
    and fetches the tag `release_1_2_1`;
 2. makes the firmware tree `/home/user/work/mastertune-<version>` (a git worktree at `release_1_2_1`) and applies
-   `patches/0001`–`0122` and `l2test/0001`–`0003` with `git am`; for v19.0.3 it checks that the source tree is the
-   release's (`520ba462…`);
+   `patches/0001`–`0123` and `l2test/0001`–`0003` with `git am`; for v19.0.4 and v19.0.3 it checks that the source
+   tree is the release's (`5c37f49f…`, `520ba462…`);
 3. downloads the dbt toolchain v16 and keeps only what the build needs (the compiler with the Cortex-A9 libraries,
    cmake, ninja: 506 MB) in `/home/user/work/dbt/toolchain/v16/linux-x86_64`;
 4. clones the library argon at v0.1.0 (the build would download it as an archive, which the session's proxy refuses);
@@ -39,12 +39,13 @@ Checked on 1 October 2026: a new tree from the patches built `b6f0bf18…4839774
 
 ```sh
 export BLOCKCOUNT_DIR=/home/user/work/blockcount
-ELF=/home/user/work/mastertune-v19.0.3/build/Release/deluge.elf
+ELF=/home/user/work/mastertune-v19.0.4/build/Release/deluge.elf
 TOOLS=/home/user/work/dbt/toolchain/v16/linux-x86_64/arm-none-eabi-gcc/bin/arm-none-eabi-
 python3 mastertune-1.2.1/tests/songchange/songchange_emu.py $ELF --tools $TOOLS --build $BLOCKCOUNT_DIR --out /tmp/sc
 python3 mastertune-1.2.1/tests/dj/dj_emu.py $ELF --tools $TOOLS --out /tmp/dj
 python3 mastertune-1.2.1/tests/scan/scan_view_emu.py $ELF --tools $TOOLS --out /tmp/scan
-EMU_OPTS="--init-sounds --seed 1" mastertune-1.2.1/tests/song/run.sh /home/user/work/mastertune-v19.0.3 /tmp/song
+EMU_OPTS="--init-sounds --seed 1" mastertune-1.2.1/tests/song/run.sh /home/user/work/mastertune-v19.0.4 /tmp/song
+mastertune-1.2.1/tests/v1904/run.sh $ELF $TOOLS $BLOCKCOUNT_DIR /tmp/v1904   # v19.0.4's fixes
 ```
 
 Each test's own docstring or `run.sh` says what it checks. Run python with any working directory except a folder that
@@ -61,5 +62,6 @@ the tree as step 2 does (a temporary index with `git read-tree release_1_2_1`, e
   `df -h /` shows what is left.
 - Behind the session's proxy, the upstream clone and the toolchain download work; GitHub's archive downloads
   (`/archive/…tar.gz`) are refused with 403.
-- The community firmware's own beta (upstream `main`, v1.3) needs the toolchain v22 (GCC 14); see the branch
-  `nightly-research`.
+- The community firmware's own beta (upstream `main`, v1.3) needs the toolchain v22 (GCC 14); that work is on the
+  branch `nightly` (folder `beta-1.3/`), kept apart from 1.2.1.
+- The community repository is read-only: the setup disables pushing in its clone (see `CLAUDE.md`).

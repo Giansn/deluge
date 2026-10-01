@@ -1,0 +1,197 @@
+From 92b7ebbea7ee200203103ac6f35f014053905383 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 12:32:13 +0000
+Subject: [PATCH] Five fixes from the v1.3 investigation: the recorder freed
+ twice, saved songs, a leak, a stale pointer
+
+- An aborted recording no longer frees its SampleRecorder twice (M123). Every SD wait
+  yields to the task manager, which could run "audio recorder slow" there: it freed the
+  recorder while that recorder's cardRoutine() was suspended inside the wait, and the
+  block was freed again (upstream #3309, #4471, #4639; reproduced on mastertune with
+  tests/export/export_abort_emu.py). AudioRecorder::slowRoutine() now returns while
+  sdRoutineLock or currentlyAccessingCard is set (upstream 9c3f9a70, #4671), and the
+  offline export's drain is null-checked and bounded: after a card error or an abort it
+  never ended.
+- AudioClip::writeDataToFile() wrote the clip's attributes twice: every <audioClip> had
+  colourOffset, isArmedForRecording, isPlaying, isSoloing, length and section twice,
+  which strict XML readers refuse (upstream #4917).
+- A named CV instrument now saves its channel too; without it, it loaded on channel 0
+  and its clips found no instrument there.
+- Deleting a clip's backed-up ParamManager destructs it, so its expression params no
+  longer leak (upstream 47b1d92b, #4920, without its free loop, which no caller reaches).
+  stealParamCollectionsFrom() refuses to steal from itself and clears what it took.
+- Loading a synth into a kit row re-points the view's mod controllable at the new drum:
+  until the browser closed it pointed at the freed one, and a gold knob turned in the
+  browser used it (upstream #4518).
+---
+ src/deluge/gui/ui/audio_recorder.cpp          | 17 ++++++++++++
+ .../gui/ui/load/load_instrument_preset_ui.cpp |  4 +++
+ src/deluge/model/clip/audio_clip.cpp          |  3 ++-
+ src/deluge/model/instrument/instrument.cpp    |  4 ++-
+ src/deluge/model/song/song.cpp                |  6 +++--
+ .../modulation/params/param_manager.cpp       |  5 ++++
+ .../processing/engines/audio_engine.cpp       | 26 ++++++++++++++++---
+ 7 files changed, 57 insertions(+), 8 deletions(-)
+
+diff --git a/src/deluge/gui/ui/audio_recorder.cpp b/src/deluge/gui/ui/audio_recorder.cpp
+index 89130a15..a92f3d3d 100644
+--- a/src/deluge/gui/ui/audio_recorder.cpp
++++ b/src/deluge/gui/ui/audio_recorder.cpp
+@@ -47,6 +47,7 @@
+ AudioRecorder audioRecorder{};
+ 
+ extern "C" void routineForSD(void);
++extern uint8_t currentlyAccessingCard;
+ 
+ extern "C" {
+ 
+@@ -177,7 +178,23 @@ void AudioRecorder::endRecordingSoon(int32_t buttonLatency) {
+ }
+ 
+ void AudioRecorder::slowRoutine() {
++	// finishRecording() frees the SampleRecorder, which discardRecorder() forbids doing from inside the SD card
++	// routine: every SD wait yields to the task manager, which may run this task there, while the recorder is
++	// suspended part-way through its own cardRoutine(). Freeing it then leaves that cardRoutine() running on freed
++	// memory and frees it a second time (M123). An aborted recording (status ABORTED, which is >= COMPLETE: no RAM
++	// for a new cluster during a long or offline export) is the usual way in. 1.2.1's scheduler has no resource
++	// gate, so this guard is the fix (upstream 9c3f9a70, #4671)
++	if (sdRoutineLock || currentlyAccessingCard) {
++		return;
++	}
++
+ 	if (recordingSource >= AUDIO_INPUT_CHANNEL_FIRST_INTERNAL_OPTION) {
++		// setupRecordingToFile() always assigns recorder before recordingSource, so this can't happen; but a quiet
++		// skip would wedge a stem export, which waits for recordingSource to clear
++		if (recorder == nullptr) {
++			FREEZE_WITH_ERROR("E250");
++			return;
++		}
+ 		if (recorder->status >= RecorderStatus::COMPLETE) {
+ 			indicator_leds::setLedState(IndicatorLED::RECORD, (playbackHandler.recording == RecordingMode::NORMAL));
+ 			finishRecording();
+diff --git a/src/deluge/gui/ui/load/load_instrument_preset_ui.cpp b/src/deluge/gui/ui/load/load_instrument_preset_ui.cpp
+index 8ae5706b..3bd0ac12 100644
+--- a/src/deluge/gui/ui/load/load_instrument_preset_ui.cpp
++++ b/src/deluge/gui/ui/load/load_instrument_preset_ui.cpp
+@@ -1065,6 +1065,10 @@ Error LoadInstrumentPresetUI::performLoadSynthToKit() {
+ 
+ 		kitToLoadFor->selectedDrum = soundDrumToReplace;
+ 		kitToLoadFor->beenEdited();
++		// loadSynthToDrum() freed the old drum, but the view's mod controllable still pointed at it until the
++		// browser closed: a gold knob turned in the browser reached View::modEncoderAction() on freed memory
++		// (upstream #4518). Re-point it now, as performLoad() does for a preset change
++		view.setActiveModControllableTimelineCounter(instrumentClipToLoadFor);
+ 	}
+ 	else {
+ 		error = Error::FILE_CORRUPTED;
+diff --git a/src/deluge/model/clip/audio_clip.cpp b/src/deluge/model/clip/audio_clip.cpp
+index c38c380c..a622b660 100644
+--- a/src/deluge/model/clip/audio_clip.cpp
++++ b/src/deluge/model/clip/audio_clip.cpp
+@@ -1082,7 +1082,8 @@ void AudioClip::writeDataToFile(Serializer& writer, Song* song) {
+ 		writer.writeAttribute("lastSelectedParamArrayPosition", lastSelectedParamArrayPosition);
+ 	}
+ 
+-	Clip::writeDataToFile(writer, song);
++	// Once: it was called twice, so every <audioClip> carried colourOffset, isArmedForRecording, isPlaying,
++	// isSoloing, length and section twice, which strict XML readers refuse (upstream #4917)
+ 	Clip::writeDataToFile(writer, song);
+ 
+ 	writer.writeOpeningTagEnd();
+diff --git a/src/deluge/model/instrument/instrument.cpp b/src/deluge/model/instrument/instrument.cpp
+index 0dfbeb71..5783c24e 100644
+--- a/src/deluge/model/instrument/instrument.cpp
++++ b/src/deluge/model/instrument/instrument.cpp
+@@ -91,7 +91,9 @@ bool Instrument::writeDataToFile(Serializer& writer, Clip* clipForSavingOutputOn
+ 		if (!name.isEmpty()) {
+ 			writer.writeAttribute("presetName", name.get());
+ 		}
+-		else if (type == OutputType::CV) {
++		// A CV instrument's channel also when it has a name: without it, a named one loaded on channel 0 and its
++		// clips (cvChannel="N") found no instrument there
++		if (type == OutputType::CV) {
+ 			char const* slotXMLTag = getSlotXMLTag();
+ 
+ 			writer.writeAttribute(slotXMLTag, ((NonAudioInstrument*)this)->channel);
+diff --git a/src/deluge/model/song/song.cpp b/src/deluge/model/song/song.cpp
+index 704f635b..41d77c6a 100644
+--- a/src/deluge/model/song/song.cpp
++++ b/src/deluge/model/song/song.cpp
+@@ -3860,10 +3860,12 @@ void Song::deleteBackedUpParamManagersForClip(Clip* clip) {
+ 			else {
+ 
+ 				ParamManagerForTimeline paramManager;
+-				paramManager.stealParamCollectionsFrom(&backedUp->paramManager);
++				paramManager.stealParamCollectionsFrom(&backedUp->paramManager, false);
+ 				ModControllableAudio* modControllable = backedUp->modControllable;
+ 
+-				// We have to delete that element...
++				// The steal leaves the backup's expression params in it: destruct it before the element goes, or
++				// they leak (deleteAtIndex() runs no destructor; upstream 47b1d92b, #4920)
++				backedUp->~BackedUpParamManager();
+ 				backedUpParamManagers.deleteAtIndex(i);
+ 
+ 				// ...and then go find the first one that had this ModControllable
+diff --git a/src/deluge/modulation/params/param_manager.cpp b/src/deluge/modulation/params/param_manager.cpp
+index 641e4830..1bebec83 100644
+--- a/src/deluge/modulation/params/param_manager.cpp
++++ b/src/deluge/modulation/params/param_manager.cpp
+@@ -116,6 +116,10 @@ void ParamManager::stealParamCollectionsFrom(ParamManager* other, bool stealExpr
+ 		FREEZE_WITH_ERROR("E413");
+ 	}
+ #endif
++	// Don't steal from ourselves (upstream 47b1d92b)
++	if (other == this) {
++		return;
++	}
+ 
+ 	int32_t mpeParamsOffsetOther = other->getExpressionParamSetOffset();
+ 	int32_t mpeParamsOffsetHere = getExpressionParamSetOffset();
+@@ -142,6 +146,7 @@ void ParamManager::stealParamCollectionsFrom(ParamManager* other, bool stealExpr
+ 	int32_t i;
+ 	for (i = 0; i < stopAtOther; i++) {
+ 		summaries[i] = other->summaries[i];
++		other->summaries[i] = {0}; // They're ours now: "other" must not destruct them
+ 	}
+ 
+ 	summaries[stopAtOther] = hereMpeParamsOrNull; // Could the expression params, or NULL
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index 4ea1045a..76a1abbd 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -1368,10 +1368,28 @@ void scheduleMidiGateOutISR(uint32_t saddrPosAtStart, int32_t unadjustedNumSampl
+ 				renderAudioForStemExport(numSamples);
+ 				audioSampleTimer += numSamples;
+ 				doSomeOutputting();
+-				// gross and hacky way to make sure the audio recorder writes all of its data so it can't be stolen
+-				while (audioRecorder.recorder->firstUnwrittenClusterIndex
+-				       < audioRecorder.recorder->currentRecordClusterIndex) {
+-					doRecorderCardRoutines();
++				// Write out the recorder's completed clusters so they can't be stolen (upstream 9c3f9a70, #4671).
++				// There's no recorder between stems, and one that has hit a card error or been aborted (RAM) never
++				// advances firstUnwrittenClusterIndex again, since cardRoutine() returns early then: bail on those,
++				// and bound the loop anyway (the export froze here after a card error)
++				SampleRecorder* recorder = audioRecorder.recorder;
++				if (recorder != nullptr) {
++					// Each call writes at most one cluster, and nothing renders until the drain is done. The slack
++					// covers calls that don't reach this recorder: doRecorderCardRoutines() abandons its traversal
++					// whenever a recorder was recently created
++					int32_t callsRemaining =
++					    recorder->currentRecordClusterIndex - recorder->firstUnwrittenClusterIndex + 8;
++					while (callsRemaining-- > 0) {
++						if (recorder->hadCardError || recorder->status >= RecorderStatus::COMPLETE
++						    || recorder->firstUnwrittenClusterIndex >= recorder->currentRecordClusterIndex) {
++							break;
++						}
++						doRecorderCardRoutines();
++						// doRecorderCardRoutines() can finish and free recorders: don't trust the pointer after it
++						if (audioRecorder.recorder != recorder) {
++							break;
++						}
++					}
+ 				}
+ 
+ 				audioFileManager.loadAnyEnqueuedClusters(128, false);
+-- 
+2.43.0
+

@@ -4,7 +4,7 @@
 # a Release build, a check that it is bit for bit the released .bin, and blockcount.so for the emulator tests.
 # Idempotent: what is already there is kept (an existing tree is checked, not patched again).
 #
-# Usage: mastertune-1.2.1/tools/setup_firmware.sh [VERSION]      (default v19.0.3; one of the l2d releases below)
+# Usage: mastertune-1.2.1/tools/setup_firmware.sh [VERSION]      (default v19.0.4; one of the l2d releases below)
 # Environment (defaults):
 #   WORK=/home/user/work            where everything goes (outside the repo)
 #   UPSTREAM=$WORK/DelugeFirmware-121   the clone of SynthstromAudible/DelugeFirmware (blob-less, about 270 MB)
@@ -21,7 +21,7 @@ set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 MT=$REPO/mastertune-1.2.1
-VERSION=${1:-v19.0.3}
+VERSION=${1:-v19.0.4}
 WORK=${WORK:-/home/user/work}
 UPSTREAM=${UPSTREAM:-$WORK/DelugeFirmware-121}
 TREE=${TREE:-$WORK/mastertune-$VERSION}
@@ -31,12 +31,13 @@ TC_URL=https://github.com/SynthstromAudible/dbt-toolchain/releases/download/v16/
 
 # The l2d releases: version, the last patch, the source tree the patches give (git write-tree), as in the README
 case "$VERSION" in
+  v19.0.4) LAST=0123 TREE_ID=5c37f49ff389b9d12db30072bc11e81c2a469060 ;;
   v19.0.3) LAST=0122 TREE_ID=520ba46244c6356e3cf9002d7a7e2ab096372f2c ;;
   v19.0.2) LAST=0121 TREE_ID= ;;
   v19.0.1) LAST=0120 TREE_ID= ;;
   v19.0) LAST=0119 TREE_ID= ;;
   v18.4) LAST=0118 TREE_ID= ;;
-  *) echo "unknown version $VERSION (v19.0.3, v19.0.2, v19.0.1, v19.0, v18.4)"; exit 2 ;;
+  *) echo "unknown version $VERSION (v19.0.4, v19.0.3, v19.0.2, v19.0.1, v19.0, v18.4)"; exit 2 ;;
 esac
 BIN=$(ls "$MT"/deluge-1.2.1-mastertune-"$VERSION"-l2d-*.bin 2>/dev/null | head -1)
 [ -n "$BIN" ] || { echo "no released .bin for $VERSION in $MT"; exit 2; }
@@ -52,6 +53,8 @@ if [ ! -d "$UPSTREAM/.git" ]; then
   GIT_LFS_SKIP_SMUDGE=1 git clone --filter=blob:none --no-checkout "$URL" "$UPSTREAM"
   git -C "$UPSTREAM" config gc.auto 0  # no background repack (it needs the disk twice over)
 fi
+# The community repository is read-only for this project: nothing is ever pushed there (see CLAUDE.md)
+git -C "$UPSTREAM" remote set-url --push origin PUSH_DISABLED_community_repo_is_read_only
 git -C "$UPSTREAM" rev-parse -q --verify release_1_2_1 > /dev/null || git -C "$UPSTREAM" fetch origin tag release_1_2_1
 
 say "The firmware tree: $TREE (release_1_2_1 + patches 0001-$LAST + l2test 0001-0003)"
@@ -87,9 +90,10 @@ say "argon (a library the build takes from GitHub): $WORK/argon at v0.1.0"
 # lib/CMakeLists.txt downloads its release archive, which the cloud session's proxy refuses (403); a git clone of the
 # same tag (caa7cd80) works, and FETCHCONTENT_SOURCE_DIR_ARGON points the build at it
 if [ ! -d "$WORK/argon/.git" ]; then
-  git clone -q --depth 1 --branch v0.1.0 https://github.com/stellar-aria/argon "$WORK/argon"
+  git -c advice.detachedHead=false clone -q --depth 1 --branch v0.1.0 https://github.com/stellar-aria/argon "$WORK/argon"
 fi
 [ "$(git -C "$WORK/argon" rev-parse HEAD)" = caa7cd8056351d4fea353c1e572fa62e04a49971 ] || { echo "argon is not v0.1.0"; exit 1; }
+git -C "$WORK/argon" remote set-url --push origin PUSH_DISABLED_read_only
 
 say "Release build ($VERSION, commit hash $HASH as in the release)"
 export PATH=$TC/cmake/bin:$TC/ninja-build/bin:$TC/ninja-build:$PATH DBT_TOOLCHAIN_PATH=$TOOLCHAIN DELUGE_FW_ROOT=$TREE
