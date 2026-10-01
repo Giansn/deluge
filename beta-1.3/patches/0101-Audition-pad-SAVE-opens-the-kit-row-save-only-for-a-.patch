@@ -1,0 +1,46 @@
+From 7218c43b1f09889ad6a0e5b786f7113b4cded40f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 17:16:34 +0000
+Subject: [PATCH 101/101] Audition pad + SAVE opens the kit-row save only for a
+ kit's sound row
+
+InstrumentClipView::buttonAction() opened SaveKitRowUI for SAVE pressed with an audition pad held in any
+clip. In a synth, MIDI or CV clip the auditioned row has no drum, and a row without notes has no NoteRow
+at all; it read noteRow->drum->type regardless (through a null pointer) and, the null check of the
+downcast optimised away after that dereference, handed the save a garbage SoundDrum (0xfffffad0 in this
+build) and the ParamManager of a melodic row, or of no row (0x1c). Saving then froze with E411, or wrote
+from the garbage drum. This is the "kit row whose ParamManager has no collections" of the fuzzer's seed
+1011 (--mode deep, inputs 13 and 170): not a kit row at all. Check the clip's type, the row and its
+drum, as commandSaveKitRow() already does. 0008's guard in Sound::writeToFile() stays.
+
+Test (beta-1.3/tests/repro/savekitrow_emu.py): in the synth clip PADA each audition pad + SAVE no longer
+opens the save (before: eight times, with the garbage drum); in the kit clip it still opens with the
+row's drum and its params.
+---
+ src/deluge/gui/views/instrument_clip_view.cpp | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/src/deluge/gui/views/instrument_clip_view.cpp b/src/deluge/gui/views/instrument_clip_view.cpp
+index 14d2df3e..a01f744c 100644
+--- a/src/deluge/gui/views/instrument_clip_view.cpp
++++ b/src/deluge/gui/views/instrument_clip_view.cpp
+@@ -578,8 +578,14 @@ ActionResult InstrumentClipView::buttonAction(deluge::hid::Button b, bool on, bo
+ 		}
+ 	}
+ 	else if (b == SAVE && currentUIMode == UI_MODE_AUDITIONING) {
+-		NoteRow* noteRow = getCurrentInstrumentClip()->getNoteRowOnScreen(lastAuditionedYDisplay, currentSong, nullptr);
+-		if (noteRow->drum->type == DrumType::SOUND) {
++		// Only a kit's sound row can be saved as a kit row. In a synth, MIDI or CV clip the auditioned row has no drum,
++		// and a row without notes has no NoteRow at all: this read noteRow->drum->type regardless and opened the save
++		// with a garbage drum (the downcast of a null Drum*) and a ParamManager without collections (E411 on saving)
++		NoteRow* noteRow =
++		    (getCurrentOutputType() == OutputType::KIT)
++		        ? getCurrentInstrumentClip()->getNoteRowOnScreen(lastAuditionedYDisplay, currentSong, nullptr)
++		        : nullptr;
++		if (noteRow && noteRow->drum && noteRow->drum->type == DrumType::SOUND) {
+ 			saveKitRowUI.setup((SoundDrum*)noteRow->drum, &noteRow->paramManager);
+ 			AudioEngine::stopAnyPreviewing();
+ 			cancelAllAuditioning();
+-- 
+2.43.0
+
