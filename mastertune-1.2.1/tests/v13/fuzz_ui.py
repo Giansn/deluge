@@ -123,6 +123,46 @@ class NullPage:
             self.emu.uc.mem_write(0, self.zero)
 
 
+class ModalRecorder:
+    """The sound editor's RECORD AUDIO item (in 1.2.1 and v1.3; a shortcut pad in each oscillator's column, e.g. pad
+    0,4) opens the audio recorder and stays in its own loop, AudioRecorder::process(), until the recording ends. That
+    loop reads the buttons itself from the PIC (readButtonsAndPads()), but the fuzzer's inputs are calls, so nothing
+    would end it: the pad press that opened it never returns (a false hang). Here, once the loop has recorded for
+    HOLD_S, each of its readButtonsAndPads() calls takes BACK's path instead, AudioRecorder::endRecordingSoon(), as
+    AudioRecorder::buttonAction() does (it ends only a recording still capturing data). The rest of the loop runs as
+    it is: the file is finished on the card, the sample assigned, the recorder closed."""
+
+    HOLD_S = 1.5
+
+    def __init__(self, emu):
+        from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1
+        sym = emu.sym
+        name = next(n for n in sym.by_name if n.startswith("_ZN13AudioRecorder7processEv"))
+        self.lo, size = sym.by_name[name]
+        self.hi = self.lo + size
+        self.this = sym.by_name["audioRecorder"][0]
+        self.end = sym.find("_ZN13AudioRecorder16endRecordingSoonEl")
+        self.start = self.last = None
+        self.recordings = 0
+
+        def on_read(e):
+            uc = e.uc
+            if not self.lo <= (uc.reg_read(UC_ARM_REG_LR) & ~1) < self.hi:
+                return None  # Not from the recorder's loop
+            now = e.seconds()
+            if self.last is None or now - self.last > 0.5:
+                self.start = now  # A new recording
+                self.recordings += 1
+            self.last = now
+            if now - self.start < self.HOLD_S:
+                return None
+            uc.reg_write(UC_ARM_REG_R0, self.this)
+            uc.reg_write(UC_ARM_REG_R1, 0)
+            uc.reg_write(UC_ARM_REG_PC, self.end | 1)  # It returns to the loop, as readButtonsAndPads() would
+            return None
+        emu.intercept(sym.find("_Z18readButtonsAndPadsv"), on_read)
+
+
 def boot(firmware, elf, tools, build, image, oled):
     if firmware == "v13":
         import rig13
@@ -274,6 +314,8 @@ def main():
         result["boots"] += 1
         inp = Inputs(rig, a.firmware)
         null = NullPage(rig.emu)
+        modal = ModalRecorder(rig.emu)
+        rig.emu.uc.ctl_flush_tb()  # The new hook also for code already translated
         if a.mode == "browser":
             inp.button("LOAD", True)
             inp.button("LOAD", False)
@@ -307,6 +349,7 @@ def main():
         result["error_popups"] += [dict(seed=seed, popup=p) for p in rig.error_popups()
                                    if not (p[2] == "displayError" and p[3] == "Error 10")][:10]
         result["steps"] = done
+        result["recordings"] = result.get("recordings", 0) + modal.recordings  # Audio recorder sessions
         seed += 1000
         json.dump(result, open(os.path.join(a.out, "fuzz.json"), "w"), indent=1, default=str)
     result["host_s"] = round(time.time() - t0)
