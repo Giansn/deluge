@@ -1,0 +1,55 @@
+From d8a077aa8f4825ce13616f64d7504a8787f07b36 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 18:19:34 +0000
+Subject: [PATCH 12/12] An aborted stem recording no longer leaves a broken
+ 5-second file (audio export docs: "only 5 seconds of audio")
+
+SampleRecorder::abort() (no RAM for the next cluster: createNextCluster() failed) only marks the recorder
+ABORTED; its own cardRoutine() then deletes the partial file and takes the half-recorded Sample out of
+audioFileManager, and lets go of the Sample. AudioRecorder::slowRoutine() (and the sound editor's
+recording loop, AudioRecorder::process()) finished every recorder whose status was >= COMPLETE, ABORTED
+included: when it ran first, finishRecording() freed the recorder and that cleanup never happened. The
+stem stayed on the card cut short, with the header SampleRecorder::setup() writes ("5 seconds long
+initially"), and a Sample without a length stayed listed in audioFileManager under its path. Both now
+wait until the aborted recorder's cardRoutine() has cleaned up (sample == nullptr).
+
+Test (beta-1.3/tests/repro): export_abort_file_emu.py; on 62a516c2 and the current fixes each aborted
+drum stem stays as a broken file (RIFF size 1323112, i.e. 5 s, file 390-430 KB).
+---
+ src/deluge/gui/ui/audio_recorder.cpp | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/src/deluge/gui/ui/audio_recorder.cpp b/src/deluge/gui/ui/audio_recorder.cpp
+index 6cb4aab5..8515ff5d 100644
+--- a/src/deluge/gui/ui/audio_recorder.cpp
++++ b/src/deluge/gui/ui/audio_recorder.cpp
+@@ -197,6 +197,13 @@ void AudioRecorder::slowRoutine() {
+ 			return;
+ 		}
+ 		if (recorder->status >= RecorderStatus::COMPLETE) {
++			// An aborted recording (RAM ran out) is cleaned up by the recorder's own cardRoutine(): it deletes the
++			// partial file and takes the Sample out of memory, then lets go of it (sample = nullptr). Freeing the
++			// recorder before that left the file on the card, its header still saying 5 seconds, and the
++			// half-recorded Sample listed in audioFileManager. AudioEngine::doRecorderCardRoutines() gets to it soon.
++			if (recorder->status == RecorderStatus::ABORTED && recorder->sample != nullptr) {
++				return;
++			}
+ 			indicator_leds::setLedState(IndicatorLED::RECORD, (playbackHandler.recording == RecordingMode::NORMAL));
+ 			finishRecording();
+ 		}
+@@ -218,6 +225,12 @@ void AudioRecorder::process() {
+ 
+ 		AudioEngine::slowRoutine();
+ 
++		// An aborted recording is cleaned up by the recorder's own cardRoutine() (from AudioEngine::slowRoutine()):
++		// the partial file deleted, the Sample taken out of memory. Wait for that before freeing the recorder
++		if (recorder->status == RecorderStatus::ABORTED && recorder->sample != nullptr) {
++			continue;
++		}
++
+ 		// If recording has finished...
+ 		if (recorder->status >= RecorderStatus::COMPLETE || recorder->hadCardError) {
+ 
+-- 
+2.43.0
+

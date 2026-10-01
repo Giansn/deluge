@@ -8,6 +8,9 @@
 #   oom_robust_emu.py     0006: out of external RAM, a stale cluster, OLED handshake hiccups: no freeze
 #   cluster_cache_emu.py  0009: a short sample held in RAM whole, a longer one's loop start held
 #   abandon_load_emu.py   0010: a synth preset that fails to load is freed from its block start (no M000)
+#   export_abort_hang_emu.py  0011: a track export / mixdown whose stem recording is aborted (RAM short) ends
+#   export_abort_file_emu.py  0012: an aborted stem leaves no broken 5-second file on the card
+#   (export_repeat_emu.py: the probe both use; 16+ exports in a row with song changes)
 #   savekitrow_emu.py     0101: audition pad + SAVE opens the kit-row save only for a kit's sound row
 #   (0007, the transpose note during a song change, and 0008, a kit row saved without params: the fuzzer's
 #   seeds 11 and 1011 in --mode deep, see beta-1.3/README.md)
@@ -19,7 +22,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ELF=$1 TOOLS=$2 BUILD=$3 OUT=${4:-/tmp/beta-repro}
 mkdir -p "$OUT"
 cd /tmp || exit 1
-tests="save_4917 songswap_e455 kitrow save_name oom_robust cluster_cache abandon_load savekitrow"
+tests="save_4917 songswap_e455 kitrow save_name oom_robust cluster_cache abandon_load export_abort_hang export_abort_file savekitrow"
 [ "${LONG:-0}" = 1 ] && tests="$tests sm01_replay"
 fails=0
 for t in $tests; do

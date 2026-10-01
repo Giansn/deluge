@@ -1,0 +1,51 @@
+From 5df68c16a85165125f619a2dac3624e4788340b8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 18:19:34 +0000
+Subject: [PATCH 11/12] A track or mixdown export no longer hangs when a stem's
+ recording is aborted (#4471, #4639)
+
+When RAM runs short while a stem is recorded (SampleRecorder::createNextCluster() fails; offline
+rendering on a heavy song), or the recorder can't be created at all, the recording is aborted and
+AudioRecorder::finishRecording() clears recordingSource. A track or mixdown export then waits for
+the arrangement to stop at its end, but Arrangement::doTickForward() only stops there when not
+recording or when resampling, and the export runs with playbackHandler.recording NORMAL: the
+arrangement played on for ever (offline: silence rendered at full speed, the Deluge looked hung,
+the stem export UI mode stayed on). The arrangement now also stops at its end during a stem export,
+so the aborted stem is skipped (its file was already deleted) and the export goes on.
+
+Test (beta-1.3/tests/repro): export_abort_hang_emu.py; on 62a516c2 and the current fixes the first
+track export hangs.
+---
+ src/deluge/playback/mode/arrangement.cpp | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/src/deluge/playback/mode/arrangement.cpp b/src/deluge/playback/mode/arrangement.cpp
+index 9164a223..7b3fdec9 100644
+--- a/src/deluge/playback/mode/arrangement.cpp
++++ b/src/deluge/playback/mode/arrangement.cpp
+@@ -34,6 +34,7 @@
+ #include "playback/mode/session.h"
+ #include "playback/playback_handler.h"
+ #include "processing/engines/audio_engine.h"
++#include "processing/stem_export/stem_export.h"
+ #include "util/functions.h"
+ 
+ extern "C" {}
+@@ -321,9 +322,12 @@ justDoArp:
+ 	// If nothing further in the arrangement, we usually just stop playing
+ 	if (playbackHandler.swungTicksTilNextEvent == 2147483647
+ 	    && playbackHandler.isInternalClockActive()
+-	    // Only do this if not recording MIDI - but override that and do do it if we're "resampling"
++	    // Only do this if not recording MIDI - but override that and do do it if we're "resampling", or exporting
++	    // stems: a stem whose recording was aborted (RAM ran out) or never started has no resampling recorder any
++	    // more, and the export waits for playback to end, so the arrangement must still stop at its end
+ 	    && (playbackHandler.recording == RecordingMode::OFF
+-	        || audioRecorder.recordingSource >= AUDIO_INPUT_CHANNEL_FIRST_INTERNAL_OPTION)) {
++	        || audioRecorder.recordingSource >= AUDIO_INPUT_CHANNEL_FIRST_INTERNAL_OPTION
++	        || stemExport.processStarted)) {
+ 
+ 		if (playbackHandler.stopOutputRecordingAtLoopEnd && audioRecorder.isCurrentlyResampling()) {
+ 			audioRecorder.endRecordingSoon();
+-- 
+2.43.0
+
