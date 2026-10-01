@@ -141,6 +141,10 @@ are worth porting, and they apply to mastertune's code (each checked against `20
 | `9cd09fb7` #4769 | external clock dies while the card routine runs | partly by hand |
 | `e2edb15f`, `e95d7dd9`, `2280df7a`, `35dd7e71` | small guards (1-6 lines) | cleanly |
 
+**Taken over in mastertune v19.0.4** (1 October 2026): `9c3f9a70` (the recorder freed twice, as a guard; the export
+crashes #3309, #4471, #4639 reproduced on mastertune), the effective part of `47b1d92b` (#4920), the #4917 fix, a fix
+for #4518's case A (a synth loaded into a kit row), and a named CV track's channel.
+
 **#4917 is in mastertune too.** The emulator shows it. mastertune v19.0.3 saved the test song, and its `<audioClip>`
 carries six attributes twice: `colourOffset`, `isArmedForRecording`, `isPlaying`, `isSoloing`, `length` and
 `section`. The Deluge reads such files without trouble, but strict XML readers (tools, editors) refuse them. The fix
@@ -157,8 +161,22 @@ firmware's own task manager ran 20-150 ms, so an hour of the host is about 4-5 m
 | all inputs, OLED, 60 min | mastertune v19.0.3 | 1,892 (2) | none (one false hang, see below) |
 | the song browser, 7-segment, 45 min | v1.3 beta | 2,397 (1) | none |
 
-- **v1.3: `SM01` on SCALE.** `freezeWithError("SM01")` from `Song::setScaleNotes()`, when SCALE was pressed in the
-  keyboard view (input 907, seed 1). The cause is being analysed.
+- **v1.3: `SM01` on SHIFT + SCALE, and mastertune has the same code.** The freeze is in
+  `ScaleMapper::computeChangeFrom()` (`scale_mapper.cpp:14-15`): the notes of all scale-mode clips must lie in the
+  current scale. `Song::setScaleNotes()` checks only that they fit in the new scale's size (`song.cpp:3051`), then
+  calls the mapper. How the rule broke, from an exact replay of the run (it freezes at the same step):
+  - recording armed and playing, a clip in keyboard view in scale mode;
+  - pads outside the scale played: the firmware adds those notes to the scale (`instrument_clip.cpp:1104`);
+  - BACK (undo) set the scale back to the one saved in the action (`action_logger.cpp:521`), but the out-of-scale
+    note (D#) stayed in the clip. From then on the scale didn't contain all the clip's notes;
+  - SHIFT + SCALE (next scale: `keyboard_screen.cpp:438` → `cycleThroughScales()` → `setScaleNotes()`) froze.
+
+  A short sequence (record out-of-scale notes once, undo, SHIFT + SCALE) didn't reproduce it: there the undo removed
+  the notes too. Recording over several loops before the undo is the likely difference; not pinned down yet. The check
+  came with the scale mapper (`8b8a67f3`, #2363, August 2024), so 1.2.1 has it: mastertune's code is the same
+  (`scale_mapper.cpp:14-15`, `song.cpp:2983-3000`, `action_logger.cpp:512`). No upstream issue or fix. A fix: in
+  `setScaleNotes()`, refuse the change (or widen the source scale by the clip's notes) when the notes aren't a subset
+  of the current scale, instead of freezing.
 - **mastertune: a false hang, found and fixed in the fuzzer.** SHIFT + pad 0,4 in a synth clip opens the sound
   editor's RECORD AUDIO, which stays in its own loop (`AudioRecorder::process()`) and reads the buttons from the PIC
   itself. The fuzzer's inputs are calls, so nothing ended the recording and the pad press never returned. The fuzzer
