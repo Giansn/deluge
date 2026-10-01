@@ -224,3 +224,47 @@ What mastertune has that `main` doesn't: master tune (`main` only edits master t
 `CHANGELOG.mdx:91`), USB audio out, the tuner and Scan, the delay, filter and EQ
 quality work, the drone, the DJ tools, the countdowns, and 20-25 % less CPU than 1.2.1. For the open plans (USB audio
 in, master EQ, line-in tuner, DJ decks/crossfader/isolator), `main` has nothing to take over.
+
+## 7. Stabilising the beta: our patches
+
+Since 1 October 2026 the beta is stabilised here, in our repository only (`beta-1.3/patches`, applied to `62a516c2` by
+`tools/setup_beta.sh`). Each patch has an emulator test in `tests/repro` that fails on `62a516c2` and passes with the
+patches (`tests/repro/run.sh`); 0007 and 0008 are covered by the fuzzer seeds that found them. Numbers 0001-0099 are
+this session's, 0101 and up the helper session's (`reports/`).
+
+| Patch | Fault on 62a516c2 | Found by | Test |
+|---|---|---|---|
+| 0001 | SM01: undo leaves a recorded note outside the scale, SHIFT + SCALE freezes | fuzz seed 1 | `sm01_replay` (LONG=1) |
+| 0002 | Duplicate `<audioClip>` attributes on save; a named CV track loses its channel (#4917, #4938) | issue review | `save_4917` |
+| 0003 | E455: a song change while playing, the old song with an arrangement | issue review | `songswap_e455` |
+| 0004 | A synth into a kit row: the view on a freed drum, E412 on knob learn (#4518, #4951) | issue review | `kitrow` |
+| 0005 | SAVE proposes an existing song's name and overwrites it (#4825) | issue review | `save_name` |
+| 0006 | Freezes out of external RAM (TERM), on a stale cluster ("invalid"), on OLED handshake hiccups | freeze audit | `oom_robust` |
+| 0007 | A transpose note during a song change (no root UI) | fuzz seed 11 | fuzzer |
+| 0008 | E411: a kit row saved whose sound has no params | fuzz seed 1011 | fuzzer |
+| 0009 | #4952's cluster caching: wrong units, count forced to 2, loop start skipped, reverse ignored | code review | `cluster_cache` |
+| 0010 | M000: a synth preset that fails to load is freed from the middle of its block | fuzz seed 2041 | `abandon_load` |
+| 0011 | A track export or mixdown hangs when a stem's recording is aborted (RAM short) (#4471, #4639) | export probe | `export_abort_hang` |
+| 0012 | An aborted stem stays on the card as a broken file whose header says 5 s | export probe | `export_abort_file` |
+| 0013 | E369: CV, MIDI, KIT, SYNTH or SCALE in the arranger's automation view (load, SONG, CLIP, CV) | fuzz seed 1071 | `arranger_automation` |
+| 0014 | RECORD AUDIO with threshold recording on: BACK never ends the recorder (since #4678) | menu walker | `recorder_threshold` |
+| 0015 | Crash on SYNTH/KIT/MIDI/CV in a menu once horizontal menus are switched off at run time | menu walker | `hmenu_off_buttons` |
+| 0016 | S004: a fast horizontal-encoder turn puts a browser's text cursor outside the text (since #4529) | fuzz seed 71 | `qwerty_cursor` |
+| 0101 | E411: audition pad + SAVE opened the kit-row save for a non-kit row | fuzz seed 1011 | `savekitrow` |
+| 0102 | E411: a clip made CV kept its synth parameter in the automation view | fuzz seed 101 | `automation_type` |
+
+How the faults were found:
+- **Fuzzer rounds** (`tests/fuzz_ui.py`, 50-60 minutes each, OLED and 7-segment, modes `all` and `deep` with held-button
+  combinations). Every round runs on the build with all patches so far; each problem is replayed exactly (same seed)
+  with a backtrace, then reduced to a short test. Round 4 (0001-0012): three problems in about 2,750 inputs (0013,
+  0016, and a crash in `Patcher::performPatching()` still being analysed).
+- **Probes** for the areas the issue tracker names: `tests/menu_walk_emu.py` (every menu of nine contexts, horizontal
+  menus on and off: about 900 items, clean with 0014) and `tests/repro/export_repeat_emu.py` (16-28 stem exports in a row
+  with song changes and injected RAM failures: no leak, clean with 0011 and 0012).
+- **Fuzzer artefacts fixed on the way**: the modal audio recorder (ended like BACK), a song load while playing (a quick
+  LOAD tap), v1.3's encoder task (each turn now wakes it).
+
+What mastertune 1.2.1 shares: the code of 0001 (SM01) and 0010 (the M000 free, from #588 in 2023) is the same in 1.2.1,
+so both are candidates for v19.0.5; v19.0.4 already has its own fixes for the faults behind 0002 and 0004 (section 4).
+Came with 1.3, so not in 1.2.1: 0006's `operator new` (#4598), 0009 (#4952), 0014 (#4678), 0016 (#4529). Not checked
+against 1.2.1 yet: the rest.
