@@ -6,7 +6,7 @@ Usage: pad_dim_emu.py <deluge.elf> [--base <1.2.1 deluge.elf>] [--tools <arm-non
 Boots each ELF (as song_emu.py does, up to the task manager), then for every dimmer interval 0 (100 %) .. 25 (0 %)
 calls PadLEDs::setDimmerInterval() (what the menu's setBrightnessLevel() and SHIFT + LEARN + vertical encoder call) and
 reads the bytes the firmware put in the PIC's UART ring (picTxBuffer, uartItems[UART_ITEM_PIC]): the refresh time (19,
-t), the dimmer interval (243, n) and whatever else it sends. With the pad-dim ELF, both ways of the community feature
+t), the dimmer interval (243, n) and whatever else it sends. With an ELF since v13, both ways of the community feature
 "Flicker-free dimming" (runtimeFeatureSettings, offsets from the ELF's debug info), On then Off, as the menu does
 (Setting::writeCurrentValue(), then PadLEDs::reapplyBrightness() = setDimmerInterval(dimmerInterval)).
 

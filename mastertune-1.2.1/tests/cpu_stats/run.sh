@@ -1,5 +1,5 @@
 #!/bin/sh
-# CPU monitor (mastertune-v12-diag): host test of the firmware's collector, OLED line and SysEx encoder, then the
+# CPU monitor (in every release since v13; patches 0015, 0026): host test of the firmware's collector, OLED line and SysEx encoder, then the
 # page's decoder (tools/cpu_monitor.html) on the same messages.
 # Usage: ./run.sh /path/to/DelugeFirmware   Needs: g++, gcc, node
 set -e

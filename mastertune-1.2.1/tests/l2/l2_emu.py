@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The L2 test versions in the emulator (the song harness of ../song, with its model of the PL310 L2 controller):
+"""The L2 configurations in the emulator (l2d: the release build since v18.2) (the song harness of ../song, with its model of the PL310 L2 controller):
 what the firmware does with the L2 at boot, and the cache maintenance before a DMA transfer.
 
   boot:   the controller is set up once, after the L1: disabled, emptied (invalidate by way), data locked out
