@@ -16,6 +16,12 @@ This branch, `nightly`, holds the work on the community firmware's daily build, 
 | `tests/emu13.py`, `tests/rig13.py` | mastertune's emulator rig (`mastertune-1.2.1/tests/song`, `tests/stress/ui`) adapted to v1.3 |
 | `tests/fuzz_ui.py` | a random user on the real firmware in the emulator, for v1.3 or mastertune with the same inputs |
 
+## Setting it up in a new session
+
+`beta-1.3/tools/setup_beta.sh` does it all from this repository: the community source at the beta `62a516c2` (cloned
+read-only, pushing disabled), `beta-1.3/patches` applied on a local branch, the toolchain v22, a Release build and the
+emulator's `blockcount.so`. Then `beta-1.3/tests/repro/run.sh` runs the fixes' tests (each fails on 62a516c2).
+
 ## Building the beta
 
 The beta needs the dbt toolchain **v22** (GCC 14); mastertune's v16 (GCC 13) can't compile its `src/memmove.c`.
