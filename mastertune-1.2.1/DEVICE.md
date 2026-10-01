@@ -23,7 +23,7 @@ Run `git pull` before any work: the cloud session keeps delivering.
 - **Use Python 3.12.** `python-rtmidi` has no ready-made packages for newer versions.
 - **Port names:** The ports are called `Deluge 0`, `MIDIIN2 (Deluge) 1` and `MIDIIN3 (Deluge) 2`. From the commit after `0377a67` the script finds `MIDIIN3` by itself, `-p` is no longer needed.
 
-## Tasks (as of 29.09.2026, v19.0.2 is out)
+## Tasks (as of 01.10.2026, v19.0.3 is out)
 
 Done: the report on v16, l2d, the song for the emulator, the retune test on Windows, "Rescue". The tasks for v17 are dropped: v18.3 contains v17, v18 and v18.2, so everything now applies to v18.3. What it brings is in the README, in the sections "v18", "v18.2" and "v18.3".
 
@@ -108,10 +108,11 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
    - **PETTRA V1:** copy `presets/SYNTHS/PETTRA V1.XML` into `SYNTHS` on the card, load it into a synth clip, tempo 138, Latch on, hold A5. With headphones: does it sound like `presets/demo/PETTRA V1.wav` (once a bar into a rattle, then running out slower and slower over the rest of the bar, each hit somewhere else between left and right)?
    - **CPU and notes:** the CPU monitor during the rattle. Stop playback in the middle of it: no note may keep sounding.
    - **Report:** a short report in English to `device/`, pushed to `device-results`.
-12. **v19.0.2: a countdown has priority** (new on 29.09.2026; README section "v19.0.2"; the user's report: a knob's popup covered the countdown):
-   - **Flash** `deluge-1.2.1-mastertune-v19.0.2-l2d-b194ed86.bin` (v19.0.1 plus this, nothing else changed). Settings → Firmware version shows `v19.0.2-l2d`. Tasks 1–11 apply to it as well.
+12. **v19.0.2 and v19.0.3: every countdown has priority** (new on 29.09.2026, the count-in on 01.10.2026; README sections "v19.0.3" and "v19.0.2"; the user's report: a knob's popup covered the countdown):
+   - **Flash** `deluge-1.2.1-mastertune-v19.0.3-l2d-20a9a6ef.bin` (v19.0.1 plus this, nothing else changed; it replaces v19.0.2). Settings → Firmware version shows `v19.0.3-l2d`. Tasks 1–11 apply to it as well.
    - **Song change:** while a song plays, load another one (the countdown `Bars remaining 3` and so on on the title line). Meanwhile turn gold knobs, press the upper one (the filter type: `HPF`, `EQ`, `DJ`) and turn the DJ filter. The countdown must stay readable all the time, the popups below it.
    - **Song view:** arm clips or a section to launch while a long clip plays (or clips to stop). The countdown (`Bars remaining 8` down to `Beats remaining 1`) is now on the title line, no box in the middle; the song's name stays visible below. Turn gold knobs (AFFECT ENTIRE lit): their popups below the countdown. After the launch the countdown is gone and the tempo is back at the top right.
+   - **Count-in (v19.0.3):** Settings → Recording → Count-in bars: 1 (or 2). In a clip view press REC, then PLAY. The count-in (`COUNT-IN` with 4, 3, 2, 1 big on the right) is on the title line, no popup in the middle any more. Turn a gold knob during it: its popup below, the count stays readable and goes on. When the recording begins, the count-in is gone. Also try it with a menu open (the count-in over its title) and stop playback during the count-in: nothing may stay on the screen.
    - **CPU monitor on** during a countdown: its line at the bottom, not over the countdown.
    - **Report:** a short report in English to `device/`, pushed to `device-results`.
 
@@ -122,11 +123,12 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
 - **The user's decision:** The firmware does not limit the resonance; self-oscillation stays possible, as in the original. v18 makes it 6 dB quieter and without the hum at the bottom.
 - **On the device:** in song view, with the filter button on LPF, turn the lower gold knob (resonance) below about 35, then save. To get rid of the automation too: hold SHIFT, then press the upper gold knob ("Automation deleted"). Without SHIFT the press changes the filter type.
 
-## Status (29.09.2026)
+## Status (01.10.2026)
 
 | File | What |
 |---|---|
-| `deluge-1.2.1-mastertune-v19.0.2-l2d-b194ed86.bin` | **current version**: v19.0.1 plus a countdown that no popup covers, with L2 cache for code and data. In the README the section "v19.0.2". |
+| `deluge-1.2.1-mastertune-v19.0.3-l2d-20a9a6ef.bin` | **current version**: v19.0.2 plus the record count-in as a countdown that no popup covers, with L2 cache for code and data. In the README the sections "v19.0.3" and "v19.0.2". |
+| `deluge-1.2.1-mastertune-v19.0.2-l2d-b194ed86.bin` | v19.0.2: v19.0.1 plus a countdown that no popup covers (the song change's and Song view's; not yet the count-in), with L2 cache for code and data. In the README the section "v19.0.2". |
 | `deluge-1.2.1-mastertune-v19.0.1-l2d-782cf068.bin` | v19.0.1: v19.0 plus the arp mode Ball that runs out (the preset PETTRA V1), with L2 cache for code and data. In the README the section "v19.0.1". |
 | `deluge-1.2.1-mastertune-v19.0-l2d-1d2b400d.bin` | v19.0: v18.4 plus the DJ filter, sync to the tempo heard and the nudge, with L2 cache for code and data. In the README the section "v19.0". |
 | `deluge-1.2.1-mastertune-v18.4-l2d-cab8e666.bin` | v18.4: v18.3 plus Scan (tuner, tempo, key) and the arp mode Ball. In the README the section "v18.4". |

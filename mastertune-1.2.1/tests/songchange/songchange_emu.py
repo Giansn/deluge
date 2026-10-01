@@ -5,7 +5,8 @@ armed to start, and the gold knobs and mod buttons on the playing song's master 
 Usage: songchange_emu.py <deluge.elf> [--scenario NAME ...] [--out DIR] [--tools PREFIX] [--build DIR] [--baseline]
   Scenarios (default all): oled, 7seg (the 7-segment display), swing (song A with quarter swing 25; song B with affect
   entire off), extclock (following an external MIDI clock, 123 BPM), stop (PLAY pressed while armed), launch (no song
-  change: in Song view song A's clips armed to stop after 2 loops, the launch countdown). --baseline: the
+  change: in Song view song A's clips armed to stop after 2 loops, the launch countdown), countin and countin7 (no
+  song change: REC, then PLAY with a 1-bar record count-in, on the OLED and on the 7-segment display). --baseline: the
   ELF is a build without the change (1.2.1, mastertune-v13): nothing is checked, it's only reported, for comparison.
   EMU_DEBUG=1: where the firmware is every 5 s of host time, and every yield.
 
@@ -46,7 +47,12 @@ Checks (not with --baseline):
   countdown's place (the filter type still changes). Scenario launch: the launch countdown in Song view on the title
   row, counted as the community firmware's box in the middle of the image counted it (the bars until the launch, in
   the last bar the beats), no box any more; a gold knob's value popup under it; the CPU monitor's line at the bottom
-  while the countdown takes the top; after the launch the countdown is gone
+  while the countdown takes the top; after the launch the countdown is gone. Scenarios countin, countin7
+  (mastertune-v19.0.3): the record count-in is a countdown too. On the OLED: on the title row ("Count-in", 4, 3, 2, 1,
+  each as the firmware counts it, at most a graphics routine late), no popup any more, a gold knob turned during it
+  (in song A's clip view: InstrumentClipView::modEncoderAction()) with its popup below it, gone when the recording
+  begins. On the 7-segment display: the count-in's popup as before, the gold knob turned during it still changes its
+  param (it asks for its popup) but its popup doesn't take the count-in's place
 - knobs: from LOAD on, the gold knob changes song A's LPF (the playing song's master FX, though A's affect entire is
   off), not song B's and not A's synth (whose clip view A was in); the mod button changes A's section; mod LEDs and
   knob indicators show A's section and values. At the swap the knobs are on nothing (the view's model stack holds no
@@ -167,7 +173,13 @@ OFFSET_QUERIES = [
                          ("filter_type", "(int)&((GlobalEffectable*)0)->currentFilterType"),
                          # Quoted: gdb doesn't find the namespace deluge::hid::display (a variable is named display)
                          ("seven_popup_active", "(int)&(('deluge::hid::display::SevenSegment'*)0)->popupActive")]),
-    ("list PlaybackHandler::PlaybackHandler", [("last_swung_tick", "(int)&((PlaybackHandler*)0)->lastSwungTickActioned")]),
+    ("list PlaybackHandler::PlaybackHandler", [("last_swung_tick", "(int)&((PlaybackHandler*)0)->lastSwungTickActioned"),
+                                               ("count_in_bars", "(int)&((PlaybackHandler*)0)->countInBars"),
+                                               ("ticks_left_in_count_in",
+                                                "(int)&((PlaybackHandler*)0)->ticksLeftInCountIn"),
+                                               ("visual_count_in",
+                                                "(int)&((PlaybackHandler*)0)->currentVisualCountForCountIn"),
+                                               ("recording", "(int)&((PlaybackHandler*)0)->recording")]),
     ("list View::View", [("view_model_stack", "(int)&((View*)0)->activeModControllableModelStack")]),
 ]
 
@@ -493,6 +505,11 @@ class Deluge:
         seven_popup = "_ZN6deluge3hid7display12SevenSegment12displayPopupEPKcabhl9PopupType"
         emu.intercept(sym[seven_popup] if seven_popup in sym.by_name else
                       sym.find("_ZN6deluge3hid7display12SevenSegment12displayPopup"), on_7seg_popup)
+        # What it then shows: the part after that check (the whole function in builds before v19.0.2)
+        if seven_popup + ".part.0" in sym.by_name:
+            def on_7seg_shown(e):
+                self.events.append((self.window_index, "7segShown", dict(text=e.ram_str(e.uc.reg_read(UC_ARM_REG_R1)))))
+            emu.intercept(sym[seven_popup + ".part.0"], on_7seg_shown)
 
     def oled_image(self):
         """What the OLED got last (OLED::oledCurrentImage: main, or main with the popup)."""
@@ -542,13 +559,14 @@ def expected_song_view(launch, repeats, loop, tick):
     return ("bars", (sixteenths - 1) // 16 + 1) if sixteenths > 16 else ("beats", (sixteenths - 1) // 4 + 1)
 
 
-LABELS = {"Loops remaining": "loops", "Bars remaining": "bars", "Beats remaining": "beats"}
+LABELS = {"Loops remaining": "loops", "Bars remaining": "bars", "Beats remaining": "beats", "Count-in": "count-in"}
 
 
 class Scenario:
-    def __init__(self, name, args, oled=True, swing=None, ext_clock=None, stop=False, b_affect_entire=1, launch=False):
+    def __init__(self, name, args, oled=True, swing=None, ext_clock=None, stop=False, b_affect_entire=1, launch=False,
+                 countin=False):
         self.name, self.args = name, args
-        self.launch = launch
+        self.launch, self.countin = launch, countin
         self.b_affect_entire = b_affect_entire
         self.oled, self.swing, self.ext_clock, self.stop = oled, swing, ext_clock, stop
         self.out = os.path.join(args.out, name)
@@ -597,6 +615,8 @@ class Scenario:
     def run(self):
         if self.launch:
             return self.run_launch()
+        if self.countin:
+            return self.run_countin()
         a = self.args
         log(f"== {self.name}: " + ("OLED" if self.oled else "7-segment display")
             + (f", swing {self.swing}" if self.swing else "") + (", external clock" if self.ext_clock else "")
@@ -958,6 +978,109 @@ class Scenario:
                   open(os.path.join(self.out, "result.json"), "w"), indent=1)
         return all(c["ok"] for c in self.checks)
 
+    def run_countin(self):
+        """Scenarios countin, countin7 (mastertune-v19.0.3): the record count-in, 1 bar (Settings > Recording >
+        Count-in bars), in song A's clip view: REC, then PLAY. A gold knob turned during its third beat. On the OLED the
+        count-in on the title row, its knob's popup below it; on the 7-segment display the count-in's popup, the knob's
+        popup held back. Then the recording begins and the count-in is gone."""
+        a = self.args
+        log(f"== {self.name}: REC, then PLAY with a 1-bar count-in, a gold knob turned during it")
+        sd = os.path.join(self.out, "sd.img")
+        build_sd(sd)
+        d = Deluge(a.elf, sd, a.tools, a.build, self.oled, self.out)
+        self.d = d
+        ph = d.var["playbackHandler"]
+        icv = d.sym["instrumentClipView"]
+        d.emu.uc.mem_write(ph + d.off["count_in_bars"], b"\x01")
+        for _ in range(10):
+            d.step()
+        ui = d.call("_Z12getCurrentUIv")
+        mark = len(d.events)
+        # Both are clones with this (&playbackHandler) propagated: no this passed
+        d.call("_ZN15PlaybackHandler19recordButtonPressedEv")
+        d.call("_ZN15PlaybackHandler17playButtonPressedEl", 0)
+
+        def left():
+            return d.i32(ph + d.off["ticks_left_in_count_in"])
+
+        def count():
+            return d.i32(ph + d.off["visual_count_in"])
+        self.check("REC, then PLAY in song A's clip view: the count-in runs, 1 bar",
+                   ui == icv and left() == BAR_TICKS and d.mode() == 45,
+                   f"UI {'clip view' if ui == icv else hex(ui)}, ticks left {left()}, UI mode {d.mode()}")
+        rows, seen, knob = [], [], None
+        while left() and len(rows) < 2000:
+            d.step()
+            if not left():
+                break
+            c = count()
+            if self.oled:
+                s = self.shown(d, mark)
+            else:
+                shown = [e["text"] for w, k, e in d.events[mark:] if k == "7segShown"]
+                s = ("count-in", int(shown[-1])) if shown and shown[-1].isdigit() else (shown[-1] if shown else None)
+            rows.append((left(), c, s))
+            if not seen or seen[-1] != s:
+                seen.append(s)
+            self.trace.append((d.window_index, d.timer(), left(), d.mode(), c, 0, s))
+            # The third beat, a little after it began: a gold knob turned (the synth's param of its mod section 0)
+            if knob is None and c == 2 and rows[-2][1] == 3:
+                knob = self.countin_knob(d, icv, mark)
+        # A change shows at the next graphics routine (every 15 ms, 5 windows), on the OLED as the image is sent after;
+        # before the count-in's first tick nothing
+        expected = [None] * 7 + [("count-in", c) for _, c, _ in rows]
+        bad = [(t, expected[i + 7], s) for i, (t, _, s) in enumerate(rows) if s not in expected[i:i + 8]]
+        counted = " ".join(str(x[1]) if isinstance(x, tuple) else str(x) for x in seen)
+        self.check(f"the count-in shown as the firmware counts it, in every window ({counted})",
+                   not bad and [x for x in seen if x] == [("count-in", n) for n in (4, 3, 2, 1)],
+                   f"wrong: {bad[:4]}")
+        if self.oled:
+            popups = [e["text"] for w, k, e in d.events[mark:] if k == "popupText" and e["text"].strip().isdigit()]
+            self.check("no popup for the count-in any more (it's the title row's)", not popups, f"{popups[:4]}")
+        rec = d.emu.u8(ph + d.off["recording"])
+        n = len(d.events)
+        for _ in range(20):
+            d.step()
+        if self.oled:
+            drawn = [e["text"] for w, k, e in d.events[n:] if k == "overlay"]
+            self.check("the count-in over, the recording begins: the countdown gone (nothing drawn over the image)",
+                       not left() and rec == 1 and not count() and not drawn,
+                       f"ticks left {left()}, recording {rec}, drawn over the image {drawn[:4]}")
+            d.save_oled("countin_after")
+        else:
+            self.check("the count-in over, the recording begins: its popup gone", not left() and rec == 1 and not
+                       count() and not d.seven_popup(), f"ticks left {left()}, recording {rec}, popup up "
+                       f"{d.seven_popup()}")
+        json.dump(dict(checks=self.checks, trace=self.trace, events=[(w, k, e) for w, k, e in d.events[mark:]]),
+                  open(os.path.join(self.out, "result.json"), "w"), indent=1)
+        return all(c["ok"] for c in self.checks)
+
+    def countin_knob(self, d, icv, mark):
+        """A gold knob turned during the count-in: below it on the OLED, held back on the 7-segment display."""
+        turn = "_ZN18InstrumentClipView16modEncoderActionEll"
+        if self.oled:
+            d.save_oled("countin_countdown")
+            self.popup_below(d, "a gold knob turned during the count-in (in the clip view)",
+                             lambda: d.call(turn, icv, 1, -8))
+            d.save_oled("countin_popup")
+            return True
+        for _ in range(8):
+            d.step()
+        levels = d.knob_levels()
+        n = len(d.events)
+        d.call(turn, icv, 1, -8)
+        for _ in range(30):  # The knob's LEDs follow in the UI timer's routine
+            d.step()
+        asked = [e["text"] for w, k, e in d.events[n:] if k == "7segPopup"]
+        shown = [e["text"] for w, k, e in d.events[n:] if k == "7segShown"]
+        self.check("7-segment: a gold knob turned during the count-in changes its param (it asks for its popup, the "
+                   "knob's LED level moves), but its popup doesn't take the count-in's place",
+                   asked and not any(not t.strip().isdigit() for t in shown) and d.seven_popup()
+                   and d.knob_levels() != levels,
+                   f"asked {asked[:2]}, shown {shown[:2]}, popup up {d.seven_popup()}, knob LEDs {levels} -> "
+                   f"{d.knob_levels()}")
+        return True
+
     def synth_state(self, d):
         """currentValue of the first 40 params of the synth's unpatched and patched ParamSets (its ParamManager's
         summaries[0] and [1], ParamCollectionSummary 20 bytes)."""
@@ -1083,8 +1206,10 @@ def main():
         "stop": dict(oled=True, stop=True),
         "extclock": dict(oled=True, ext_clock=7),
         "launch": dict(oled=True, launch=True),
+        "countin": dict(oled=True, countin=True),
+        "countin7": dict(oled=False, countin=True),
     }
-    names = args.scenario or ["oled", "7seg", "swing", "extclock", "stop", "launch"]
+    names = args.scenario or ["oled", "7seg", "swing", "extclock", "stop", "launch", "countin", "countin7"]
     results = {}
     for n in names:
         results[n] = Scenario(n, args, **scenarios[n]).run()

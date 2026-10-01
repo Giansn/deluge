@@ -1,0 +1,152 @@
+From 20a9a6ef1534283160d5096dcaa0e6ae13f25cc7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 09:19:52 +0000
+Subject: [PATCH] The record count-in is a countdown with priority too: on the
+ OLED's title row, its 7-segment popup kept
+
+v19.0.2 covered the song change's countdown and Song view's launch countdown, but missed a third one: the record
+count-in (Settings > Recording > Count-in bars; REC, then PLAY), whose beats 1.2.1 showed as a popup in the middle of
+the image. Any other popup took its place: a gold knob turned during the count-in hid it until the next beat.
+
+OLED: the count-in is now a countdown like the others (gui/ui/countdown.h), in whatever UI, as its popup was: "Count-in"
+and the beats left big on the right, on the title row over everything, a popup moved below it, gone when the recording
+begins (countdown::line(), from PlaybackHandler::currentVisualCountForCountIn). PlaybackHandler::actionSwungTick() no
+longer shows it as a popup there, and neither the count-in's end nor endPlayback() cancels a popup there (that would now
+take away a knob's popup instead).
+
+7-segment display: the count-in stays its popup, and while it runs a gold knob turned or pressed or a mod button pressed
+shows no popup (countdown::knobPopupAllowed()); the knob still does all it does.
+
+Tested (tests/songchange/songchange_emu.py, the firmware in the emulator), new scenarios countin and countin7: REC, then
+PLAY with a 1-bar count-in in a clip view; the count-in shown as the firmware counts it in every window (4, 3, 2, 1), a
+gold knob turned in its third beat ("Master Level: -8.5 dB"): on the OLED the title row pixel for pixel as before, the
+popup below it; on the 7-segment display the knob's LED level moves and the count-in stays. On a v19.0.2 build both
+scenarios fail (the count-in a popup, which the knob's took the place of).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Eb214cM1zi1k5Gpcn9RLKh
+---
+ src/deluge/gui/ui/countdown.cpp          | 15 ++++++++++++++-
+ src/deluge/gui/ui/countdown.h            | 15 +++++++++------
+ src/deluge/playback/playback_handler.cpp | 19 ++++++++++++++-----
+ 3 files changed, 37 insertions(+), 12 deletions(-)
+
+diff --git a/src/deluge/gui/ui/countdown.cpp b/src/deluge/gui/ui/countdown.cpp
+index 0e2c8f5a..b4118dfa 100644
+--- a/src/deluge/gui/ui/countdown.cpp
++++ b/src/deluge/gui/ui/countdown.cpp
+@@ -35,13 +35,19 @@ namespace deluge::gui::countdown {
+ 
+ namespace {
+ 
+-enum class Where : uint8_t { NONE, SONG_CHANGE, LAUNCH };
++enum class Where : uint8_t { NONE, COUNT_IN, SONG_CHANGE, LAUNCH };
+ 
+ /// Which countdown the current UI shows, if any. Asked anew each time, so that nothing can stay up after it
+ Where where() {
+ 	if (!currentSong || stemExport.processStarted) {
+ 		return Where::NONE;
+ 	}
++	// The record count-in (v19.0.3): in whatever UI, as 1.2.1's popup showed it. Its count is set at the count-in's
++	// first tick and back to 0 at its end or when playback ends
++	if (playbackHandler.ticksLeftInCountIn && playbackHandler.currentVisualCountForCountIn
++	    && playbackHandler.isEitherClockActive()) {
++		return Where::COUNT_IN;
++	}
+ 	UI* ui = getCurrentUI();
+ 	if (ui == &loadSongUI) {
+ 		return (currentUIMode == UI_MODE_LOADING_SONG_UNESSENTIAL_SAMPLES_ARMED) ? Where::SONG_CHANGE : Where::NONE;
+@@ -67,6 +73,12 @@ bool line(char const** label, char* number, size_t size) {
+ 	if (now == Where::NONE || size < 12) {
+ 		return false;
+ 	}
++	if (now == Where::COUNT_IN) {
++		// The beats until the recording begins, as 1.2.1's popup counted them (PlaybackHandler::actionSwungTick())
++		*label = "Count-in";
++		intToString(playbackHandler.currentVisualCountForCountIn, number);
++		return true;
++	}
+ 	if (now == Where::LAUNCH) {
+ 		// As Song view counted it (SessionView::displayLoopsRemainingPopup(), community firmware): the bars until the
+ 		// launch, in the last bar the beats. At least 1 until the launch: its sixteenths are rounded, and an external
+@@ -110,6 +122,7 @@ bool knobPopupAllowed() {
+ 		return true; // The OLED moves popups below the countdown
+ 	}
+ 	switch (where()) {
++	case Where::COUNT_IN: // Its number is a popup there, which the knob's popup would take the place of
+ 	case Where::SONG_CHANGE:
+ 		return false;
+ 	case Where::LAUNCH:
+diff --git a/src/deluge/gui/ui/countdown.h b/src/deluge/gui/ui/countdown.h
+index 2c435af5..aa89d9c3 100644
+--- a/src/deluge/gui/ui/countdown.h
++++ b/src/deluge/gui/ui/countdown.h
+@@ -20,12 +20,15 @@
+ 
+ /// mastertune-v19.0.2: a countdown has priority on the display. While one runs, the OLED draws it on its title row over
+ /// everything else and moves popups below it (OLED::sendMainImage()), and on the 7-segment display the gold knobs'
+-/// popups don't take the countdown's place. The countdowns: the song change's in the song browser while the song to come
+-/// is armed (mastertune-v14: the loops, then the bars of the last loop, then the beats of the last bar), and the launch
+-/// countdown in Song view (and the performance view and the arranger, which draw through it) while clips or a section
+-/// are armed to launch, counted as Song view counted it: the bars until the launch, in the last bar the beats. 1.2.1 and
+-/// the community firmware drew that one as a box in the middle ("Loops remaining: 2", "Bars Remaining: 8"), where every
+-/// popup covered it
++/// popups don't take the countdown's place. The countdowns:
++/// - the song change's, in the song browser while the song to come is armed (mastertune-v14: the loops, then the bars
++///   of the last loop, then the beats of the last bar)
++/// - the launch countdown in Song view (and the performance view and the arranger, which draw through it) while clips
++///   or a section are armed to launch, counted as Song view counted it: the bars until the launch, in the last bar the
++///   beats. 1.2.1 and the community firmware drew it as a box in the middle of the image ("Bars Remaining: 8"), where
++///   every popup covered it
++/// - v19.0.3: the record count-in (Settings > Recording > Count-in bars), the beats until the recording begins, in
++///   whatever UI. 1.2.1 showed it as a popup, which any other popup took the place of
+ namespace deluge::gui::countdown {
+ 
+ /// The countdown shown now: its label ("Bars remaining") and number ("" while the song change has none: "Song will
+diff --git a/src/deluge/playback/playback_handler.cpp b/src/deluge/playback/playback_handler.cpp
+index 74a06617..7a8d562e 100644
+--- a/src/deluge/playback/playback_handler.cpp
++++ b/src/deluge/playback/playback_handler.cpp
+@@ -569,7 +569,9 @@ void PlaybackHandler::endPlayback() {
+ 
+ 	if (currentVisualCountForCountIn) {
+ 		currentVisualCountForCountIn = 0;
+-		display->cancelPopup(); // In case the count-in was showing
++		if (display->have7SEG()) {
++			display->cancelPopup(); // In case the count-in was showing (on the OLED it's no popup: mastertune-v19.0.3)
++		}
+ 	}
+ 
+ 	setLedStates();
+@@ -911,7 +913,9 @@ void PlaybackHandler::actionSwungTick() {
+ 				}
+ 			}
+ 
+-			display->cancelPopup();
++			if (display->have7SEG()) {
++				display->cancelPopup(); // The count-in's (on the OLED it's no popup: mastertune-v19.0.3)
++			}
+ 			currentVisualCountForCountIn = 0;
+ 			currentUIMode &= UI_MODE_AUDITIONING;
+ 
+@@ -925,9 +929,14 @@ void PlaybackHandler::actionSwungTick() {
+ 
+ 			if (newVisualCount != currentVisualCountForCountIn) {
+ 				currentVisualCountForCountIn = newVisualCount;
+-				char buffer[12];
+-				intToString(newVisualCount, buffer);
+-				display->displayPopup(buffer, 0, true, 255, 2);
++				// mastertune-v19.0.3: on the OLED the count-in is a countdown on the title row, which has priority
++				// (gui/ui/countdown.h): popups go below it, where 1.2.1's popup was taken by any other popup. On the
++				// 7-segment display it stays this popup, and the gold knobs' popups don't take its place
++				if (display->have7SEG()) {
++					char buffer[12];
++					intToString(newVisualCount, buffer);
++					display->displayPopup(buffer, 0, true, 255, 2);
++				}
+ 			}
+ 			swungTicksTilNextEvent = 2147483647;
+ 			goto doMetronome;
+-- 
+2.43.0
+
