@@ -47,7 +47,11 @@ or not planned); **11 are open**, several marked release-blocker. Four causes, b
 4. **Churn in memory ownership.** The fix for ParamManager leaks (#4920) was pushed directly, reverted the same day,
    and landed again on 25 September. It now frees the destination's collections in `stealParamCollectionsFrom()`,
    which has 11 callers that were not audited for shared collections. A leak raises the risk of running out of
-   memory; a double free would be a crash. Neither has been observed yet.
+   memory; a double free would be a crash. Neither has been observed yet. An audit of the 11 callers
+   (`device/analysis/2026-10-01-v13-4920-double-free.md` on `device-results`) found the new free loop dead at every one
+   of them: each destination is fresh, emptied just before, or guarded. The fix's effective change is the destructor
+   of the removed backup (`song.cpp:3942`). So this cause is unlikely to crash today; a latent trap remains for a
+   future caller (a kit row whose cloning failed for lack of RAM keeps a stale expression offset).
 
 Also open and not a crash, but it damages files: **#4917, song files with duplicate attributes**.
 `AudioClip::writeDataToFile()` calls `Clip::writeDataToFile()` twice (since 2024, so in 1.2.1 too).
@@ -129,7 +133,7 @@ are worth porting, and they apply to mastertune's code (each checked against `20
 |---|---|---|
 | `8102020a` #4805 | i028 memory corruption: the waveform view loaded the wrong cluster (1 line) | with -C1 |
 | `7064d10b` #4885 | live input pitch shifter: division by zero, endless loop, wrong mask | one hunk by hand |
-| `47b1d92b` #4920 | ParamManager leaks on steal/backup delete | cleanly (check the double-free risk first) |
+| `47b1d92b` #4920 | ParamManager leaks (in mastertune at `song.cpp:3863-3867`) | cleanly; no double free (audited) |
 | `dd911e86` #4615 | automation region edit through a dangling pointer | cleanly |
 | `e851b323` #4645 | dangling `outputRecordingFrom` after deleting a track | one hunk by hand |
 | `9c3f9a70` #4671 | SampleRecorder freed inside the card routine | partly by hand |
