@@ -48,8 +48,8 @@ def main():
     null = fz.NullPage(emu)
     fz.ModalRecorder(emu)
     emu.uc.ctl_flush_tb()
-    import song_emu as se
-    key_offset = se.gdb_values(emu, ["(int)&((Song*)0)->key.modeNotes"])[0]  # MusicalKey's NoteSet, 12 bits
+    # MusicalKey's NoteSet, 12 bits (gdb finds Song only in the context of its constructor)
+    key_offset, = su.gdb_ints(emu, ["list Song::Song", "print (int)&((Song*)0)->key.modeNotes"])
     sym = emu.sym
     rng = random.Random(1)
     broken = []
