@@ -23,7 +23,7 @@ with the browser still open (LoadInstrumentPresetUI::performLoadSynthToKit()), t
       ParamManagers of the drum (ensureInaccessibleParamPresetValuesWithoutKnobsAreZero()); an entry emptied by the load
       freezes there with E412. No freeze, crash or hang allowed.
 On 62a516c2: (1) the view still points at the first freed drum after both loads, (2) E412 in
-ParamManager::getPatchCableSet(). Encoder turns wake v1.3's self-blocking encoder task (see Inputs below).
+ParamManager::getPatchCableSet(). Encoder turns wake v1.3's self-blocking encoder task (fuzz_ui.Inputs).
 
 Usage: kitrow_emu.py <deluge.elf> --tools PREFIX --build DIR --out DIR
 Last line: PASS (all checks hold) or FAIL (which ones didn't); exit 0/1."""
@@ -46,21 +46,9 @@ EXIT_ACTIONS = ("_ZN10LoadSongUI10exitActionEv", "_ZN22LoadInstrumentPresetUI10e
                 "_ZN13SampleBrowser10exitActionEv", "_ZN7Browser10exitActionEv")
 
 
-class Inputs(fuzz_ui.Inputs):
-    """fuzz_ui.Inputs, with the encoders' interrupt completed: v1.3's encoder task blocks itself
-    (interpretEncodersTask(): blockTask(EncoderTaskID)) until the encoder IRQ unblocks it after applyEdges(), so a turn
-    written into the encoder alone is never actioned. Here unblockTask(EncoderTaskID) follows, as in the IRQ."""
-
-    def __init__(self, rig, firmware):
-        super().__init__(rig, firmware)
-        sym = rig.emu.sym
-        self.unblock = sym["unblockTask"]
-        self.task_id = sym["_ZN6deluge3hid8encoders13EncoderTaskIDE"]
-
-    def turn(self, name, n):
-        super().turn(name, n)
-        task_id = struct.unpack("<b", self.rig.emu.uc.mem_read(self.task_id, 1))[0]
-        self.rig.action(f"turn {name} {n:+d}", self.unblock, task_id & 0xFF)
+# fuzz_ui.Inputs wakes v1.3's self-blocking encoder task after each turn, as the encoder IRQ does (the other tests
+# import it from here)
+Inputs = fuzz_ui.Inputs
 
 
 def boot(a, label):

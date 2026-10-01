@@ -7,7 +7,7 @@ kit's 1 bar = 2 s, the audio clip 2 bars = 4 s) as SONGS/DEFAULT.XML (the startu
 with an arrangement written into the XML (every Output one ClipInstance of 4 bars at bar 0: 8 s), as the firmware
 saves it. Per song, as a hand does it:
   clip    song view: SAVE held + RECORD (StemExportType::CLIP)
-  drum    the kit's clip (its pad pressed in song view): SAVE held + RECORD (DRUM; the same call as c1.3's
+  drum    the kit's clip (its pad pressed in song view): SAVE held + RECORD (DRUM; the same call as v1.3's
           KIT FX > ACTIONS > EXPORT AUDIO)
   track   arranger (SONG): SAVE held + RECORD (TRACK)
   mixdown arranger, exportMixdown on (Configure Export > Mixdown): SAVE held + RECORD (MIXDOWN)
@@ -180,8 +180,8 @@ class Probe:
         emu.intercept(sym.find("_ZN14SampleRecorder17createNextClusterEv"), next_cluster)
         lock = sym["sdRoutineLock"]
         for name, kind in (("_ZN13AudioRecorder15finishRecordingEv", "finishRecording"),
-                           ("_ZN14SampleRecorderD2Ev", "~SampleRecorder"), ("_ZN14SampleRecorder5abortEv", "abort"),
-                           ("f_unlink", "f_unlink")):
+                           ("_ZN14SampleRecorderD2Ev", "~SampleRecorder"), ("f_unlink", "f_unlink")):
+            # (SampleRecorder::abort() is inlined in v1.3: the aborts show in self.fails, createNextCluster()'s)
             try:
                 emu.intercept(sym.find(name), lambda e, k=kind: self.events.append(
                     (round(e.seconds(), 4), k, e.sym.name_at(e.uc.reg_read(UC_ARM_REG_LR)), e.u8(lock),

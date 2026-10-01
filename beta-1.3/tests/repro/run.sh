@@ -19,7 +19,7 @@
 #   automation_type_emu.py 0102: a clip made CV or MIDI in song view opens its automation view without the synth's
 #                         parameter (CV: no E411)
 #   (0007, the transpose note during a song change, and 0008, a kit row saved without params: the fuzzer's
-#   seeds 11 and 1011 in --mode deep, see beta-1.3/README.md)
+#   seeds 11 (and 21) and 1011 in --mode deep, see beta-1.3/NIGHTLY.md section 7)
 #   sm01_replay_emu.py    0001: the 908-input run that froze with SM01 (about 35 minutes; LONG=1 to include it)
 # Usage: ./run.sh <deluge.elf> <toolchain v22 prefix> <blockcount dir> [out dir]
 # Exit status: the number of failed tests.

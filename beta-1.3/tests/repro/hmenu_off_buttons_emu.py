@@ -15,7 +15,7 @@ editor, MASTER opened (horizontal: its paging prepared) and left, LFO 1 opened (
 fields) and left; SHIFT + SELECT (settings), COMMUNITY FEATURES > HORIZONTAL MENUS turned off, settings left (saved);
 the sound editor again, MASTER opened (a vertical list now), SYNTH, KIT, MIDI, CV pressed. PASS: no crash, freeze,
 hang, write through a null pointer or wild access, the menu still MASTER with a current item inside its own list.
-On beta-fix2 (and 62a516c2): see the last line.
+On 62a516c2: FAIL (crash: current_item_ = end() dereferenced); with 0015: PASS.
 
 Usage: hmenu_off_buttons_emu.py <deluge.elf> --tools PREFIX --build DIR --out DIR
 Last line: PASS or FAIL; exit 0/1."""

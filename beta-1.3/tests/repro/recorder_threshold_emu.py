@@ -15,7 +15,7 @@ MODE turned one step (LOW), BACK out; the synth clip PADA, its sound editor, ACT
 pressed (with horizontal menus twice: the recorder's menu, then its record field). The input is silence. 1.5 s into
 the recording BACK's path is taken (fuzz_ui.ModalRecorder: AudioRecorder::endRecordingSoon() at each of the recorder
 loop's button reads). PASS: the press returns within 20 s (emulated), the recorder closed and the sound editor current
-again, no crash or freeze. On beta-fix2 and 62a516c2 the press never returns (hang).
+again, no crash or freeze. On 62a516c2 the press never returns (hang); with 0014 it returns.
 
 Usage: recorder_threshold_emu.py <deluge.elf> --tools PREFIX --build DIR --out DIR
 Last line: PASS or FAIL; exit 0/1."""

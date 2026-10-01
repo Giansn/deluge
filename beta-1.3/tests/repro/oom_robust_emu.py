@@ -46,22 +46,6 @@ SELECT, DESELECT, NONE = 248, 249, 256
 QUEUE = 32  # OLED_FRAME_QUEUE_SIZE
 
 
-class Inputs(fuzz_ui.Inputs):
-    """fuzz_ui.Inputs, with the encoders' interrupt completed: v1.3's encoder task blocks itself until the encoder
-    IRQ unblocks it, so a turn written into the encoder alone is never actioned (as in kitrow_emu.py)."""
-
-    def __init__(self, rig, firmware):
-        super().__init__(rig, firmware)
-        sym = rig.emu.sym
-        self.unblock = sym["unblockTask"]
-        self.task_id = sym["_ZN6deluge3hid8encoders13EncoderTaskIDE"]
-
-    def turn(self, name, n):
-        super().turn(name, n)
-        task_id = struct.unpack("<b", self.rig.emu.uc.mem_read(self.task_id, 1))[0]
-        self.rig.action(f"turn {name} {n:+d}", self.unblock, task_id & 0xFF)
-
-
 def call(rig, what, address, regs=(), stack=(), limit_s=5):
     """A firmware function called directly (up to 4 register arguments, the rest on the stack), under the rig's
     watchdog: a freeze or crash raises su.Stop."""
@@ -368,7 +352,7 @@ def main():
         print("FAIL: boot")
         return 1
     results["_rig"] = rig
-    inp = Inputs(rig, "v13")
+    inp = fuzz_ui.Inputs(rig, "v13")  # it wakes v1.3's encoder task after each turn
     rig.tm(0.3, "settle")
     if not a.discover:
         oled_checks(rig, results)
