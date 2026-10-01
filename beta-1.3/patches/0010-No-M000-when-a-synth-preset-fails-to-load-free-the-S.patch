@@ -1,0 +1,32 @@
+From 5f0948add2b47d910e0a0582ea49aa1dee7957f4 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 18:07:19 +0000
+Subject: [PATCH] No M000 when a synth preset fails to load: free the
+ SoundInstrument's block start
+
+StorageManager::loadInstrumentFromFile() abandons an instrument whose reading failed and freed
+static_cast<void*>(newInstrument). SoundInstrument derives from Sound first and MelodicInstrument second,
+so its Instrument part doesn't start the allocation: MemoryRegion::dealloc() froze with M000.
+dynamic_cast<void*> gives the most-derived object's start, as the other frees in the firmware do.
+---
+ src/deluge/storage/storage_manager.cpp | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/deluge/storage/storage_manager.cpp b/src/deluge/storage/storage_manager.cpp
+index 0185cd69..6178b22a 100644
+--- a/src/deluge/storage/storage_manager.cpp
++++ b/src/deluge/storage/storage_manager.cpp
+@@ -360,7 +360,9 @@ Error StorageManager::loadInstrumentFromFile(Song* song, InstrumentClip* clip, O
+ deleteInstrumentAndGetOut:
+ 		D_PRINTLN("abandoning load -  %s", name->get());
+ 		newInstrument->deleteBackedUpParamManagers(song);
+-		void* toDealloc = static_cast<void*>(newInstrument);
++		// The block's start: for a SoundInstrument (Sound first, then MelodicInstrument) the Instrument part isn't
++		// it, and freeing a pointer into the block freezes the allocator (M000)
++		void* toDealloc = dynamic_cast<void*>(newInstrument);
+ 		newInstrument->~Instrument();
+ 		delugeDealloc(toDealloc);
+ 
+-- 
+2.43.0
+
