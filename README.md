@@ -120,7 +120,7 @@ Source code: `patches/0001` to `0123` against `release_1_2_1`. v2 = 0001, v3 = 0
 
 **Performance package A (v3):**
 - **NEON buffer shift:** The 16-entry interpolation buffer is shifted with NEON instructions instead of value by value. That was about half of the sinc cost.
-- **Tested:** On real Cortex-A9 machine code in the emulator it gives the same buffers for all shift widths (`tests/run_neon_shift_test.py`).
+- **Tested:** On real Cortex-A9 machine code in the emulator it gives the same buffers for all shift widths (`tests/neon_shift_test.cpp`, run by `tests/run_all.sh`).
 - **Rejected:** Two additional compiler flags (`-funswitch-loops -fsplit-loops`) changed the floating-point code in 81 functions, including audio. That made bit-identity unprovable, so they are not included.
 
 **Sidechain fix (v3, v4):**
@@ -1153,8 +1153,9 @@ g++ -std=c++20 -O2 -Isrc/deluge /path/to/tests/master_tune_math_test.cpp -o mt_t
 # WAV test (pip install soundfile scipy)
 python3 /path/to/tests/wav_mtun_chunk_test.py
 
-# NEON buffer shift on Cortex-A9 code in the emulator (pip install unicorn)
-python3 /path/to/tests/run_neon_shift_test.py .
+# NEON buffer shift on Cortex-A9 code in the emulator (pip install unicorn; run_all.sh . arm runs it with the others)
+python3 /path/to/tests/arm/arm_build.py . -o neon.elf -I src/deluge /path/to/tests/neon_shift_test.cpp &&
+  DELUGE_FIRMWARE=. python3 /path/to/tests/arm/arm_run.py neon.elf
 
 # SD access over USB (v7) on the PC, with AddressSanitizer
 /path/to/tests/smsysex/run.sh .
