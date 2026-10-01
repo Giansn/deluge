@@ -51,6 +51,13 @@ or not planned); **11 are open**, several marked release-blocker. Four causes, b
 Also open and not a crash, but it damages files: **#4917, song files with duplicate attributes**.
 `AudioClip::writeDataToFile()` calls `Clip::writeDataToFile()` twice (since 2024, so in 1.2.1 too).
 
+The community says so itself. Its download page (`website/src/content/docs/downloads.mdx`) offers the beta with:
+"Note that there may still be issues in the beta [...] Be aware that in addition to new features there are large
+internal changes - we believe these will make the deluge more efficient and stable in the long term, but there may be
+short term issues with perceived performance due to interactions between sub systems." A crash shows as "a crazy
+pattern with yellow or red in the sidebar"; they ask for a photo of the whole Deluge on the issue tracker or Discord.
+Since today (#4955) the crash handler reports more.
+
 In short: v1.3 is a beta under heavy construction. Large parts were rewritten at once (menus, sound editor, the
 scheduler, memory ownership), and the crashes come from the seams between old and new code, above all from object
 lifetimes. The fixes land quickly, often within days, but new regressions keep coming in at about the same rate.
