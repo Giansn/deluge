@@ -1,0 +1,71 @@
+From 50f9c8055b7f9b6b7524b593367fbf34dacfc77f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 05:05:01 +0000
+Subject: [PATCH] A cloned Clip's keyboard view uses its own column controls:
+ no crash once the original is deleted
+
+A Clip's keyboard state holds the keyboard view's column controls
+(ColumnControlState): the columns and leftCol/rightCol, pointers to the two
+shown, which point at the state's own columns. InstrumentClip::copyBasicsFrom()
+copied the state with the implicit copy, so a clone (session view, a pending
+overdub, the arranger) pointed at the original's columns, and once the
+original was deleted and its memory reused, the clone's keyboard view
+rendered its sidebar through a freed column's vtable (fuzz seed 291: a jump
+to 0x0c000014 from ColumnControlsKeyboard::renderSidebarPads()). The copy now
+copies the columns and points leftCol/rightCol at its own.
+---
+ .../ui/keyboard/layout/column_control_state.h |  7 +++++++
+ .../ui/keyboard/layout/column_controls.cpp    | 19 +++++++++++++++++++
+ 2 files changed, 26 insertions(+)
+
+diff --git a/src/deluge/gui/ui/keyboard/layout/column_control_state.h b/src/deluge/gui/ui/keyboard/layout/column_control_state.h
+index 8d60a3ac..c4485269 100644
+--- a/src/deluge/gui/ui/keyboard/layout/column_control_state.h
++++ b/src/deluge/gui/ui/keyboard/layout/column_control_state.h
+@@ -44,6 +44,13 @@ enum ColumnControlFunction : int8_t {
+ using namespace deluge::gui::ui::keyboard::controls;
+ 
+ struct ColumnControlState {
++	// leftCol and rightCol point at this state's own columns, so a copy (the keyboard state of a cloned Clip) must
++	// point at its own: the implicit copy pointed at the original's, which may be deleted first (the keyboard view
++	// then rendered through a freed column's vtable)
++	ColumnControlState() = default;
++	ColumnControlState(const ColumnControlState& other) { *this = other; }
++	ColumnControlState& operator=(const ColumnControlState& other);
++
+ 	VelocityColumn velocityColumn{64};
+ 
+ 	ModColumn modColumn{};
+diff --git a/src/deluge/gui/ui/keyboard/layout/column_controls.cpp b/src/deluge/gui/ui/keyboard/layout/column_controls.cpp
+index 7a9547a8..1b24ccb0 100644
+--- a/src/deluge/gui/ui/keyboard/layout/column_controls.cpp
++++ b/src/deluge/gui/ui/keyboard/layout/column_controls.cpp
+@@ -194,6 +194,25 @@ ColumnControlFunction ColumnControlsKeyboard::stepControlFunction(int32_t offset
+ 	return (offset > 0) ? nextControlFunction(cur, skip) : prevControlFunction(cur, skip);
+ }
+ 
++ColumnControlState& ColumnControlState::operator=(const ColumnControlState& other) {
++	velocityColumn = other.velocityColumn;
++	modColumn = other.modColumn;
++	chordColumn = other.chordColumn;
++	songChordMemColumn = other.songChordMemColumn;
++	chordMemColumn = other.chordMemColumn;
++	scaleModeColumn = other.scaleModeColumn;
++	dxColumn = other.dxColumn;
++	sessionColumn = other.sessionColumn;
++	leftColFunc = other.leftColFunc;
++	lastLeftFunc = other.lastLeftFunc;
++	rightColFunc = other.rightColFunc;
++	rightColSetAtRuntime = other.rightColSetAtRuntime;
++	// The same functions, in this state's own columns
++	leftCol = getColumnForFunc(leftColFunc);
++	rightCol = getColumnForFunc(rightColFunc);
++	return *this;
++}
++
+ ControlColumn* ColumnControlState::getColumnForFunc(ColumnControlFunction func) {
+ 	switch (func) {
+ 	case VELOCITY:
+-- 
+2.43.0
+
