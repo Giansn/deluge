@@ -1,0 +1,43 @@
+From 16cbab33ffb1a0730639847a3c39c53537d6e0d6 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 11:17:34 +0000
+Subject: [PATCH 116/116] No stem export while the output is being resampled:
+ no E242, no second recorder
+
+SHIFT + RECORD records the output through the audio recorder (resampling).
+SAVE + RECORD (and the song menu's export) then started a stem export: the
+views check playback and song recording, not the audio recorder, and the
+export set up its own output recording. A beta build froze with E242 in
+AudioRecorder::setupRecordingToFile() (the fuzzer's seed 226, second boot,
+stop run 9); a release build replaced the running recorder.
+StemExport::startStemExportProcess() now refuses while the audio recorder
+records, with the views' "can't export stems" popup.
+
+Test (beta-1.3/tests/repro/stem_export_resampling_emu.py): SHIFT + RECORD,
+SAVE + RECORD: the popup, the resampling goes on (before: E242); a short
+RECORD press then ends it.
+---
+ src/deluge/processing/stem_export/stem_export.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/deluge/processing/stem_export/stem_export.cpp b/src/deluge/processing/stem_export/stem_export.cpp
+index 1cbffa98..bfa00503 100644
+--- a/src/deluge/processing/stem_export/stem_export.cpp
++++ b/src/deluge/processing/stem_export/stem_export.cpp
+@@ -83,6 +83,13 @@ StemExport::StemExport() {
+ /// starts stem export process which includes setting up UI mode, timer, and preparing
+ /// instruments / clips / kit rows for exporting
+ void StemExport::startStemExportProcess(StemExportType stemExportType) {
++	// The export records the output through the audio recorder. While that already records (resampling, started with
++	// SHIFT + RECORD), a second recording would replace its recorder: E242 in a beta build, a lost recorder otherwise
++	if (audioRecorder.recordingSource > AudioInputChannel::NONE) {
++		display->displayPopup(deluge::l10n::get(deluge::l10n::String::STRING_FOR_CANT_EXPORT_STEMS));
++		return;
++	}
++
+ 	// in case playback is active when you start stem export, stop it.
+ 	stopPlayback();
+ 
+-- 
+2.43.0
+
