@@ -306,8 +306,9 @@ How the faults were found:
   all 20 tests passed on it, round 9 ran on it). Round 10 on it found E427 (fuzz seed 241: 0018). Then
   `...-697ffb0f.bin` (28 patches, with 0018 and the helper session's 0107-0111; all 26 tests passed on it), where
   round 11 found 0019. A third build with 0019 (`1.3.0-beta-e24dd432`, all tests passed) wasn't delivered: 0020
-  came first. Now `...-90a87481.bin` (30 patches, 0001-0020 and 0101-0111 without 0104): all 27 tests pass on that
-  very file, the SM01 replay included; round 12 on it found 0023.
+  came first. Then `...-90a87481.bin` (30 patches, 0001-0020 and 0101-0111 without 0104; all 27 tests passed on it),
+  where round 12 found 0023. Now `...-8f34a7c4.bin` (35 patches: 0001-0024 and 0101-0112 without 0104, in the order
+  of `patches/series`): all 31 tests pass on that very file, and so do the SM01 and seed 152 replays (`LONG=1`).
 - **The whole series together**: `tests/repro/run.sh` on the build with all 22 patches: all 19 tests pass, and so does the
   SM01 replay (`LONG=1`, all 908 inputs).
 - **Stop runs** (2 hours, `--mode deep`, OLED and 7-segment in parallel, 20 minutes per seed): the criterion for

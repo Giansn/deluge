@@ -12,22 +12,25 @@ This branch, `nightly`, holds the work on the community firmware's daily build, 
 
 ## The stabilised build
 
-`deluge-1.3.0-beta-62a516c2-nightly-90a87481.bin` (1,739,528 bytes, SHA-256
-`422de3d2f267d2853cd0171a949994a21bb166d5b3d62c5db195eb29776baaab`) is the beta `62a516c2` with the 30 patches
-0001-0020 and 0101-0111 in `patches/` (0021-0024 and the helper session's 0112, found after it, come with the next
-build); what each one fixes and how it was found is in `NIGHTLY.md` section 7. The Deluge shows it as
-`1.3.0-beta-90a87481` (SETTINGS > FIRMWARE VERSION). Install it like any firmware: the .bin as the only .bin in the
-card's root folder, then switch the Deluge on with SHIFT held. Back up the card first, as for any beta.
+`deluge-1.3.0-beta-62a516c2-nightly-8f34a7c4.bin` (1,739,568 bytes, SHA-256
+`1ded841e122f13c19d28fa56e0313de384a39c2ed457fc32955dbd999c0bbb4f`) is the beta `62a516c2` with the 35 patches in
+`patches/` (0001-0024 and 0101-0112 without the withdrawn 0104, in the order of `patches/series`); what each one fixes
+and how it was found is in `NIGHTLY.md` section 7. The Deluge shows it as `1.3.0-beta-8f34a7c4` (SETTINGS > FIRMWARE
+VERSION). Install it like any firmware: the .bin as the only .bin in the card's root folder, then switch the Deluge on
+with SHIFT held. Back up the card first, as for any beta.
 
 - **Tested in the emulator only, not yet on a Deluge.** On this very file every patch's test passes
-  (`tests/repro/run.sh`, 27 tests, and the SM01 replay with `LONG=1`).
+  (`tests/repro/run.sh`, 31 tests, and the SM01 and seed 152 replays with `LONG=1`).
 - **The fuzzer** ran about 12,300 random inputs without a problem in rounds 7-9 (`NIGHTLY.md` section 7; round 9 on
-  the first delivered build). Rounds 10 and 11 then found E427 (0018) and a crash on a fast select turn in arranger
-  view (0019); the audit after that, of every encoder handler, found seven more places of that kind (0020). The fuzz
-  rounds on this file (round 12) are in `NIGHTLY.md`.
-- **Built by `tools/setup_beta.sh`**: the tree `503cb5ce` (62a516c2 plus the patches), commit `90a87481`. The builds
+  the first delivered build). Rounds 10-12 on the delivered builds then found E427 (0018), a crash on a fast select
+  turn in arranger view (0019) and one on KEYBOARD in an audio Clip's automation view (0023: one problem in 11,823
+  inputs); the helper session's stop runs found E170 at a song swap (0112). Audits of each fault's kind found 0020 (seven
+  more fast-turn places), 0021 (MIDI follow), 0022 and 0024 (the automation view and an audio Clip). MIDI input, which
+  the fuzzer now sends too (`--midi`): no problem in 4,498 inputs. The fuzz rounds on this file are in `NIGHTLY.md`.
+- **Built by `tools/setup_beta.sh`**: the tree `75b38bbd` (62a516c2 plus the patches), commit `8f34a7c4`. The builds
   before it are in the git history: `...-582a21a1.bin` freezes with E427 on a ramp to the arrangement's end,
-  `...-697ffb0f.bin` can crash on a fast select turn with a clip instance held in arranger view.
+  `...-697ffb0f.bin` can crash on a fast select turn with a clip instance held in arranger view, `...-90a87481.bin` on
+  KEYBOARD in an audio Clip's automation view.
 
 | File | What |
 |---|---|
