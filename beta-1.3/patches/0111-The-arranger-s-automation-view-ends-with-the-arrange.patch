@@ -1,0 +1,107 @@
+From 8cb2813e8b83ef2366b3aa39521f74b89df4947e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 00:19:50 +0000
+Subject: [PATCH 111/111] The arranger's automation view ends with the
+ arranger: a song load or a clip view resets it
+
+automationView.onArrangerView was set when CLIP opened the arranger's
+automation view, and only ArrangerView::opened() and two transitions into a
+Clip's automation view reset it. A song loaded from the arranger's
+automation view starts in song view or a Clip's view and kept the flag.
+CLIP in a Clip then opened the arranger's automation view instead of the
+Clip's, with the arranger's rows (arrangerView.outputsOnScreen) of the old
+song, whose Outputs were freed: an audition pad there began auditioning a
+freed Output (the fuzzer's seed 127: a jump to 0x0c000014 from
+View::setActiveModControllableTimelineCounter()). setUIForLoadedSong() and
+the openings of song view, the clip views and the keyboard view now reset
+the flag, as ArrangerView::opened() does.
+
+Test (beta-1.3/tests/repro/arranger_automation_load_emu.py): after a song
+load from the arranger's automation view the flag is off (before: on, with
+a row of the old song); CLIP in PADA opens PADA's automation view and its
+audition pads are harmless (before: the arranger's automation view, and a
+crash on audition pad 17,7).
+---
+ src/deluge/deluge.cpp                          | 3 +++
+ src/deluge/gui/ui/keyboard/keyboard_screen.cpp | 4 ++++
+ src/deluge/gui/views/audio_clip_view.cpp       | 4 ++++
+ src/deluge/gui/views/instrument_clip_view.cpp  | 3 +++
+ src/deluge/gui/views/session_view.cpp          | 4 ++++
+ 5 files changed, 18 insertions(+)
+
+diff --git a/src/deluge/deluge.cpp b/src/deluge/deluge.cpp
+index da1950e1..fd760a06 100644
+--- a/src/deluge/deluge.cpp
++++ b/src/deluge/deluge.cpp
+@@ -343,6 +343,9 @@ void setUIForLoadedSong(Song* song) {
+ 
+ 	UI* newUI;
+ 	Clip* currentClip = song->getCurrentClip();
++	// A new song never starts in the arranger's automation view: the flag may still be set from the old song, whose
++	// arranger rows (arrangerView.outputsOnScreen) are freed by now
++	automationView.onArrangerView = false;
+ 	// If in a Clip-minder view
+ 	if (currentClip && song->inClipMinderViewOnLoad) {
+ 		if (currentClip->onAutomationClipView) {
+diff --git a/src/deluge/gui/ui/keyboard/keyboard_screen.cpp b/src/deluge/gui/ui/keyboard/keyboard_screen.cpp
+index 3b9089ec..eb306d26 100644
+--- a/src/deluge/gui/ui/keyboard/keyboard_screen.cpp
++++ b/src/deluge/gui/ui/keyboard/keyboard_screen.cpp
+@@ -774,6 +774,10 @@ void KeyboardScreen::exitAuditionMode() {
+ }
+ 
+ bool KeyboardScreen::opened() {
++	// This view ends the arranger's automation view, as ArrangerView::opened() does. Otherwise the flag outlived it,
++	// and the automation view opened from a Clip showed the arranger's, with rows that may belong to another song
++	automationView.onArrangerView = false;
++
+ 	focusRegained();
+ 	openedInBackground();
+ 	return true;
+diff --git a/src/deluge/gui/views/audio_clip_view.cpp b/src/deluge/gui/views/audio_clip_view.cpp
+index 4cad5cfd..56551dba 100644
+--- a/src/deluge/gui/views/audio_clip_view.cpp
++++ b/src/deluge/gui/views/audio_clip_view.cpp
+@@ -67,6 +67,10 @@ inline Sample* getSample() {
+ }
+ 
+ bool AudioClipView::opened() {
++	// This view ends the arranger's automation view, as ArrangerView::opened() does. Otherwise the flag outlived it,
++	// and the automation view opened from a Clip showed the arranger's, with rows that may belong to another song
++	automationView.onArrangerView = false;
++
+ 	mustRedrawTickSquares = true;
+ 	uiNeedsRendering(this);
+ 
+diff --git a/src/deluge/gui/views/instrument_clip_view.cpp b/src/deluge/gui/views/instrument_clip_view.cpp
+index a01f744c..894e5b76 100644
+--- a/src/deluge/gui/views/instrument_clip_view.cpp
++++ b/src/deluge/gui/views/instrument_clip_view.cpp
+@@ -128,6 +128,9 @@ InstrumentClipView::InstrumentClipView() : numEditPadPresses(0) {
+ }
+ 
+ bool InstrumentClipView::opened() {
++	// This view ends the arranger's automation view, as ArrangerView::opened() does. Otherwise the flag outlived it,
++	// and the automation view opened from a Clip showed the arranger's, with rows that may belong to another song
++	automationView.onArrangerView = false;
+ 
+ 	openedInBackground();
+ 
+diff --git a/src/deluge/gui/views/session_view.cpp b/src/deluge/gui/views/session_view.cpp
+index 02f5ffb9..f0e28444 100644
+--- a/src/deluge/gui/views/session_view.cpp
++++ b/src/deluge/gui/views/session_view.cpp
+@@ -147,6 +147,10 @@ bool SessionView::getGreyoutColsAndRows(uint32_t* cols, uint32_t* rows) {
+ }
+ 
+ bool SessionView::opened() {
++	// This view ends the arranger's automation view, as ArrangerView::opened() does. Otherwise the flag outlived it,
++	// and the automation view opened from a Clip showed the arranger's, with rows that may belong to another song
++	automationView.onArrangerView = false;
++
+ 	if (playbackHandler.playbackState && currentPlaybackMode == &arrangement) {
+ 		PadLEDs::skipGreyoutFade();
+ 	}
+-- 
+2.43.0
+

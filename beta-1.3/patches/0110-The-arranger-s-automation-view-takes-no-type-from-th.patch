@@ -1,0 +1,122 @@
+From b0af45d9b7d601f4a2c0984f46eecc0e1f04d46a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 23:31:29 +0000
+Subject: [PATCH 110/110] The arranger's automation view takes no type from the
+ song's current Clip
+
+AutomationView::padAction() and selectEncoderAction() took the output type
+from getCurrentClip() also in the arranger's automation view
+(onArrangerView), which shows no Clip, and steered by it. After a song load
+there is no current Clip: the type was read through null (SYNTH), and the
+expression parameters' pads (14,7, 15,0, 15,7) selected a parameter for
+that "synth", written through the null pointer, and moved the song's
+shortcut to a pad without a song parameter. With an audio Clip current the
+arranger's status and audition pads did nothing; with a MIDI Clip the
+select encoder changed that Clip's CC instead of the song's parameter. In
+the arranger these now take no Output and OutputType::NONE; the audio
+sidebar check, SELECT's kit check, the cross-screen LED and the patch
+cable reset are skipped there, and the editor's pad values take NONE.
+
+Test (beta-1.3/tests/repro/arranger_automation_clip_emu.py): with no
+current Clip the three pads write nothing through null and leave the
+song's selection (before: writes at 212 and 216, shortcut moved to 15);
+with the audio Clip current the status pad toggles its Output's mute
+(before: nothing); with PADA made MIDI and current, select +1 selects the
+song's next parameter and leaves PADA's CC (before: CC -1 -> 2).
+---
+ .../editor_layout/mod_controllable.cpp        |  6 +++---
+ src/deluge/gui/views/automation_view.cpp      | 19 +++++++++++--------
+ 2 files changed, 14 insertions(+), 11 deletions(-)
+
+diff --git a/src/deluge/gui/views/automation/editor_layout/mod_controllable.cpp b/src/deluge/gui/views/automation/editor_layout/mod_controllable.cpp
+index fd9a8ad1..2953235d 100644
+--- a/src/deluge/gui/views/automation/editor_layout/mod_controllable.cpp
++++ b/src/deluge/gui/views/automation/editor_layout/mod_controllable.cpp
+@@ -1065,8 +1065,8 @@ void AutomationEditorLayoutModControllable::handleAutomationSinglePadPress(Model
+                                                                            int32_t yDisplay, int32_t effectiveLength,
+                                                                            int32_t xScroll, int32_t xZoom) {
+ 
+-	Output* output = clip->output;
+-	OutputType outputType = output->type;
++	// (the arranger's automation view shows no Clip: the song's current one, if any, doesn't count)
++	OutputType outputType = getOnArrangerView() ? OutputType::NONE : clip->output->type;
+ 
+ 	// this means you are editing a parameter's value
+ 	handleAutomationParameterChange(modelStackWithParam, clip, outputType, xDisplay, yDisplay, effectiveLength, xScroll,
+@@ -1222,7 +1222,7 @@ void AutomationEditorLayoutModControllable::handleAutomationMultiPadPress(
+ 		// otherwise if it's a regular long press, calculate values from the y position of the pads
+ 		// pressed
+ 		else {
+-			OutputType outputType = clip->output->type;
++			OutputType outputType = getOnArrangerView() ? OutputType::NONE : clip->output->type;
+ 			firstPadValue =
+ 			    calculateAutomationKnobPosForPadPress(modelStackWithParam, outputType, firstPadY) + kKnobPosOffset;
+ 			secondPadValue =
+diff --git a/src/deluge/gui/views/automation_view.cpp b/src/deluge/gui/views/automation_view.cpp
+index f9fb3ea4..0e696e6c 100644
+--- a/src/deluge/gui/views/automation_view.cpp
++++ b/src/deluge/gui/views/automation_view.cpp
+@@ -1650,7 +1650,8 @@ void AutomationView::handleSelectEncoderButtonAction(bool on) {
+ 			return;
+ 		}
+ 
+-		if ((getCurrentOutputType() == OutputType::KIT) && (getCurrentInstrumentClip()->affectEntire)) {
++		if (!onArrangerView && (getCurrentOutputType() == OutputType::KIT)
++		    && (getCurrentInstrumentClip()->affectEntire)) {
+ 			soundEditor.setupKitGlobalFXMenu = true;
+ 		}
+ 
+@@ -1672,7 +1673,7 @@ ActionResult AutomationView::padAction(int32_t x, int32_t y, int32_t velocity) {
+ 
+ 	Clip* clip = getCurrentClip();
+ 
+-	if (clip->type == ClipType::AUDIO) {
++	if (!onArrangerView && clip->type == ClipType::AUDIO) {
+ 		if (x >= kDisplayWidth) {
+ 			return ActionResult::DEALT_WITH;
+ 		}
+@@ -1683,8 +1684,9 @@ ActionResult AutomationView::padAction(int32_t x, int32_t y, int32_t velocity) {
+ 		return ActionResult::DEALT_WITH;
+ 	}
+ 
+-	Output* output = clip->output;
+-	OutputType outputType = output->type;
++	// The arranger's automation view shows no Clip: the song's current one (none after a song load) mustn't steer it
++	Output* output = onArrangerView ? nullptr : clip->output;
++	OutputType outputType = onArrangerView ? OutputType::NONE : output->type;
+ 
+ 	// if we're in a midi clip, with a midi cc selected and we press the name shortcut
+ 	// while holding shift, then enter the rename midi cc UI
+@@ -1869,7 +1871,7 @@ bool AutomationView::shortcutPadAction(ModelStackWithAutoParam* modelStackWithPa
+ 					handleParameterSelection(clip, output, outputType, x, y);
+ 
+ 					// if you're in not in note editor, turn led off if it's on
+-					if (((InstrumentClip*)clip)->wrapEditing) {
++					if (!onArrangerView && ((InstrumentClip*)clip)->wrapEditing) {
+ 						indicator_leds::setLedState(IndicatorLED::CROSS_SCREEN_EDIT, inNoteEditor());
+ 					}
+ 				}
+@@ -2590,8 +2592,9 @@ void AutomationView::selectEncoderAction(int8_t offset) {
+ 
+ 	// change midi CC or param ID
+ 	Clip* clip = getCurrentClip();
+-	Output* output = clip->output;
+-	OutputType outputType = output->type;
++	// The arranger's automation view shows no Clip: the song's current one (none after a song load) mustn't steer it
++	Output* output = onArrangerView ? nullptr : clip->output;
++	OutputType outputType = onArrangerView ? OutputType::NONE : output->type;
+ 
+ 	// if you've selected a mod encoder (e.g. by pressing modEncoderButton) and you're in Automation
+ 	// Overview the currentUIMode will change to Selecting Midi CC. In this case, turning select encoder
+@@ -2640,7 +2643,7 @@ void AutomationView::selectEncoderAction(int8_t offset) {
+ 			selectNonGlobalParam(offset, clip);
+ 		}
+ 		// don't have patch cable blinking logic figured out yet
+-		if (clip->lastSelectedParamKind == params::Kind::PATCH_CABLE) {
++		if (!onArrangerView && clip->lastSelectedParamKind == params::Kind::PATCH_CABLE) {
+ 			clip->lastSelectedParamShortcutX = kNoSelection;
+ 			clip->lastSelectedParamShortcutY = kNoSelection;
+ 		}
+-- 
+2.43.0
+

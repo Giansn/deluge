@@ -1,0 +1,41 @@
+From 98b73df0d1d7f80bad471fba9b3742c481aa926b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 23:07:16 +0000
+Subject: [PATCH 109/109] A fast turn of the horizontal encoder with its button
+ held zooms one step in the turn's direction
+
+Since the encoder overhaul (#4529) TimelineView::horizontalEncoderAction()
+gets the whole turn since the last read (+-2 or more when turned fast), not
++-1. Its zoom took zoomMagnitude = -offset, zoomed in only for -1 and
+checked its limits only for +-1: a fast turn to the right zoomed out
+instead, and fast turns either way zoomed out past kMaxZoom, doubling xZoom
+until it overflowed to 0, where it stays (the clip views can't zoom any
+more). Zoom one step in the turn's direction, as
+ArrangerView::horizontalEncoderAction() does.
+
+Test (beta-1.3/tests/repro/fast_zoom_emu.py): in a clip view with X_ENC
+held, +2 zooms in (24 -> 12; before: out, 24 -> 48); 30 x -3 stop at the
+clip's limit, 1536 (before: past kMaxZoom to 3221225472, then 0); 30 x +3
+stop at 3 (before: 0 throughout).
+---
+ src/deluge/gui/views/timeline_view.cpp | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/deluge/gui/views/timeline_view.cpp b/src/deluge/gui/views/timeline_view.cpp
+index 8b6a5969..ac8a58d3 100644
+--- a/src/deluge/gui/views/timeline_view.cpp
++++ b/src/deluge/gui/views/timeline_view.cpp
+@@ -162,7 +162,9 @@ ActionResult TimelineView::horizontalEncoderAction(int32_t offset) {
+ 		// in note row editor we are holding horizontal encoder + auditioning to zoom
+ 		if (isUIModeActiveExclusively(UI_MODE_HOLDING_HORIZONTAL_ENCODER_BUTTON) || inNoteRowEditor) {
+ 			int32_t oldXZoom = currentSong->xZoom[navSysId];
+-			int32_t zoomMagnitude = -offset;
++			// Since the encoder overhaul (#4529) offset is the whole turn since the last read (+-2 or more when turned
++			// fast), not +-1: zoom one step in its direction (-1 zooms in), so that the limits below hold
++			int32_t zoomMagnitude = (offset > 0) ? -1 : 1;
+ 			uint32_t newZoom = zoomMagnitude == -1 ? oldXZoom >> 1 : oldXZoom << 1;
+ 			uint32_t clipLengthMaxZoom = getMaxZoom();
+ 
+-- 
+2.43.0
+

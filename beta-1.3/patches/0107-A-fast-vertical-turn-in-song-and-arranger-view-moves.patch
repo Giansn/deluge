@@ -1,0 +1,77 @@
+From 325a029035909077c2a32be09545404f37d59e1b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 22:05:53 +0000
+Subject: [PATCH 107/107] A fast vertical turn in song and arranger view moves
+ one square per detent
+
+v1.3 hands a fast turn on as several detents at once (encoder_input.cpp, the
+encoder overhaul #4529), and SessionView's and ArrangerView's
+verticalEncoderAction() passed the whole turn to verticalScrollOneSquare(),
+which checks its limits for one square. In song view a Clip held and the
+encoder turned up fast swapped the Clip with an index outside sessionClips
+(direction == 1 is false for +3, so the down check ran), leaving a null
+pointer in the list of Clips. In arranger view the scroll went past its
+limits (+30 from -7 gave 23), and an audition pad on an empty row then put
+its new Output at outputsOnScreen[-19], outside its rows, and later ended
+auditioning on whatever was there: the garbage Output* of a crash seen in a
+replay of the fuzzer's seed 109. Take the detents one by one.
+
+Test (beta-1.3/tests/repro/vertical_turn_emu.py): the song's Clips stay
+the same 4 after +3 with a Clip held (before: a null pointer among them);
+the arranger's scroll stays within its limits after +30 and an audition
+pad writes nothing outside outputsOnScreen[] (before: scroll 23, a write
+at row -19).
+---
+ src/deluge/gui/views/arranger_view.cpp | 12 +++++++++++-
+ src/deluge/gui/views/session_view.cpp  | 12 +++++++++++-
+ 2 files changed, 22 insertions(+), 2 deletions(-)
+
+diff --git a/src/deluge/gui/views/arranger_view.cpp b/src/deluge/gui/views/arranger_view.cpp
+index c0c42fd4..e6f9d80f 100644
+--- a/src/deluge/gui/views/arranger_view.cpp
++++ b/src/deluge/gui/views/arranger_view.cpp
+@@ -3096,7 +3096,17 @@ ActionResult ArrangerView::verticalEncoderAction(int32_t offset, bool inCardRout
+ 			return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE; // Allow sometimes.
+ 		}
+ 
+-		return verticalScrollOneSquare(offset);
++		// v1.3 hands a fast turn on as several detents at once (encoder_input.cpp). verticalScrollOneSquare() checks its
++		// limits for one square: take the detents one by one. The whole turn at once scrolled past the limits, and an
++		// audition pad then indexed outputsOnScreen[] outside its rows
++		int32_t direction = (offset > 0) ? 1 : -1;
++		for (int32_t i = 0; i < offset * direction; i++) {
++			ActionResult result = verticalScrollOneSquare(direction);
++			if (result != ActionResult::DEALT_WITH) {
++				return (i == 0) ? result : ActionResult::DEALT_WITH; // Retried later only if nothing moved yet
++			}
++		}
++		return ActionResult::DEALT_WITH;
+ 	}
+ 
+ 	return ActionResult::DEALT_WITH;
+diff --git a/src/deluge/gui/views/session_view.cpp b/src/deluge/gui/views/session_view.cpp
+index 7409b365..02f5ffb9 100644
+--- a/src/deluge/gui/views/session_view.cpp
++++ b/src/deluge/gui/views/session_view.cpp
+@@ -1461,7 +1461,17 @@ ActionResult SessionView::verticalEncoderAction(int32_t offset, bool inCardRouti
+ 			return gridHandleScroll(0, offset);
+ 		}
+ 
+-		return verticalScrollOneSquare(offset);
++		// v1.3 hands a fast turn on as several detents at once (encoder_input.cpp). verticalScrollOneSquare() checks its
++		// limits for one square: take the detents one by one. The whole turn at once scrolled past the limits and
++		// swapped a held Clip with an index outside sessionClips
++		int32_t direction = (offset > 0) ? 1 : -1;
++		for (int32_t i = 0; i < offset * direction; i++) {
++			ActionResult result = verticalScrollOneSquare(direction);
++			if (result != ActionResult::DEALT_WITH) {
++				return (i == 0) ? result : ActionResult::DEALT_WITH; // Retried later only if nothing moved yet
++			}
++		}
++		return ActionResult::DEALT_WITH;
+ 	}
+ 
+ 	return ActionResult::DEALT_WITH;
+-- 
+2.43.0
+

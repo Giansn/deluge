@@ -256,6 +256,11 @@ this session's, 0101 and up the helper session's (`reports/`).
 | 0103 | Null writes: the MOD buttons in a CV clip wrote through a null `getModKnobMode()` (the fuzzer's "null writes") | write hook on the null page | `modknob_cv` |
 | 0105 | E445: a Song in reused memory "played reversed" when song automation was recorded (PR #4445's fields uninitialized) | fuzz seed 108 | `song_reversed` |
 | 0106 | E369: undo or redo in the arranger's automation view went into a Clip that isn't there | fuzz seed 109 | `arranger_undo` |
+| 0107 | A fast vertical turn (since #4529): a held Clip swapped outside `sessionClips`, the arranger scroll past its limits, `outputsOnScreen[]` indexed outside | replay of seed 109 | `vertical_turn` |
+| 0108 | Crash: the horizontal encoder in the arranger's automation view went through `getCurrentClip()` (null after a song load; with SHIFT another Clip's length) | fuzz seed 125 | `arranger_automation_turn` |
+| 0109 | A fast zoom turn (since #4529): to the right it zoomed out, either way past the limit until `xZoom` overflowed to 0 | code review of 0107's kind, then the emulator | `fast_zoom` |
+| 0110 | The arranger's automation view steered by the song's current Clip: a write through null (expression pads after a song load), dead status pads (audio Clip), select changed a MIDI Clip's CC | code review of 0108's kind, then the emulator | `arranger_automation_clip` |
+| 0111 | Crash: the arranger's automation flag outlived a song load, so CLIP in a Clip opened the arranger's automation view with the old song's freed rows (an audition pad on a freed Output) | fuzz seed 127 | `arranger_automation_load` |
 
 0104 (the S004 of fuzz seed 106) was the same fix as 0016, found independently, and is withdrawn.
 
@@ -277,14 +282,24 @@ How the faults were found:
   all 20 tests pass on that very file, the SM01 replay included. See `README.md`.
 - **The whole series together**: `tests/repro/run.sh` on the build with all 22 patches: all 19 tests pass, and so does the
   SM01 replay (`LONG=1`, all 908 inputs).
+- **Stop runs** (2 hours, `--mode deep`, OLED and 7-segment in parallel, 20 minutes per seed): the criterion for
+  "stable". Run 1 (up to 0106): seeds 122 (a fuzzer artefact, the grid layout's new track) and 125 (0108). Run 2 (up to
+  0109): seed 127 (0111); seed 126's two `Error 2` popups are expected (the MIDI instrument browser with no file on the
+  test card). Run 3 (0001-0016, 0101-0103, 0105-0111, without 0017): in progress.
+- **Code review of a fault's kind**: after 0107 the other places that take an encoder turn for +-1 (0109), after 0108
+  the arranger's automation view's other uses of the song's current Clip (0110).
 - **Probes** for the areas the issue tracker names: `tests/menu_walk_emu.py` (every menu of nine contexts, horizontal
   menus on and off: about 900 items, clean with 0014) and `tests/repro/export_repeat_emu.py` (16-28 stem exports in a row
   with song changes and injected RAM failures: no leak, clean with 0011 and 0012).
 - **Fuzzer artefacts fixed on the way**: the modal audio recorder (ended like BACK), a song load while playing (a quick
   LOAD tap), v1.3's encoder task (each turn now wakes it), the SSI's receive DMA (its position now moves with the
-  transmit DMA: without it a recorder recording an input froze with bbbb, fuzz seed 114).
+  transmit DMA: without it a recorder recording an input froze with bbbb, fuzz seed 114), a new track in the grid
+  layout (its pad's press waits for its own release, which the fuzzer now delivers during that wait: fuzz seed 122).
 
 What mastertune 1.2.1 shares: the code of 0001 (SM01) and 0010 (the M000 free, from #588 in 2023) is the same in 1.2.1,
 so both are candidates for v19.0.5; v19.0.4 already has its own fixes for the faults behind 0002 and 0004 (section 4).
-Came with 1.3, so not in 1.2.1: 0006's `operator new` (#4598), 0009 (#4952), 0014 (#4678), 0016 (#4529). 1.2.1 has 0103's null write (`View::modButtonAction()`) and the older form of 0105's fault (it casts the Song to a
+Came with 1.3, so not in 1.2.1: 0006's `operator new` (#4598), 0009 (#4952), 0014 (#4678), 0016, 0107 and 0109
+(#4529: 1.2.1 hands every turn on as +-1). 1.2.1 has 0108's code path unchanged (`automation_view.cpp`,
+`clip_view.cpp`) and 0110's audio and MIDI cases (not the expression pads, new in 1.3), so both are candidates for
+v19.0.5 (not run on 1.2.1 yet). 1.2.1 has 0103's null write (`View::modButtonAction()`) and the older form of 0105's fault (it casts the Song to a
 `Clip` for the direction). Not checked against 1.2.1 yet: the rest.

@@ -23,6 +23,16 @@
 #   (0104 withdrawn: the same fix as 0016, found independently in seed 106)
 #   song_reversed_emu.py  0105: a new Song doesn't play "reversed" (song automation recorded: no E445)
 #   arranger_undo_emu.py  0106: undo in the arranger's automation view goes back to the arranger (no E369)
+#   vertical_turn_emu.py  0107: a fast vertical turn in song/arranger view moves one square per detent (no stray
+#                         Clip pointer, no write outside the arranger's rows)
+#   arranger_automation_turn_emu.py  0108: the horizontal encoder in the arranger's automation view scrolls and zooms
+#                         the arranger (no jump through a null Clip, no other Clip's length changed)
+#   fast_zoom_emu.py      0109: a fast turn with the horizontal encoder's button held zooms one step its way, within
+#                         the limits (no zoom out on a turn to the right, no xZoom overflow to 0)
+#   arranger_automation_clip_emu.py  0110: the arranger's automation view takes no type from the song's current
+#                         Clip (no write through null on the expression pads, status pads with an audio Clip, select)
+#   arranger_automation_load_emu.py  0111: a song load or a clip view ends the arranger's automation view (CLIP in a
+#                         Clip opens the Clip's automation view, not the arranger's with the old song's rows)
 #   (0007, the transpose note during a song change, and 0008, a kit row saved without params: the fuzzer's
 #   seeds 11 (and 21) and 1011 in --mode deep, see beta-1.3/NIGHTLY.md section 7)
 #   sm01_replay_emu.py    0001: the 908-input run that froze with SM01 (about 35 minutes; LONG=1 to include it)
@@ -33,7 +43,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ELF=$1 TOOLS=$2 BUILD=$3 OUT=${4:-/tmp/beta-repro}
 mkdir -p "$OUT"
 cd /tmp || exit 1
-tests="save_4917 songswap_e455 kitrow save_name oom_robust cluster_cache abandon_load export_abort_hang export_abort_file arranger_automation recorder_threshold hmenu_off_buttons qwerty_cursor mpe_arp_noteoff savekitrow automation_type modknob_cv song_reversed arranger_undo"
+tests="save_4917 songswap_e455 kitrow save_name oom_robust cluster_cache abandon_load export_abort_hang export_abort_file arranger_automation recorder_threshold hmenu_off_buttons qwerty_cursor mpe_arp_noteoff savekitrow automation_type modknob_cv song_reversed arranger_undo vertical_turn arranger_automation_turn fast_zoom arranger_automation_clip arranger_automation_load"
 [ "${LONG:-0}" = 1 ] && tests="$tests sm01_replay"
 fails=0
 for t in $tests; do

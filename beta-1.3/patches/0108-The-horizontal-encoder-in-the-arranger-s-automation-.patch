@@ -1,0 +1,55 @@
+From bc9cca232bb4e40737ce1e5a73ac28fae3975cbd Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 23:04:10 +0000
+Subject: [PATCH 108/108] The horizontal encoder in the arranger's automation
+ view only scrolls and zooms the arranger
+
+AutomationView::horizontalEncoderAction() handed every turn the editor itself
+didn't take to ClipView::horizontalEncoderAction(), also in the arranger's
+automation view (onArrangerView), which shows no Clip. ClipView's cases go
+through getCurrentClip(): SHIFT edits the Clip's length, and a plain turn
+first asks the Clip whether it can scroll (a virtual call). After a song
+load the song has no current Clip: a jump through a null pointer (the
+fuzzer's seed 125). With a current Clip, SHIFT changed the length of a Clip
+the arranger doesn't show. In the arranger the turn now goes straight to
+ClipNavigationTimelineView (scroll and zoom), and the audio clip's SHIFT +
+X_ENC check is skipped there.
+
+Test (beta-1.3/tests/repro/arranger_automation_turn_emu.py): with PADA
+entered, three SHIFT turns in the arranger's automation editor leave its
+length at 1536 (before: 2112); after a song load (no current Clip) a turn,
+a SHIFT turn and an X_ENC turn zoom the arranger (before: a jump to 0 from
+ClipView::horizontalEncoderAction()).
+---
+ src/deluge/gui/views/automation_view.cpp | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/src/deluge/gui/views/automation_view.cpp b/src/deluge/gui/views/automation_view.cpp
+index ea18f05d..f9fb3ea4 100644
+--- a/src/deluge/gui/views/automation_view.cpp
++++ b/src/deluge/gui/views/automation_view.cpp
+@@ -2300,12 +2300,20 @@ ActionResult AutomationView::horizontalEncoderAction(int32_t offset) {
+ 	}
+ 
+ 	// Shift and x pressed - edit length of audio clip without timestretching
+-	else if (getCurrentClip()->type == ClipType::AUDIO && isNoUIModeActive()
++	else if (!onArrangerView && getCurrentClip()->type == ClipType::AUDIO && isNoUIModeActive()
+ 	         && Buttons::isButtonPressed(deluge::hid::button::X_ENC) && Buttons::isShiftButtonPressed()) {
+ 		ActionResult result = audioClipView.editClipLengthWithoutTimestretching(offset);
+ 		return result;
+ 	}
+ 
++	// The arranger's automation view shows no Clip: it only scrolls and zooms. ClipView's own cases (SHIFT: the Clip's
++	// length; the vertical encoder's button: its contents) and its check for tempoless recording go through
++	// getCurrentClip(), which there is null after a song load, or a Clip the arranger doesn't show
++	else if (onArrangerView) {
++		ActionResult result = ClipNavigationTimelineView::horizontalEncoderAction(offset);
++		return result;
++	}
++
+ 	// Or, let parent deal with it
+ 	else {
+ 		ActionResult result = ClipView::horizontalEncoderAction(offset);
+-- 
+2.43.0
+

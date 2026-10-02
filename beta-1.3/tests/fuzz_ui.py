@@ -59,6 +59,8 @@ class Inputs:
         sym = emu.sym
         self.button_fn = sym.find("_ZN7Buttons12buttonActionEhbb")
         self.pad_fn = sym.find("_ZN12MatrixDriver9padActionElll")  # A clone without this: (x, y, velocity)
+        self.pressing = None  # The pad whose press is running (GridTrackCreation)
+        self.released = set()  # Pads whose release the firmware has had already (GridTrackCreation)
         self.unblock = None
         if firmware == "v13":
             # v1.3's encoder task blocks itself (interpretEncodersTask(): blockTask(EncoderTaskID)) until the encoder
@@ -85,7 +87,12 @@ class Inputs:
                         limit_s=limit_s)
 
     def pad(self, x, y, velocity):
+        if not velocity and (x, y) in self.released:
+            self.released.discard((x, y))  # GridTrackCreation delivered this release already, during the press
+            return
+        self.pressing = (x, y) if velocity else None
         self.rig.action(f"pad {x},{y} {velocity}", self.pad_fn, x, y, velocity)
+        self.pressing = None
 
     def turn(self, name, n):
         address, fmt = self.enc[name]
@@ -198,6 +205,52 @@ class QuickLoadTap:
                 return 0  # not pressed
             return None
         emu.intercept(sym.find("_ZN7Buttons15isButtonPressed"), on_pressed)
+
+
+class GridTrackCreation:
+    """Song view in the grid layout: a pad pressed in the empty column right of the last track starts a new track.
+    SessionView::gridCreateClip() enters UI_MODE_CREATING_CLIP and waits (a yield(), inside the press) until a type
+    button or the pad's release ends that mode. On the Deluge the "buttons and pads" task runs during that yield and
+    delivers the release from the PIC. The fuzzer's inputs are calls, so the release can't come while the press is
+    still running: a false hang (the fuzzer's seed 122, --mode deep, input 736). Here, once the mode has lasted HOLD_S,
+    the task's next run (readButtonsAndPadsOnce()) delivers the pad's release instead, MatrixDriver::padAction(x, y, 0)
+    as readButtonsAndPads() would, and the fuzzer's own release of that pad afterwards is left out (the PIC sends one).
+    1.2.1 and v1.3 have the same wait."""
+
+    HOLD_S = 0.5
+    CREATING_CLIP = 29  # UI_MODE_CREATING_CLIP (gui/ui/ui.h)
+
+    def __init__(self, emu, inp):
+        from unicorn.arm_const import UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2
+        sym = emu.sym
+        self.releases = 0
+        if not all(any(n.startswith(p) for n in sym.by_name)
+                   for p in ("_ZN11SessionView14gridCreateClip", "_Z22readButtonsAndPadsOncev")):
+            return
+        mode = sym["currentUIMode"]
+        self.since = None
+
+        def on_task(e):
+            if e.u32(mode) != self.CREATING_CLIP or inp.pressing is None:
+                self.since = None
+                return None
+            now = e.seconds()
+            if self.since is None:
+                self.since = now
+            if now - self.since < self.HOLD_S:
+                return None
+            x, y = inp.pressing
+            inp.pressing = None
+            inp.released.add((x, y))
+            self.since = None
+            self.releases += 1
+            uc = e.uc
+            uc.reg_write(UC_ARM_REG_R0, x)
+            uc.reg_write(UC_ARM_REG_R1, y)
+            uc.reg_write(UC_ARM_REG_R2, 0)
+            uc.reg_write(UC_ARM_REG_PC, inp.pad_fn | 1)  # It returns to the task manager, as the task would
+            return None
+        emu.intercept(sym.find("_Z22readButtonsAndPadsOncev"), on_task)
 
 
 def boot(firmware, elf, tools, build, image, oled):
@@ -437,6 +490,7 @@ def main():
         null = NullPage(rig.emu)
         modal = ModalRecorder(rig.emu)
         QuickLoadTap(rig.emu)
+        tracks = GridTrackCreation(rig.emu, inp)
         rig.emu.uc.ctl_flush_tb()  # The new hooks also for code already translated
         if a.mode == "browser":
             inp.button("LOAD", True)
@@ -472,6 +526,7 @@ def main():
                                    if not (p[2] == "displayError" and p[3] == "Error 10")][:10]
         result["steps"] = done
         result["recordings"] = result.get("recordings", 0) + modal.recordings  # Audio recorder sessions
+        result["track_releases"] = result.get("track_releases", 0) + tracks.releases  # GridTrackCreation's releases
         seed += 1000
         json.dump(result, open(os.path.join(a.out, "fuzz.json"), "w"), indent=1, default=str)
     result["host_s"] = round(time.time() - t0)
