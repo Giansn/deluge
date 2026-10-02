@@ -320,9 +320,12 @@ How the faults were found:
   MIDI round 3, with that clock (24 ticks a quarter note at 120 BPM), on the fifth (25-minute runs: deep 371 and
   all 29001 (7-segment), all 28001 (OLED)): 4,780 inputs, 25,732 MIDI messages parsed (most of them clock ticks), no
   problem, no wild access, no write through a null pointer, no error popup.
-  MIDI round 4, on the sixth (`...-1ff34bd0`, with 0025; 25-minute runs): deep 381 (OLED) crashed after 339 inputs
-  on BACK in the performance view, whose editing mode had outlived a song load (0026); the other seeds are running.
-  Round 14 (no MIDI) runs on the sixth too.
+  MIDI round 4, on the sixth (`...-1ff34bd0`, with 0025; 25-minute runs: deep 381 and all 31001 (OLED), all 30001 and
+  deep 391 (7-segment)): 6,067 inputs, 26,055 MIDI messages parsed, one problem: deep 381 crashed after 339 inputs on
+  BACK in the performance view, whose editing mode had outlived a song load (0026; its 10 wild accesses were that
+  crash's jump; replayed with 0026, all 1,000 inputs clean).
+  Round 14 (no MIDI), on the sixth (25-minute runs: deep 401 and all 32001 (OLED), deep 411 and the song browser
+  33001 (7-segment)): 5,882 inputs, no problem, no wild access, no write through a null pointer (one `Error 16`).
 - **The delivered build** (built by `tools/setup_beta.sh`; see `README.md`): first `...-582a21a1.bin` (22 patches;
   all 20 tests passed on it, round 9 ran on it). Round 10 on it found E427 (fuzz seed 241: 0018). Then
   `...-697ffb0f.bin` (28 patches, with 0018 and the helper session's 0107-0111; all 26 tests passed on it), where
@@ -330,9 +333,10 @@ How the faults were found:
   came first. Then `...-90a87481.bin` (30 patches, 0001-0020 and 0101-0111 without 0104; all 27 tests passed on it),
   where round 12 found 0023. Then `...-8f34a7c4.bin` (35 patches: 0001-0024 and 0101-0112 without 0104, in the order
   of `patches/series`; all 31 tests passed on it), where round 13 found nothing and MIDI round 2 found 0025 (and the
-  helper session's stop runs 0113 and 0114, on their own builds). Now `...-1ff34bd0.bin` (38 patches: 0001-0025 and
-  0101-0114 without 0104, in the order of `patches/series`): all 34 tests pass on that very file, and so do the
-  SM01 and seed 152 replays (`LONG=1`).
+  helper session's stop runs 0113 and 0114, on their own builds). Then `...-1ff34bd0.bin` (38 patches: 0001-0025 and
+  0101-0114 without 0104; all 34 tests passed on it), where MIDI round 4 found 0026 (and the helper session's stop run
+  8 0115, on their own build). Now `...-dd64dbbe.bin` (40 patches: 0001-0026 and 0101-0115 without 0104, in the order of
+  `patches/series`): all 36 tests pass on that very file, and so do the SM01 and seed 152 replays (`LONG=1`).
 - **The whole series together**: `tests/repro/run.sh` on the build with all 22 patches: all 19 tests pass, and so does the
   SM01 replay (`LONG=1`, all 908 inputs).
 - **Stop runs** (2 hours, `--mode deep`, OLED and 7-segment in parallel, 20 minutes per seed): the criterion for

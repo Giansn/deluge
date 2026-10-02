@@ -12,31 +12,33 @@ This branch, `nightly`, holds the work on the community firmware's daily build, 
 
 ## The stabilised build
 
-`deluge-1.3.0-beta-62a516c2-nightly-1ff34bd0.bin` (1,739,792 bytes, SHA-256
-`dd280b012db46c6f781bcbcd98fd828562a429b824d2344547e3667af6290018`) is the beta `62a516c2` with the 38 patches in
-`patches/` (0001-0025 and 0101-0114 without the withdrawn 0104, in the order of `patches/series`; 0115 (the helper
-session's) and 0026, found after it, come with the next build); what each one fixes and how it was found is in
-`NIGHTLY.md` section 7. The Deluge shows it as `1.3.0-beta-1ff34bd0` (SETTINGS > FIRMWARE
+`deluge-1.3.0-beta-62a516c2-nightly-dd64dbbe.bin` (1,740,048 bytes, SHA-256
+`af080c0bd52cec9fbb149c906a270b8826eef0ff888524dfd3ccb2467a9b9d01`) is the beta `62a516c2` with the 40 patches in
+`patches/` (0001-0026 and 0101-0115 without the withdrawn 0104, in the order of `patches/series`); what each one fixes
+and how it was found is in `NIGHTLY.md` section 7. The Deluge shows it as `1.3.0-beta-dd64dbbe` (SETTINGS > FIRMWARE
 VERSION). Install it like any firmware: the .bin as the only .bin in the card's root folder, then switch the Deluge on
 with SHIFT held. Back up the card first, as for any beta.
 
 - **Tested in the emulator only, not yet on a Deluge.** On this very file every patch's test passes
-  (`tests/repro/run.sh`, 34 tests, and the SM01 and seed 152 replays with `LONG=1`).
+  (`tests/repro/run.sh`, 36 tests, and the SM01 and seed 152 replays with `LONG=1`).
 - **The fuzzer** ran about 12,300 random inputs without a problem in rounds 7-9 (`NIGHTLY.md` section 7; round 9 on
   the first delivered build). Rounds 10-12 on the delivered builds then found E427 (0018), a crash on a fast select
   turn in arranger view (0019) and one on KEYBOARD in an audio Clip's automation view (0023: one problem in 11,823
   inputs); the helper session's stop runs found E170 at a song swap (0112), a crash or E369 on undo in the arranger's
-  automation view (0113) and a crash in a kit row's sample browser with Affect Entire on (0114). Audits of each fault's
+  automation view (0113), a crash in a kit row's sample browser with Affect Entire on (0114) and E411 after CV in the
+  synth browser over a clip's automation view (0115). Audits of each fault's
   kind found 0020 (seven more fast-turn places), 0021 (MIDI follow), 0022 and 0024 (the automation view and an audio
   Clip). Round 13 on the fifth build: 8,453 inputs, no problem. MIDI input, which the fuzzer now sends too (`--midi`,
   with a running clock since round 3): 13,852 inputs in three rounds, one problem, E427 recording a parameter right
-  after a continue whose clock ticks arrived together (0025). The fuzz rounds on this file are in `NIGHTLY.md`.
-- **Built by `tools/setup_beta.sh`**: the tree `38548871` (62a516c2 plus the patches), commit `1ff34bd0`. The builds
+  after a continue whose clock ticks arrived together (0025); round 4 on the sixth build found a crash on BACK in the
+  performance view after a song load in its editing mode (0026). The fuzz rounds on this file are in `NIGHTLY.md`.
+- **Built by `tools/setup_beta.sh`**: the tree `9878e864` (62a516c2 plus the patches), commit `dd64dbbe`. The builds
   before it are in the git history: `...-582a21a1.bin` freezes with E427 on a ramp to the arrangement's end,
   `...-697ffb0f.bin` can crash on a fast select turn with a clip instance held in arranger view, `...-90a87481.bin` on
   KEYBOARD in an audio Clip's automation view, `...-8f34a7c4.bin` freezes with E427 when a parameter is recorded right
   after a MIDI continue whose clock ticks arrive together, and can crash in a kit row's sample browser with Affect
-  Entire on.
+  Entire on, `...-1ff34bd0.bin` can crash on BACK in the performance view after a song load in its editing mode, and
+  freezes with E411 after CV in the synth browser over a clip's automation view.
 
 | File | What |
 |---|---|
