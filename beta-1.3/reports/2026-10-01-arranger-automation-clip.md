@@ -31,7 +31,7 @@ Not changed, open:
 - **Reads only:** the OLED shows the current Clip's output name (`InstrumentClipMinder::renderOLED()`), and the renders read the Clip (`:683`, `:974`). After a song load these read through null; no run has failed on them.
 - **Fill mode:** with SYNC-SCALING set to Fill (not the default), the button can edit `instrumentClipView`'s held notes from any view (`view.cpp:331-344`). In the arranger that would need edit-pad presses left over in `instrumentClipView`. Not reproduced.
 
-`tests/repro/run.sh` on the whole series as `nightly` has it (0001-0016, 0101-0103, 0105-0111, applied with `git am` to 62a516c2): 23 of 23 PASS.
+`tests/repro/run.sh` on the whole series as `nightly` has it (0001-0020, 0101-0103, 0105-0112, applied with `git am` to 62a516c2): 27 of 27 PASS.
 
 ## Status
 

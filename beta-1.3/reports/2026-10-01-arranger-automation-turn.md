@@ -30,7 +30,7 @@ In the arranger the turn goes straight to `ClipNavigationTimelineView::horizonta
 
 Seed 125 was replayed to input 1250 on the series up to 0109. Inputs 1107-1111 open the arranger's automation editor as before, and input 1112 (`turn scrollX +3`) scrolls it. Up to 1250 there is no crash, freeze or hang.
 
-`tests/repro/run.sh` on the whole series as `nightly` has it (0001-0016, 0101-0103, 0105-0111, applied with `git am` to 62a516c2): 23 of 23 PASS.
+`tests/repro/run.sh` on the whole series as `nightly` has it (0001-0020, 0101-0103, 0105-0112, applied with `git am` to 62a516c2): 27 of 27 PASS.
 
 ## Status
 

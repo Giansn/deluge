@@ -1,0 +1,59 @@
+From 4652a56e757236ae254cea759a6fd86263bfd23a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 03:37:24 +0000
+Subject: [PATCH 112/112] A song swap doesn't ask an Instrument that isn't
+ auditioning for its ParamManager
+
+Song::stopAllAuditioning() calls stopAnyAuditioning() for every Output of
+the old song at a song swap. MelodicInstrument::stopAnyAuditioning() set up
+its model stack with getParamManager() before looking at notesAuditioned,
+even with nothing to stop. Loading a song while playing,
+Song::deleteSoundsWhichWontSound() first thins out the old song (the Clips
+not active on their Output, then every ParamManager backed up with a Clip),
+and a synth left with no Clip and no ParamManager then froze the swap with
+E170 in Output::getParamManager() (the fuzzer's seed 152). The ParamManager
+is now asked for only when notes are auditioned, as Kit::stopAnyAuditioning()
+does for its drums.
+
+Test (beta-1.3/tests/repro/seed152_replay_emu.py, LONG=1): the fuzzer's
+seed 152 replayed exactly through the swap at input 955 and 25 inputs after
+it (before: E170 at input 955).
+---
+ .../model/instrument/melodic_instrument.cpp   | 19 ++++++++++++-------
+ 1 file changed, 12 insertions(+), 7 deletions(-)
+
+diff --git a/src/deluge/model/instrument/melodic_instrument.cpp b/src/deluge/model/instrument/melodic_instrument.cpp
+index 1d2ba3e9..f65251ac 100644
+--- a/src/deluge/model/instrument/melodic_instrument.cpp
++++ b/src/deluge/model/instrument/melodic_instrument.cpp
+@@ -505,15 +505,20 @@ bool MelodicInstrument::isNoteRowStillAuditioningAsLinearRecordingEnded(NoteRow*
+ 
+ void MelodicInstrument::stopAnyAuditioning(ModelStack* modelStack) {
+ 
+-	ModelStackWithThreeMainThings* modelStackWithThreeMainThings =
+-	    modelStack->addTimelineCounter(activeClip)
+-	        ->addOtherTwoThingsButNoNoteRow(toModControllable(), getParamManager(modelStack->song));
++	// Only notes auditioned need the ParamManager, as in Kit::stopAnyAuditioning(). An Instrument without a Clip may
++	// have none by now: before a song swap, Song::deleteSoundsWhichWontSound() deletes the ParamManagers backed up
++	// with Clips, and getParamManager() froze with E170 in Song::stopAllAuditioning()
++	if (!notesAuditioned.empty()) {
++		ModelStackWithThreeMainThings* modelStackWithThreeMainThings =
++		    modelStack->addTimelineCounter(activeClip)
++		        ->addOtherTwoThingsButNoNoteRow(toModControllable(), getParamManager(modelStack->song));
++
++		for (int16_t note : notesAuditioned | std::views::keys) {
++			sendNote(modelStackWithThreeMainThings, false, note, nullptr);
++		}
+ 
+-	for (int16_t note : notesAuditioned | std::views::keys) {
+-		sendNote(modelStackWithThreeMainThings, false, note, nullptr);
++		notesAuditioned.clear();
+ 	}
+-
+-	notesAuditioned.clear();
+ 	earlyNotes.clear(); // This is fine, though in a perfect world we'd prefer to just mark the notes as no
+ 	                    // longer active
+ 	if (activeClip) {
+-- 
+2.43.0
+

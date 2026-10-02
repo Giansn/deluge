@@ -36,7 +36,7 @@ Seed 127 was replayed to input 700 on the series up to 0111. Input 507 (`CLIP he
 
 Stop run #2's other finding, seed 126's two `Error 2` popups, is expected. The instrument browser for MIDI (`LOAD held + MIDI`) had no file selected on the test card, which sets `currentInstrumentLoadError` to UNSPECIFIED (`load_instrument_preset_ui.cpp:268`). An audition pad then shows that error (`:1128`).
 
-`tests/repro/run.sh` on the whole series as `nightly` has it (0001-0016, 0101-0103, 0105-0111, applied with `git am` to 62a516c2): 23 of 23 PASS.
+`tests/repro/run.sh` on the whole series as `nightly` has it (0001-0020, 0101-0103, 0105-0112, applied with `git am` to 62a516c2): 27 of 27 PASS.
 
 ## Status
 

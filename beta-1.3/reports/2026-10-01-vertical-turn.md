@@ -28,7 +28,7 @@ Both `verticalEncoderAction()`s take the detents one by one: `verticalScrollOneS
 | (2) arranger: +30 at once, then audition pad 17,0 | scroll 23; a write to `outputsOnScreen[-19]` | scroll 3; nothing outside |
 | Result | FAIL (1, 2) | PASS |
 
-`tests/repro/run.sh` on the whole series as `nightly` has it (0001-0016, 0101-0103, 0105-0111, applied with `git am` to 62a516c2): 23 of 23 PASS.
+`tests/repro/run.sh` on the whole series as `nightly` has it (0001-0020, 0101-0103, 0105-0112, applied with `git am` to 62a516c2): 27 of 27 PASS.
 
 ## Status
 
