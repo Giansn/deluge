@@ -1,0 +1,44 @@
+From e3794cece3ad985b69e7b0fa577fe19a3434fa03 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 04:40:16 +0000
+Subject: [PATCH] MIDI follow forgets a Clip however it's deleted: no note-off
+ through a freed Clip
+
+MidiFollow remembers, per note, the Clip a note-on went to
+(clipForLastNoteReceived[]), so the note-off reaches that Clip even if the
+context changed meanwhile, and all notes off goes to every Clip remembered.
+Only SessionView::removeClip() made it forget a Clip. Undo of a Clip's
+creation (once the action log is cleared), the arranger deleting an
+arrangement-only Clip, Song::swapClips() and Song::deletePendingOverdubs()
+didn't, so a key held meanwhile sent its note-off through the freed Clip.
+The Clip's destructor now makes MIDI follow forget it, whichever way it's
+deleted.
+---
+ src/deluge/model/clip/clip.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/deluge/model/clip/clip.cpp b/src/deluge/model/clip/clip.cpp
+index e1bc1eff..5d5f59a8 100644
+--- a/src/deluge/model/clip/clip.cpp
++++ b/src/deluge/model/clip/clip.cpp
+@@ -22,6 +22,7 @@
+ #include "gui/views/automation_view.h"
+ #include "gui/views/view.h"
+ #include "io/debug/log.h"
++#include "io/midi/midi_follow.h"
+ #include "memory/general_memory_allocator.h"
+ #include "model/action/action_logger.h"
+ #include "model/clip/audio_clip.h"
+@@ -80,6 +81,9 @@ Clip::~Clip() {
+ 	if (currentSong && getCurrentClip() == this) {
+ 		currentSong->setCurrentClip(nullptr);
+ 	}
++	// MIDI follow sends a note-off (and all notes off) to the Clip its note-on went to: forget this one however it's
++	// deleted (only the session view's delete did, not undo, the arranger, a Clip swap or a pending overdub's end)
++	midiFollow.removeClip(this);
+ }
+ 
+ // This is more exhaustive than copyBasicsFrom(), and is designed to be used *between* different Clip types, just for
+-- 
+2.43.0
+
