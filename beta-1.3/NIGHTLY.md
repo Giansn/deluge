@@ -272,6 +272,7 @@ this session's, 0101 and up the helper session's (`reports/`).
 | 0112 | E170 at a song swap: the old song kept a synth with no Clip and no ParamManager, and stopping its auditioning asked for one with nothing auditioned | fuzz seed 152 (stop run 4) | `seed152_replay` (LONG=1) |
 | 0113 | Undo or redo of an edit in the arranger's automation view went into a Clip's view (none after a song load: a crash or E369) | fuzz seed 176 (stop run 6) | `arranger_automation_redo` |
 | 0114 | Crash: with Affect Entire on, a note pad left the sound editor set for the kit's own FX, so a kit row's sample browser (audition pad + LOAD) opened with no Sound, and choosing a sample called through null | fuzz seed 186 (stop run 7) | `kitrow_load_affect` |
+| 0115 | E411: CV (or MIDI) in the instrument browser over a clip's automation view changed the clip's type, and the view, regaining focus, rendered the old patched parameter in the CV clip | fuzz seed 202 (stop run 8) | `automation_browser_type` |
 
 0104 (the S004 of fuzz seed 106) was the same fix as 0016, found independently, and is withdrawn.
 
@@ -333,7 +334,7 @@ How the faults were found:
 - **Stop runs** (2 hours, `--mode deep`, OLED and 7-segment in parallel, 20 minutes per seed): the criterion for
   "stable". Run 1 (up to 0106): seeds 122 (a fuzzer artefact, the grid layout's new track) and 125 (0108). Run 2 (up to
   0109): seed 127 (0111); seed 126's two `Error 2` popups are expected (the MIDI instrument browser with no file on the
-  test card). Run 3 (0001-0016, 0101-0103, 0105-0111, without 0017): seeds 138 and 139 clean, then stopped for the full series. Run 4 (0001-0017, 0101-0103, 0105-0111): 12 seeds, 14,152 inputs, one problem: seed 152 (0112). Run 5 (the same with 0112): seeds 162-165 clean (4,678 inputs), then stopped for the full series with 0018-0020. Run 6 (0001-0020, 0101-0103, 0105-0112, 31 patches; `run.sh` 27 of 27 PASS): seeds 174, 175 and 177 clean, seed 176 E369 (0113). Run 7 (0001-0022, 0101-0103, 0105-0113, 34 patches; `run.sh` 30 of 30 PASS): 12 seeds, 13,599 inputs, one problem: seed 186 (0114). Run 8 (`patches/series` with 0113 and 0114, 37 patches; `run.sh` 33 of 33 PASS): seed 202 froze with E411 on CV (being traced).
+  test card). Run 3 (0001-0016, 0101-0103, 0105-0111, without 0017): seeds 138 and 139 clean, then stopped for the full series. Run 4 (0001-0017, 0101-0103, 0105-0111): 12 seeds, 14,152 inputs, one problem: seed 152 (0112). Run 5 (the same with 0112): seeds 162-165 clean (4,678 inputs), then stopped for the full series with 0018-0020. Run 6 (0001-0020, 0101-0103, 0105-0112, 31 patches; `run.sh` 27 of 27 PASS): seeds 174, 175 and 177 clean, seed 176 E369 (0113). Run 7 (0001-0022, 0101-0103, 0105-0113, 34 patches; `run.sh` 30 of 30 PASS): 12 seeds, 13,599 inputs, one problem: seed 186 (0114). Run 8 (`patches/series` with 0113 and 0114, 37 patches; `run.sh` 33 of 33 PASS): 12 seeds, 13,284 inputs, one problem: seed 202 (0115). Run 9 (`patches/series` with 0025, then 0115; 39 patches): in progress.
 - **Code review of a fault's kind**: after 0107 the other places that take an encoder turn for +-1 (0109), after 0108
   the arranger's automation view's other uses of the song's current Clip (0110), after 0019 (the third fault of
   that kind) every select, horizontal and vertical encoder handler (0020; the sample marker editor's part has no
@@ -352,7 +353,8 @@ What mastertune 1.2.1 shares: the code of 0001 (SM01) and 0010 (the M000 free, f
 so both are candidates for v19.0.5; v19.0.4 already has its own fixes for the faults behind 0002 and 0004 (section 4).
 Came with 1.3, so not in 1.2.1: 0006's `operator new` (#4598), 0009 (#4952), 0014 (#4678), 0016, 0107 and 0109
 (#4529: 1.2.1 hands every turn on as +-1). 1.2.1 has 0108's code path unchanged (`automation_view.cpp`,
-`clip_view.cpp`) and 0110's audio and MIDI cases (not the expression pads, new in 1.3), and 0112's
-`MelodicInstrument::stopAnyAuditioning()` with its E170 check, so all three are candidates for v19.0.5 (not run on
-1.2.1 yet). 1.2.1 has 0103's null write (`View::modButtonAction()`) and the older form of 0105's fault (it casts the Song to a
+`clip_view.cpp`) and 0110's audio and MIDI cases (not the expression pads, new in 1.3), 0112's
+`MelodicInstrument::stopAnyAuditioning()` with its E170 check, and 0115's `AutomationView::focusRegained()` without a
+type check, so all four are candidates for v19.0.5 (not run on 1.2.1 yet). 0114's flag comes with 1.3's
+`potentialShortcutPadAction()`: not in 1.2.1. 1.2.1 has 0103's null write (`View::modButtonAction()`) and the older form of 0105's fault (it casts the Song to a
 `Clip` for the direction). Not checked against 1.2.1 yet: the rest.

@@ -1,0 +1,93 @@
+From af5fdebe6ce19f0a971e5052365acb475f0c697e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 08:41:52 +0000
+Subject: [PATCH 115/115] The automation view regains focus without a parameter
+ its Clip's new type lacks: no E411 after CV in the instrument browser
+
+A synth Clip's automation view with a patched parameter selected opens the
+synth browser with LOAD + SYNTH; CV (or MIDI) there changes the Clip's type
+and closes the browser. AutomationView::focusRegained() then rendered the
+old parameter through InstrumentClipMinder::focusRegained() and the knob
+levels, which looked it up in the CV Clip's params: E411 in
+ModelStackWithThreeMainThings::getPatchedAutoParamFromId() (the fuzzer's
+seed 202, stop run 8). The view resets such a selection when it opens and
+before session or arranger view pre-render it, not when it regains focus.
+For an instrument Clip whose type changed, focusRegained() now forgets the
+selected parameter before InstrumentClipMinder::focusRegained() sets the
+view's model stack to the new Output and renders, and resets the rest of
+the selection after it. The whole reset can't come first: it refreshes the
+knob levels while the model stack still has the old synth (E411 in
+Sound::getParamFromModEncoder()).
+
+The view also notes the Clip's type when a parameter is selected (a pad or
+the select encoder), not only when it opens: in the seed the view's own
+SYNTH had made a CV clip a synth, LPF resonance was selected, and the type
+noted was still CV, so CV in the browser looked like no change.
+
+Test (beta-1.3/tests/repro/automation_browser_type_emu.py): LPF frequency
+selected, LOAD + SYNTH, CV: back in the automation view with no parameter
+selected (before: E411); the browser left with BACK keeps the selection;
+a CV clip made a synth by the view's SYNTH, LPF frequency, LOAD + SYNTH, CV:
+no parameter selected (before: E411).
+---
+ src/deluge/gui/views/automation_view.cpp | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/src/deluge/gui/views/automation_view.cpp b/src/deluge/gui/views/automation_view.cpp
+index 9bc3e69f..50851b1a 100644
+--- a/src/deluge/gui/views/automation_view.cpp
++++ b/src/deluge/gui/views/automation_view.cpp
+@@ -487,6 +487,17 @@ void AutomationView::focusRegained() {
+ 			view.setActiveModControllableTimelineCounter(clip);
+ 		}
+ 		else {
++			// The Clip's type can change while a UI is open on top of this view (CV or MIDI in the instrument browser).
++			// The view's model stack keeps the old Output until InstrumentClipMinder::focusRegained() below sets the new
++			// one and renders the selected parameter: forget a parameter the new type may not have before that (a
++			// patched one froze with E411 in a CV clip), and reset the rest of the selection after it
++			bool outputTypeChanged = clip->output->type != clip->lastSelectedOutputType;
++			bool resetSelection = outputTypeChanged && inAutomationEditor();
++			if (resetSelection) {
++				clip->lastSelectedParamID = params::kNoParamID;
++				clip->lastSelectedParamKind = params::Kind::NONE;
++			}
++
+ 			// check if patch cable previously selected is still valid
+ 			// if not we'll reset parameter selection and go back to overview
+ 			if (clip->lastSelectedParamKind == params::Kind::PATCH_CABLE) {
+@@ -511,6 +522,13 @@ void AutomationView::focusRegained() {
+ 			instrumentClipView.auditioningSilently = false; // Necessary?
+ 			InstrumentClipMinder::focusRegained();
+ 			instrumentClipView.setLedStates();
++
++			if (resetSelection) {
++				initParameterSelection(false);
++			}
++			if (outputTypeChanged) {
++				clip->lastSelectedOutputType = clip->output->type;
++			}
+ 		}
+ 	}
+ 
+@@ -1991,6 +2009,7 @@ void AutomationView::handleParameterSelection(Clip* clip, Output* output, Output
+ 	else {
+ 		clip->lastSelectedParamShortcutX = xDisplay;
+ 		clip->lastSelectedParamShortcutY = yDisplay;
++		clip->lastSelectedOutputType = outputType; // The type the parameter was selected for
+ 	}
+ 
+ 	resetParameterShortcutBlinking();
+@@ -2662,6 +2681,10 @@ void AutomationView::selectEncoderAction(int8_t offset) {
+ 		return;
+ 	}
+ 
++	if (!onArrangerView) {
++		clip->lastSelectedOutputType = outputType; // The type the parameter was selected for
++	}
++
+ 	// update name on display, the LED mod indicators, and refresh the grid
+ 	lastPadSelectedKnobPos = kNoSelection;
+ 	if (multiPadPressSelected && padSelectionOn) {
+-- 
+2.43.0
+
