@@ -57,6 +57,8 @@
 #                         performance view (the root UI again) closes nothing that isn't open (no crash)
 #   stem_export_resampling_emu.py  0116: SAVE + RECORD while SHIFT + RECORD resamples: no stem export, no E242
 #   presets_all_used_emu.py  0117: every preset in the song, the arranger's preset navigation: no change, no i009
+#   undo_note_row_editor_emu.py  0118: a note set in the note row editor, undone from another clip: back in the
+#                         clip's view, not the closed sound editor
 #   seed152_replay_emu.py 0112: the 980-input run that froze with E170 at a song swap (about 20 minutes; LONG=1)
 # Usage: ./run.sh <deluge.elf> <toolchain v22 prefix> <blockcount dir> [out dir]
 # Exit status: the number of failed tests.
@@ -65,7 +67,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ELF=$1 TOOLS=$2 BUILD=$3 OUT=${4:-/tmp/beta-repro}
 mkdir -p "$OUT"
 cd /tmp || exit 1
-tests="save_4917 songswap_e455 kitrow save_name oom_robust cluster_cache abandon_load export_abort_hang export_abort_file arranger_automation recorder_threshold hmenu_off_buttons qwerty_cursor mpe_arp_noteoff automation_ramp_end arranger_clip_select savekitrow automation_type modknob_cv song_reversed arranger_undo vertical_turn arranger_automation_turn fast_zoom arranger_automation_clip arranger_automation_load encoder_fast_turn midi_follow_clip keyboard_clone keyboard_audio_clip automation_undo_audio arranger_automation_redo kitrow_load_affect midi_clock_record automation_browser_type performance_editing_load stem_export_resampling presets_all_used"
+tests="save_4917 songswap_e455 kitrow save_name oom_robust cluster_cache abandon_load export_abort_hang export_abort_file arranger_automation recorder_threshold hmenu_off_buttons qwerty_cursor mpe_arp_noteoff automation_ramp_end arranger_clip_select savekitrow automation_type modknob_cv song_reversed arranger_undo vertical_turn arranger_automation_turn fast_zoom arranger_automation_clip arranger_automation_load encoder_fast_turn midi_follow_clip keyboard_clone keyboard_audio_clip automation_undo_audio arranger_automation_redo kitrow_load_affect midi_clock_record automation_browser_type performance_editing_load stem_export_resampling presets_all_used undo_note_row_editor"
 [ "${LONG:-0}" = 1 ] && tests="$tests sm01_replay seed152_replay"
 fails=0
 for t in $tests; do

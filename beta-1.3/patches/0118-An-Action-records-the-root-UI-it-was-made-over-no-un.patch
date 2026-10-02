@@ -1,0 +1,42 @@
+From e6df2166e1b29047e4c68d48275ba5691691259b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 13:40:21 +0000
+Subject: [PATCH 118/118] An Action records the root UI it was made over: no
+ undo into a closed sound editor
+
+ActionLogger::getNewAction() recorded getCurrentUI(). The sound editor's
+note editor and note row editor may make Actions (they edit notes on the
+grid), so such an Action recorded the sound editor. Undone from another
+clip, revert() changes clip (CHANGE_CLIP) and made the recorded UI the root
+UI: the sound editor, closed long before, opened with no menu item and
+called through null in SoundEditor::beginScreen() (the fuzzer's seed 260,
+stop run 11). Undo and redo run only from a root UI
+(allowedToDoReversion()), and revert() compares the recorded view only with
+root UIs, so the Action now records getRootUI().
+
+Test (beta-1.3/tests/repro/undo_note_row_editor_emu.py): a note set in
+PADA's note row editor, then from PADB's clip view BACK (undo): back in
+PADA's clip view (before: a crash in SoundEditor::beginScreen()).
+---
+ src/deluge/model/action/action_logger.cpp | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/deluge/model/action/action_logger.cpp b/src/deluge/model/action/action_logger.cpp
+index a34c1da2..5cdf9029 100644
+--- a/src/deluge/model/action/action_logger.cpp
++++ b/src/deluge/model/action/action_logger.cpp
+@@ -192,7 +192,10 @@ Action* ActionLogger::getNewAction(ActionType newActionType, ActionAddition addT
+ 		// newAction->modKnobModeSongView = currentSong->modKnobMode;
+ 		newAction->affectEntireSongView = currentSong->affectEntire;
+ 
+-		newAction->view = getCurrentUI();
++		// The view to go back to on undo or redo: the root UI. An Action made in the sound editor (or another UI over a
++		// view) recorded that UI, and revert() then made the sound editor the root UI (CHANGE_CLIP), with no menu
++		// item to show: a call through null
++		newAction->view = getRootUI();
+ 		newAction->viewIsArrangerAutomation = (newAction->view == &automationView && automationView.onArrangerView);
+ 		newAction->currentClip = getCurrentClip();
+ 	}
+-- 
+2.43.0
+
