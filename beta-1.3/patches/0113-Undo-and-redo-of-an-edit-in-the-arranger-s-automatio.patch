@@ -1,0 +1,106 @@
+From 057507df1e1af8c8508c4f9f40001bccc2e1792e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 05:22:54 +0000
+Subject: [PATCH 113/113] Undo and redo of an edit in the arranger's automation
+ view stay with the arranger
+
+An Action records the view it was made in. The arranger's automation view
+is automationView, a ClipMinder, so ActionLogger::revert() took its Actions
+for a Clip view's: undo from arranger view (ARRANGEMENT_TO_CLIP_MINDER) or
+redo from song view (SESSION_TO_CLIP_MINDER) went into a Clip's view, and
+with no current Clip (after a song load) the instrument clip view opened
+without one: a write through null in openedInBackground(), or E369 in its
+rendering (the fuzzer's seed 176). 0106 fixed the same mistake for undo
+inside the arranger's automation view. An Action now also records whether
+its view was the arranger's automation view; such Actions count as the
+arranger's, and going back into their view opens the arranger's automation
+view.
+
+Test (beta-1.3/tests/repro/arranger_automation_redo_emu.py): a knob turn in
+the arranger's automation editor, CLIP, BACK: the arranger's automation view
+again (before: a crash in InstrumentClipView::openedInBackground()); then
+from song view SHIFT+BACK: the arranger.
+---
+ src/deluge/model/action/action.h          |  1 +
+ src/deluge/model/action/action_logger.cpp | 14 +++++++++++---
+ 2 files changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/src/deluge/model/action/action.h b/src/deluge/model/action/action.h
+index e781b417..a1c77dba 100644
+--- a/src/deluge/model/action/action.h
++++ b/src/deluge/model/action/action.h
+@@ -126,6 +126,7 @@ public:
+ 	// bool inKeyboardView;
+ 
+ 	UI* view;
++	bool viewIsArrangerAutomation; // view is the arranger's automation view (automationView.onArrangerView): no Clip's
+ 
+ 	Clip* currentClip; // Watch out - this might get set to NULL
+ 
+diff --git a/src/deluge/model/action/action_logger.cpp b/src/deluge/model/action/action_logger.cpp
+index 4adce69b..a34c1da2 100644
+--- a/src/deluge/model/action/action_logger.cpp
++++ b/src/deluge/model/action/action_logger.cpp
+@@ -193,6 +193,7 @@ Action* ActionLogger::getNewAction(ActionType newActionType, ActionAddition addT
+ 		newAction->affectEntireSongView = currentSong->affectEntire;
+ 
+ 		newAction->view = getCurrentUI();
++		newAction->viewIsArrangerAutomation = (newAction->view == &automationView && automationView.onArrangerView);
+ 		newAction->currentClip = getCurrentClip();
+ 	}
+ 
+@@ -381,6 +382,7 @@ void ActionLogger::revertAction(Action* action, bool updateVisually, bool doNavi
+ 			// If user is in song view or arranger view, just stay in that UI.
+ 			if (getCurrentUI() == &arrangerView || getCurrentUI() == &sessionView) {
+ 				action->view = getCurrentUI();
++				action->viewIsArrangerAutomation = false;
+ 
+ 				// If in arranger view, don't go scrolling anywhere - that'd just visually confuse things
+ 				if (getCurrentUI() == &arrangerView) {
+@@ -393,11 +395,16 @@ void ActionLogger::revertAction(Action* action, bool updateVisually, bool doNavi
+ 
+ 		if (updateVisually) {
+ 
++			// An action in the arranger's automation view belongs to the arranger: that view is a ClipMinder, but it
++			// shows no Clip, and going into a Clip's view for it entered one without a Clip (E369)
++			bool actionInClipMinder = action->view->toClipMinder() && !action->viewIsArrangerAutomation;
++
+ 			// Switching between session / arranger
+ 			if (action->view == &sessionView && getCurrentUI() == &arrangerView) {
+ 				whichAnimation = Animation::ARRANGEMENT_TO_SESSION;
+ 			}
+-			else if (action->view == &arrangerView && getCurrentUI() == &sessionView) {
++			else if ((action->view == &arrangerView || action->viewIsArrangerAutomation)
++			         && getCurrentUI() == &sessionView) {
+ 				whichAnimation = Animation::SESSION_TO_ARRANGEMENT;
+ 			}
+ 
+@@ -405,7 +412,7 @@ void ActionLogger::revertAction(Action* action, bool updateVisually, bool doNavi
+ 			else if (action->view == &sessionView && getCurrentUI()->toClipMinder()) {
+ 				whichAnimation = Animation::CLIP_MINDER_TO_SESSION;
+ 			}
+-			else if (action->view->toClipMinder() && getCurrentUI() == &sessionView) {
++			else if (actionInClipMinder && getCurrentUI() == &sessionView) {
+ 				whichAnimation = Animation::SESSION_TO_CLIP_MINDER;
+ 			}
+ 
+@@ -413,7 +420,7 @@ void ActionLogger::revertAction(Action* action, bool updateVisually, bool doNavi
+ 			else if (action->view == &arrangerView && getCurrentUI()->toClipMinder()) {
+ 				whichAnimation = Animation::CLIP_MINDER_TO_ARRANGEMENT;
+ 			}
+-			else if (action->view->toClipMinder() && getCurrentUI() == &arrangerView) {
++			else if (actionInClipMinder && getCurrentUI() == &arrangerView) {
+ 				whichAnimation = Animation::ARRANGEMENT_TO_CLIP_MINDER;
+ 			}
+ 
+@@ -619,6 +626,7 @@ currentClipSwitchedOver:
+ 	}
+ 
+ 	else if (whichAnimation == Animation::ENTER_AUTOMATION_VIEW) {
++		automationView.onArrangerView = action->viewIsArrangerAutomation; // The arranger's, or a Clip's
+ 		changeRootUI(&automationView);
+ 	}
+ 
+-- 
+2.43.0
+

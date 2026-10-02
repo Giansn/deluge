@@ -269,6 +269,7 @@ this session's, 0101 and up the helper session's (`reports/`).
 | 0110 | The arranger's automation view steered by the song's current Clip: a write through null (expression pads after a song load), dead status pads (audio Clip), select changed a MIDI Clip's CC | code review of 0108's kind, then the emulator | `arranger_automation_clip` |
 | 0111 | Crash: the arranger's automation flag outlived a song load, so CLIP in a Clip opened the arranger's automation view with the old song's freed rows (an audition pad on a freed Output) | fuzz seed 127 | `arranger_automation_load` |
 | 0112 | E170 at a song swap: the old song kept a synth with no Clip and no ParamManager, and stopping its auditioning asked for one with nothing auditioned | fuzz seed 152 (stop run 4) | `seed152_replay` (LONG=1) |
+| 0113 | Undo or redo of an edit in the arranger's automation view went into a Clip's view (none after a song load: a crash or E369) | fuzz seed 176 (stop run 6) | `arranger_automation_redo` |
 
 0104 (the S004 of fuzz seed 106) was the same fix as 0016, found independently, and is withdrawn.
 
@@ -312,7 +313,7 @@ How the faults were found:
 - **Stop runs** (2 hours, `--mode deep`, OLED and 7-segment in parallel, 20 minutes per seed): the criterion for
   "stable". Run 1 (up to 0106): seeds 122 (a fuzzer artefact, the grid layout's new track) and 125 (0108). Run 2 (up to
   0109): seed 127 (0111); seed 126's two `Error 2` popups are expected (the MIDI instrument browser with no file on the
-  test card). Run 3 (0001-0016, 0101-0103, 0105-0111, without 0017): seeds 138 and 139 clean, then stopped for the full series. Run 4 (0001-0017, 0101-0103, 0105-0111): 12 seeds, 14,152 inputs, one problem: seed 152 (0112). Run 5 (the same with 0112): seeds 162-165 clean (4,678 inputs), then stopped for the full series with 0018-0020. Run 6 (0001-0020, 0101-0103, 0105-0112, 31 patches): in progress; `tests/repro/run.sh` on that series: 27 of 27 PASS.
+  test card). Run 3 (0001-0016, 0101-0103, 0105-0111, without 0017): seeds 138 and 139 clean, then stopped for the full series. Run 4 (0001-0017, 0101-0103, 0105-0111): 12 seeds, 14,152 inputs, one problem: seed 152 (0112). Run 5 (the same with 0112): seeds 162-165 clean (4,678 inputs), then stopped for the full series with 0018-0020. Run 6 (0001-0020, 0101-0103, 0105-0112, 31 patches; `run.sh` 27 of 27 PASS): seeds 174, 175 and 177 clean, seed 176 E369 (0113). Run 7 (0001-0022, 0101-0103, 0105-0113, 34 patches; `run.sh` 30 of 30 PASS): seed 186 crashed in the sample browser (being traced).
 - **Code review of a fault's kind**: after 0107 the other places that take an encoder turn for +-1 (0109), after 0108
   the arranger's automation view's other uses of the song's current Clip (0110), after 0019 (the third fault of
   that kind) every select, horizontal and vertical encoder handler (0020; the sample marker editor's part has no
