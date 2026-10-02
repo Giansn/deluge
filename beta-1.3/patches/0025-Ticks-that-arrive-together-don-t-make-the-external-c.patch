@@ -1,0 +1,79 @@
+From 1f915c1439fd85ef20b3bcbe0e57112db7ff49dd Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 09:07:53 +0000
+Subject: [PATCH] Ticks that arrive together don't make the external clock's
+ tick time 0: no E427 recording a parameter
+
+On an external clock, PlaybackHandler measures the time per tick from the
+input ticks' arrival times: a moving average over the ticks counted since the
+start. Ticks that arrive together measure no time. Logic, and the Deluge
+itself, send several clocks at once after a continue (the firmware's own
+comment says so), and the messages of one USB packet share one arrival time
+(the packet's). After a continue followed by such clocks the average was 0
+until the next tick, and so was the time per internal tick taken from it. A
+parameter recorded meanwhile (a CC or pitch bend from the input MIDI channel,
+a gold knob; the Clip armed, RECORD on) divided by it: AutoParam's ticks to
+clear, SAMPLES_TO_CLEAR_AFTER_RECORD / 0, came back from the ARM runtime as
+0xFFFFFFFF, -1 ticks, and homogenizeRegion() froze with E427. Other readers
+rely on these values too: a synced sample's position (SamplePlaybackGuide) and
+the synced LFOs' offset divide by them, the external clock's current tick
+divides by the input average (a float division: minus infinity), and the swung
+tick's time remainder takes 1 from the time per internal tick (0xFFFFFFFF).
+
+Ticks that measured no time now keep the last values: an average of 0 isn't
+stored, nor a time per internal tick of 0, and a tick that took no time leaves
+the very current tick time inverse as it was (it divided 2147483647 by 0). The
+fuzzer's MIDI round 2 found it (seed 1331).
+---
+ src/deluge/playback/playback_handler.cpp | 20 ++++++++++++++++----
+ 1 file changed, 16 insertions(+), 4 deletions(-)
+
+diff --git a/src/deluge/playback/playback_handler.cpp b/src/deluge/playback/playback_handler.cpp
+index 6245c1ce..3502a07f 100644
+--- a/src/deluge/playback/playback_handler.cpp
++++ b/src/deluge/playback/playback_handler.cpp
+@@ -1919,7 +1919,11 @@ void PlaybackHandler::inputTick(bool fromTriggerClock, uint32_t time) {
+ 
+ 		uint32_t thisTimePerInternalTick = timeLastInputTickTook * inputTicksPer / internalTicksPer;
+ 
+-		veryCurrentTimePerInternalTickInverse = 2147483647 / ((thisTimePerInternalTick * 3) >> 1);
++		// A tick that arrived together with the one before (a sender's several clocks at once after a continue, or
++		// several in one USB packet) measured no time: keep the last value rather than divide by 0
++		if (thisTimePerInternalTick) {
++			veryCurrentTimePerInternalTickInverse = 2147483647 / ((thisTimePerInternalTick * 3) >> 1);
++		}
+ 
+ 		// Lowpass
+ 		int32_t distanceToGo = thisTimePerInternalTick - lowpassedTimePerInternalTick;
+@@ -1964,9 +1968,14 @@ void PlaybackHandler::inputTick(bool fromTriggerClock, uint32_t time) {
+ 	// Calculating time per input tick for the purpose of scheduling internal ticks. TODO: this code largely mirrors
+ 	// what the tempo magnitude matching code above does - could be combined. Or not?
+ 	if (numInputTickTimesCounted) {
+-		timePerInputTickMovingAverage =
++		uint32_t timePerInputTick =
+ 		    (uint32_t)(timeThisInputTick - timeLastInputTicks[numInputTickTimesCounted - 1]) / numInputTickTimesCounted;
+-		resetTimePerInternalTickMovingAverage();
++		// Ticks that all arrived together measured no time. Keep the last average then: 0 would be divided by (a
++		// parameter recorded meanwhile: AutoParam's ticks to clear, E427)
++		if (timePerInputTick) {
++			timePerInputTickMovingAverage = timePerInputTick;
++			resetTimePerInternalTickMovingAverage();
++		}
+ 	}
+ 
+ 	if (numInputTickTimesCounted < kNumInputTicksForMovingAverage) {
+@@ -2019,7 +2028,10 @@ void PlaybackHandler::resetTimePerInternalTickMovingAverage() {
+ 		uint32_t inputTicksPer;
+ 		getInternalTicksToInputTicksRatio(&inputTicksPer, &internalTicksPer);
+ 
+-		timePerInternalTickMovingAverage = timePerInputTickMovingAverage * inputTicksPer / internalTicksPer;
++		uint32_t timePerInternalTick = timePerInputTickMovingAverage * inputTicksPer / internalTicksPer;
++		if (timePerInternalTick) { // Too short to measure: keep the last value, which is divided by
++			timePerInternalTickMovingAverage = timePerInternalTick;
++		}
+ 	}
+ }
+ 
+-- 
+2.43.0
+
