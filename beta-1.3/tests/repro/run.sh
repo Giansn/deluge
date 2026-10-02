@@ -24,6 +24,7 @@
 #   midi_follow_clip_emu.py     0021: a Clip deleted other than by the session view: MIDI follow forgets it
 #   keyboard_clone_emu.py       0022: a cloned Clip's keyboard columns are its own (no crash once the original goes)
 #   keyboard_audio_clip_emu.py  0023: KEYBOARD in an audio Clip's automation view does nothing (no crash)
+#   automation_undo_audio_emu.py  0024: undo from a note velocity editor into an audio Clip's automation view (no i008)
 #   savekitrow_emu.py     0101: audition pad + SAVE opens the kit-row save only for a kit's sound row
 #   automation_type_emu.py 0102: a clip made CV or MIDI in song view opens its automation view without the synth's
 #                         parameter (CV: no E411)
@@ -52,7 +53,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ELF=$1 TOOLS=$2 BUILD=$3 OUT=${4:-/tmp/beta-repro}
 mkdir -p "$OUT"
 cd /tmp || exit 1
-tests="save_4917 songswap_e455 kitrow save_name oom_robust cluster_cache abandon_load export_abort_hang export_abort_file arranger_automation recorder_threshold hmenu_off_buttons qwerty_cursor mpe_arp_noteoff automation_ramp_end arranger_clip_select savekitrow automation_type modknob_cv song_reversed arranger_undo vertical_turn arranger_automation_turn fast_zoom arranger_automation_clip arranger_automation_load encoder_fast_turn midi_follow_clip keyboard_clone keyboard_audio_clip"
+tests="save_4917 songswap_e455 kitrow save_name oom_robust cluster_cache abandon_load export_abort_hang export_abort_file arranger_automation recorder_threshold hmenu_off_buttons qwerty_cursor mpe_arp_noteoff automation_ramp_end arranger_clip_select savekitrow automation_type modknob_cv song_reversed arranger_undo vertical_turn arranger_automation_turn fast_zoom arranger_automation_clip arranger_automation_load encoder_fast_turn midi_follow_clip keyboard_clone keyboard_audio_clip automation_undo_audio"
 [ "${LONG:-0}" = 1 ] && tests="$tests sm01_replay seed152_replay"
 fails=0
 for t in $tests; do

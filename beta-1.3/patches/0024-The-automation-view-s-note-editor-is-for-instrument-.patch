@@ -1,0 +1,123 @@
+From 304df1c4c277839985ab2b42e3ef3cc5e0004c5f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 06:11:25 +0000
+Subject: [PATCH] The automation view's note editor is for instrument Clips
+ only: no i008 after undo into an audio Clip
+
+The automation view keeps its editor type for whatever Clip it shows. Undo or
+redo of another Clip's action in the same view only makes that Clip current
+and calls focusRegained() (ActionLogger: CHANGE_CLIP), so the note velocity
+editor's type stayed set when that Clip was an audio one, and the note
+editor's code took the AudioClip for an InstrumentClip: its rendering read
+note rows from past the AudioClip's end, and a grid pad inserted a note row
+into that foreign array (i008, the array locked). inNoteEditor() now holds
+only for an instrument Clip (and never in the arranger).
+
+The same audit (every InstrumentClip cast in the automation view) found three
+more reads of an audio Clip as an InstrumentClip, without visible harm so far
+but undefined: initializeView() dereferenced getCurrentInstrumentClip() (null
+for an audio Clip) before its null check, which the compiler then dropped; a
+parameter shortcut read wrapEditing past an AudioClip's end; getAffectEntire()
+read affectEntire through null (an audio Clip affects its entire Clip, as
+View::setModLedStates() has it).
+---
+ src/deluge/gui/views/automation_view.cpp | 54 ++++++++++++++----------
+ 1 file changed, 32 insertions(+), 22 deletions(-)
+
+diff --git a/src/deluge/gui/views/automation_view.cpp b/src/deluge/gui/views/automation_view.cpp
+index 2f94b266..9bc3e69f 100644
+--- a/src/deluge/gui/views/automation_view.cpp
++++ b/src/deluge/gui/views/automation_view.cpp
+@@ -425,31 +425,32 @@ void AutomationView::initializeView() {
+ 
+ 	if (!onArrangerView) {
+ 		InstrumentClip* clip = getCurrentInstrumentClip();
++		// only applies to instrument clips (an audio Clip gives none, which was dereferenced before this check)
++		if (!clip) {
++			return;
++		}
+ 		Output* output = clip->output;
+ 		OutputType outputType = output->type;
+ 
+-		// only applies to instrument clips (not audio)
+-		if (clip) {
+-			// check if we for some reason, left the automation view, then switched clip types, then came back in
+-			resetSelectionIfOutputTypeChanged();
++		// check if we for some reason, left the automation view, then switched clip types, then came back in
++		resetSelectionIfOutputTypeChanged();
+ 
+-			// if we're in a kit, we want to make sure the param selected is valid for current context
+-			// e.g. only UNPATCHED_GLOBAL param kind's can be used with Kit Affect Entire enabled
+-			if ((outputType == OutputType::KIT) && (clip->lastSelectedParamKind != params::Kind::NONE)) {
+-				if (clip->lastSelectedParamKind == params::Kind::UNPATCHED_GLOBAL) {
+-					clip->affectEntire = true;
+-				}
+-				else {
+-					clip->affectEntire = false;
+-				}
++		// if we're in a kit, we want to make sure the param selected is valid for current context
++		// e.g. only UNPATCHED_GLOBAL param kind's can be used with Kit Affect Entire enabled
++		if ((outputType == OutputType::KIT) && (clip->lastSelectedParamKind != params::Kind::NONE)) {
++			if (clip->lastSelectedParamKind == params::Kind::UNPATCHED_GLOBAL) {
++				clip->affectEntire = true;
+ 			}
+-
+-			// if you're not in note editor, turn led off if it's on
+-			if (clip->wrapEditing) {
+-				indicator_leds::setLedState(IndicatorLED::CROSS_SCREEN_EDIT, inNoteEditor());
++			else {
++				clip->affectEntire = false;
+ 			}
+ 		}
+ 
++		// if you're not in note editor, turn led off if it's on
++		if (clip->wrapEditing) {
++			indicator_leds::setLedState(IndicatorLED::CROSS_SCREEN_EDIT, inNoteEditor());
++		}
++
+ 		// if we're in the note editor and we're in a kit,
+ 		// check that the lastAuditionedYDisplay is in sync with the selected drum
+ 		if (inNoteEditor()) {
+@@ -1875,8 +1876,8 @@ bool AutomationView::shortcutPadAction(ModelStackWithAutoParam* modelStackWithPa
+ 
+ 					handleParameterSelection(clip, output, outputType, x, y);
+ 
+-					// if you're in not in note editor, turn led off if it's on
+-					if (!onArrangerView && ((InstrumentClip*)clip)->wrapEditing) {
++					// if you're in not in note editor, turn led off if it's on (an audio Clip has no wrap editing)
++					if (!onArrangerView && clip->type == ClipType::INSTRUMENT && ((InstrumentClip*)clip)->wrapEditing) {
+ 						indicator_leds::setLedState(IndicatorLED::CROSS_SCREEN_EDIT, inNoteEditor());
+ 					}
+ 				}
+@@ -3232,7 +3233,14 @@ void AutomationView::setAutomationParamType() {
+ // used to check if we're automating a note row specific param type
+ // e.g. velocity, probability, poly expression, etc.
+ bool AutomationView::inNoteEditor() {
+-	return (automationParamType != AutomationParamType::PER_SOUND);
++	if (automationParamType == AutomationParamType::PER_SOUND || onArrangerView) {
++		return false;
++	}
++	// Only an instrument Clip has a note editor. Undo or redo of another Clip's action makes that Clip current in this
++	// view without resetting the type (ActionLogger: CHANGE_CLIP), and for an audio Clip the note editor took the
++	// AudioClip for an InstrumentClip: note rows read past its end, a grid pad inserted into them (i008)
++	Clip* clip = getCurrentClip();
++	return clip && clip->type == ClipType::INSTRUMENT;
+ }
+ 
+ // used to determine the affect entire context
+@@ -3253,8 +3261,10 @@ bool AutomationView::getAffectEntire() {
+ 			return false;
+ 		}
+ 	}
+-	// otherwise if you're not in the kit sound menu, use the clip affect entire state
+-	return getCurrentInstrumentClip()->affectEntire;
++	// otherwise if you're not in the kit sound menu, use the clip affect entire state (an audio Clip always affects
++	// its entire Clip, as View::setModLedStates() has it; it has no InstrumentClip to ask)
++	InstrumentClip* clip = getCurrentInstrumentClip();
++	return clip ? clip->affectEntire : true;
+ }
+ 
+ void AutomationView::blinkShortcuts() {
+-- 
+2.43.0
+

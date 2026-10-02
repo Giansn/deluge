@@ -257,6 +257,7 @@ this session's, 0101 and up the helper session's (`reports/`).
 | 0021 | Use after free: MIDI follow sent a held note's note-off (and all notes off) to the Clip its note-on went to even after that Clip was deleted by undo, the arranger, a Clip swap or a pending overdub's end (only the session view's delete made it forget the Clip) | code review (which Clip pointers outlive their Clip; the fuzzer sends no MIDI) | `midi_follow_clip` |
 | 0022 | Crash: a cloned Clip's keyboard view rendered its column controls through the original's columns (the keyboard state's leftCol/rightCol copied as they were), so once the original was deleted and its memory reused, through a freed vtable | reading that code while tracing fuzz seed 291 (not its cause) | `keyboard_clone` |
 | 0023 | Crash: KEYBOARD in an audio Clip's automation view opened the keyboard view, which took the AudioClip for an InstrumentClip and called through column pointers read past its end | fuzz seed 291 (7-segment), on the fourth delivered build | `keyboard_audio_clip` |
+| 0024 | i008: undo or redo from an instrument Clip's note velocity editor into an audio Clip's automation view kept the note editor on, which took the AudioClip for an InstrumentClip (a grid pad inserted a note row into a foreign array); three more undefined reads of an audio Clip as an InstrumentClip in the same view | an audit of the automation view's InstrumentClip casts after 0023 | `automation_undo_audio` |
 | 0101 | E411: audition pad + SAVE opened the kit-row save for a non-kit row | fuzz seed 1011 | `savekitrow` |
 | 0102 | E411: a clip made CV kept its synth parameter in the automation view | fuzz seed 101 | `automation_type` |
 | 0103 | Null writes: the MOD buttons in a CV clip wrote through a null `getModKnobMode()` (the fuzzer's "null writes") | write hook on the null page | `modknob_cv` |
@@ -312,7 +313,8 @@ How the faults were found:
   the arranger's automation view's other uses of the song's current Clip (0110), after 0019 (the third fault of
   that kind) every select, horizontal and vertical encoder handler (0020; the sample marker editor's part has no
   emulator test, the rig doesn't open that editor). After that, the Clip pointers that MIDI input keeps, which no
-  fuzzer input reaches: MIDI follow's note-off routing (0021).
+  fuzzer input reaches: MIDI follow's note-off routing (0021). After 0023 (an audio Clip taken for an
+  InstrumentClip) every InstrumentClip cast in the automation view, by one audit agent: 0024.
 - **Probes** for the areas the issue tracker names: `tests/menu_walk_emu.py` (every menu of nine contexts, horizontal
   menus on and off: about 900 items, clean with 0014) and `tests/repro/export_repeat_emu.py` (16-28 stem exports in a row
   with song changes and injected RAM failures: no leak, clean with 0011 and 0012).
