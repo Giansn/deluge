@@ -1,0 +1,76 @@
+From ae438b5b8bc2d2e4768891b8718cc15f76ec5eb8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 03:09:58 +0000
+Subject: [PATCH] No crash on a fast select turn with a clip instance held in
+ arranger view
+
+Song::getNextSessionClipWithOutput() stepped the session Clip index by the turn's offset and stopped only
+at exactly -1 or exactly the number of Clips. Since the encoder overhaul (#4529) the offset is the whole
+turn since the last read (+-2 or more when turned fast), so the index jumped past either end and Clip
+pointers were read beyond sessionClips until some garbage matched the Output; ArrangerView put that into
+the clip instance and crashed (a held clip instance in arranger view, select turned fast). It now steps
+one Clip per detent, as single detents did, and never past the array's ends.
+---
+ src/deluge/model/song/song.cpp | 18 +++++++++++++++---
+ src/deluge/model/song/song.h   |  1 +
+ 2 files changed, 16 insertions(+), 3 deletions(-)
+
+diff --git a/src/deluge/model/song/song.cpp b/src/deluge/model/song/song.cpp
+index 78b24e5f..e7929d1c 100644
+--- a/src/deluge/model/song/song.cpp
++++ b/src/deluge/model/song/song.cpp
+@@ -1101,6 +1101,18 @@ Clip* Song::getSessionClipWithOutput(Output* output, int32_t requireSection, Cli
+ }
+ 
+ Clip* Song::getNextSessionClipWithOutput(int32_t offset, Output* output, Clip* prevClip) {
++	// Since the encoder overhaul (#4529) offset is the whole turn since the last read (+-2 or more when turned fast),
++	// not +-1. Stepping the index by it skipped past the ends of sessionClips (only -1 and the count ended the search)
++	// and read Clips beyond the array, until some garbage matched. One step per detent, as with single detents
++	int32_t direction = (offset < 0) ? -1 : 1;
++	Clip* clip = prevClip;
++	for (int32_t step = 0; step < std::abs(offset); step++) {
++		clip = getNextSessionClipWithOutputOneStep(direction, output, clip);
++	}
++	return clip;
++}
++
++Clip* Song::getNextSessionClipWithOutputOneStep(int32_t direction, Output* output, Clip* prevClip) {
+ 
+ 	int32_t oldIndex = -1;
+ 	if (prevClip) {
+@@ -1110,7 +1122,7 @@ Clip* Song::getNextSessionClipWithOutput(int32_t offset, Output* output, Clip* p
+ 	// if we didn't retrieve a clip index, this is an arranger-only clip
+ 	if (oldIndex == -1) {
+ 		// turning select knob left
+-		if (offset < 0) {
++		if (direction < 0) {
+ 			// use the highest available index
+ 			// NOTE: resulting index is one-based
+ 			oldIndex = sessionClips.getNumElements();
+@@ -1120,9 +1132,9 @@ Clip* Song::getNextSessionClipWithOutput(int32_t offset, Output* output, Clip* p
+ 	int32_t newIndex = oldIndex;
+ 	while (true) {
+ 		// iterate index according to select knob direction
+-		newIndex += offset;
++		newIndex += direction;
+ 		// index out of bounds on either side returns NULL
+-		if (newIndex == -1 || newIndex == sessionClips.getNumElements()) {
++		if (newIndex < 0 || newIndex >= sessionClips.getNumElements()) {
+ 			return nullptr;
+ 		}
+ 		// retrieve clip and return
+diff --git a/src/deluge/model/song/song.h b/src/deluge/model/song/song.h
+index 78ad67ce..a2c6a870 100644
+--- a/src/deluge/model/song/song.h
++++ b/src/deluge/model/song/song.h
+@@ -293,6 +293,7 @@ public:
+ 	uint32_t getTimePerTimerTickRounded();
+ 	int32_t getNumOutputs();
+ 	Clip* getNextSessionClipWithOutput(int32_t offset, Output* output, Clip* prevClip);
++	Clip* getNextSessionClipWithOutputOneStep(int32_t direction, Output* output, Clip* prevClip);
+ 	bool anyClipsSoloing;
+ 
+ 	ParamManager* getBackedUpParamManagerForExactClip(ModControllableAudio* modControllable, Clip* clip,
+-- 
+2.43.0
+

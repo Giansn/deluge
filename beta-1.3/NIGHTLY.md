@@ -252,6 +252,7 @@ this session's, 0101 and up the helper session's (`reports/`).
 | 0016 | S004: a fast horizontal-encoder turn puts a browser's text cursor outside the text (since #4529) | fuzz seed 71 | `qwerty_cursor` |
 | 0017 | Memory corruption: a MIDI clip with MPE output and the arp on writes 2 KB past its member channels on every note-off (the crash in `Patcher::performPatching()`) | fuzz seed 3001 | `mpe_arp_noteoff` |
 | 0018 | E427: a two-pad ramp in the arranger's automation editor up to the first pad after the arrangement's end (a region of -3 ticks) | fuzz seed 241, on the delivered build | `automation_ramp_end` |
+| 0019 | Crash: a fast select turn with a clip instance held in arranger view read Clips beyond `sessionClips` (since #4529) | fuzz seed 13001, on the second delivered build | `arranger_clip_select` |
 | 0101 | E411: audition pad + SAVE opened the kit-row save for a non-kit row | fuzz seed 1011 | `savekitrow` |
 | 0102 | E411: a clip made CV kept its synth parameter in the automation view | fuzz seed 101 | `automation_type` |
 | 0103 | Null writes: the MOD buttons in a CV clip wrote through a null `getModKnobMode()` (the fuzzer's "null writes") | write hook on the null page | `modknob_cv` |
