@@ -12,17 +12,19 @@ This branch, `nightly`, holds the work on the community firmware's daily build, 
 
 ## The stabilised build
 
-`deluge-1.3.0-beta-62a516c2-nightly-582a21a1.bin` (1,739,200 bytes, SHA-256
-`f02f42de5974c69369799ece14c952c6f4e22b4bc44cedf27e463b6bb8a81426`) is the beta `62a516c2` with the 22 patches in
+`deluge-1.3.0-beta-62a516c2-nightly-697ffb0f.bin` (1,739,392 bytes, SHA-256
+`d09a7620367370d666ef91d5e4e9bc281df64cb5e3a55b485db40f0f12ba24ba`) is the beta `62a516c2` with the 28 patches in
 `patches/`; what each one fixes and how it was found is in `NIGHTLY.md` section 7. The Deluge shows it as
-`1.3.0-beta-582a21a1` (SETTINGS > FIRMWARE VERSION). Install it like any firmware: the .bin as the only .bin in the
+`1.3.0-beta-697ffb0f` (SETTINGS > FIRMWARE VERSION). Install it like any firmware: the .bin as the only .bin in the
 card's root folder, then switch the Deluge on with SHIFT held. Back up the card first, as for any beta.
 
 - **Tested in the emulator only, not yet on a Deluge.** On this very file every patch's test passes
-  (`tests/repro/run.sh`, and the SM01 replay with `LONG=1`). The fuzzer ran 4,676 random inputs on this file and about
-  7,600 more on the same code without a problem (rounds 9, and 7 and 8, in `NIGHTLY.md` section 7; that build differs
-  from this file only in the CPU fault handler, which runs after a crash, and in the version string).
-- **Built by `tools/setup_beta.sh`**: the tree `dc8440bf` (62a516c2 plus the patches), commit `582a21a1`.
+  (`tests/repro/run.sh`, 25 tests, and the SM01 replay with `LONG=1`).
+- **The fuzzer** ran about 12,300 random inputs without a problem on the build before it (rounds 7-9 in `NIGHTLY.md`
+  section 7); round 10 then found E427, fixed by 0018, and the helper session's 0107-0111 came in. This file has 6
+  more patches than that build; the fuzz rounds on it are in `NIGHTLY.md`.
+- **Built by `tools/setup_beta.sh`**: the tree `8785eef3` (62a516c2 plus the patches), commit `697ffb0f`. The build
+  before it, `...-582a21a1.bin`, is in the git history; it freezes with E427 on a ramp to the arrangement's end.
 
 | File | What |
 |---|---|

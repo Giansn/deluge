@@ -279,8 +279,10 @@ How the faults were found:
   with all 22 patches that makes about 7,600 inputs without a problem. Round 9, on the delivered file itself
   (25-minute runs: deep seed 231 7-segment, all seed 11001 OLED, the song browser seed 12001 OLED), ran to the end:
   none in 4,676 inputs, no wild access, no write through a null pointer (0103), no error popup, free SDRAM steady.
-- **The delivered build** (`beta-1.3/deluge-1.3.0-beta-62a516c2-nightly-582a21a1.bin`, built by `tools/setup_beta.sh`):
-  all 20 tests pass on that very file, the SM01 replay included. See `README.md`.
+- **The delivered build** (built by `tools/setup_beta.sh`; see `README.md`): first `...-582a21a1.bin` (22 patches;
+  all 20 tests passed on it, round 9 ran on it). Round 10 on it found E427 (fuzz seed 241: 0018). Now
+  `...-697ffb0f.bin` (28 patches, with 0018 and the helper session's 0107-0111): all 26 tests pass on that very file,
+  the SM01 replay included.
 - **The whole series together**: `tests/repro/run.sh` on the build with all 22 patches: all 19 tests pass, and so does the
   SM01 replay (`LONG=1`, all 908 inputs).
 - **Stop runs** (2 hours, `--mode deep`, OLED and 7-segment in parallel, 20 minutes per seed): the criterion for
