@@ -47,6 +47,8 @@
 #   sm01_replay_emu.py    0001: the 908-input run that froze with SM01 (about 35 minutes; LONG=1 to include it)
 #   arranger_automation_redo_emu.py  0113: undo/redo of an edit in the arranger's automation view stay with the
 #                         arranger (no Clip view opened without a Clip)
+#   kitrow_load_affect_emu.py  0114: with Affect Entire on, a kit row's sample browser (audition pad + LOAD) works
+#                         on the row's new drum (no call through a null Sound when a sample is chosen)
 #   seed152_replay_emu.py 0112: the 980-input run that froze with E170 at a song swap (about 20 minutes; LONG=1)
 # Usage: ./run.sh <deluge.elf> <toolchain v22 prefix> <blockcount dir> [out dir]
 # Exit status: the number of failed tests.
@@ -55,7 +57,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ELF=$1 TOOLS=$2 BUILD=$3 OUT=${4:-/tmp/beta-repro}
 mkdir -p "$OUT"
 cd /tmp || exit 1
-tests="save_4917 songswap_e455 kitrow save_name oom_robust cluster_cache abandon_load export_abort_hang export_abort_file arranger_automation recorder_threshold hmenu_off_buttons qwerty_cursor mpe_arp_noteoff automation_ramp_end arranger_clip_select savekitrow automation_type modknob_cv song_reversed arranger_undo vertical_turn arranger_automation_turn fast_zoom arranger_automation_clip arranger_automation_load encoder_fast_turn midi_follow_clip keyboard_clone keyboard_audio_clip automation_undo_audio arranger_automation_redo"
+tests="save_4917 songswap_e455 kitrow save_name oom_robust cluster_cache abandon_load export_abort_hang export_abort_file arranger_automation recorder_threshold hmenu_off_buttons qwerty_cursor mpe_arp_noteoff automation_ramp_end arranger_clip_select savekitrow automation_type modknob_cv song_reversed arranger_undo vertical_turn arranger_automation_turn fast_zoom arranger_automation_clip arranger_automation_load encoder_fast_turn midi_follow_clip keyboard_clone keyboard_audio_clip automation_undo_audio arranger_automation_redo kitrow_load_affect"
 [ "${LONG:-0}" = 1 ] && tests="$tests sm01_replay seed152_replay"
 fails=0
 for t in $tests; do

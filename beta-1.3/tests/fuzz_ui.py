@@ -657,9 +657,11 @@ def main():
         result.setdefault("null_writes", []).extend(dict(seed=seed, **w) for w in null.writes[:20])
         result["invalid"] += [dict(seed=seed, page=hex(k[0]), at=k[1], during=k[2], n=c)
                               for k, c in rig.invalid.most_common(10)]
-        # Error 10 (FOLDER_DOESNT_EXIST: no KITS folder on the card) left out
+        # Error 10 (FOLDER_DOESNT_EXIST: no KITS folder on the card) left out, and the "Song Chord Memory" mode popup
+        # (the rig's error words include "memory")
         result["error_popups"] += [dict(seed=seed, popup=p) for p in rig.error_popups()
-                                   if not (p[2] == "displayError" and p[3] == "Error 10")][:10]
+                                   if not (p[2] == "displayError" and p[3] == "Error 10")
+                                   and p[3] != "Song Chord Memory"][:10]
         result["steps"] = done
         result["recordings"] = result.get("recordings", 0) + modal.recordings  # Audio recorder sessions
         result["track_releases"] = result.get("track_releases", 0) + tracks.releases  # GridTrackCreation's releases

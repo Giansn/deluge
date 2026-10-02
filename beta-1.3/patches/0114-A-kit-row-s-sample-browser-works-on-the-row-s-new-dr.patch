@@ -1,0 +1,45 @@
+From daaae6135895ff700490f711584dfb242cb622fa Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 07:01:27 +0000
+Subject: [PATCH 114/114] A kit row's sample browser works on the row's new
+ drum, also with Affect Entire on
+
+Every grid pad press in a kit clip view goes through
+SoundEditor::potentialShortcutPadAction(), which sets setupKitGlobalFXMenu
+while Affect Entire is on, also when the pad is no shortcut (a note); only
+the sound editor's exit clears it. An audition pad held + LOAD then makes a
+new drum for that row and calls SoundEditor::setup() for its file selector:
+with the flag set, setup() took the kit's own FX, left currentSound null,
+and the sample browser opened anyway. Choosing a sample, or the select
+encoder with auto-load on, called currentSound->killAllVoices() through
+null in SampleBrowser::claimCurrentFile() (the fuzzer's seed 186, stop run
+7). enterDrumCreator() now clears the flag before setup(): the new drum is
+what the sound editor and the browser work on.
+
+Test (beta-1.3/tests/repro/kitrow_load_affect_emu.py): Affect Entire on, a
+grid pad, audition pad + LOAD: the browser is open on the new drum's Sound
+(before: currentSound null); the select encoder turned and pressed: the
+sample kept, the sound editor on the row (before: a crash).
+---
+ src/deluge/gui/views/instrument_clip_view.cpp | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/deluge/gui/views/instrument_clip_view.cpp b/src/deluge/gui/views/instrument_clip_view.cpp
+index 797cd940..00623cc1 100644
+--- a/src/deluge/gui/views/instrument_clip_view.cpp
++++ b/src/deluge/gui/views/instrument_clip_view.cpp
+@@ -5521,6 +5521,11 @@ doDisplayError:
+ 
+ 	setSelectedDrum(newDrum); // Does this really need to render?
+ 
++	// The sound editor and the browser work on the new Drum, never on the kit's own FX. A grid pad pressed with Affect
++	// Entire on leaves setupKitGlobalFXMenu set (SoundEditor::potentialShortcutPadAction()), and setup() would then
++	// pick the kit: no currentSound, so choosing a sample called through a null Sound.
++	soundEditor.setupKitGlobalFXMenu = false;
++
+ 	// Can't fail because we just set the selected Drum
+ 	// TODO: what if fail because no RAM
+ 	bool success = soundEditor.setup(getCurrentInstrumentClip(), &menu_item::file0SelectorMenu, 0);
+-- 
+2.43.0
+
