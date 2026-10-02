@@ -13,9 +13,12 @@ manager not back within its limit), wild accesses outside RAM and the peripheral
 then. After a problem: the last inputs are kept, the Deluge boots again and the run goes on with the next seed.
 
 Usage: fuzz_ui.py <deluge.elf> --firmware v13|121 --tools PREFIX --build DIR --out DIR [--steps N] [--seed S]
-                  [--synths N] [--7seg] [--minutes M] [--mode all|browser|deep]
+                  [--synths N] [--7seg] [--minutes M] [--mode all|browser|deep] [--midi SHARE]
   --mode deep    half plain steps, half two-finger ones (a button held + another, an audition pad held + SYNTH,
                  LEARN + a knob, a pad held + a type button, undo/redo, SHIFT+SCALE): the paths of the open crashes
+  --midi 0.3     30 % of the inputs MIDI from a keyboard on the DIN input (MIDI follow on channel 1): notes and
+                 their note-offs, CCs (sustain, all notes off), pitch bend, pressure, program changes, clock and
+                 start/stop, MIDI learn (LEARN, an audition pad or a clip pad held)
 Results: <out>/fuzz.json (problems with their last inputs, heap samples, counts) and a summary on stdout."""
 import argparse
 import collections
@@ -451,6 +454,116 @@ def step_browser(rng, inp, rig, log):
     return d
 
 
+class MidiIn:
+    """--midi: a keyboard on the DIN MIDI input. The bytes go into the MIDI UART's receive buffer (midiRxBuffer) and its
+    receive DMA's write position (CRDA) moves past them, as on the hardware (song_emu otherwise keeps CRDA at the
+    reader: nothing arrived); the firmware's MIDI routine reads and parses them in its task manager. MIDI follow's
+    channel A is set to channel 1 on any device, so channel 1 plays the selected or current clip (note-offs to the clip
+    of their note-on, all notes off to every clip remembered); the other channels reach only what learned them.
+    messages: the messages the firmware parsed (MidiEngine::midiMessageReceived())."""
+
+    SIZE = 512  # MIDI_RX_BUFFER_SIZE (definitions.h)
+
+    def __init__(self, emu):
+        import song_emu as se
+        import stress_ui_emu as su
+        self.emu = emu
+        sym = emu.sym
+        self.buf = sym["midiRxBuffer"]
+        self.read_at = sym["rxBufferReadAddr"] + 4  # rxBufferReadAddr[UART_ITEM_MIDI]
+        channel = emu.elf_bytes_at(sym["rxDmaChannels"] + 1, 1)[0]
+        self.write = None  # where the DMA has written up to; None: nothing arrived yet
+        emu.readers[se.dmac_channel_base(channel) + 0x1C] = self.crda
+        cable_off, channel_off = su.gdb_ints(emu, [
+            "print (int)&midiEngine.midiFollowChannelType[0].cable - (int)&midiEngine",
+            "print (int)&midiEngine.midiFollowChannelType[0].channelOrZone - (int)&midiEngine"])
+        engine = sym["midiEngine"]
+        emu.uc.mem_write(engine + cable_off, struct.pack("<I", 0))  # any device
+        emu.uc.mem_write(engine + channel_off, b"\0")  # channel 1
+        self.held = set()  # notes on channel 1 whose note-off hasn't been sent
+        self.messages = 0
+        emu.intercept(sym.find("_ZN10MidiEngine19midiMessageReceived"), self.on_message)
+
+    def on_message(self, e):
+        self.messages += 1  # and the function runs
+
+    def crda(self, size):
+        return self.write if self.write is not None else self.emu.u32(self.read_at)
+
+    def send(self, data):
+        read = self.emu.u32(self.read_at)
+        if self.write is None:
+            self.write = read
+        if (self.write - read) % self.SIZE + len(data) >= self.SIZE - 1:
+            return False  # the buffer full: the firmware hasn't read yet
+        for b in data:
+            self.emu.uc.mem_write(self.write, bytes([b]))
+            self.write = self.buf + (self.write - self.buf + 1) % self.SIZE
+        return True
+
+
+MIDI_CCS = (1, 1, 7, 10, 11, 64, 64, 74, 120, 121, 123, 123)  # mod wheel, volume, pan, expression, sustain, MPE Y,
+# all sound off, reset all controllers, all notes off
+
+
+def step_midi(rng, inp, rig, midi):
+    """One --midi input: a message from the keyboard (mostly channel 1, MIDI follow), now and then with LEARN, an
+    audition pad or a clip pad held (MIDI learn)."""
+    tm = lambda s, what: rig.tm(s, what)  # noqa: E731
+    ch = 0 if rng.random() < 0.85 else rng.randrange(1, 16)
+    r = rng.random()
+    if r < 0.30:
+        note = rng.choice((rng.randrange(128), rng.randrange(36, 84), rng.randrange(36, 52)))
+        msg, d = [0x90 | ch, note, rng.choice((1, 64, 100, 127))], f"MIDI note on {note} ch{ch + 1}"
+        if ch == 0:
+            midi.held.add(note)
+    elif r < 0.55:
+        note = rng.choice(sorted(midi.held)) if midi.held and rng.random() < 0.9 else rng.randrange(128)
+        midi.held.discard(note)
+        # a note-off, or the note-on with velocity 0 that many keyboards send
+        msg = [0x80 | ch, note, 64] if rng.random() < 0.5 else [0x90 | ch, note, 0]
+        d = f"MIDI note off {note} ch{ch + 1}"
+    elif r < 0.70:
+        cc = rng.choice(MIDI_CCS) if rng.random() < 0.7 else rng.randrange(128)
+        msg, d = [0xB0 | ch, cc, rng.randrange(128)], f"MIDI CC {cc} ch{ch + 1}"
+        if cc in (120, 123) and ch == 0:
+            midi.held.clear()
+    elif r < 0.77:
+        msg, d = [0xE0 | ch, rng.randrange(128), rng.randrange(128)], f"MIDI pitch bend ch{ch + 1}"
+    elif r < 0.82:
+        msg, d = [0xD0 | ch, rng.randrange(128)], f"MIDI channel pressure ch{ch + 1}"
+    elif r < 0.86:
+        msg, d = [0xA0 | ch, rng.randrange(128), rng.randrange(128)], f"MIDI poly pressure ch{ch + 1}"
+    elif r < 0.89:
+        msg, d = [0xC0 | ch, rng.randrange(128)], f"MIDI program change ch{ch + 1}"
+    elif r < 0.91:
+        b = rng.choice((0xF8, 0xF8, 0xFA, 0xFB, 0xFC))  # clock, start, continue, stop
+        msg, d = [b] * (24 if b == 0xF8 else 1), f"MIDI realtime {b:#x}"
+    else:  # MIDI learn: something held while a note or CC arrives
+        hold = rng.choice(("LEARN", "audition", "clip"))
+        note = rng.randrange(128)
+        msg = [0x90 | ch, note, 100] if rng.random() < 0.6 else [0xB0 | ch, rng.randrange(128), rng.randrange(128)]
+        if hold == "LEARN":
+            inp.button("LEARN", True)
+        else:
+            x, y = (17 if hold == "audition" else rng.randrange(16)), rng.randrange(8)
+            inp.button("LEARN", True)
+            inp.pad(x, y, 100)
+        tm(0.05, f"{hold} held")
+        midi.send(msg)
+        tm(0.05, "MIDI while held")
+        if hold != "LEARN":
+            inp.pad(x, y, 0)
+        inp.button("LEARN", False)
+        if msg[0] & 0xF0 == 0x90:
+            midi.send([0x80 | ch, note, 64])
+        tm(rng.uniform(0.02, 0.1), "between inputs")
+        return f"LEARN+{hold} + MIDI {msg[0]:#x} {msg[1]} ch{ch + 1}"
+    midi.send(msg)
+    tm(rng.uniform(0.01, 0.08), "between inputs")
+    return d
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("elf")
@@ -464,6 +577,8 @@ def main():
     ap.add_argument("--synths", type=int, default=2)
     ap.add_argument("--7seg", dest="seven", action="store_true")
     ap.add_argument("--mode", choices=("all", "browser", "deep"), default="all")
+    ap.add_argument("--midi", type=float, default=0, metavar="SHARE",
+                    help="this share of the inputs MIDI from a keyboard on the DIN input (e.g. 0.3)")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     import stress_ui_emu as su
@@ -491,6 +606,7 @@ def main():
         modal = ModalRecorder(rig.emu)
         QuickLoadTap(rig.emu)
         tracks = GridTrackCreation(rig.emu, inp)
+        midi = MidiIn(rig.emu) if a.midi else None
         rig.emu.uc.ctl_flush_tb()  # The new hooks also for code already translated
         if a.mode == "browser":
             inp.button("LOAD", True)
@@ -499,7 +615,10 @@ def main():
         n = 0
         try:
             while done < a.steps and not (a.minutes and time.time() - t0 > a.minutes * 60):
-                d = dict(browser=step_browser, deep=step_deep).get(a.mode, step)(rng, inp, rig, print)
+                if midi and rng.random() < a.midi:
+                    d = step_midi(rng, inp, rig, midi)
+                else:
+                    d = dict(browser=step_browser, deep=step_deep).get(a.mode, step)(rng, inp, rig, print)
                 recent.append(f"{rig.emu.seconds():.2f}s {d}")
                 null.check(d)
                 n += 1
@@ -527,6 +646,8 @@ def main():
         result["steps"] = done
         result["recordings"] = result.get("recordings", 0) + modal.recordings  # Audio recorder sessions
         result["track_releases"] = result.get("track_releases", 0) + tracks.releases  # GridTrackCreation's releases
+        if midi:
+            result["midi_messages"] = result.get("midi_messages", 0) + midi.messages  # parsed by the firmware
         seed += 1000
         json.dump(result, open(os.path.join(a.out, "fuzz.json"), "w"), indent=1, default=str)
     result["host_s"] = round(time.time() - t0)
