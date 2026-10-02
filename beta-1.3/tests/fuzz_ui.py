@@ -460,9 +460,13 @@ class MidiIn:
     reader: nothing arrived); the firmware's MIDI routine reads and parses them in its task manager. MIDI follow's
     channel A is set to channel 1 on any device, so channel 1 plays the selected or current clip (note-offs to the clip
     of their note-on, all notes off to every clip remembered); the other channels reach only what learned them.
+    After a start or continue the keyboard's clock runs on, 24 ticks a quarter note at 120 BPM in emulated time (also
+    during a long input), until a stop: a clock that stopped without a stop message left the Deluge waiting for it,
+    e.g. a song load while playing waits for the playing clips' end (fuzz seed 331 with --midi, not a fault).
     messages: the messages the firmware parsed (MidiEngine::midiMessageReceived())."""
 
     SIZE = 512  # MIDI_RX_BUFFER_SIZE (definitions.h)
+    CLOCK_S = 60 / (120 * 24)  # the external clock's tick at 120 BPM
 
     def __init__(self, emu):
         import song_emu as se
@@ -481,6 +485,7 @@ class MidiIn:
         emu.uc.mem_write(engine + cable_off, struct.pack("<I", 0))  # any device
         emu.uc.mem_write(engine + channel_off, b"\0")  # channel 1
         self.held = set()  # notes on channel 1 whose note-off hasn't been sent
+        self.clock_next = None  # the external clock's next tick (emulated seconds); None: stopped
         self.messages = 0
         emu.intercept(sym.find("_ZN10MidiEngine19midiMessageReceived"), self.on_message)
 
@@ -488,9 +493,21 @@ class MidiIn:
         self.messages += 1  # and the function runs
 
     def crda(self, size):
+        if self.clock_next is not None:  # the clock's ticks due by now arrive (as many as there is room for)
+            now = self.emu.seconds()
+            while self.clock_next <= now:
+                self.clock_next += self.CLOCK_S
+                self.put([0xF8])
         return self.write if self.write is not None else self.emu.u32(self.read_at)
 
     def send(self, data):
+        if 0xFC in data:
+            self.clock_next = None
+        elif 0xFA in data or 0xFB in data:
+            self.clock_next = self.emu.seconds() + self.CLOCK_S
+        return self.put(data)
+
+    def put(self, data):
         read = self.emu.u32(self.read_at)
         if self.write is None:
             self.write = read
