@@ -1,0 +1,70 @@
+From ae040e4bcae4403b5e6709fc8f9180c36770d4b9 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 10:48:20 +0000
+Subject: [PATCH] BACK in the performance view after a song load doesn't close
+ a UI that isn't open: no crash
+
+The performance view's editing modes (SHIFT + KEYBOARD, or the sound editor's
+editing mode) open the view again on top of a UI, and BACK closes that
+instance (PerformanceView::buttonAction(): close() while defaultEditingMode).
+A song load replaces all UIs without closing it, so the flag stayed set. The
+next time the performance view was the root UI (KEYBOARD in session view),
+BACK took it for the editing instance and closed it: closeUI() looked for it
+only above the root, didn't find it, and took the UI "below" the root from
+before uiNavigationHierarchy[], calling focusRegained() through whatever was
+there (and numUIsOpen became 0). The fuzzer's MIDI round 4 found it (seed 381:
+a jump to 0x0c000014).
+
+PerformanceView::opened() now ends the editing mode when the view is opened
+as the root UI. And closeUI() leaves a UI alone that isn't open above the root
+(its own comment said "If UI not found, chaos"), for any other caller that
+asks to close a UI that isn't open.
+---
+ src/deluge/gui/ui/ui.cpp                  | 10 +++++++++-
+ src/deluge/gui/views/performance_view.cpp |  8 ++++++++
+ 2 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/src/deluge/gui/ui/ui.cpp b/src/deluge/gui/ui/ui.cpp
+index 2b6495cc..f9f70aba 100644
+--- a/src/deluge/gui/ui/ui.cpp
++++ b/src/deluge/gui/ui/ui.cpp
+@@ -177,8 +177,16 @@ UI* getUIUpOneLevel(int32_t numLevelsUp) {
+ 	}
+ }
+ 
+-// If UI not found, chaos
++// Closes uiToClose and any UI open above it. A UI that isn't open above the root UI is left alone: the root UI can only
++// be changed, and the search below would otherwise stop at the root and take the UI below it from before the array
+ void closeUI(UI* uiToClose) {
++	int32_t level = numUIsOpen - 1;
++	while (level >= 1 && uiNavigationHierarchy[level] != uiToClose) {
++		level--;
++	}
++	if (level < 1) {
++		return;
++	}
+ 
+ 	bool redrawMainPads = false;
+ 	bool redrawSidebar = false;
+diff --git a/src/deluge/gui/views/performance_view.cpp b/src/deluge/gui/views/performance_view.cpp
+index 3fa52321..1e9d63ba 100644
+--- a/src/deluge/gui/views/performance_view.cpp
++++ b/src/deluge/gui/views/performance_view.cpp
+@@ -264,6 +264,14 @@ bool PerformanceView::getGreyoutColsAndRows(uint32_t* cols, uint32_t* rows) {
+ }
+ 
+ bool PerformanceView::opened() {
++	// The editing modes are this view opened again on top of a UI (SHIFT + KEYBOARD, or the sound editor's editing
++	// mode), which BACK closes. Opened as the root UI it isn't editing: the flags can be left over from an editing
++	// instance that went without being closed (a song load replaces all UIs), and BACK would close a UI that isn't open
++	if (!getUIUpOneLevel(1)) {
++		defaultEditingMode = false;
++		editingParam = false;
++	}
++
+ 	if (playbackHandler.playbackState && currentPlaybackMode == &arrangement) {
+ 		PadLEDs::skipGreyoutFade();
+ 	}
+-- 
+2.43.0
+

@@ -259,6 +259,7 @@ this session's, 0101 and up the helper session's (`reports/`).
 | 0023 | Crash: KEYBOARD in an audio Clip's automation view opened the keyboard view, which took the AudioClip for an InstrumentClip and called through column pointers read past its end | fuzz seed 291 (7-segment), on the fourth delivered build | `keyboard_audio_clip` |
 | 0024 | i008: undo or redo from an instrument Clip's note velocity editor into an audio Clip's automation view kept the note editor on, which took the AudioClip for an InstrumentClip (a grid pad inserted a note row into a foreign array); three more undefined reads of an audio Clip as an InstrumentClip in the same view | an audit of the automation view's InstrumentClip casts after 0023 | `automation_undo_audio` |
 | 0025 | E427: after a MIDI continue, clock ticks that arrived together (several at once, as Logic and the Deluge itself send them; with USB MIDI, the messages of one packet) made the external clock's tick time 0, and a parameter recorded meanwhile divided by it (-1 ticks to clear) | fuzz MIDI round 2, seed 1331 (7-segment), on the fifth delivered build | `midi_clock_record` |
+| 0026 | Crash: a song load in the performance view's editing mode left the editing flag on, so BACK in the performance view as the root UI closed it as the editing instance: `closeUI()` didn't find it above the root and called through the UI "below" it, read from before the UI array | fuzz MIDI round 4, seed 381 (OLED), on the sixth delivered build | `performance_editing_load` |
 | 0101 | E411: audition pad + SAVE opened the kit-row save for a non-kit row | fuzz seed 1011 | `savekitrow` |
 | 0102 | E411: a clip made CV kept its synth parameter in the automation view | fuzz seed 101 | `automation_type` |
 | 0103 | Null writes: the MOD buttons in a CV clip wrote through a null `getModKnobMode()` (the fuzzer's "null writes") | write hook on the null page | `modknob_cv` |
@@ -319,6 +320,9 @@ How the faults were found:
   MIDI round 3, with that clock (24 ticks a quarter note at 120 BPM), on the fifth (25-minute runs: deep 371 and
   all 29001 (7-segment), all 28001 (OLED)): 4,780 inputs, 25,732 MIDI messages parsed (most of them clock ticks), no
   problem, no wild access, no write through a null pointer, no error popup.
+  MIDI round 4, on the sixth (`...-1ff34bd0`, with 0025; 25-minute runs): deep 381 (OLED) crashed after 339 inputs
+  on BACK in the performance view, whose editing mode had outlived a song load (0026); the other seeds are running.
+  Round 14 (no MIDI) runs on the sixth too.
 - **The delivered build** (built by `tools/setup_beta.sh`; see `README.md`): first `...-582a21a1.bin` (22 patches;
   all 20 tests passed on it, round 9 ran on it). Round 10 on it found E427 (fuzz seed 241: 0018). Then
   `...-697ffb0f.bin` (28 patches, with 0018 and the helper session's 0107-0111; all 26 tests passed on it), where
