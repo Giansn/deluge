@@ -328,6 +328,11 @@ How the faults were found:
   crash's jump; replayed with 0026, all 1,000 inputs clean).
   Round 14 (no MIDI), on the sixth (25-minute runs: deep 401 and all 32001 (OLED), deep 411 and the song browser
   33001 (7-segment)): 5,882 inputs, no problem, no wild access, no write through a null pointer (one `Error 16`).
+  Round 15 and MIDI round 5, on the seventh (`...-dd64dbbe`; 25-minute runs): round 15 (deep 421 and all 34001 (OLED),
+  deep 431 (7-segment), the song browser 35001 (OLED)) 5,321 inputs, MIDI round 5 (deep 441 and all 37001 (OLED),
+  all 36001 and deep 451 (7-segment)) 6,144 inputs and 13,291 MIDI messages: no problem, no wild access, no write
+  through a null pointer. The popups: seed 421's `Error 2` on audition pads (pad 17, the same as round 13's traced
+  case: a preset browser with no preset file selected).
 - **The delivered build** (built by `tools/setup_beta.sh`; see `README.md`): first `...-582a21a1.bin` (22 patches;
   all 20 tests passed on it, round 9 ran on it). Round 10 on it found E427 (fuzz seed 241: 0018). Then
   `...-697ffb0f.bin` (28 patches, with 0018 and the helper session's 0107-0111; all 26 tests passed on it), where

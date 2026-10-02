@@ -14,8 +14,9 @@ This branch, `nightly`, holds the work on the community firmware's daily build, 
 
 `deluge-1.3.0-beta-62a516c2-nightly-dd64dbbe.bin` (1,740,048 bytes, SHA-256
 `af080c0bd52cec9fbb149c906a270b8826eef0ff888524dfd3ccb2467a9b9d01`) is the beta `62a516c2` with the 40 patches in
-`patches/` (0001-0026 and 0101-0115 without the withdrawn 0104, in the order of `patches/series`); what each one fixes
-and how it was found is in `NIGHTLY.md` section 7. The Deluge shows it as `1.3.0-beta-dd64dbbe` (SETTINGS > FIRMWARE
+`patches/` (0001-0026 and 0101-0115 without the withdrawn 0104, in the order of `patches/series`; the helper session's
+0116 and 0117, found after it, come with the next build); what each one fixes and how it was found is in `NIGHTLY.md`
+section 7. The Deluge shows it as `1.3.0-beta-dd64dbbe` (SETTINGS > FIRMWARE
 VERSION). Install it like any firmware: the .bin as the only .bin in the card's root folder, then switch the Deluge on
 with SHIFT held. Back up the card first, as for any beta.
 
