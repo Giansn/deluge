@@ -281,10 +281,18 @@ How the faults were found:
   with all 22 patches that makes about 7,600 inputs without a problem. Round 9, on the delivered file itself
   (25-minute runs: deep seed 231 7-segment, all seed 11001 OLED, the song browser seed 12001 OLED), ran to the end:
   none in 4,676 inputs, no wild access, no write through a null pointer (0103), no error popup, free SDRAM steady.
+  Round 10, on the first delivered build (`...-582a21a1`): deep seed 241 (OLED) froze with E427 after 752 inputs
+  (0018). Round 11, on the second (`...-697ffb0f`, 25-minute runs): all seed 13001 (OLED) crashed after 1,125 inputs
+  (0019); deep seeds 251 and 271 (OLED) and 261 (7-segment) and the song browser seed 15001 (7-segment): none in
+  6,738 inputs (1,168 + 1,287 + 1,073 + 2,210), no wild access, no write through a null pointer, no error popup but
+  the harmless `Error 16` (no further file that way). 0019 was the third fault of its kind (after 0016 and 0107):
+  an audit of every encoder handler then found the seven places of 0020.
 - **The delivered build** (built by `tools/setup_beta.sh`; see `README.md`): first `...-582a21a1.bin` (22 patches;
-  all 20 tests passed on it, round 9 ran on it). Round 10 on it found E427 (fuzz seed 241: 0018). Now
-  `...-697ffb0f.bin` (28 patches, with 0018 and the helper session's 0107-0111): all 26 tests pass on that very file,
-  the SM01 replay included.
+  all 20 tests passed on it, round 9 ran on it). Round 10 on it found E427 (fuzz seed 241: 0018). Then
+  `...-697ffb0f.bin` (28 patches, with 0018 and the helper session's 0107-0111; all 26 tests passed on it), where
+  round 11 found 0019. A third build with 0019 (`1.3.0-beta-e24dd432`, all tests passed) wasn't delivered: 0020
+  came first. Now `...-90a87481.bin` (30 patches, 0001-0020 and 0101-0111 without 0104): all 27 tests pass on that
+  very file, the SM01 replay included; round 12 runs on it.
 - **The whole series together**: `tests/repro/run.sh` on the build with all 22 patches: all 19 tests pass, and so does the
   SM01 replay (`LONG=1`, all 908 inputs).
 - **Stop runs** (2 hours, `--mode deep`, OLED and 7-segment in parallel, 20 minutes per seed): the criterion for

@@ -12,19 +12,21 @@ This branch, `nightly`, holds the work on the community firmware's daily build, 
 
 ## The stabilised build
 
-`deluge-1.3.0-beta-62a516c2-nightly-697ffb0f.bin` (1,739,392 bytes, SHA-256
-`d09a7620367370d666ef91d5e4e9bc281df64cb5e3a55b485db40f0f12ba24ba`) is the beta `62a516c2` with the 28 patches in
+`deluge-1.3.0-beta-62a516c2-nightly-90a87481.bin` (1,739,528 bytes, SHA-256
+`422de3d2f267d2853cd0171a949994a21bb166d5b3d62c5db195eb29776baaab`) is the beta `62a516c2` with the 30 patches in
 `patches/`; what each one fixes and how it was found is in `NIGHTLY.md` section 7. The Deluge shows it as
-`1.3.0-beta-697ffb0f` (SETTINGS > FIRMWARE VERSION). Install it like any firmware: the .bin as the only .bin in the
+`1.3.0-beta-90a87481` (SETTINGS > FIRMWARE VERSION). Install it like any firmware: the .bin as the only .bin in the
 card's root folder, then switch the Deluge on with SHIFT held. Back up the card first, as for any beta.
 
 - **Tested in the emulator only, not yet on a Deluge.** On this very file every patch's test passes
-  (`tests/repro/run.sh`, 25 tests, and the SM01 replay with `LONG=1`).
-- **The fuzzer** ran about 12,300 random inputs without a problem on the build before it (rounds 7-9 in `NIGHTLY.md`
-  section 7); round 10 then found E427, fixed by 0018, and the helper session's 0107-0111 came in. This file has 6
-  more patches than that build; the fuzz rounds on it are in `NIGHTLY.md`.
-- **Built by `tools/setup_beta.sh`**: the tree `8785eef3` (62a516c2 plus the patches), commit `697ffb0f`. The build
-  before it, `...-582a21a1.bin`, is in the git history; it freezes with E427 on a ramp to the arrangement's end.
+  (`tests/repro/run.sh`, 27 tests, and the SM01 replay with `LONG=1`).
+- **The fuzzer** ran about 12,300 random inputs without a problem in rounds 7-9 (`NIGHTLY.md` section 7; round 9 on
+  the first delivered build). Rounds 10 and 11 then found E427 (0018) and a crash on a fast select turn in arranger
+  view (0019); the audit after that, of every encoder handler, found seven more places of that kind (0020). The fuzz
+  rounds on this file (round 12) are in `NIGHTLY.md`.
+- **Built by `tools/setup_beta.sh`**: the tree `503cb5ce` (62a516c2 plus the patches), commit `90a87481`. The builds
+  before it are in the git history: `...-582a21a1.bin` freezes with E427 on a ramp to the arrangement's end,
+  `...-697ffb0f.bin` can crash on a fast select turn with a clip instance held in arranger view.
 
 | File | What |
 |---|---|
