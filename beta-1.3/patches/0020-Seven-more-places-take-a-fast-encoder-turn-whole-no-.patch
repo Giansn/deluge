@@ -1,0 +1,205 @@
+From 4128363d6b3abaa10f6e7a436e965726cff9a841 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 03:36:00 +0000
+Subject: [PATCH] Seven more places take a fast encoder turn whole: no hang,
+ stuck note or value out of range
+
+Since the encoder overhaul (#4529) the select, horizontal and vertical
+handlers get the whole turn (+-2 or more when turned fast, x5 with SHIFT in
+some views):
+- CVInstrument::navigateChannels(): a negative remainder other than -1 stayed
+  negative (channel -2 indexes the CV engine's channels as 254)
+- KeyboardScreen::selectEncoderAction(), SCALE held: a turn of more than an
+  octave down gave a negative root note
+- InstrumentClipView::verticalEncoderAction(), a kit row dragged: the row
+  swaps with its neighbour only, so a scroll of more than one row left it
+  away from the held audition pad (whose release then ended another row's
+  audition: a stuck note); now one row per detent
+- AutomationView::getNextSelectedParamArrayPosition(): numParams + offset
+  went below 0 for a turn longer than the list (a read before the array)
+- Slicer::selectEncoderAction(): numClips stepped past 257 or 1 (0 slices, a
+  division by zero, or more than 256)
+- DxParam::horizontalEncoderAction() with SHIFT: stepping by the whole offset
+  over the six operators could cycle without meeting the start again (a hang
+  with operators switched off); now one step per detent, each at most once
+  around
+- SampleMarkerEditor::selectEncoderAction(): a marker could jump past its
+  neighbour (start past end, loop start past loop end)
+---
+ src/deluge/gui/menu_item/dx/param.cpp         | 26 +++++++++++++------
+ .../gui/ui/keyboard/keyboard_screen.cpp       |  4 ++-
+ src/deluge/gui/ui/sample_marker_editor.cpp    |  5 ++--
+ src/deluge/gui/ui/slicer.cpp                  | 10 ++++---
+ src/deluge/gui/views/automation_view.cpp      | 16 +++++-------
+ src/deluge/gui/views/instrument_clip_view.cpp | 13 ++++++++++
+ src/deluge/model/instrument/cv_instrument.h   |  6 +++--
+ 7 files changed, 53 insertions(+), 27 deletions(-)
+
+diff --git a/src/deluge/gui/menu_item/dx/param.cpp b/src/deluge/gui/menu_item/dx/param.cpp
+index 8bdef22f..a98b5662 100644
+--- a/src/deluge/gui/menu_item/dx/param.cpp
++++ b/src/deluge/gui/menu_item/dx/param.cpp
+@@ -180,15 +180,25 @@ void DxParam::horizontalEncoderAction(int32_t offset) {
+ 			return; // TODO: remember last OP param?
+ 		int cur_op = param / 21;
+ 		int next_op = cur_op;
+-		do {
+-			next_op += offset;
+-			if (next_op >= 6) {
+-				next_op = 0;
++		// One step per detent, each to the next operator that is switched on, at most once around (none: back where
++		// it started). Since the encoder overhaul (#4529) offset can be +-2 or more, and stepping by it (with wraps to
++		// 0 and 5) could cycle without ever meeting cur_op again: with the operators in between switched off the loop
++		// never ended (nor from param 126, cur_op 6, with all operators off)
++		int direction = (offset < 0) ? -1 : 1;
++		for (int32_t step = 0; step < std::abs(offset); step++) {
++			for (int32_t tries = 0; tries < 6; tries++) {
++				next_op += direction;
++				if (next_op >= 6) {
++					next_op = 0;
++				}
++				else if (next_op < 0) {
++					next_op = 5;
++				}
++				if (patch->opSwitch(next_op)) {
++					break;
++				}
+ 			}
+-			else if (next_op < 0) {
+-				next_op = 5;
+-			}
+-		} while (!patch->opSwitch(next_op) && next_op != cur_op);
++		}
+ 
+ 		param = (param % 21) + 21 * next_op;
+ 	}
+diff --git a/src/deluge/gui/ui/keyboard/keyboard_screen.cpp b/src/deluge/gui/ui/keyboard/keyboard_screen.cpp
+index eb306d26..d49de293 100644
+--- a/src/deluge/gui/ui/keyboard/keyboard_screen.cpp
++++ b/src/deluge/gui/ui/keyboard/keyboard_screen.cpp
+@@ -735,7 +735,9 @@ void KeyboardScreen::selectEncoderAction(int8_t offset) {
+ 
+ 		bool useSharps = FlashStorage::defaultUseSharps;
+ 		toggleScaleModeOnButtonRelease = false;
+-		int32_t newRootNote = ((currentSong->key.rootNote + kOctaveSize) + offset) % kOctaveSize;
++		// Wrapped into 0-11 for any turn: since the encoder overhaul (#4529) offset is the whole turn (up to +-127),
++		// and one more than an octave down gave a negative root note (read as a note name before the table)
++		int32_t newRootNote = ((currentSong->key.rootNote + offset) % kOctaveSize + kOctaveSize) % kOctaveSize;
+ 		instrumentClipView.setupChangingOfRootNote(newRootNote);
+ 
+ 		char noteName[3] = {0};
+diff --git a/src/deluge/gui/ui/sample_marker_editor.cpp b/src/deluge/gui/ui/sample_marker_editor.cpp
+index 81b64c59..9c1d7c4f 100644
+--- a/src/deluge/gui/ui/sample_marker_editor.cpp
++++ b/src/deluge/gui/ui/sample_marker_editor.cpp
+@@ -278,12 +278,13 @@ void SampleMarkerEditor::selectEncoderAction(int8_t offset) {
+ 	int32_t oldPos = cols[util::to_underlying(markerType)].pos;
+ 	int32_t newCol = oldCol + offset;
+ 
+-	// Make sure we don't drive one marker into the other
++	// Make sure we don't drive one marker into or past the other (since the encoder overhaul, #4529, a turn can move
++	// more than one column: past the neighbour, start and end, or the loop points, would swap)
+ 	for (int32_t c = 0; c < kNumMarkerTypes; c++) {
+ 		if (c == util::to_underlying(markerType)) {
+ 			continue;
+ 		}
+-		if (cols[c].colOnScreen == oldCol || cols[c].colOnScreen == newCol) {
++		if (cols[c].colOnScreen >= std::min(oldCol, newCol) && cols[c].colOnScreen <= std::max(oldCol, newCol)) {
+ 			return;
+ 		}
+ 	}
+diff --git a/src/deluge/gui/ui/slicer.cpp b/src/deluge/gui/ui/slicer.cpp
+index 5e8c6de2..d1362b35 100644
+--- a/src/deluge/gui/ui/slicer.cpp
++++ b/src/deluge/gui/ui/slicer.cpp
+@@ -267,11 +267,13 @@ ActionResult Slicer::verticalEncoderAction(int32_t offset, bool inCardRoutine) {
+ void Slicer::selectEncoderAction(int8_t offset) {
+ 	if (slicerMode == SLICER_MODE_REGION) {
+ 		numClips += offset;
+-		if (numClips == 257) {
+-			numClips = 2;
++		// Wrap within 2-256: since the encoder overhaul (#4529) a turn can be more than one detent, and stepping past
++		// 257 or 1 left 0 (a division by zero when slicing), negative or more than 256 slices
++		while (numClips > 256) {
++			numClips -= 255;
+ 		}
+-		else if (numClips == 1) {
+-			numClips = 256;
++		while (numClips < 2) {
++			numClips += 255;
+ 		}
+ 	}
+ 	else { // SLICER_MODE_MANUAL
+diff --git a/src/deluge/gui/views/automation_view.cpp b/src/deluge/gui/views/automation_view.cpp
+index 0e696e6c..98cea9d6 100644
+--- a/src/deluge/gui/views/automation_view.cpp
++++ b/src/deluge/gui/views/automation_view.cpp
+@@ -2901,17 +2901,13 @@ int32_t AutomationView::getNextSelectedParamArrayPosition(int32_t offset, int32_
+ 	if (onAutomationOverview()) {
+ 		idx = 0;
+ 	}
+-	// if you are scrolling left and are at the beginning of the list, go to the end of the list
+-	else if ((lastSelectedParamArrayPosition + offset) < 0) {
+-		idx = numParams + offset;
+-	}
+-	// if you are scrolling right and are at the end of the list, go to the beginning of the list
+-	else if ((lastSelectedParamArrayPosition + offset) > (numParams - 1)) {
+-		idx = 0;
+-	}
+-	// otherwise scrolling left/right within the list
++	// otherwise scroll around the list. Since the encoder overhaul (#4529) offset is the whole turn (and x5 with
++	// SHIFT), so it can be longer than the list: numParams + offset went below 0 and read before the array
+ 	else {
+-		idx = lastSelectedParamArrayPosition + offset;
++		idx = (lastSelectedParamArrayPosition + offset) % numParams;
++		if (idx < 0) {
++			idx += numParams;
++		}
+ 	}
+ 	return idx;
+ }
+diff --git a/src/deluge/gui/views/instrument_clip_view.cpp b/src/deluge/gui/views/instrument_clip_view.cpp
+index 894e5b76..797cd940 100644
+--- a/src/deluge/gui/views/instrument_clip_view.cpp
++++ b/src/deluge/gui/views/instrument_clip_view.cpp
+@@ -6229,6 +6229,19 @@ ActionResult InstrumentClipView::verticalEncoderAction(int32_t offset, bool inCa
+ 			if (!shouldIgnoreVerticalScrollKnobActionIfNotAlsoPressedForThisNotePress
+ 			    || (!isUIModeActive(UI_MODE_NOTES_PRESSED) && !isUIModeActive(UI_MODE_AUDITIONING))) {
+ 				bool draggingNoteRow = (isUIModeActive(UI_MODE_DRAGGING_KIT_NOTEROW));
++				if (draggingNoteRow) {
++					// One row per detent: the dragged NoteRow only swaps with its neighbour, so a scroll of more than
++					// one row (since the encoder overhaul, #4529, offset is the whole turn) left it away from the held
++					// audition pad, whose release then ended another row's audition (the dragged one's stuck on)
++					int32_t direction = (offset > 0) ? 1 : -1;
++					for (int32_t step = 0; step < std::abs(offset); step++) {
++						ActionResult result = scrollVertical(direction, inCardRoutine, true, modelStack);
++						if (result != ActionResult::DEALT_WITH) {
++							return result;
++						}
++					}
++					return ActionResult::DEALT_WITH;
++				}
+ 				return scrollVertical(offset, inCardRoutine, draggingNoteRow, modelStack);
+ 			}
+ 		}
+diff --git a/src/deluge/model/instrument/cv_instrument.h b/src/deluge/model/instrument/cv_instrument.h
+index a58e4ff9..0fd5efd3 100644
+--- a/src/deluge/model/instrument/cv_instrument.h
++++ b/src/deluge/model/instrument/cv_instrument.h
+@@ -42,9 +42,11 @@ public:
+ 	bool setActiveClip(ModelStackWithTimelineCounter* modelStack, PgmChangeSend maySendMIDIPGMs) override;
+ 	void setupWithoutActiveClip(ModelStack* modelStack) override;
+ 	static int32_t navigateChannels(int oldChannel, int offset) {
++		// Since the encoder overhaul (#4529) offset can be more than one detent: C++'s % keeps the sign, so wrap any
++		// negative remainder (CV1 turned -2 was channel -2, which indexes the CV engine's channels as 254)
+ 		auto newChannel = (oldChannel + offset) % kNumCVInstrumentChannels;
+-		if (newChannel == -1) {
+-			newChannel = kNumCVInstrumentChannels - 1;
++		if (newChannel < 0) {
++			newChannel += kNumCVInstrumentChannels;
+ 		}
+ 		return newChannel;
+ 	}
+-- 
+2.43.0
+

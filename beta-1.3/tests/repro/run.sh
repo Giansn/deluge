@@ -18,6 +18,9 @@
 #   mpe_arp_noteoff_emu.py      0017: a MIDI clip with MPE output and the arp on writes nothing past its member channels
 #   automation_ramp_end_emu.py  0018: a two-pad ramp up to the arrangement's end in its automation editor: no E427
 #   arranger_clip_select_emu.py 0019: a fast select turn with a clip instance held in arranger view: no crash
+#   encoder_fast_turn_emu.py    0020: fast turns in a CV clip, the keyboard's root note, a dragged kit row, the
+#                         automation view's parameter list, the slicer and the DX7 menu stay in range (no stuck
+#                         note, no hang)
 #   savekitrow_emu.py     0101: audition pad + SAVE opens the kit-row save only for a kit's sound row
 #   automation_type_emu.py 0102: a clip made CV or MIDI in song view opens its automation view without the synth's
 #                         parameter (CV: no E411)
@@ -45,7 +48,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ELF=$1 TOOLS=$2 BUILD=$3 OUT=${4:-/tmp/beta-repro}
 mkdir -p "$OUT"
 cd /tmp || exit 1
-tests="save_4917 songswap_e455 kitrow save_name oom_robust cluster_cache abandon_load export_abort_hang export_abort_file arranger_automation recorder_threshold hmenu_off_buttons qwerty_cursor mpe_arp_noteoff automation_ramp_end arranger_clip_select savekitrow automation_type modknob_cv song_reversed arranger_undo vertical_turn arranger_automation_turn fast_zoom arranger_automation_clip arranger_automation_load"
+tests="save_4917 songswap_e455 kitrow save_name oom_robust cluster_cache abandon_load export_abort_hang export_abort_file arranger_automation recorder_threshold hmenu_off_buttons qwerty_cursor mpe_arp_noteoff automation_ramp_end arranger_clip_select savekitrow automation_type modknob_cv song_reversed arranger_undo vertical_turn arranger_automation_turn fast_zoom arranger_automation_clip arranger_automation_load encoder_fast_turn"
 [ "${LONG:-0}" = 1 ] && tests="$tests sm01_replay"
 fails=0
 for t in $tests; do

@@ -253,6 +253,7 @@ this session's, 0101 and up the helper session's (`reports/`).
 | 0017 | Memory corruption: a MIDI clip with MPE output and the arp on writes 2 KB past its member channels on every note-off (the crash in `Patcher::performPatching()`) | fuzz seed 3001 | `mpe_arp_noteoff` |
 | 0018 | E427: a two-pad ramp in the arranger's automation editor up to the first pad after the arrangement's end (a region of -3 ticks) | fuzz seed 241, on the delivered build | `automation_ramp_end` |
 | 0019 | Crash: a fast select turn with a clip instance held in arranger view read Clips beyond `sessionClips` (since #4529) | fuzz seed 13001, on the second delivered build | `arranger_clip_select` |
+| 0020 | Seven more places that took a fast turn for one detent (since #4529): a CV clip's channel set to -2, a negative root note in the keyboard view, a dragged kit row left away from its held pad (a stuck note), the automation view's parameter list read before its start, 0 or 258 slices in the slicer, a hang stepping DX7 operators with SHIFT, a sample marker carried past its neighbour | an audit of every encoder handler after 0019, then the emulator | `encoder_fast_turn` |
 | 0101 | E411: audition pad + SAVE opened the kit-row save for a non-kit row | fuzz seed 1011 | `savekitrow` |
 | 0102 | E411: a clip made CV kept its synth parameter in the automation view | fuzz seed 101 | `automation_type` |
 | 0103 | Null writes: the MOD buttons in a CV clip wrote through a null `getModKnobMode()` (the fuzzer's "null writes") | write hook on the null page | `modknob_cv` |
@@ -291,7 +292,9 @@ How the faults were found:
   0109): seed 127 (0111); seed 126's two `Error 2` popups are expected (the MIDI instrument browser with no file on the
   test card). Run 3 (0001-0016, 0101-0103, 0105-0111, without 0017): in progress.
 - **Code review of a fault's kind**: after 0107 the other places that take an encoder turn for +-1 (0109), after 0108
-  the arranger's automation view's other uses of the song's current Clip (0110).
+  the arranger's automation view's other uses of the song's current Clip (0110), after 0019 (the third fault of
+  that kind) every select, horizontal and vertical encoder handler (0020; the sample marker editor's part has no
+  emulator test, the rig doesn't open that editor).
 - **Probes** for the areas the issue tracker names: `tests/menu_walk_emu.py` (every menu of nine contexts, horizontal
   menus on and off: about 900 items, clean with 0014) and `tests/repro/export_repeat_emu.py` (16-28 stem exports in a row
   with song changes and injected RAM failures: no leak, clean with 0011 and 0012).
