@@ -4,9 +4,9 @@ keyboard state has the column controls of the keyboard view (ColumnControlState)
 and rightCol, pointers to the two shown, which point at the state's own columns. InstrumentClip::copyBasicsFrom()
 copies the keyboard state with the implicit copy, pointers and all, so a clone (session view: a clip held and another
 row pressed; a pending overdub; the arranger's clone) points at the original's columns. Once the original is deleted
-and its memory reused, the clone's keyboard view renders its sidebar through a freed column's vtable: the fuzzer's seed
-291 (--mode deep, 7-segment, input 775, on the fourth delivered build) jumped to 0x0c000014 from
-ColumnControlsKeyboard::renderSidebarPads() on AFFECT + KEYBOARD.
+and its memory reused, the clone's keyboard view renders its sidebar through a freed column's vtable. Found reading
+that code while tracing the fuzzer's seed 291, whose crash in ColumnControlsKeyboard::renderSidebarPads() was another
+fault (0023, keyboard_audio_clip_emu.py); this test checks the pointers themselves, which a reused block makes a crash.
 
 One boot of the real firmware in the emulator (OLED), make_card's song: in session view the first Clip's pad held and
 an empty row's pad pressed (the Clip cloned), the clone's leftCol and rightCol looked at, then the original deleted

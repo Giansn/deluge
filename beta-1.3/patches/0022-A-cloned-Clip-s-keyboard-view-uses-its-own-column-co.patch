@@ -10,9 +10,9 @@ shown, which point at the state's own columns. InstrumentClip::copyBasicsFrom()
 copied the state with the implicit copy, so a clone (session view, a pending
 overdub, the arranger) pointed at the original's columns, and once the
 original was deleted and its memory reused, the clone's keyboard view
-rendered its sidebar through a freed column's vtable (fuzz seed 291: a jump
-to 0x0c000014 from ColumnControlsKeyboard::renderSidebarPads()). The copy now
-copies the columns and points leftCol/rightCol at its own.
+rendered its sidebar through a freed column's vtable. Found reading that code
+while tracing fuzz seed 291 (whose crash there was another fault: 0023). The
+copy now copies the columns and points leftCol/rightCol at its own.
 ---
  .../ui/keyboard/layout/column_control_state.h |  7 +++++++
  .../ui/keyboard/layout/column_controls.cpp    | 19 +++++++++++++++++++

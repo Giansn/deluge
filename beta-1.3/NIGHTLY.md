@@ -255,7 +255,8 @@ this session's, 0101 and up the helper session's (`reports/`).
 | 0019 | Crash: a fast select turn with a clip instance held in arranger view read Clips beyond `sessionClips` (since #4529) | fuzz seed 13001, on the second delivered build | `arranger_clip_select` |
 | 0020 | Seven more places that took a fast turn for one detent (since #4529): a CV clip's channel set to -2, a negative root note in the keyboard view, a dragged kit row left away from its held pad (a stuck note), the automation view's parameter list read before its start, 0 or 258 slices in the slicer, a hang stepping DX7 operators with SHIFT, a sample marker carried past its neighbour | an audit of every encoder handler after 0019, then the emulator | `encoder_fast_turn` |
 | 0021 | Use after free: MIDI follow sent a held note's note-off (and all notes off) to the Clip its note-on went to even after that Clip was deleted by undo, the arranger, a Clip swap or a pending overdub's end (only the session view's delete made it forget the Clip) | code review (which Clip pointers outlive their Clip; the fuzzer sends no MIDI) | `midi_follow_clip` |
-| 0022 | Crash: a cloned Clip's keyboard view rendered its column controls through the original's columns (the keyboard state's leftCol/rightCol copied as they were), so once the original was deleted and its memory reused, through a freed vtable | fuzz seed 291 (7-segment), on the fourth delivered build | `keyboard_clone` |
+| 0022 | Crash: a cloned Clip's keyboard view rendered its column controls through the original's columns (the keyboard state's leftCol/rightCol copied as they were), so once the original was deleted and its memory reused, through a freed vtable | reading that code while tracing fuzz seed 291 (not its cause) | `keyboard_clone` |
+| 0023 | Crash: KEYBOARD in an audio Clip's automation view opened the keyboard view, which took the AudioClip for an InstrumentClip and called through column pointers read past its end | fuzz seed 291 (7-segment), on the fourth delivered build | `keyboard_audio_clip` |
 | 0101 | E411: audition pad + SAVE opened the kit-row save for a non-kit row | fuzz seed 1011 | `savekitrow` |
 | 0102 | E411: a clip made CV kept its synth parameter in the automation view | fuzz seed 101 | `automation_type` |
 | 0103 | Null writes: the MOD buttons in a CV clip wrote through a null `getModKnobMode()` (the fuzzer's "null writes") | write hook on the null page | `modknob_cv` |
@@ -290,12 +291,17 @@ How the faults were found:
   6,738 inputs (1,168 + 1,287 + 1,073 + 2,210), no wild access, no write through a null pointer, no error popup but
   the harmless `Error 16` (no further file that way). 0019 was the third fault of its kind (after 0016 and 0107):
   an audit of every encoder handler then found the seven places of 0020.
+  Round 12, on the fourth (`...-90a87481`, 25-minute runs, nine seeds: deep 281 and 301 (OLED), 291 and 311
+  (7-segment), all 16001 and 19001 (OLED) and 18001 (7-segment), the song browser 17001 (OLED) and 20001
+  (7-segment)): 11,823 inputs, one problem, deep seed 291 crashed after 775 inputs (0023: KEYBOARD in an audio
+  Clip's automation view; replayed with 0023, all 800 inputs clean). Otherwise no wild access, no write through a
+  null pointer, no error popup. 0022 came from reading that code while tracing it.
 - **The delivered build** (built by `tools/setup_beta.sh`; see `README.md`): first `...-582a21a1.bin` (22 patches;
   all 20 tests passed on it, round 9 ran on it). Round 10 on it found E427 (fuzz seed 241: 0018). Then
   `...-697ffb0f.bin` (28 patches, with 0018 and the helper session's 0107-0111; all 26 tests passed on it), where
   round 11 found 0019. A third build with 0019 (`1.3.0-beta-e24dd432`, all tests passed) wasn't delivered: 0020
   came first. Now `...-90a87481.bin` (30 patches, 0001-0020 and 0101-0111 without 0104): all 27 tests pass on that
-  very file, the SM01 replay included; round 12 runs on it.
+  very file, the SM01 replay included; round 12 on it found 0023.
 - **The whole series together**: `tests/repro/run.sh` on the build with all 22 patches: all 19 tests pass, and so does the
   SM01 replay (`LONG=1`, all 908 inputs).
 - **Stop runs** (2 hours, `--mode deep`, OLED and 7-segment in parallel, 20 minutes per seed): the criterion for

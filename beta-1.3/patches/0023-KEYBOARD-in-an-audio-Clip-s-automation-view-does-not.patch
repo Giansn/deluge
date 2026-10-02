@@ -1,0 +1,37 @@
+From 37e121e914082c88d936c6b08797abf91b89c370 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 05:33:32 +0000
+Subject: [PATCH] KEYBOARD in an audio Clip's automation view does nothing: no
+ crash
+
+AutomationView's KEYBOARD handler opened the keyboard view for whatever Clip it
+showed. An audio Clip has no keyboard view (AudioClipView ignores KEYBOARD),
+and the keyboard view took it for an InstrumentClip: its column controls were
+read past the AudioClip's end and called through (fuzz seed 291: a jump to
+0x0c000014 from ColumnControlsKeyboard::renderSidebarPads() on AFFECT +
+KEYBOARD; directly, a write through a wild pointer in
+KeyboardScreen::selectLayout()). The automation view now ignores KEYBOARD
+for an audio Clip, as its clip view does.
+---
+ src/deluge/gui/views/automation_view.cpp | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/deluge/gui/views/automation_view.cpp b/src/deluge/gui/views/automation_view.cpp
+index 98cea9d6..2f94b266 100644
+--- a/src/deluge/gui/views/automation_view.cpp
++++ b/src/deluge/gui/views/automation_view.cpp
+@@ -1307,6 +1307,11 @@ void AutomationView::handleSessionButtonAction(Clip* clip, bool on) {
+ 
+ // called by button action if b == KEYBOARD
+ void AutomationView::handleKeyboardButtonAction(bool on) {
++	// An audio Clip has no keyboard view (its clip view ignores KEYBOARD): the keyboard view took it for an
++	// InstrumentClip and read its column controls past the AudioClip's end (a crash)
++	if (!onArrangerView && getCurrentClip()->type == ClipType::AUDIO) {
++		return;
++	}
+ 	if (on && (currentUIMode == UI_MODE_NONE || (currentUIMode == UI_MODE_NOTES_PRESSED && padSelectionOn))) {
+ 		if (padSelectionOn) {
+ 			initPadSelection();
+-- 
+2.43.0
+
