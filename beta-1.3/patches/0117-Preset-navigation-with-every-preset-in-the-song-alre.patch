@@ -1,0 +1,51 @@
+From 917daae2377cc3388801ce7f9b41ab2783b7d24d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 12:33:17 +0000
+Subject: [PATCH 117/117] Preset navigation with every preset in the song
+ already changes nothing: no i009, no E058
+
+When the whole instrument is to be replaced (arranger view, song view, a
+Clip with an arranger instance), LoadInstrumentPresetUI::doPresetNavigation()
+looks for a preset not in the song (Availability::INSTRUMENT_UNUSED). After
+going round its list twice without one, its guard against an endless loop
+returned one in the song anyway. The arranger's (and the song grid's)
+Song::navigateThroughPresetsForInstrument() gave it to replaceInstrument(),
+which froze with i009; a Clip with an arranger instance went to it by
+changeInstrument() without its instances, and the check after the change
+froze with E058 (the fuzzer's seed 226, stop run 9). It now gets out
+without a result, as when the list is empty: nothing changes.
+
+Test (beta-1.3/tests/repro/presets_all_used_emu.py): new clips until no
+unused preset is left, every clip stopped, then in arranger view a synth
+row's audition pad held and the select encoder turned: the row keeps its
+synth (before: i009).
+---
+ src/deluge/gui/ui/load/load_instrument_preset_ui.cpp | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/src/deluge/gui/ui/load/load_instrument_preset_ui.cpp b/src/deluge/gui/ui/load/load_instrument_preset_ui.cpp
+index d0633619..efceb88f 100644
+--- a/src/deluge/gui/ui/load/load_instrument_preset_ui.cpp
++++ b/src/deluge/gui/ui/load/load_instrument_preset_ui.cpp
+@@ -1564,9 +1564,15 @@ doneMoving:
+ 	toReturn.fileItem = (FileItem*)fileItems.getElementAddress(i);
+ 
+ 	bool isAlreadyInSong = toReturn.fileItem->instrument && toReturn.fileItem->instrumentAlreadyInSong;
+-	// wrapped is here to prevent an infinite loop
+-	if (availabilityRequirement == Availability::INSTRUMENT_UNUSED && isAlreadyInSong && wrapped < 2) {
+-		goto moveAgain;
++	if (availabilityRequirement == Availability::INSTRUMENT_UNUSED && isAlreadyInSong) {
++		// wrapped is here to prevent an infinite loop
++		if (wrapped < 2) {
++			goto moveAgain;
++		}
++		// Every preset there is in the Song already: none to change to. The callers can't take one in use: the
++		// arranger's replaceInstrument() froze with i009, and a Clip with an arranger instance went to it without its
++		// instances (E058)
++		goto noErrorButGetOut;
+ 	}
+ 
+ 	toReturn.loadedFromFile = false;
+-- 
+2.43.0
+
