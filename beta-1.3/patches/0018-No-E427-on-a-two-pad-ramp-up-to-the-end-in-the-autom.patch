@@ -1,0 +1,47 @@
+From 6158d6ed0192e6adc5254a866940e37d5d2d295b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 01:08:59 +0000
+Subject: [PATCH] No E427 on a two-pad ramp up to the end in the automation
+ editor
+
+handleAutomationMultiPadPress() gives the first and the last pad of a ramp "the rest of the pad" after
+the node at its edge: the pad's width minus kParamNodeWidth. The view returns only when the second pad
+starts after its length; a pad that starts exactly at the end has a width of 0, so the rest was -3.
+In the arranger the view's length is the arrangement's end, shorter than the Song parameter's own, so
+setValueForRegion() let the negative length through and homogenizeRegion() froze with E427 (load a song
+with an arrangement, SONG, CLIP, a song parameter, a ramp from a pad to the first pad after the end).
+A pad with nothing left after its edge node is now skipped.
+---
+ .../views/automation/editor_layout/mod_controllable.cpp  | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/src/deluge/gui/views/automation/editor_layout/mod_controllable.cpp b/src/deluge/gui/views/automation/editor_layout/mod_controllable.cpp
+index fd9a8ad1..6371138a 100644
+--- a/src/deluge/gui/views/automation/editor_layout/mod_controllable.cpp
++++ b/src/deluge/gui/views/automation/editor_layout/mod_controllable.cpp
+@@ -1254,7 +1254,7 @@ void AutomationEditorLayoutModControllable::handleAutomationMultiPadPress(
+ 		for (int32_t x = firstPadX; x <= secondPadX; x++) {
+ 
+ 			int32_t newKnobPos = 0;
+-			uint32_t squareWidth = 0;
++			int32_t squareWidth = 0;
+ 
+ 			// we've already set the value for the very first node corresponding to the first pad above
+ 			// now we will set the value for the remaining nodes within the first pad
+@@ -1276,6 +1276,13 @@ void AutomationEditorLayoutModControllable::handleAutomationMultiPadPress(
+ 				squareWidth = getSquareWidth(x, effectiveLength, xScroll, xZoom);
+ 			}
+ 
++			// The first and the last pad keep the node set above at their edge. What is left of them is nothing when a
++			// square is no wider than a node (zoomed in all the way, or the last square cut short by the clip's end), and
++			// a region of no length froze homogenizeRegion() with E427
++			if (squareWidth <= 0) {
++				continue;
++			}
++
+ 			// linear interpolation formula to calculate the value of the pads
+ 			// f(x) = A + (x - Ax) * ((B - A) / (Bx - Ax))
+ 			float newKnobPosFloat = std::round(firstPadValueFloat
+-- 
+2.43.0
+
