@@ -48,8 +48,17 @@ if [ ! -d "$TREE" ]; then
   # The website and contrib folders aren't needed; the menu generator needs docs/menus
   git -C "$TREE" sparse-checkout set --no-cone '/*' '!/website/' '!/contrib/' '!/docs/' '/docs/menus/'
   git -C "$TREE" checkout -q "$BRANCH"
+  # In the order of patches/series (the order they were made in: some of ours build on the helper session's), then
+  # any patch not listed there, in name order
+  PATCHES=()
+  if [ -f "$BETA/patches/series" ]; then
+    while read -r p; do PATCHES+=("$BETA/patches/$p"); done < <(grep -v -e '^#' -e '^[[:space:]]*$' "$BETA/patches/series")
+  fi
+  for f in "$BETA"/patches/0*.patch; do
+    case " ${PATCHES[*]+${PATCHES[*]}} " in *" $f "*) ;; *) PATCHES+=("$f") ;; esac
+  done
   git -C "$TREE" -c user.name=beta-fixes -c user.email=beta-fixes@localhost am -q --committer-date-is-author-date \
-    "$BETA"/patches/0*.patch
+    "${PATCHES[@]}"
 fi
 echo "tree $(git -C "$TREE" rev-parse 'HEAD^{tree}'), $(git -C "$TREE" rev-list --count "$BASE"..HEAD) patches on $BASE_SHORT"
 

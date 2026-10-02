@@ -1,0 +1,37 @@
+# The order tools/setup_beta.sh applies the patches in: the order they were made in, since some of ours build on the
+# helper session's (0102 before 0024, for one). A patch not listed here is applied after these, in name order.
+0001-Undo-keeps-every-note-still-in-a-scale-mode-clip-in-.patch
+0002-Save-songs-without-duplicate-audio-clip-attributes-k.patch
+0003-Loading-a-song-while-playing-no-longer-freezes-with-.patch
+0004-A-synth-loaded-into-a-kit-row-no-stale-pointers-no-E.patch
+0005-SAVE-never-proposes-the-name-of-an-existing-song-482.patch
+0006-No-freeze-when-external-RAM-runs-out-on-a-stale-samp.patch
+0007-No-crash-on-a-transpose-note-during-a-song-change.patch
+0008-No-E411-when-saving-a-kit-row-whose-sound-has-no-par.patch
+0009-Short-samples-held-whole-and-loop-starts-held-again-.patch
+0101-Audition-pad-SAVE-opens-the-kit-row-save-only-for-a-.patch
+0010-No-M000-when-a-synth-preset-fails-to-load-free-the-S.patch
+0011-A-track-or-mixdown-export-no-longer-hangs-when-a-ste.patch
+0012-An-aborted-stem-recording-no-longer-leaves-a-broken-.patch
+0013-No-E369-on-CV-MIDI-KIT-SYNTH-or-SCALE-in-the-arrange.patch
+0014-RECORD-AUDIO-with-threshold-recording-on-BACK-ends-t.patch
+0102-A-clip-whose-type-changed-opens-its-automation-view-.patch
+0015-No-crash-on-SYNTH-KIT-MIDI-or-CV-in-a-menu-once-hori.patch
+0016-No-S004-after-a-fast-turn-of-the-horizontal-encoder-.patch
+0017-No-memory-corruption-from-a-MIDI-clip-with-MPE-outpu.patch
+0103-MOD-buttons-in-a-CV-clip-no-longer-write-through-a-n.patch
+0105-A-new-Song-doesn-t-play-reversed-initialize-the-Time.patch
+0106-Undo-in-the-arranger-s-automation-view-goes-back-to-.patch
+0018-No-E427-on-a-two-pad-ramp-up-to-the-end-in-the-autom.patch
+0107-A-fast-vertical-turn-in-song-and-arranger-view-moves.patch
+0108-The-horizontal-encoder-in-the-arranger-s-automation-.patch
+0109-A-fast-turn-of-the-horizontal-encoder-with-its-butto.patch
+0110-The-arranger-s-automation-view-takes-no-type-from-th.patch
+0111-The-arranger-s-automation-view-ends-with-the-arrange.patch
+0019-No-crash-on-a-fast-select-turn-with-a-clip-instance-.patch
+0020-Seven-more-places-take-a-fast-encoder-turn-whole-no-.patch
+0021-MIDI-follow-forgets-a-Clip-however-it-s-deleted-no-n.patch
+0022-A-cloned-Clip-s-keyboard-view-uses-its-own-column-co.patch
+0112-A-song-swap-doesn-t-ask-an-Instrument-that-isn-t-aud.patch
+0023-KEYBOARD-in-an-audio-Clip-s-automation-view-does-not.patch
+0024-The-automation-view-s-note-editor-is-for-instrument-.patch

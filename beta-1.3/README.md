@@ -32,7 +32,7 @@ card's root folder, then switch the Deluge on with SHIFT held. Back up the card 
 | File | What |
 |---|---|
 | `NIGHTLY.md` | Why the beta crashes, what its own documentation says, the emulator runs, our patches (section 7) |
-| `patches/` | The fixes on 62a516c2: 0001-0099 this session's, 0101 and up the helper session's (`git am` in order) |
+| `patches/` | The fixes on 62a516c2: 0001-0099 this session's, 0101 and up the helper session's; `patches/series` is the order (`git am`), new ones not listed go after it in name order |
 | `tools/setup_beta.sh` | The patched beta from this repository alone: source, patches, toolchain v22, build, blockcount.so |
 | `tests/emu13.py`, `tests/rig13.py` | mastertune's emulator rig (`mastertune-1.2.1/tests/song`, `tests/stress/ui`) adapted to v1.3 |
 | `tests/fuzz_ui.py` | a random user on the real firmware in the emulator, for v1.3 or mastertune with the same inputs |
