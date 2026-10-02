@@ -297,6 +297,10 @@ How the faults were found:
   (7-segment)): 11,823 inputs, one problem, deep seed 291 crashed after 775 inputs (0023: KEYBOARD in an audio
   Clip's automation view; replayed with 0023, all 800 inputs clean). Otherwise no wild access, no write through a
   null pointer, no error popup. 0022 came from reading that code while tracing it.
+  MIDI round 1, with the fuzzer's new `--midi 0.35` (a keyboard on the DIN input: notes and note-offs, CCs, pitch
+  bend, pressure, program changes, clock, MIDI learn; MIDI follow on channel 1), on the build with 0001-0021
+  (25-minute runs: all 21001 and deep 321 (OLED), all 22001 (7-segment)): 4,498 inputs, 1,969 MIDI messages
+  parsed by the firmware, no problem, no wild access, no write through a null pointer (only `Error 16` popups).
 - **The delivered build** (built by `tools/setup_beta.sh`; see `README.md`): first `...-582a21a1.bin` (22 patches;
   all 20 tests passed on it, round 9 ran on it). Round 10 on it found E427 (fuzz seed 241: 0018). Then
   `...-697ffb0f.bin` (28 patches, with 0018 and the helper session's 0107-0111; all 26 tests passed on it), where
