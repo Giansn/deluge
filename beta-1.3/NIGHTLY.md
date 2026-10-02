@@ -304,21 +304,30 @@ How the faults were found:
   bend, pressure, program changes, clock, MIDI learn; MIDI follow on channel 1), on the build with 0001-0021
   (25-minute runs: all 21001 and deep 321 (OLED), all 22001 (7-segment)): 4,498 inputs, 1,969 MIDI messages
   parsed by the firmware, no problem, no wild access, no write through a null pointer (only `Error 16` popups).
+  Round 13, on the fifth (`...-8f34a7c4`, 25-minute runs, six seeds: deep 341 and 361 (OLED) and 351 (7-segment),
+  all 27001 (OLED) and 25001 (7-segment), the song browser 26001 (OLED)): 8,453 inputs, no problem, no wild access,
+  no write through a null pointer. The popups were `Error 16` and, twice in seed 341, `Error 2`: audition pads in
+  the MIDI preset browser (LOAD + MIDI) with no preset file selected, which the browser reports as an unspecified
+  load error by design (`LoadInstrumentPresetUI`'s `currentInstrumentLoadError`; replayed and traced).
   MIDI round 2, on the fifth (`...-8f34a7c4`, 25-minute runs: all 23001 (OLED), all 24001 and deep 331
   (7-segment)): 4,574 inputs, 2,008 MIDI messages parsed. Seed 331 hung after 112 inputs on a song load: a fuzzer
   artefact (a continue and then no more clock ticks, so the load waited for the playing clips' end, as it should); the
   fuzzer's keyboard now keeps its clock running after a start or continue, until a stop. Seed 1331 froze with E427
   after 824 inputs: a parameter from the input MIDI channel recorded right after a continue whose clocks arrived
   together (0025; replayed with 0025, all 1,300 inputs clean).
-  MIDI round 3, with that clock (24 ticks a quarter note at 120 BPM), on the fifth: deep 371 (7-segment), 1,572
-  inputs and 8,868 MIDI messages, no problem; all 28001 and 29001 are running.
+  MIDI round 3, with that clock (24 ticks a quarter note at 120 BPM), on the fifth (25-minute runs: deep 371 and
+  all 29001 (7-segment), all 28001 (OLED)): 4,780 inputs, 25,732 MIDI messages parsed (most of them clock ticks), no
+  problem, no wild access, no write through a null pointer, no error popup.
 - **The delivered build** (built by `tools/setup_beta.sh`; see `README.md`): first `...-582a21a1.bin` (22 patches;
   all 20 tests passed on it, round 9 ran on it). Round 10 on it found E427 (fuzz seed 241: 0018). Then
   `...-697ffb0f.bin` (28 patches, with 0018 and the helper session's 0107-0111; all 26 tests passed on it), where
   round 11 found 0019. A third build with 0019 (`1.3.0-beta-e24dd432`, all tests passed) wasn't delivered: 0020
   came first. Then `...-90a87481.bin` (30 patches, 0001-0020 and 0101-0111 without 0104; all 27 tests passed on it),
-  where round 12 found 0023. Now `...-8f34a7c4.bin` (35 patches: 0001-0024 and 0101-0112 without 0104, in the order
-  of `patches/series`): all 31 tests pass on that very file, and so do the SM01 and seed 152 replays (`LONG=1`).
+  where round 12 found 0023. Then `...-8f34a7c4.bin` (35 patches: 0001-0024 and 0101-0112 without 0104, in the order
+  of `patches/series`; all 31 tests passed on it), where round 13 found nothing and MIDI round 2 found 0025 (and the
+  helper session's stop runs 0113 and 0114, on their own builds). Now `...-1ff34bd0.bin` (38 patches: 0001-0025 and
+  0101-0114 without 0104, in the order of `patches/series`): all 34 tests pass on that very file, and so do the
+  SM01 and seed 152 replays (`LONG=1`).
 - **The whole series together**: `tests/repro/run.sh` on the build with all 22 patches: all 19 tests pass, and so does the
   SM01 replay (`LONG=1`, all 908 inputs).
 - **Stop runs** (2 hours, `--mode deep`, OLED and 7-segment in parallel, 20 minutes per seed): the criterion for
