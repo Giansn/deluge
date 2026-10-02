@@ -343,8 +343,10 @@ How the faults were found:
   of `patches/series`; all 31 tests passed on it), where round 13 found nothing and MIDI round 2 found 0025 (and the
   helper session's stop runs 0113 and 0114, on their own builds). Then `...-1ff34bd0.bin` (38 patches: 0001-0025 and
   0101-0114 without 0104; all 34 tests passed on it), where MIDI round 4 found 0026 (and the helper session's stop run
-  8 0115, on their own build). Now `...-dd64dbbe.bin` (40 patches: 0001-0026 and 0101-0115 without 0104, in the order of
-  `patches/series`): all 36 tests pass on that very file, and so do the SM01 and seed 152 replays (`LONG=1`).
+  8 0115, on their own build). Then `...-dd64dbbe.bin` (40 patches: 0001-0026 and 0101-0115 without 0104; all 36
+  tests passed on it), where round 15 and MIDI round 5 found nothing (the helper session's stop run 9 found 0116 and
+  0117, on their own build). Now `...-3b916052.bin` (42 patches: 0001-0026 and 0101-0117 without 0104, in the order of
+  `patches/series`): all 38 tests pass on that very file, and so do the SM01 and seed 152 replays (`LONG=1`).
 - **The whole series together**: `tests/repro/run.sh` on the build with all 22 patches: all 19 tests pass, and so does the
   SM01 replay (`LONG=1`, all 908 inputs).
 - **Stop runs** (2 hours, `--mode deep`, OLED and 7-segment in parallel, 20 minutes per seed): the criterion for
