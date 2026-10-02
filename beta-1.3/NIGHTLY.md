@@ -270,7 +270,9 @@ How the faults were found:
   3,100 inputs (46 of 60 minutes, again cut off by a restart; the counts are from the logs, which report every 100
   inputs and every problem at once). Round 8 (all 22 patches, 30-minute runs: deep seed 221 and all seed 10001 OLED,
   the song browser seed 9001 7-segment): none in about 4,500 inputs (cut off after about 23 minutes). On the build
-  with all 22 patches that makes about 7,600 inputs without a problem.
+  with all 22 patches that makes about 7,600 inputs without a problem. Round 9, on the delivered file itself
+  (25-minute runs: deep seed 231 7-segment, all seed 11001 OLED, the song browser seed 12001 OLED), ran to the end:
+  none in 4,676 inputs, no wild access, no write through a null pointer (0103), no error popup, free SDRAM steady.
 - **The delivered build** (`beta-1.3/deluge-1.3.0-beta-62a516c2-nightly-582a21a1.bin`, built by `tools/setup_beta.sh`):
   all 20 tests pass on that very file, the SM01 replay included. See `README.md`.
 - **The whole series together**: `tests/repro/run.sh` on the build with all 22 patches: all 19 tests pass, and so does the

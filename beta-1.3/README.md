@@ -19,9 +19,9 @@ This branch, `nightly`, holds the work on the community firmware's daily build, 
 card's root folder, then switch the Deluge on with SHIFT held. Back up the card first, as for any beta.
 
 - **Tested in the emulator only, not yet on a Deluge.** On this very file every patch's test passes
-  (`tests/repro/run.sh`, and the SM01 replay with `LONG=1`). The fuzzer ran about 7,600 random inputs on the same
-  code without a problem (rounds 7 and 8 in `NIGHTLY.md` section 7; that build differs from this file only in the
-  CPU fault handler, which runs after a crash, and in the version string).
+  (`tests/repro/run.sh`, and the SM01 replay with `LONG=1`). The fuzzer ran 4,676 random inputs on this file and about
+  7,600 more on the same code without a problem (rounds 9, and 7 and 8, in `NIGHTLY.md` section 7; that build differs
+  from this file only in the CPU fault handler, which runs after a crash, and in the version string).
 - **Built by `tools/setup_beta.sh`**: the tree `dc8440bf` (62a516c2 plus the patches), commit `582a21a1`.
 
 | File | What |
