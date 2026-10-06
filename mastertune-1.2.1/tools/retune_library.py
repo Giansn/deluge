@@ -3,7 +3,7 @@
 
 At a master tune other than 440 Hz the firmware shifts every sample voice by the tuning, even an untransposed drum:
 the voice is interpolated (sinc) instead of read natively, about six times the CPU per voice. A WAV file with the
-12-byte "mtun" chunk counts as audio in that tuning (see the README, "Aufnahmen werden nie doppelt gestimmt") and plays
+12-byte "mtun" chunk counts as audio in that tuning (see the README, "Recordings are never tuned twice") and plays
 unshifted when the master tune is the same. This tool makes a converted copy of the card, once:
 
 - Audio: every WAV and AIFF under SAMPLES/ and every file the songs, kits and synths reference, resampled once from
