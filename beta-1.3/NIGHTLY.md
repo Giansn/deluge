@@ -334,6 +334,11 @@ How the faults were found:
   all 36001 and deep 451 (7-segment)) 6,144 inputs and 13,291 MIDI messages: no problem, no wild access, no write
   through a null pointer. The popups: seed 421's `Error 2` on audition pads (pad 17, the same as round 13's traced
   case: a preset browser with no preset file selected).
+  Round 16, deep mode only (as the helper session's stop runs), on the eighth (`...-3b916052`; 25-minute runs: deep
+  461 and 481 (OLED), 471 and 491 (7-segment)): 4,954 inputs, no problem, no wild access, no write through a null
+  pointer (one `Error 2` on an audition pad, as above). MIDI round 6 (`--midi 0.35`), on the eighth (25-minute runs:
+  deep 501 and 521 (OLED), 511 and 531 (7-segment)): 6,209 inputs, 29,271 MIDI messages parsed, no problem, no wild
+  access, no write through a null pointer (seed 501's three `Error 16` on audition pads: no unused preset).
 - **The delivered build** (built by `tools/setup_beta.sh`; see `README.md`): first `...-582a21a1.bin` (22 patches;
   all 20 tests passed on it, round 9 ran on it). Round 10 on it found E427 (fuzz seed 241: 0018). Then
   `...-697ffb0f.bin` (28 patches, with 0018 and the helper session's 0107-0111; all 26 tests passed on it), where
@@ -345,8 +350,11 @@ How the faults were found:
   0101-0114 without 0104; all 34 tests passed on it), where MIDI round 4 found 0026 (and the helper session's stop run
   8 0115, on their own build). Then `...-dd64dbbe.bin` (40 patches: 0001-0026 and 0101-0115 without 0104; all 36
   tests passed on it), where round 15 and MIDI round 5 found nothing (the helper session's stop run 9 found 0116 and
-  0117, on their own build). Now `...-3b916052.bin` (42 patches: 0001-0026 and 0101-0117 without 0104, in the order of
-  `patches/series`): all 38 tests pass on that very file, and so do the SM01 and seed 152 replays (`LONG=1`).
+  0117, on their own build). Then `...-3b916052.bin` (42 patches: 0001-0026 and 0101-0117 without 0104; all 38
+  tests passed on it), where round 16 and MIDI round 6 found nothing (the helper session's stop run 11 found 0118, on
+  its own build). Now `...-426a0ab4.bin` (43 patches: 0001-0026 and 0101-0118 without 0104, in the order of
+  `patches/series`, the series of stop run 12): all 39 tests pass on that very file, and so do the SM01 and seed
+  152 replays (`LONG=1`).
 - **The whole series together**: `tests/repro/run.sh` on the build with all 22 patches: all 19 tests pass, and so does the
   SM01 replay (`LONG=1`, all 908 inputs).
 - **Stop runs** (2 hours, `--mode deep`, OLED and 7-segment in parallel, 20 minutes per seed): the criterion for
