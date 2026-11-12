@@ -232,6 +232,22 @@ Since 1 October 2026 the beta is stabilised here, in our repository only (`beta-
 patches (`tests/repro/run.sh`); 0007 and 0008 are covered by the fuzzer seeds that found them. Numbers 0001-0099 are
 this session's, 0101 and up the helper session's (`reports/`).
 
+**Port to v1.3.0 (12 November 2026).** Upstream released v1.3.0 (tag `156500e7c`, 3 November 2026; 125 commits after
+`62a516c2`). Before porting, every patch was checked against it: statically (does it apply, is the fix already
+there) and with its test on unpatched v1.3.0. Two rig fixes came first, without which the tests proved nothing on
+v1.3.0: since #4931 a `DetentedEncoder` keeps its detents at +8, not +4, so turns written by the rig never reached the
+UI (`fuzz_ui.Inputs` now asks gdb for the offset), and since #5150 the PIC's SELECT reply is no longer a UI timer
+(`oom_robust` c1 calls `oledSelectingComplete()` directly there). Result: 36 of 43 patches stay, now on v1.3.0
+(`patches/series`; the 62a516c2 series is in git history, commit 6ac932f).
+
+| On v1.3.0 | Patches | Why |
+|---|---|---|
+| Dropped, fixed upstream | 0003 (#4963), 0004 (#4964, #4951, #4993), 0005, 0010, 0016, 0023 (#5243), 0114 (#5222) | the same or an equivalent fix is in v1.3.0, and each test passes there without the patch |
+| Reduced | 0002, 0013, 0105 | 0002: #4917's parts are upstream, the #4938 guard in `allowNoteTails()` is not. 0013: #5243 ignores the clip-type buttons in the arranger's automation view, but `buttonAction()` still reads the missing clip's type through null on every button (the test now counts reads in the null page: 8 on v1.3.0). 0105: #5094 initializes `currentlyPlayingReversed`, not `sequenceDirectionMode` (0xED on v1.3.0) |
+| Ported by hand | 0006, 0014 | 0006: the OLED handshake was rewritten (#5150) but its three beta-only freezes, the always-on "invalid" and TERM out of external RAM are unchanged (c1, c2, b and a freeze on v1.3.0). 0014: context changed only, BACK still never ends threshold recording |
+| Unchanged, the fault reproduces on v1.3.0 | 0008, 0009, 0011, 0015, 0017-0022, 0024-0026, 0101-0103, 0106-0111, 0113, 0115-0118 | each test fails on v1.3.0 (0008: the seed 152 replay freezes with its E411 at input 954) |
+| Unchanged, no reproduction on v1.3.0 | 0001, 0007, 0012, 0112 | the faulty code is unchanged; 0001's replay no longer reaches SM01 (the UI answers differently, so the recorded inputs diverge), 0007 has only its fuzzer seeds, 0012 is a race the card routine now wins in the emulator, the seed 152 replay stops at 0008's fault first |
+
 | Patch | Fault on 62a516c2 | Found by | Test |
 |---|---|---|---|
 | 0001 | SM01: undo leaves a recorded note outside the scale, SHIFT + SCALE freezes | fuzz seed 1 | `sm01_replay` (LONG=1) |

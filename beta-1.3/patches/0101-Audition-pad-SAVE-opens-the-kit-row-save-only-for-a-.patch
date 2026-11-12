@@ -1,7 +1,7 @@
-From 7218c43b1f09889ad6a0e5b786f7113b4cded40f Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 17:16:34 +0000
-Subject: [PATCH 101/101] Audition pad + SAVE opens the kit-row save only for a
+Subject: [PATCH 07/36] Audition pad + SAVE opens the kit-row save only for a
  kit's sound row
 
 InstrumentClipView::buttonAction() opened SaveKitRowUI for SAVE pressed with an audition pad held in any
@@ -21,10 +21,10 @@ row's drum and its params.
  1 file changed, 8 insertions(+), 2 deletions(-)
 
 diff --git a/src/deluge/gui/views/instrument_clip_view.cpp b/src/deluge/gui/views/instrument_clip_view.cpp
-index 14d2df3e..a01f744c 100644
+index 75e1a7340..51ed59b72 100644
 --- a/src/deluge/gui/views/instrument_clip_view.cpp
 +++ b/src/deluge/gui/views/instrument_clip_view.cpp
-@@ -578,8 +578,14 @@ ActionResult InstrumentClipView::buttonAction(deluge::hid::Button b, bool on, bo
+@@ -576,8 +576,14 @@ ActionResult InstrumentClipView::buttonAction(deluge::hid::Button b, bool on, bo
  		}
  	}
  	else if (b == SAVE && currentUIMode == UI_MODE_AUDITIONING) {
@@ -41,6 +41,3 @@ index 14d2df3e..a01f744c 100644
  			saveKitRowUI.setup((SoundDrum*)noteRow->drum, &noteRow->paramManager);
  			AudioEngine::stopAnyPreviewing();
  			cancelAllAuditioning();
--- 
-2.43.0
-

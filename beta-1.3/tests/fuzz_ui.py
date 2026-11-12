@@ -71,11 +71,17 @@ class Inputs:
             # turn() completes it as the interrupt does. (Before 1 October 2026 the v13 runs turned no encoder.)
             self.unblock = sym["unblockTask"]
             self.encoder_task_id = sym["_ZN6deluge3hid8encoders13EncoderTaskIDE"]
-            # deluge::hid::encoders::scrollY etc.: DetentedEncoder (edgeAccumulator, then the detents: an atomic int32
-            # at +4), ContinuousEncoder for the gold ones (the ticks: an atomic int8 at +0)
+            # deluge::hid::encoders::scrollY etc.: DetentedEncoder (the detents: an atomic int32 `pos`), ContinuousEncoder
+            # for the gold ones (the ticks: an atomic int8 `pos`). Where `pos` sits is asked of gdb: at +4 on 62a516c2
+            # (after edgeAccumulator), at +8 since #4931 (after last_direction_ and edge_accumulator); a turn written
+            # into the edge accumulator stays under the detent threshold and never reaches the UI.
+            import stress_ui_emu as su
             names = {"scrollY": "7scrollY", "scrollX": "7scrollX", "tempo": "5tempo", "select": "6select",
                      "mod1": "4mod1", "mod0": "4mod0"}
-            self.enc = {k: (sym[f"_ZN6deluge3hid8encoders{v}E"] + (0 if k.startswith("mod") else 4),
+            q = "'deluge::hid::encoders::{0}'"
+            detent_pos, tick_pos = su.gdb_ints(emu, [f"print (int)&{q.format(n)}.pos - (int)&{q.format(n)}"
+                                                     for n in ("select", "mod0")])
+            self.enc = {k: (sym[f"_ZN6deluge3hid8encoders{v}E"] + (tick_pos if k.startswith("mod") else detent_pos),
                             "<b" if k.startswith("mod") else "<i") for k, v in names.items()}
         else:
             # 1.2.1: std::array<Encoder, 6> encoders (14 bytes each: encPos, then detentPos); SCROLL_Y, SCROLL_X,

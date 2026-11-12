@@ -1,8 +1,8 @@
-From 1f915c1439fd85ef20b3bcbe0e57112db7ff49dd Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 2 Oct 2026 09:07:53 +0000
-Subject: [PATCH] Ticks that arrive together don't make the external clock's
- tick time 0: no E427 recording a parameter
+Subject: [PATCH 31/36] Ticks that arrive together don't make the external
+ clock's tick time 0: no E427 recording a parameter
 
 On an external clock, PlaybackHandler measures the time per tick from the
 input ticks' arrival times: a moving average over the ticks counted since the
@@ -29,10 +29,10 @@ fuzzer's MIDI round 2 found it (seed 1331).
  1 file changed, 16 insertions(+), 4 deletions(-)
 
 diff --git a/src/deluge/playback/playback_handler.cpp b/src/deluge/playback/playback_handler.cpp
-index 6245c1ce..3502a07f 100644
+index 45d623210..02c6cfd2d 100644
 --- a/src/deluge/playback/playback_handler.cpp
 +++ b/src/deluge/playback/playback_handler.cpp
-@@ -1919,7 +1919,11 @@ void PlaybackHandler::inputTick(bool fromTriggerClock, uint32_t time) {
+@@ -1920,7 +1920,11 @@ void PlaybackHandler::inputTick(bool fromTriggerClock, uint32_t time) {
  
  		uint32_t thisTimePerInternalTick = timeLastInputTickTook * inputTicksPer / internalTicksPer;
  
@@ -45,7 +45,7 @@ index 6245c1ce..3502a07f 100644
  
  		// Lowpass
  		int32_t distanceToGo = thisTimePerInternalTick - lowpassedTimePerInternalTick;
-@@ -1964,9 +1968,14 @@ void PlaybackHandler::inputTick(bool fromTriggerClock, uint32_t time) {
+@@ -1965,9 +1969,14 @@ void PlaybackHandler::inputTick(bool fromTriggerClock, uint32_t time) {
  	// Calculating time per input tick for the purpose of scheduling internal ticks. TODO: this code largely mirrors
  	// what the tempo magnitude matching code above does - could be combined. Or not?
  	if (numInputTickTimesCounted) {
@@ -62,7 +62,7 @@ index 6245c1ce..3502a07f 100644
  	}
  
  	if (numInputTickTimesCounted < kNumInputTicksForMovingAverage) {
-@@ -2019,7 +2028,10 @@ void PlaybackHandler::resetTimePerInternalTickMovingAverage() {
+@@ -2020,7 +2029,10 @@ void PlaybackHandler::resetTimePerInternalTickMovingAverage() {
  		uint32_t inputTicksPer;
  		getInternalTicksToInputTicksRatio(&inputTicksPer, &internalTicksPer);
  
@@ -74,6 +74,3 @@ index 6245c1ce..3502a07f 100644
  	}
  }
  
--- 
-2.43.0
-

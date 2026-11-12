@@ -1,7 +1,7 @@
-From d578c53cbc71c7f8f28b08654399cb0b09b9f601 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 16:24:21 +0000
-Subject: [PATCH 7/9] No crash on a transpose note during a song change
+Subject: [PATCH 04/36] No crash on a transpose note during a song change
 
 While a song swap is under way there is no root UI (getRootUI() returns null, by design), but
 MIDITranspose::doTranspose() called it unchecked: a MIDI clip on the transpose channel still playing
@@ -17,7 +17,7 @@ pass these inputs.
  1 file changed, 8 insertions(+), 1 deletion(-)
 
 diff --git a/src/deluge/io/midi/midi_transpose.cpp b/src/deluge/io/midi/midi_transpose.cpp
-index 2504099c..26b68ede 100644
+index 2504099c6..26b68ede0 100644
 --- a/src/deluge/io/midi/midi_transpose.cpp
 +++ b/src/deluge/io/midi/midi_transpose.cpp
 @@ -16,6 +16,12 @@ namespace MIDITranspose {
@@ -43,6 +43,3 @@ index 2504099c..26b68ede 100644
  		InstrumentClip* clip = getCurrentInstrumentClip();
  
  		if (clip != nullptr) {
--- 
-2.43.0
-

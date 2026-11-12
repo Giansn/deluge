@@ -1,8 +1,8 @@
-From 304df1c4c277839985ab2b42e3ef3cc5e0004c5f Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 2 Oct 2026 06:11:25 +0000
-Subject: [PATCH] The automation view's note editor is for instrument Clips
- only: no i008 after undo into an audio Clip
+Subject: [PATCH 29/36] The automation view's note editor is for instrument
+ Clips only: no i008 after undo into an audio Clip
 
 The automation view keeps its editor type for whatever Clip it shows. Undo or
 redo of another Clip's action in the same view only makes that Clip current
@@ -25,7 +25,7 @@ View::setModLedStates() has it).
  1 file changed, 32 insertions(+), 22 deletions(-)
 
 diff --git a/src/deluge/gui/views/automation_view.cpp b/src/deluge/gui/views/automation_view.cpp
-index 2f94b266..9bc3e69f 100644
+index 2eb5d24de..62a5fa674 100644
 --- a/src/deluge/gui/views/automation_view.cpp
 +++ b/src/deluge/gui/views/automation_view.cpp
 @@ -425,31 +425,32 @@ void AutomationView::initializeView() {
@@ -78,7 +78,7 @@ index 2f94b266..9bc3e69f 100644
  		// if we're in the note editor and we're in a kit,
  		// check that the lastAuditionedYDisplay is in sync with the selected drum
  		if (inNoteEditor()) {
-@@ -1875,8 +1876,8 @@ bool AutomationView::shortcutPadAction(ModelStackWithAutoParam* modelStackWithPa
+@@ -1876,8 +1877,8 @@ bool AutomationView::shortcutPadAction(ModelStackWithAutoParam* modelStackWithPa
  
  					handleParameterSelection(clip, output, outputType, x, y);
  
@@ -89,7 +89,7 @@ index 2f94b266..9bc3e69f 100644
  						indicator_leds::setLedState(IndicatorLED::CROSS_SCREEN_EDIT, inNoteEditor());
  					}
  				}
-@@ -3232,7 +3233,14 @@ void AutomationView::setAutomationParamType() {
+@@ -3233,7 +3234,14 @@ void AutomationView::setAutomationParamType() {
  // used to check if we're automating a note row specific param type
  // e.g. velocity, probability, poly expression, etc.
  bool AutomationView::inNoteEditor() {
@@ -105,7 +105,7 @@ index 2f94b266..9bc3e69f 100644
  }
  
  // used to determine the affect entire context
-@@ -3253,8 +3261,10 @@ bool AutomationView::getAffectEntire() {
+@@ -3254,8 +3262,10 @@ bool AutomationView::getAffectEntire() {
  			return false;
  		}
  	}
@@ -118,6 +118,3 @@ index 2f94b266..9bc3e69f 100644
  }
  
  void AutomationView::blinkShortcuts() {
--- 
-2.43.0
-

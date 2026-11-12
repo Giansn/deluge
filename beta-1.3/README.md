@@ -12,21 +12,23 @@ This branch, `nightly`, holds the work on the community firmware's daily build, 
 
 ## The stabilised build
 
-`deluge-1.3.0-beta-62a516c2-nightly-426a0ab4.bin` (1,740,048 bytes, SHA-256
-`bceb0397e8f274a39f11a95b589cfc271701624c52e366595beb04042fb97ada`) is the beta `62a516c2` with the 43 patches in
-`patches/` (0001-0026 and 0101-0118 without the withdrawn 0104, in the order of `patches/series`); what each one fixes
-and how it was found is in `NIGHTLY.md` section 7. The Deluge shows it as `1.3.0-beta-426a0ab4` (SETTINGS > FIRMWARE
-VERSION).
+`deluge-1.3.0-fixes-4b7b21af.bin` (1,772,188 bytes, SHA-256
+`fee14728f95e1401a08b4c1fa92849f03f8a442af1a2f18b24d4b5f5aa6291ca`) is the community release v1.3.0 (tag `156500e7c`)
+with the 36 patches in `patches/` (in the order of `patches/series`), built as a beta (`RELEASE_TYPE=beta`, so its
+internal checks are on). The Deluge shows it as `1.3.0-beta-4b7b21af` (SETTINGS > FIRMWARE VERSION). What each patch
+fixes, how it was found and why 7 of the former 43 were dropped in the port to v1.3.0 is in `NIGHTLY.md` section 7.
 Install it like any firmware: the .bin as the only .bin in the card's root folder, then switch the Deluge on
 with SHIFT held. Back up the card first, as for any beta.
 
-- **Stable by the stop run criterion, in the emulator.** The helper session's stop run 12 on these 43 patches: the
-  full 2 hours of `--mode deep`, OLED and 7-segment, 12 seeds, 13,100 inputs, no problem (no crash, freeze or hang, no
-  access outside RAM, no write through null; only the test card's popups). Stop runs 1-12: 102,304 inputs, 10
-  problems, 9 fixed by patches and one a fuzzer artefact (`reports/2026-10-02-stop-runs.md`).
-- **Tested in the emulator only, not yet on a Deluge.** On this very file every patch's test passes
-  (`tests/repro/run.sh`, 39 tests, and the SM01 and seed 152 replays with `LONG=1`).
-- **The fuzzer** ran about 12,300 random inputs without a problem in rounds 7-9 (`NIGHTLY.md` section 7; round 9 on
+- **Tested in the emulator only, not yet on a Deluge.** Every patch's test passes (`tests/repro/run.sh`, 39 tests,
+  and the SM01 and seed 152 replays with `LONG=1`) on a build of this very tree (`eb41ebb7`; the file differs only in
+  the commit hash of its version string), `oom_robust` on this file itself; on unpatched v1.3.0 the tests of the 36
+  patches fail, except where `NIGHTLY.md` section 7 says why not.
+- **Before (the beta `62a516c2`, until 12 November 2026):** `deluge-1.3.0-beta-62a516c2-nightly-426a0ab4.bin` with 43
+  patches, in git history (commit 6ac932f). The helper session's stop run 12 on it: the full 2 hours of `--mode deep`,
+  OLED and 7-segment, 12 seeds, 13,100 inputs, no problem. Stop runs 1-12: 102,304 inputs, 10 problems, 9 fixed by
+  patches and one a fuzzer artefact (`reports/2026-10-02-stop-runs.md`).
+- **The fuzzer** (on the 62a516c2 builds) ran about 12,300 random inputs without a problem in rounds 7-9 (`NIGHTLY.md` section 7; round 9 on
   the first delivered build). Rounds 10-12 on the delivered builds then found E427 (0018), a crash on a fast select
   turn in arranger view (0019) and one on KEYBOARD in an audio Clip's automation view (0023: one problem in 11,823
   inputs); the helper session's stop runs found E170 at a song swap (0112), a crash or E369 on undo in the arranger's
@@ -40,8 +42,8 @@ with SHIFT held. Back up the card first, as for any beta.
   after a continue whose clock ticks arrived together (0025); round 4 on the sixth build found a crash on BACK in the
   performance view after a song load in its editing mode (0026). Round 16 and MIDI round 6 on the eighth build:
   11,163 inputs and 29,271 MIDI messages, no problem. The fuzz rounds are in `NIGHTLY.md`.
-- **Built by `tools/setup_beta.sh`**: the tree `87da6143` (62a516c2 plus the patches), commit `426a0ab4`. The builds
-  before it are in the git history: `...-582a21a1.bin` freezes with E427 on a ramp to the arrangement's end,
+- **Built by `tools/setup_beta.sh`**: the tree `eb41ebb7` (v1.3.0 plus the patches), commit `4b7b21af`. The
+  62a516c2 builds are in the git history: `...-426a0ab4.bin` the last (above); before it, `...-582a21a1.bin` freezes with E427 on a ramp to the arrangement's end,
   `...-697ffb0f.bin` can crash on a fast select turn with a clip instance held in arranger view, `...-90a87481.bin` on
   KEYBOARD in an audio Clip's automation view, `...-8f34a7c4.bin` freezes with E427 when a parameter is recorded right
   after a MIDI continue whose clock ticks arrive together, and can crash in a kit row's sample browser with Affect
@@ -54,19 +56,19 @@ with SHIFT held. Back up the card first, as for any beta.
 | File | What |
 |---|---|
 | `NIGHTLY.md` | Why the beta crashes, what its own documentation says, the emulator runs, our patches (section 7) |
-| `patches/` | The fixes on 62a516c2: 0001-0099 this session's, 0101 and up the helper session's; `patches/series` is the order (`git am`), new ones not listed go after it in name order |
+| `patches/` | The fixes on v1.3.0 (until 12 November 2026 on 62a516c2): 0001-0099 this session's, 0101 and up the helper session's; `patches/series` is the order (`git am`), new ones not listed go after it in name order |
 | `tools/setup_beta.sh` | The patched beta from this repository alone: source, patches, toolchain v22, build, blockcount.so |
 | `tests/emu13.py`, `tests/rig13.py` | mastertune's emulator rig (`mastertune-1.2.1/tests/song`, `tests/stress/ui`) adapted to v1.3 |
 | `tests/fuzz_ui.py` | a random user on the real firmware in the emulator, for v1.3 or mastertune with the same inputs |
 | `tests/menu_walk_emu.py` | walks every menu of nine contexts (OLED or 7-segment, horizontal menus on or off) |
-| `tests/repro/` | one test per patch (fails on 62a516c2, passes with the patches); `run.sh` runs them all |
+| `tests/repro/` | one test per patch (failed on 62a516c2, passes with the patches; on v1.3.0 see `run.sh`); `run.sh` runs them all |
 | `reports/` | the helper session's write-ups of single findings |
 
 ## Setting it up in a new session
 
-`beta-1.3/tools/setup_beta.sh` does it all from this repository: the community source at the beta `62a516c2` (cloned
+`beta-1.3/tools/setup_beta.sh` does it all from this repository: the community source at the release `v1.3.0` (cloned
 read-only, pushing disabled), `beta-1.3/patches` applied on a local branch, the toolchain v22, a Release build and the
-emulator's `blockcount.so`. Then `beta-1.3/tests/repro/run.sh` runs the fixes' tests (each fails on 62a516c2).
+emulator's `blockcount.so`. Then `beta-1.3/tests/repro/run.sh` runs the fixes' tests.
 
 ## Building the beta
 

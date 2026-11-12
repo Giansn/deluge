@@ -11,6 +11,12 @@ One boot of the real firmware in the emulator (OLED), the startup song loaded (n
 (arranger view), CLIP (its automation view), then CV, MIDI, KIT, SYNTH and SCALE, each pressed and released. Must not
 freeze or crash, must stay in the automation view, and the song's clips must keep their output types.
 
+Since v1.3.0 (#5243) those buttons are ignored in the arranger's automation view, so no E369, but buttonAction() still
+read the missing clip's type and its output's type first, through null, on every button. The Deluge's MMU maps the
+empty CS0 area at 0 as normal memory (see fuzz_ui.NullPage), so that doesn't fault, it reads whatever is there and
+then follows it as the Output pointer; in the emulator the page reads as zeros. So reads in the null page during the
+presses count as a fault, too.
+
 Usage: arranger_automation_emu.py <deluge.elf> --tools PREFIX --build DIR --out DIR
 Last line: PASS or FAIL; exit 0/1."""
 import argparse
@@ -38,6 +44,13 @@ def main():
     song = kr.Song(rig)
     types = lambda: [emu.u8(emu.u32(c + song.output_off) + song.otype_off) for c in song.clips()]  # noqa: E731
     res = dict(current_clip=hex(song.current()), types_before=types())
+    from unicorn import UC_HOOK_MEM_READ
+    from unicorn.arm_const import UC_ARM_REG_PC
+    null_reads = []
+
+    def on_read(uc, access, address, size, value, data):
+        if len(null_reads) < 8:
+            null_reads.append(f"{address:#x} from {uc.reg_read(UC_ARM_REG_PC):#x}")
 
     def press(name, what):
         inp.button(name, True)
@@ -49,18 +62,22 @@ def main():
         res["arranger"] = rig.ui_name()
         press("CLIP", "CLIP (arranger automation view)")
         res["automation"] = rig.ui_name()
+        hook = emu.uc.hook_add(UC_HOOK_MEM_READ, on_read, begin=0, end=0xFFF)
+        emu.uc.ctl_flush_tb()
         for b in ("CV", "MIDI", "KIT", "SYNTH", "SCALE"):
             press(b, b)
+        emu.uc.hook_del(hook)
         res["ui_after"] = rig.ui_name()
     except su.Stop:
         p = rig.problems[-1] if rig.problems else {}
         res["stopped"] = f"{p.get('kind')}: {p.get('detail')} during {p.get('what')}"
     res["types_after"] = types()
+    res["null_reads"] = null_reads
     res["problems"] = rig.problems
     for k, v in res.items():
         print(f"  {k}: {v}")
     ok = (res.get("arranger") == "arrangerView" and res.get("automation") == "automationView"
-          and res.get("ui_after") == "automationView" and not res["problems"]
+          and res.get("ui_after") == "automationView" and not res["problems"] and not null_reads
           and res["types_after"] == res["types_before"])
     print("PASS" if ok else "FAIL")
     sys.exit(0 if ok else 1)

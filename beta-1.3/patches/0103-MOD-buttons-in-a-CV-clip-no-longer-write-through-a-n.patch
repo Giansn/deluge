@@ -1,8 +1,8 @@
-From 94bb711d0ddf3f86fa4c39da6855880007915b29 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 19:10:24 +0000
-Subject: [PATCH 103/104] MOD buttons in a CV clip no longer write through a
- null pointer
+Subject: [PATCH 15/36] MOD buttons in a CV clip no longer write through a null
+ pointer
 
 View::modButtonAction() stored the pressed MOD button in
 *modControllable->getModKnobMode(). A CV instrument has no mod knob modes:
@@ -23,7 +23,7 @@ synth clip MOD3 still sets the mode to 3.
  1 file changed, 8 insertions(+), 5 deletions(-)
 
 diff --git a/src/deluge/gui/views/view.cpp b/src/deluge/gui/views/view.cpp
-index 0690e2bb..52bde253 100644
+index 1a20da07c..15ed0e802 100644
 --- a/src/deluge/gui/views/view.cpp
 +++ b/src/deluge/gui/views/view.cpp
 @@ -1536,7 +1536,7 @@ void View::modButtonAction(uint8_t whichButton, bool on) {
@@ -60,6 +60,3 @@ index 0690e2bb..52bde253 100644
  	        || (isClipContext() && renderedVUMeter))) {
  		PadLEDs::renderingLock = true;
  
--- 
-2.43.0
-

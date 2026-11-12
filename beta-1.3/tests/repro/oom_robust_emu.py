@@ -79,12 +79,19 @@ class Oled:
         self.needs_sending = sym["_ZN6deluge3hid7display4OLED12needsSendingE"]
         self.send_main_image = sym["_ZN6deluge3hid7display4OLED13sendMainImageEv"]
         self.transfer_complete = sym["oledTransferComplete"]
+        self.send_from_queue = sym.find("sendSPITransferFromQueue")
         self.routine = sym.find("_ZN14UITimerManager7routineEv")
-        (self.timer_trigger, self.timer_active, self.next_event, self.trigger_size) = se.gdb_values(emu, [
-            "(int)&uiTimerManager.timers_._M_elems[(int)TimerName::OLED_LOW_LEVEL].triggerTime",
-            "(int)&uiTimerManager.timers_._M_elems[(int)TimerName::OLED_LOW_LEVEL].active",
-            "(int)&uiTimerManager.timeNextEvent",
-            "sizeof(uiTimerManager.timeNextEvent)"])
+        # Since v1.3.0 (#5150) the PIC's SELECT reply is no longer a UI timer: oledRoutine() waits out the settling
+        # time on the hardware clock and then calls oledSelectingComplete() itself. There c1 calls that directly.
+        self.selecting_complete = None
+        try:
+            (self.timer_trigger, self.timer_active, self.next_event, self.trigger_size) = se.gdb_values(emu, [
+                "(int)&uiTimerManager.timers_._M_elems[(int)TimerName::OLED_LOW_LEVEL].triggerTime",
+                "(int)&uiTimerManager.timers_._M_elems[(int)TimerName::OLED_LOW_LEVEL].active",
+                "(int)&uiTimerManager.timeNextEvent",
+                "sizeof(uiTimerManager.timeNextEvent)"])
+        except SystemExit:
+            self.selecting_complete = sym["oledSelectingComplete"]
         self.sample_timer = sym["_ZN11AudioEngine16audioSampleTimerE"]
         # Set from the hardware at boot: the emulated Deluge has none (the rig swaps the display to the OLED), so it
         # is set while the PIC reply's timer runs, as on an OLED Deluge (ui_timer_manager.cpp checks it)
@@ -131,6 +138,10 @@ class Oled:
         """The OLED_LOW_LEVEL timer due now (as deluge.cpp sets it on the awaited PIC reply), then the UI timers'
         routine: oledLowLevelTimerCallback()."""
         emu = self.rig.emu
+        if self.selecting_complete is not None:
+            emu.uc.mem_write(self.have_oled, b"\x01")
+            call(self.rig, "oledSelectingComplete (the SELECT reply settled)", self.selecting_complete)
+            return
         now = emu.u32(self.sample_timer)
         emu.uc.mem_write(self.timer_trigger, struct.pack("<I", (now - 10) & 0xFFFFFFFF))
         emu.uc.mem_write(self.timer_active, b"\x01")
@@ -190,8 +201,14 @@ def oled_checks(rig, results):
         o.w8("spiBusCurrentlySending", 0)
         o.w8("oled_sending", 0)
         o.w8("cvPriorityPending", 0)
-        rig.emu.uc.mem_write(o.needs_sending, b"\x01")
-        call(rig, "OLED::sendMainImage (bus idle, DESELECT awaited)", o.send_main_image)
+        if o.selecting_complete is not None:
+            # v1.3.0's sendMainImage() enqueues nothing that equals the last frame sent (the emulator's screen rarely
+            # changes here), so a frame is queued directly and the bus started as enqueueOLEDFrame() would
+            o.queue([0x100], read=3)
+            call(rig, "sendSPITransferFromQueue (bus idle, DESELECT awaited)", o.send_from_queue)
+        else:
+            rig.emu.uc.mem_write(o.needs_sending, b"\x01")
+            call(rig, "OLED::sendMainImage (bus idle, DESELECT awaited)", o.send_main_image)
         s = o.state()
         return s["pending"] == SELECT and s["write"] == 4, s
 

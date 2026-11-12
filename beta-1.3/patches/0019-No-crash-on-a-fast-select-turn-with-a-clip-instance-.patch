@@ -1,8 +1,8 @@
-From ae438b5b8bc2d2e4768891b8718cc15f76ec5eb8 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 2 Oct 2026 03:09:58 +0000
-Subject: [PATCH] No crash on a fast select turn with a clip instance held in
- arranger view
+Subject: [PATCH 24/36] No crash on a fast select turn with a clip instance
+ held in arranger view
 
 Song::getNextSessionClipWithOutput() stepped the session Clip index by the turn's offset and stopped only
 at exactly -1 or exactly the number of Clips. Since the encoder overhaul (#4529) the offset is the whole
@@ -16,10 +16,10 @@ one Clip per detent, as single detents did, and never past the array's ends.
  2 files changed, 16 insertions(+), 3 deletions(-)
 
 diff --git a/src/deluge/model/song/song.cpp b/src/deluge/model/song/song.cpp
-index 78b24e5f..e7929d1c 100644
+index 0370022f6..b2bb2655f 100644
 --- a/src/deluge/model/song/song.cpp
 +++ b/src/deluge/model/song/song.cpp
-@@ -1101,6 +1101,18 @@ Clip* Song::getSessionClipWithOutput(Output* output, int32_t requireSection, Cli
+@@ -1112,6 +1112,18 @@ Clip* Song::getSessionClipWithOutput(Output* output, int32_t requireSection, Cli
  }
  
  Clip* Song::getNextSessionClipWithOutput(int32_t offset, Output* output, Clip* prevClip) {
@@ -38,7 +38,7 @@ index 78b24e5f..e7929d1c 100644
  
  	int32_t oldIndex = -1;
  	if (prevClip) {
-@@ -1110,7 +1122,7 @@ Clip* Song::getNextSessionClipWithOutput(int32_t offset, Output* output, Clip* p
+@@ -1121,7 +1133,7 @@ Clip* Song::getNextSessionClipWithOutput(int32_t offset, Output* output, Clip* p
  	// if we didn't retrieve a clip index, this is an arranger-only clip
  	if (oldIndex == -1) {
  		// turning select knob left
@@ -47,7 +47,7 @@ index 78b24e5f..e7929d1c 100644
  			// use the highest available index
  			// NOTE: resulting index is one-based
  			oldIndex = sessionClips.getNumElements();
-@@ -1120,9 +1132,9 @@ Clip* Song::getNextSessionClipWithOutput(int32_t offset, Output* output, Clip* p
+@@ -1131,9 +1143,9 @@ Clip* Song::getNextSessionClipWithOutput(int32_t offset, Output* output, Clip* p
  	int32_t newIndex = oldIndex;
  	while (true) {
  		// iterate index according to select knob direction
@@ -60,7 +60,7 @@ index 78b24e5f..e7929d1c 100644
  		}
  		// retrieve clip and return
 diff --git a/src/deluge/model/song/song.h b/src/deluge/model/song/song.h
-index 78ad67ce..a2c6a870 100644
+index 539fc922f..3faf6358e 100644
 --- a/src/deluge/model/song/song.h
 +++ b/src/deluge/model/song/song.h
 @@ -293,6 +293,7 @@ public:
@@ -71,6 +71,3 @@ index 78ad67ce..a2c6a870 100644
  	bool anyClipsSoloing;
  
  	ParamManager* getBackedUpParamManagerForExactClip(ModControllableAudio* modControllable, Clip* clip,
--- 
-2.43.0
-

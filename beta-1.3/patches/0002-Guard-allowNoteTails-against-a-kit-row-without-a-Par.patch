@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 08:55:50 +0000
+Subject: [PATCH 02/36] Guard allowNoteTails against a kit row without a
+ ParamManager (#4938)
+
+InstrumentClip::allowNoteTails(): a kit row whose ParamManager has no main collections (briefly,
+during NoteRow::setDrum()) is treated as allowing tails instead of reading through a null
+patched-param set (#4938, the guard proposed in the issue).
+
+The rest of the former 0002 (the duplicate <audioClip> attributes and a named CV track's channel,
+#4917) is in v1.3.0 (#4961).
+
+Test (beta-1.3/tests): save_4917_emu.py covers #4917; this guard is defensive (no emulator repro).
+---
+ src/deluge/model/clip/instrument_clip.cpp | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/deluge/model/clip/instrument_clip.cpp b/src/deluge/model/clip/instrument_clip.cpp
+index babfd8541..1cca82b2a 100644
+--- a/src/deluge/model/clip/instrument_clip.cpp
++++ b/src/deluge/model/clip/instrument_clip.cpp
+@@ -3363,6 +3363,11 @@ bool InstrumentClip::allowNoteTails(ModelStackWithNoteRow* modelStack) {
+ 	if (!noteRow || !noteRow->drum) {
+ 		return true;
+ 	}
++	// A SoundDrum's NoteRow can briefly have no ParamManager (drum reassignment, kit loading); Sound::allowNoteTails()
++	// would dereference its missing PatchedParamSet (#4938)
++	if (noteRow->drum->type == DrumType::SOUND && !noteRow->paramManager.containsAnyMainParamCollections()) {
++		return true;
++	}
+ 	ModelStackWithSoundFlags* modelStackWithSoundFlags =
+ 	    modelStack->addOtherTwoThings(noteRow->drum->toModControllable(), &noteRow->paramManager)->addSoundFlags();
+ 	return noteRow->drum->allowNoteTails(

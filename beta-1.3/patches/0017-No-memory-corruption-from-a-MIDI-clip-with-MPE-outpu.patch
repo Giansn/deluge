@@ -1,8 +1,8 @@
-From 3ef7b8dea8088ec6d96717c5b397a75ef69c46b2 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 21:31:12 +0000
-Subject: [PATCH] No memory corruption from a MIDI clip with MPE output and the
- arp on
+Subject: [PATCH 14/36] No memory corruption from a MIDI clip with MPE output
+ and the arp on
 
 With the arpeggiator on, every note-off reached MIDIInstrument::noteOffPostArp() a second time with member
 channel MIDI_CHANNEL_NONE (255): Arpeggiator::noteOff() hands back the notes[] entry's outputMemberChannel,
@@ -17,10 +17,10 @@ already sends the real note-off on the valid member channel.
  1 file changed, 9 insertions(+)
 
 diff --git a/src/deluge/model/instrument/midi_instrument.cpp b/src/deluge/model/instrument/midi_instrument.cpp
-index 03cd7e1b..76af69bb 100644
+index bc4162f32..647050d01 100644
 --- a/src/deluge/model/instrument/midi_instrument.cpp
 +++ b/src/deluge/model/instrument/midi_instrument.cpp
-@@ -1127,6 +1127,12 @@ void MIDIInstrument::noteOffPostArp(int32_t noteCodePostArp, int32_t oldOutputMe
+@@ -1070,6 +1070,12 @@ void MIDIInstrument::noteOffPostArp(int32_t noteCodePostArp, int32_t oldOutputMe
  
  	// Or, MPE
  	else {
@@ -33,7 +33,7 @@ index 03cd7e1b..76af69bb 100644
  
  		mpeOutputMemberChannels[oldOutputMemberChannel].lastNoteCode = noteCodePostArp;
  		mpeOutputMemberChannels[oldOutputMemberChannel].noteOffOrder = lastNoteOffOrder++;
-@@ -1223,6 +1229,9 @@ void MIDIInstrument::polyphonicExpressionEventPostArpeggiator(int32_t value32, i
+@@ -1166,6 +1172,9 @@ void MIDIInstrument::polyphonicExpressionEventPostArpeggiator(int32_t value32, i
  	// Or if we do have MPE output...
  	else {
  		int32_t memberChannel = arpNote->outputMemberChannel[noteIndex];
@@ -43,6 +43,3 @@ index 03cd7e1b..76af69bb 100644
  
  		// Are multiple notes sharing the same output member channel?
  		ArpeggiatorSettings* settings = getArpSettings();
--- 
-2.43.0
-

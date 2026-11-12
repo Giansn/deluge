@@ -1,7 +1,7 @@
-From 4652a56e757236ae254cea759a6fd86263bfd23a Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 2 Oct 2026 03:37:24 +0000
-Subject: [PATCH 112/112] A song swap doesn't ask an Instrument that isn't
+Subject: [PATCH 28/36] A song swap doesn't ask an Instrument that isn't
  auditioning for its ParamManager
 
 Song::stopAllAuditioning() calls stopAnyAuditioning() for every Output of
@@ -23,7 +23,7 @@ it (before: E170 at input 955).
  1 file changed, 12 insertions(+), 7 deletions(-)
 
 diff --git a/src/deluge/model/instrument/melodic_instrument.cpp b/src/deluge/model/instrument/melodic_instrument.cpp
-index 1d2ba3e9..f65251ac 100644
+index 1d2ba3e96..f65251ac9 100644
 --- a/src/deluge/model/instrument/melodic_instrument.cpp
 +++ b/src/deluge/model/instrument/melodic_instrument.cpp
 @@ -505,15 +505,20 @@ bool MelodicInstrument::isNoteRowStillAuditioningAsLinearRecordingEnded(NoteRow*
@@ -54,6 +54,3 @@ index 1d2ba3e9..f65251ac 100644
  	earlyNotes.clear(); // This is fine, though in a perfect world we'd prefer to just mark the notes as no
  	                    // longer active
  	if (activeClip) {
--- 
-2.43.0
-

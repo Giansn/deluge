@@ -1,7 +1,7 @@
-From 98b73df0d1d7f80bad471fba9b3742c481aa926b Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 23:07:16 +0000
-Subject: [PATCH 109/109] A fast turn of the horizontal encoder with its button
+Subject: [PATCH 21/36] A fast turn of the horizontal encoder with its button
  held zooms one step in the turn's direction
 
 Since the encoder overhaul (#4529) TimelineView::horizontalEncoderAction()
@@ -22,7 +22,7 @@ stop at 3 (before: 0 throughout).
  1 file changed, 3 insertions(+), 1 deletion(-)
 
 diff --git a/src/deluge/gui/views/timeline_view.cpp b/src/deluge/gui/views/timeline_view.cpp
-index 8b6a5969..ac8a58d3 100644
+index 8b6a5969b..ac8a58d36 100644
 --- a/src/deluge/gui/views/timeline_view.cpp
 +++ b/src/deluge/gui/views/timeline_view.cpp
 @@ -162,7 +162,9 @@ ActionResult TimelineView::horizontalEncoderAction(int32_t offset) {
@@ -36,6 +36,3 @@ index 8b6a5969..ac8a58d3 100644
  			uint32_t newZoom = zoomMagnitude == -1 ? oldXZoom >> 1 : oldXZoom << 1;
  			uint32_t clipLengthMaxZoom = getMaxZoom();
  
--- 
-2.43.0
-

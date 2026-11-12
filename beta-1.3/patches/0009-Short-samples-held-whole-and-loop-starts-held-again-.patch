@@ -1,8 +1,8 @@
-From 730e364bcec0857f7d6bd422214c65580b65c91d Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 16:24:21 +0000
-Subject: [PATCH 9/9] Short samples held whole and loop starts held again: the
- cluster caching of #4952 corrected
+Subject: [PATCH 06/36] Short samples held whole and loop starts held again:
+ the cluster caching of #4952 corrected
 
 #4952 (30 September) meant to keep samples that fit in ten clusters in RAM whole, but:
 - it compared the duration in samples shifted by the cluster size's magnitude, so samples 2-6 times
@@ -24,10 +24,10 @@ Test (beta-1.3/tests/repro/cluster_cache_emu.py): a 9-cluster sample held [0-3] 
  2 files changed, 11 insertions(+), 5 deletions(-)
 
 diff --git a/src/deluge/model/sample/sample_holder.cpp b/src/deluge/model/sample/sample_holder.cpp
-index 97db9c72..70b2a635 100644
+index 58635153c..6e28301f5 100644
 --- a/src/deluge/model/sample/sample_holder.cpp
 +++ b/src/deluge/model/sample/sample_holder.cpp
-@@ -190,7 +190,8 @@ void SampleHolder::claimClusterReasons(bool reversed, int32_t clusterLoadInstruc
+@@ -189,7 +189,8 @@ void SampleHolder::claimClusterReasons(bool reversed, int32_t clusterLoadInstruc
  void SampleHolder::claimClusterReasonsForMarker(Cluster** clusters, uint32_t startPlaybackAtByte, int32_t playDirection,
                                                  int32_t clusterLoadInstruction, int32_t numClustersToClaim) {
  
@@ -38,10 +38,10 @@ index 97db9c72..70b2a635 100644
  
  	uint32_t posWithinCluster = startPlaybackAtByte & (Cluster::size - 1);
 diff --git a/src/deluge/model/sample/sample_holder_for_voice.cpp b/src/deluge/model/sample/sample_holder_for_voice.cpp
-index 32f52d27..bbe1340e 100644
+index 4ff0f32af..37443f23e 100644
 --- a/src/deluge/model/sample/sample_holder_for_voice.cpp
 +++ b/src/deluge/model/sample/sample_holder_for_voice.cpp
-@@ -88,12 +88,17 @@ void SampleHolderForVoice::claimClusterReasons(bool reversed, int32_t clusterLoa
+@@ -89,12 +89,17 @@ void SampleHolderForVoice::claimClusterReasons(bool reversed, int32_t clusterLoa
  		}
  	}
  
@@ -63,6 +63,3 @@ index 32f52d27..bbe1340e 100644
  
  		claimClusterReasonsForMarker(clustersForLoopStart, nextClusterStartByte, playDirection, clusterLoadInstruction,
  		                             kMaxNumClustersLoadedAhead);
--- 
-2.43.0
-

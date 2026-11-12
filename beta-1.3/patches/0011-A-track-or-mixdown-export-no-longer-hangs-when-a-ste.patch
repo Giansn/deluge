@@ -1,7 +1,7 @@
-From 5df68c16a85165125f619a2dac3624e4788340b8 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 18:19:34 +0000
-Subject: [PATCH 11/12] A track or mixdown export no longer hangs when a stem's
+Subject: [PATCH 08/36] A track or mixdown export no longer hangs when a stem's
  recording is aborted (#4471, #4639)
 
 When RAM runs short while a stem is recorded (SampleRecorder::createNextCluster() fails; offline
@@ -20,7 +20,7 @@ track export hangs.
  1 file changed, 6 insertions(+), 2 deletions(-)
 
 diff --git a/src/deluge/playback/mode/arrangement.cpp b/src/deluge/playback/mode/arrangement.cpp
-index 9164a223..7b3fdec9 100644
+index 9164a223a..7b3fdec95 100644
 --- a/src/deluge/playback/mode/arrangement.cpp
 +++ b/src/deluge/playback/mode/arrangement.cpp
 @@ -34,6 +34,7 @@
@@ -46,6 +46,3 @@ index 9164a223..7b3fdec9 100644
  
  		if (playbackHandler.stopOutputRecordingAtLoopEnd && audioRecorder.isCurrentlyResampling()) {
  			audioRecorder.endRecordingSoon();
--- 
-2.43.0
-

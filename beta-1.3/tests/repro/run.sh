@@ -1,6 +1,10 @@
 #!/bin/sh
-# The beta fixes' tests (beta-1.3/patches), each on the real firmware in the emulator. Each fails on the original
-# beta 62a516c2 and passes with the patches:
+# The beta fixes' tests (beta-1.3/patches), each on the real firmware in the emulator. Each failed on the original
+# beta 62a516c2 and passes with the patches. Since 12 November 2026 the patches are on v1.3.0 (NIGHTLY.md section 7):
+# there the tests of 0003, 0004, 0005, 0010, 0016, 0023 and 0114 pass without them (fixed upstream; they stay here as
+# regression tests), those of 0012 and the SM01 replay (0001) pass too but the code is unchanged (0012 a race the card
+# routine now wins, the replay no longer reaches SM01), the seed 152 replay stops earlier there, at 0008's E411; all
+# others fail on v1.3.0 and pass with the patches.
 #   save_4917_emu.py      0002: a saved song has no duplicate <audioClip> attributes, a named CV track its channel
 #   songswap_e455_emu.py  0003: a song change while playing, the old song with an arrangement: no E455
 #   kitrow_emu.py         0004: a synth into a kit row: the view not on the freed drum, LEARN + knob no E412
@@ -11,7 +15,8 @@
 #   export_abort_hang_emu.py  0011: a track export / mixdown whose stem recording is aborted (RAM short) ends
 #   export_abort_file_emu.py  0012: an aborted stem leaves no broken 5-second file on the card
 #   (export_repeat_emu.py: the probe both use; 16+ exports in a row with song changes)
-#   arranger_automation_emu.py  0013: CV, MIDI, KIT, SYNTH, SCALE in the arranger's automation view: no E369
+#   arranger_automation_emu.py  0013: CV, MIDI, KIT, SYNTH, SCALE in the arranger's automation view: no E369, and
+#                         (since v1.3.0) no read through the missing clip
 #   recorder_threshold_emu.py   0014: RECORD AUDIO with threshold recording on: BACK ends the recorder
 #   hmenu_off_buttons_emu.py    0015: SYNTH/KIT/MIDI/CV in a menu once horizontal menus are off: no crash
 #   qwerty_cursor_emu.py        0016: a fast horizontal-encoder turn keeps a browser's text cursor in the text (S004)

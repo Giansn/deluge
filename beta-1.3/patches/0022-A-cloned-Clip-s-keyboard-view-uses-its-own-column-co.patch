@@ -1,8 +1,8 @@
-From 50f9c8055b7f9b6b7524b593367fbf34dacfc77f Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 2 Oct 2026 05:05:01 +0000
-Subject: [PATCH] A cloned Clip's keyboard view uses its own column controls:
- no crash once the original is deleted
+Subject: [PATCH 27/36] A cloned Clip's keyboard view uses its own column
+ controls: no crash once the original is deleted
 
 A Clip's keyboard state holds the keyboard view's column controls
 (ColumnControlState): the columns and leftCol/rightCol, pointers to the two
@@ -19,7 +19,7 @@ copy now copies the columns and points leftCol/rightCol at its own.
  2 files changed, 26 insertions(+)
 
 diff --git a/src/deluge/gui/ui/keyboard/layout/column_control_state.h b/src/deluge/gui/ui/keyboard/layout/column_control_state.h
-index 8d60a3ac..c4485269 100644
+index 8d60a3ac2..c44852690 100644
 --- a/src/deluge/gui/ui/keyboard/layout/column_control_state.h
 +++ b/src/deluge/gui/ui/keyboard/layout/column_control_state.h
 @@ -44,6 +44,13 @@ enum ColumnControlFunction : int8_t {
@@ -37,7 +37,7 @@ index 8d60a3ac..c4485269 100644
  
  	ModColumn modColumn{};
 diff --git a/src/deluge/gui/ui/keyboard/layout/column_controls.cpp b/src/deluge/gui/ui/keyboard/layout/column_controls.cpp
-index 7a9547a8..1b24ccb0 100644
+index 7a9547a8b..1b24ccb07 100644
 --- a/src/deluge/gui/ui/keyboard/layout/column_controls.cpp
 +++ b/src/deluge/gui/ui/keyboard/layout/column_controls.cpp
 @@ -194,6 +194,25 @@ ColumnControlFunction ColumnControlsKeyboard::stepControlFunction(int32_t offset
@@ -66,6 +66,3 @@ index 7a9547a8..1b24ccb0 100644
  ControlColumn* ColumnControlState::getColumnForFunc(ColumnControlFunction func) {
  	switch (func) {
  	case VELOCITY:
--- 
-2.43.0
-

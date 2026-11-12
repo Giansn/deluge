@@ -1,8 +1,8 @@
-From 8cb2813e8b83ef2366b3aa39521f74b89df4947e Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 2 Oct 2026 00:19:50 +0000
-Subject: [PATCH 111/111] The arranger's automation view ends with the
- arranger: a song load or a clip view resets it
+Subject: [PATCH 23/36] The arranger's automation view ends with the arranger:
+ a song load or a clip view resets it
 
 automationView.onArrangerView was set when CLIP opened the arranger's
 automation view, and only ArrangerView::opened() and two transitions into a
@@ -30,7 +30,7 @@ crash on audition pad 17,7).
  5 files changed, 18 insertions(+)
 
 diff --git a/src/deluge/deluge.cpp b/src/deluge/deluge.cpp
-index da1950e1..fd760a06 100644
+index d0679c838..dce38727b 100644
 --- a/src/deluge/deluge.cpp
 +++ b/src/deluge/deluge.cpp
 @@ -343,6 +343,9 @@ void setUIForLoadedSong(Song* song) {
@@ -44,7 +44,7 @@ index da1950e1..fd760a06 100644
  	if (currentClip && song->inClipMinderViewOnLoad) {
  		if (currentClip->onAutomationClipView) {
 diff --git a/src/deluge/gui/ui/keyboard/keyboard_screen.cpp b/src/deluge/gui/ui/keyboard/keyboard_screen.cpp
-index 3b9089ec..eb306d26 100644
+index 3b9089ec8..eb306d26d 100644
 --- a/src/deluge/gui/ui/keyboard/keyboard_screen.cpp
 +++ b/src/deluge/gui/ui/keyboard/keyboard_screen.cpp
 @@ -774,6 +774,10 @@ void KeyboardScreen::exitAuditionMode() {
@@ -59,7 +59,7 @@ index 3b9089ec..eb306d26 100644
  	openedInBackground();
  	return true;
 diff --git a/src/deluge/gui/views/audio_clip_view.cpp b/src/deluge/gui/views/audio_clip_view.cpp
-index 4cad5cfd..56551dba 100644
+index 4cad5cfdb..56551dba2 100644
 --- a/src/deluge/gui/views/audio_clip_view.cpp
 +++ b/src/deluge/gui/views/audio_clip_view.cpp
 @@ -67,6 +67,10 @@ inline Sample* getSample() {
@@ -74,10 +74,10 @@ index 4cad5cfd..56551dba 100644
  	uiNeedsRendering(this);
  
 diff --git a/src/deluge/gui/views/instrument_clip_view.cpp b/src/deluge/gui/views/instrument_clip_view.cpp
-index a01f744c..894e5b76 100644
+index 51ed59b72..cdd9ddbb5 100644
 --- a/src/deluge/gui/views/instrument_clip_view.cpp
 +++ b/src/deluge/gui/views/instrument_clip_view.cpp
-@@ -128,6 +128,9 @@ InstrumentClipView::InstrumentClipView() : numEditPadPresses(0) {
+@@ -126,6 +126,9 @@ InstrumentClipView::InstrumentClipView() : numEditPadPresses(0) {
  }
  
  bool InstrumentClipView::opened() {
@@ -88,7 +88,7 @@ index a01f744c..894e5b76 100644
  	openedInBackground();
  
 diff --git a/src/deluge/gui/views/session_view.cpp b/src/deluge/gui/views/session_view.cpp
-index 02f5ffb9..f0e28444 100644
+index bc25237b9..1fd9eb665 100644
 --- a/src/deluge/gui/views/session_view.cpp
 +++ b/src/deluge/gui/views/session_view.cpp
 @@ -147,6 +147,10 @@ bool SessionView::getGreyoutColsAndRows(uint32_t* cols, uint32_t* rows) {
@@ -102,6 +102,3 @@ index 02f5ffb9..f0e28444 100644
  	if (playbackHandler.playbackState && currentPlaybackMode == &arrangement) {
  		PadLEDs::skipGreyoutFade();
  	}
--- 
-2.43.0
-

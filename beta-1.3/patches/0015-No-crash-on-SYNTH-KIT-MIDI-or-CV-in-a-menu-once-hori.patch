@@ -1,7 +1,7 @@
-From da3cbd662e4c2cd13de59ab101d1226265190130 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 20:06:04 +0000
-Subject: [PATCH 15/16] No crash on SYNTH, KIT, MIDI or CV in a menu once
+Subject: [PATCH 13/36] No crash on SYNTH, KIT, MIDI or CV in a menu once
  horizontal menus are switched off
 
 HorizontalMenu::buttonAction() took the field buttons (and SCALE, CROSS) whatever the menu's rendering
@@ -16,7 +16,7 @@ and current_item_ is never set to end().
  1 file changed, 10 insertions(+), 2 deletions(-)
 
 diff --git a/src/deluge/gui/menu_item/horizontal_menu.cpp b/src/deluge/gui/menu_item/horizontal_menu.cpp
-index f99813b2..fd52cd99 100644
+index 04a60a2b9..40e7ba023 100644
 --- a/src/deluge/gui/menu_item/horizontal_menu.cpp
 +++ b/src/deluge/gui/menu_item/horizontal_menu.cpp
 @@ -78,7 +78,10 @@ ActionResult HorizontalMenu::buttonAction(hid::Button b, bool on, bool inCardRou
@@ -45,6 +45,3 @@ index f99813b2..fd52cd99 100644
  
  			// is the item already selected?
  			if (*current_item_ == previous) {
--- 
-2.43.0
-

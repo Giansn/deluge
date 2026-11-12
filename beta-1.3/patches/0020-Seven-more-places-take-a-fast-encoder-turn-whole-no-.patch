@@ -1,8 +1,8 @@
-From 4128363d6b3abaa10f6e7a436e965726cff9a841 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 2 Oct 2026 03:36:00 +0000
-Subject: [PATCH] Seven more places take a fast encoder turn whole: no hang,
- stuck note or value out of range
+Subject: [PATCH 25/36] Seven more places take a fast encoder turn whole: no
+ hang, stuck note or value out of range
 
 Since the encoder overhaul (#4529) the select, horizontal and vertical
 handlers get the whole turn (+-2 or more when turned fast, x5 with SHIFT in
@@ -36,10 +36,10 @@ some views):
  7 files changed, 53 insertions(+), 27 deletions(-)
 
 diff --git a/src/deluge/gui/menu_item/dx/param.cpp b/src/deluge/gui/menu_item/dx/param.cpp
-index 8bdef22f..a98b5662 100644
+index e484f187b..5944ac96c 100644
 --- a/src/deluge/gui/menu_item/dx/param.cpp
 +++ b/src/deluge/gui/menu_item/dx/param.cpp
-@@ -180,15 +180,25 @@ void DxParam::horizontalEncoderAction(int32_t offset) {
+@@ -201,15 +201,25 @@ void DxParam::horizontalEncoderAction(int32_t offset) {
  			return; // TODO: remember last OP param?
  		int cur_op = param / 21;
  		int next_op = cur_op;
@@ -74,7 +74,7 @@ index 8bdef22f..a98b5662 100644
  		param = (param % 21) + 21 * next_op;
  	}
 diff --git a/src/deluge/gui/ui/keyboard/keyboard_screen.cpp b/src/deluge/gui/ui/keyboard/keyboard_screen.cpp
-index eb306d26..d49de293 100644
+index eb306d26d..d49de2931 100644
 --- a/src/deluge/gui/ui/keyboard/keyboard_screen.cpp
 +++ b/src/deluge/gui/ui/keyboard/keyboard_screen.cpp
 @@ -735,7 +735,9 @@ void KeyboardScreen::selectEncoderAction(int8_t offset) {
@@ -89,7 +89,7 @@ index eb306d26..d49de293 100644
  
  		char noteName[3] = {0};
 diff --git a/src/deluge/gui/ui/sample_marker_editor.cpp b/src/deluge/gui/ui/sample_marker_editor.cpp
-index 81b64c59..9c1d7c4f 100644
+index 81b64c59d..9c1d7c4f0 100644
 --- a/src/deluge/gui/ui/sample_marker_editor.cpp
 +++ b/src/deluge/gui/ui/sample_marker_editor.cpp
 @@ -278,12 +278,13 @@ void SampleMarkerEditor::selectEncoderAction(int8_t offset) {
@@ -109,7 +109,7 @@ index 81b64c59..9c1d7c4f 100644
  		}
  	}
 diff --git a/src/deluge/gui/ui/slicer.cpp b/src/deluge/gui/ui/slicer.cpp
-index 5e8c6de2..d1362b35 100644
+index 5599c3995..2d2faa35b 100644
 --- a/src/deluge/gui/ui/slicer.cpp
 +++ b/src/deluge/gui/ui/slicer.cpp
 @@ -267,11 +267,13 @@ ActionResult Slicer::verticalEncoderAction(int32_t offset, bool inCardRoutine) {
@@ -131,10 +131,10 @@ index 5e8c6de2..d1362b35 100644
  	}
  	else { // SLICER_MODE_MANUAL
 diff --git a/src/deluge/gui/views/automation_view.cpp b/src/deluge/gui/views/automation_view.cpp
-index 0e696e6c..98cea9d6 100644
+index edd22f58d..2eb5d24de 100644
 --- a/src/deluge/gui/views/automation_view.cpp
 +++ b/src/deluge/gui/views/automation_view.cpp
-@@ -2901,17 +2901,13 @@ int32_t AutomationView::getNextSelectedParamArrayPosition(int32_t offset, int32_
+@@ -2907,17 +2907,13 @@ int32_t AutomationView::getNextSelectedParamArrayPosition(int32_t offset, int32_
  	if (onAutomationOverview()) {
  		idx = 0;
  	}
@@ -159,10 +159,10 @@ index 0e696e6c..98cea9d6 100644
  	return idx;
  }
 diff --git a/src/deluge/gui/views/instrument_clip_view.cpp b/src/deluge/gui/views/instrument_clip_view.cpp
-index 894e5b76..797cd940 100644
+index cdd9ddbb5..0b49269a7 100644
 --- a/src/deluge/gui/views/instrument_clip_view.cpp
 +++ b/src/deluge/gui/views/instrument_clip_view.cpp
-@@ -6229,6 +6229,19 @@ ActionResult InstrumentClipView::verticalEncoderAction(int32_t offset, bool inCa
+@@ -6452,6 +6452,19 @@ ActionResult InstrumentClipView::verticalEncoderAction(int32_t offset, bool inCa
  			if (!shouldIgnoreVerticalScrollKnobActionIfNotAlsoPressedForThisNotePress
  			    || (!isUIModeActive(UI_MODE_NOTES_PRESSED) && !isUIModeActive(UI_MODE_AUDITIONING))) {
  				bool draggingNoteRow = (isUIModeActive(UI_MODE_DRAGGING_KIT_NOTEROW));
@@ -183,7 +183,7 @@ index 894e5b76..797cd940 100644
  			}
  		}
 diff --git a/src/deluge/model/instrument/cv_instrument.h b/src/deluge/model/instrument/cv_instrument.h
-index a58e4ff9..0fd5efd3 100644
+index a58e4ff9f..0fd5efd34 100644
 --- a/src/deluge/model/instrument/cv_instrument.h
 +++ b/src/deluge/model/instrument/cv_instrument.h
 @@ -42,9 +42,11 @@ public:
@@ -200,6 +200,3 @@ index a58e4ff9..0fd5efd3 100644
  		}
  		return newChannel;
  	}
--- 
-2.43.0
-

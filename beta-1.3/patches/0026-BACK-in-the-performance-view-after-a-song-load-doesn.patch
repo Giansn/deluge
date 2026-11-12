@@ -1,8 +1,8 @@
-From ae040e4bcae4403b5e6709fc8f9180c36770d4b9 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 2 Oct 2026 10:48:20 +0000
-Subject: [PATCH] BACK in the performance view after a song load doesn't close
- a UI that isn't open: no crash
+Subject: [PATCH 33/36] BACK in the performance view after a song load doesn't
+ close a UI that isn't open: no crash
 
 The performance view's editing modes (SHIFT + KEYBOARD, or the sound editor's
 editing mode) open the view again on top of a UI, and BACK closes that
@@ -25,7 +25,7 @@ asks to close a UI that isn't open.
  2 files changed, 17 insertions(+), 1 deletion(-)
 
 diff --git a/src/deluge/gui/ui/ui.cpp b/src/deluge/gui/ui/ui.cpp
-index 2b6495cc..f9f70aba 100644
+index 247cc854e..cd77bbb15 100644
 --- a/src/deluge/gui/ui/ui.cpp
 +++ b/src/deluge/gui/ui/ui.cpp
 @@ -177,8 +177,16 @@ UI* getUIUpOneLevel(int32_t numLevelsUp) {
@@ -47,7 +47,7 @@ index 2b6495cc..f9f70aba 100644
  	bool redrawMainPads = false;
  	bool redrawSidebar = false;
 diff --git a/src/deluge/gui/views/performance_view.cpp b/src/deluge/gui/views/performance_view.cpp
-index 3fa52321..1e9d63ba 100644
+index 86f92cc3f..09a934396 100644
 --- a/src/deluge/gui/views/performance_view.cpp
 +++ b/src/deluge/gui/views/performance_view.cpp
 @@ -264,6 +264,14 @@ bool PerformanceView::getGreyoutColsAndRows(uint32_t* cols, uint32_t* rows) {
@@ -65,6 +65,3 @@ index 3fa52321..1e9d63ba 100644
  	if (playbackHandler.playbackState && currentPlaybackMode == &arrangement) {
  		PadLEDs::skipGreyoutFade();
  	}
--- 
-2.43.0
-

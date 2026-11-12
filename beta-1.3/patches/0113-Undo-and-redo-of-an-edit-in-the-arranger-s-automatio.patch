@@ -1,7 +1,7 @@
-From 057507df1e1af8c8508c4f9f40001bccc2e1792e Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 2 Oct 2026 05:22:54 +0000
-Subject: [PATCH 113/113] Undo and redo of an edit in the arranger's automation
+Subject: [PATCH 30/36] Undo and redo of an edit in the arranger's automation
  view stay with the arranger
 
 An Action records the view it was made in. The arranger's automation view
@@ -26,7 +26,7 @@ from song view SHIFT+BACK: the arranger.
  2 files changed, 12 insertions(+), 3 deletions(-)
 
 diff --git a/src/deluge/model/action/action.h b/src/deluge/model/action/action.h
-index e781b417..a1c77dba 100644
+index e781b4179..a1c77dba1 100644
 --- a/src/deluge/model/action/action.h
 +++ b/src/deluge/model/action/action.h
 @@ -126,6 +126,7 @@ public:
@@ -38,7 +38,7 @@ index e781b417..a1c77dba 100644
  	Clip* currentClip; // Watch out - this might get set to NULL
  
 diff --git a/src/deluge/model/action/action_logger.cpp b/src/deluge/model/action/action_logger.cpp
-index 4adce69b..a34c1da2 100644
+index 2ce3f1347..de771d112 100644
 --- a/src/deluge/model/action/action_logger.cpp
 +++ b/src/deluge/model/action/action_logger.cpp
 @@ -193,6 +193,7 @@ Action* ActionLogger::getNewAction(ActionType newActionType, ActionAddition addT
@@ -49,7 +49,7 @@ index 4adce69b..a34c1da2 100644
  		newAction->currentClip = getCurrentClip();
  	}
  
-@@ -381,6 +382,7 @@ void ActionLogger::revertAction(Action* action, bool updateVisually, bool doNavi
+@@ -398,6 +399,7 @@ void ActionLogger::revertAction(Action* action, bool updateVisually, bool doNavi
  			// If user is in song view or arranger view, just stay in that UI.
  			if (getCurrentUI() == &arrangerView || getCurrentUI() == &sessionView) {
  				action->view = getCurrentUI();
@@ -57,7 +57,7 @@ index 4adce69b..a34c1da2 100644
  
  				// If in arranger view, don't go scrolling anywhere - that'd just visually confuse things
  				if (getCurrentUI() == &arrangerView) {
-@@ -393,11 +395,16 @@ void ActionLogger::revertAction(Action* action, bool updateVisually, bool doNavi
+@@ -410,11 +412,16 @@ void ActionLogger::revertAction(Action* action, bool updateVisually, bool doNavi
  
  		if (updateVisually) {
  
@@ -75,7 +75,7 @@ index 4adce69b..a34c1da2 100644
  				whichAnimation = Animation::SESSION_TO_ARRANGEMENT;
  			}
  
-@@ -405,7 +412,7 @@ void ActionLogger::revertAction(Action* action, bool updateVisually, bool doNavi
+@@ -422,7 +429,7 @@ void ActionLogger::revertAction(Action* action, bool updateVisually, bool doNavi
  			else if (action->view == &sessionView && getCurrentUI()->toClipMinder()) {
  				whichAnimation = Animation::CLIP_MINDER_TO_SESSION;
  			}
@@ -84,7 +84,7 @@ index 4adce69b..a34c1da2 100644
  				whichAnimation = Animation::SESSION_TO_CLIP_MINDER;
  			}
  
-@@ -413,7 +420,7 @@ void ActionLogger::revertAction(Action* action, bool updateVisually, bool doNavi
+@@ -430,7 +437,7 @@ void ActionLogger::revertAction(Action* action, bool updateVisually, bool doNavi
  			else if (action->view == &arrangerView && getCurrentUI()->toClipMinder()) {
  				whichAnimation = Animation::CLIP_MINDER_TO_ARRANGEMENT;
  			}
@@ -93,7 +93,7 @@ index 4adce69b..a34c1da2 100644
  				whichAnimation = Animation::ARRANGEMENT_TO_CLIP_MINDER;
  			}
  
-@@ -619,6 +626,7 @@ currentClipSwitchedOver:
+@@ -636,6 +643,7 @@ currentClipSwitchedOver:
  	}
  
  	else if (whichAnimation == Animation::ENTER_AUTOMATION_VIEW) {
@@ -101,6 +101,3 @@ index 4adce69b..a34c1da2 100644
  		changeRootUI(&automationView);
  	}
  
--- 
-2.43.0
-

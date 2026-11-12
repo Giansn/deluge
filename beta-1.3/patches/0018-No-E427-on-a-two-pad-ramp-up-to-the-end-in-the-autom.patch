@@ -1,8 +1,8 @@
-From 6158d6ed0192e6adc5254a866940e37d5d2d295b Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 2 Oct 2026 01:08:59 +0000
-Subject: [PATCH] No E427 on a two-pad ramp up to the end in the automation
- editor
+Subject: [PATCH 18/36] No E427 on a two-pad ramp up to the end in the
+ automation editor
 
 handleAutomationMultiPadPress() gives the first and the last pad of a ramp "the rest of the pad" after
 the node at its edge: the pad's width minus kParamNodeWidth. The view returns only when the second pad
@@ -16,7 +16,7 @@ A pad with nothing left after its edge node is now skipped.
  1 file changed, 8 insertions(+), 1 deletion(-)
 
 diff --git a/src/deluge/gui/views/automation/editor_layout/mod_controllable.cpp b/src/deluge/gui/views/automation/editor_layout/mod_controllable.cpp
-index fd9a8ad1..6371138a 100644
+index fd9a8ad17..6371138ac 100644
 --- a/src/deluge/gui/views/automation/editor_layout/mod_controllable.cpp
 +++ b/src/deluge/gui/views/automation/editor_layout/mod_controllable.cpp
 @@ -1254,7 +1254,7 @@ void AutomationEditorLayoutModControllable::handleAutomationMultiPadPress(
@@ -42,6 +42,3 @@ index fd9a8ad1..6371138a 100644
  			// linear interpolation formula to calculate the value of the pads
  			// f(x) = A + (x - Ax) * ((B - A) / (Bx - Ax))
  			float newKnobPosFloat = std::round(firstPadValueFloat
--- 
-2.43.0
-

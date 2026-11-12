@@ -1,8 +1,8 @@
-From 917daae2377cc3388801ce7f9b41ab2783b7d24d Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 2 Oct 2026 12:33:17 +0000
-Subject: [PATCH 117/117] Preset navigation with every preset in the song
- already changes nothing: no i009, no E058
+Subject: [PATCH 35/36] Preset navigation with every preset in the song already
+ changes nothing: no i009, no E058
 
 When the whole instrument is to be replaced (arranger view, song view, a
 Clip with an arranger instance), LoadInstrumentPresetUI::doPresetNavigation()
@@ -24,10 +24,10 @@ synth (before: i009).
  1 file changed, 9 insertions(+), 3 deletions(-)
 
 diff --git a/src/deluge/gui/ui/load/load_instrument_preset_ui.cpp b/src/deluge/gui/ui/load/load_instrument_preset_ui.cpp
-index d0633619..efceb88f 100644
+index a2997fff5..2a74200dd 100644
 --- a/src/deluge/gui/ui/load/load_instrument_preset_ui.cpp
 +++ b/src/deluge/gui/ui/load/load_instrument_preset_ui.cpp
-@@ -1564,9 +1564,15 @@ doneMoving:
+@@ -1599,9 +1599,15 @@ doneMoving:
  	toReturn.fileItem = (FileItem*)fileItems.getElementAddress(i);
  
  	bool isAlreadyInSong = toReturn.fileItem->instrument && toReturn.fileItem->instrumentAlreadyInSong;
@@ -46,6 +46,3 @@ index d0633619..efceb88f 100644
  	}
  
  	toReturn.loadedFromFile = false;
--- 
-2.43.0
-

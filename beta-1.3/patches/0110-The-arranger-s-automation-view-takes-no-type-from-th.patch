@@ -1,7 +1,7 @@
-From b0af45d9b7d601f4a2c0984f46eecc0e1f04d46a Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 23:31:29 +0000
-Subject: [PATCH 110/110] The arranger's automation view takes no type from the
+Subject: [PATCH 22/36] The arranger's automation view takes no type from the
  song's current Clip
 
 AutomationView::padAction() and selectEncoderAction() took the output type
@@ -29,7 +29,7 @@ song's next parameter and leaves PADA's CC (before: CC -1 -> 2).
  2 files changed, 14 insertions(+), 11 deletions(-)
 
 diff --git a/src/deluge/gui/views/automation/editor_layout/mod_controllable.cpp b/src/deluge/gui/views/automation/editor_layout/mod_controllable.cpp
-index fd9a8ad1..2953235d 100644
+index 6371138ac..d4ccac80b 100644
 --- a/src/deluge/gui/views/automation/editor_layout/mod_controllable.cpp
 +++ b/src/deluge/gui/views/automation/editor_layout/mod_controllable.cpp
 @@ -1065,8 +1065,8 @@ void AutomationEditorLayoutModControllable::handleAutomationSinglePadPress(Model
@@ -53,10 +53,10 @@ index fd9a8ad1..2953235d 100644
  			    calculateAutomationKnobPosForPadPress(modelStackWithParam, outputType, firstPadY) + kKnobPosOffset;
  			secondPadValue =
 diff --git a/src/deluge/gui/views/automation_view.cpp b/src/deluge/gui/views/automation_view.cpp
-index f9fb3ea4..0e696e6c 100644
+index a5aeb99d3..edd22f58d 100644
 --- a/src/deluge/gui/views/automation_view.cpp
 +++ b/src/deluge/gui/views/automation_view.cpp
-@@ -1650,7 +1650,8 @@ void AutomationView::handleSelectEncoderButtonAction(bool on) {
+@@ -1656,7 +1656,8 @@ void AutomationView::handleSelectEncoderButtonAction(bool on) {
  			return;
  		}
  
@@ -66,7 +66,7 @@ index f9fb3ea4..0e696e6c 100644
  			soundEditor.setupKitGlobalFXMenu = true;
  		}
  
-@@ -1672,7 +1673,7 @@ ActionResult AutomationView::padAction(int32_t x, int32_t y, int32_t velocity) {
+@@ -1678,7 +1679,7 @@ ActionResult AutomationView::padAction(int32_t x, int32_t y, int32_t velocity) {
  
  	Clip* clip = getCurrentClip();
  
@@ -75,7 +75,7 @@ index f9fb3ea4..0e696e6c 100644
  		if (x >= kDisplayWidth) {
  			return ActionResult::DEALT_WITH;
  		}
-@@ -1683,8 +1684,9 @@ ActionResult AutomationView::padAction(int32_t x, int32_t y, int32_t velocity) {
+@@ -1689,8 +1690,9 @@ ActionResult AutomationView::padAction(int32_t x, int32_t y, int32_t velocity) {
  		return ActionResult::DEALT_WITH;
  	}
  
@@ -87,7 +87,7 @@ index f9fb3ea4..0e696e6c 100644
  
  	// if we're in a midi clip, with a midi cc selected and we press the name shortcut
  	// while holding shift, then enter the rename midi cc UI
-@@ -1869,7 +1871,7 @@ bool AutomationView::shortcutPadAction(ModelStackWithAutoParam* modelStackWithPa
+@@ -1875,7 +1877,7 @@ bool AutomationView::shortcutPadAction(ModelStackWithAutoParam* modelStackWithPa
  					handleParameterSelection(clip, output, outputType, x, y);
  
  					// if you're in not in note editor, turn led off if it's on
@@ -96,7 +96,7 @@ index f9fb3ea4..0e696e6c 100644
  						indicator_leds::setLedState(IndicatorLED::CROSS_SCREEN_EDIT, inNoteEditor());
  					}
  				}
-@@ -2590,8 +2592,9 @@ void AutomationView::selectEncoderAction(int8_t offset) {
+@@ -2596,8 +2598,9 @@ void AutomationView::selectEncoderAction(int8_t offset) {
  
  	// change midi CC or param ID
  	Clip* clip = getCurrentClip();
@@ -108,7 +108,7 @@ index f9fb3ea4..0e696e6c 100644
  
  	// if you've selected a mod encoder (e.g. by pressing modEncoderButton) and you're in Automation
  	// Overview the currentUIMode will change to Selecting Midi CC. In this case, turning select encoder
-@@ -2640,7 +2643,7 @@ void AutomationView::selectEncoderAction(int8_t offset) {
+@@ -2646,7 +2649,7 @@ void AutomationView::selectEncoderAction(int8_t offset) {
  			selectNonGlobalParam(offset, clip);
  		}
  		// don't have patch cable blinking logic figured out yet
@@ -117,6 +117,3 @@ index f9fb3ea4..0e696e6c 100644
  			clip->lastSelectedParamShortcutX = kNoSelection;
  			clip->lastSelectedParamShortcutY = kNoSelection;
  		}
--- 
-2.43.0
-

@@ -1,7 +1,7 @@
-From bc9cca232bb4e40737ce1e5a73ac28fae3975cbd Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 23:04:10 +0000
-Subject: [PATCH 108/108] The horizontal encoder in the arranger's automation
+Subject: [PATCH 20/36] The horizontal encoder in the arranger's automation
  view only scrolls and zooms the arranger
 
 AutomationView::horizontalEncoderAction() handed every turn the editor itself
@@ -25,10 +25,10 @@ ClipView::horizontalEncoderAction()).
  1 file changed, 9 insertions(+), 1 deletion(-)
 
 diff --git a/src/deluge/gui/views/automation_view.cpp b/src/deluge/gui/views/automation_view.cpp
-index ea18f05d..f9fb3ea4 100644
+index 0c93d0909..a5aeb99d3 100644
 --- a/src/deluge/gui/views/automation_view.cpp
 +++ b/src/deluge/gui/views/automation_view.cpp
-@@ -2300,12 +2300,20 @@ ActionResult AutomationView::horizontalEncoderAction(int32_t offset) {
+@@ -2306,12 +2306,20 @@ ActionResult AutomationView::horizontalEncoderAction(int32_t offset) {
  	}
  
  	// Shift and x pressed - edit length of audio clip without timestretching
@@ -50,6 +50,3 @@ index ea18f05d..f9fb3ea4 100644
  	// Or, let parent deal with it
  	else {
  		ActionResult result = ClipView::horizontalEncoderAction(offset);
--- 
-2.43.0
-

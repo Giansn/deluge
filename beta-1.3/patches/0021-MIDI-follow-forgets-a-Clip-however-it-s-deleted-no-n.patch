@@ -1,8 +1,8 @@
-From e3794cece3ad985b69e7b0fa577fe19a3434fa03 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 2 Oct 2026 04:40:16 +0000
-Subject: [PATCH] MIDI follow forgets a Clip however it's deleted: no note-off
- through a freed Clip
+Subject: [PATCH 26/36] MIDI follow forgets a Clip however it's deleted: no
+ note-off through a freed Clip
 
 MidiFollow remembers, per note, the Clip a note-on went to
 (clipForLastNoteReceived[]), so the note-off reaches that Clip even if the
@@ -18,7 +18,7 @@ deleted.
  1 file changed, 4 insertions(+)
 
 diff --git a/src/deluge/model/clip/clip.cpp b/src/deluge/model/clip/clip.cpp
-index e1bc1eff..5d5f59a8 100644
+index e1bc1eff7..5d5f59a8f 100644
 --- a/src/deluge/model/clip/clip.cpp
 +++ b/src/deluge/model/clip/clip.cpp
 @@ -22,6 +22,7 @@
@@ -39,6 +39,3 @@ index e1bc1eff..5d5f59a8 100644
  }
  
  // This is more exhaustive than copyBasicsFrom(), and is designed to be used *between* different Clip types, just for
--- 
-2.43.0
-

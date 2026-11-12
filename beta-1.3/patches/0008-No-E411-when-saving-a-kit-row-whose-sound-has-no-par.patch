@@ -1,7 +1,7 @@
-From c19237265b00b844906b4fad2c9e8e7754706397 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 16:24:21 +0000
-Subject: [PATCH 8/9] No E411 when saving a kit row whose sound has no params
+Subject: [PATCH 05/36] No E411 when saving a kit row whose sound has no params
 
 A kit row's ParamManager can be without its collections (seen after a clip type change and an undo;
 #4938's hard fault comes from the same state). Saving that row as a preset (its audition pad held +
@@ -14,10 +14,10 @@ Test: the random-input run seed 1011 (--mode deep, froze at input 177) now passe
  1 file changed, 4 insertions(+), 1 deletion(-)
 
 diff --git a/src/deluge/processing/sound/sound.cpp b/src/deluge/processing/sound/sound.cpp
-index cd98c149..89e289d9 100644
+index 5f4a82450..7307c39c4 100644
 --- a/src/deluge/processing/sound/sound.cpp
 +++ b/src/deluge/processing/sound/sound.cpp
-@@ -4245,7 +4245,10 @@ void Sound::writeToFile(Serializer& writer, bool savingSong, ParamManager* param
+@@ -4255,7 +4255,10 @@ void Sound::writeToFile(Serializer& writer, bool savingSong, ParamManager* param
  	writer.writeAttribute("spread", unisonStereoSpread, false);
  	writer.closeTag();
  
@@ -29,6 +29,3 @@ index cd98c149..89e289d9 100644
  		writer.writeOpeningTagBeginning("defaultParams", true);
  		Sound::writeParamsToFile(writer, paramManager, false);
  		writer.writeClosingTag("defaultParams", true, true);
--- 
-2.43.0
-

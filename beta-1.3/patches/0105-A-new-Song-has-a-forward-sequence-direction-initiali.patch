@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 08:57:43 +0000
+Subject: [PATCH 16/36] A new Song has a forward sequence direction: initialize
+ TimelineCounter::sequenceDirectionMode
+
+TimelineCounter::sequenceDirectionMode was never initialized; Clip sets it, the Song (the other
+TimelineCounter, song automation) never does. A Song made in reused memory could have a reverse or
+ping-pong mode. With currentlyPlayingReversed set as well, recording song automation froze with
+E445 in AutoParam::homogenizeRegion() (fuzz seed 108).
+
+v1.3.0 (#5094) initializes currentlyPlayingReversed, the other half of the former 0105.
+
+Test (beta-1.3/tests): song_reversed_emu.py.
+---
+ src/deluge/model/timeline_counter.h | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/deluge/model/timeline_counter.h b/src/deluge/model/timeline_counter.h
+index ce3663fed..89800cf4f 100644
+--- a/src/deluge/model/timeline_counter.h
++++ b/src/deluge/model/timeline_counter.h
+@@ -52,5 +52,7 @@ public:
+ 	bool armedForRecording{true};
+ 
+ 	bool currentlyPlayingReversed{false};
+-	SequenceDirection sequenceDirectionMode;
++	// Clip sets this; the Song, the other TimelineCounter (song automation), never does. Uninitialized, a Song made in
++	// reused memory could have a reverse or ping-pong mode (#5094 initialized currentlyPlayingReversed only)
++	SequenceDirection sequenceDirectionMode{SequenceDirection::FORWARD};
+ };

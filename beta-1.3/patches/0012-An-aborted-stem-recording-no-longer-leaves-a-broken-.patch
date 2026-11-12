@@ -1,7 +1,7 @@
-From d8a077aa8f4825ce13616f64d7504a8787f07b36 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 18:19:34 +0000
-Subject: [PATCH 12/12] An aborted stem recording no longer leaves a broken
+Subject: [PATCH 09/36] An aborted stem recording no longer leaves a broken
  5-second file (audio export docs: "only 5 seconds of audio")
 
 SampleRecorder::abort() (no RAM for the next cluster: createNextCluster() failed) only marks the recorder
@@ -20,10 +20,10 @@ drum stem stays as a broken file (RIFF size 1323112, i.e. 5 s, file 390-430 KB).
  1 file changed, 13 insertions(+)
 
 diff --git a/src/deluge/gui/ui/audio_recorder.cpp b/src/deluge/gui/ui/audio_recorder.cpp
-index 6cb4aab5..8515ff5d 100644
+index 31abbb7f8..cf165f17d 100644
 --- a/src/deluge/gui/ui/audio_recorder.cpp
 +++ b/src/deluge/gui/ui/audio_recorder.cpp
-@@ -197,6 +197,13 @@ void AudioRecorder::slowRoutine() {
+@@ -201,6 +201,13 @@ void AudioRecorder::slowRoutine() {
  			return;
  		}
  		if (recorder->status >= RecorderStatus::COMPLETE) {
@@ -37,7 +37,7 @@ index 6cb4aab5..8515ff5d 100644
  			indicator_leds::setLedState(IndicatorLED::RECORD, (playbackHandler.recording == RecordingMode::NORMAL));
  			finishRecording();
  		}
-@@ -218,6 +225,12 @@ void AudioRecorder::process() {
+@@ -226,6 +233,12 @@ void AudioRecorder::process() {
  
  		AudioEngine::slowRoutine();
  
@@ -50,6 +50,3 @@ index 6cb4aab5..8515ff5d 100644
  		// If recording has finished...
  		if (recorder->status >= RecorderStatus::COMPLETE || recorder->hadCardError) {
  
--- 
-2.43.0
-

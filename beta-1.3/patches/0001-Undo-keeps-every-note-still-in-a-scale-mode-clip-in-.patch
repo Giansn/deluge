@@ -1,7 +1,7 @@
-From 2e4935f775dddec4e177c8e44d6848c28b9c8ec5 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 14:02:56 +0000
-Subject: [PATCH 1/9] Undo keeps every note still in a scale-mode clip in the
+Subject: [PATCH 01/36] Undo keeps every note still in a scale-mode clip in the
  scale (SM01)
 
 An undo set the scale back to the action's snapshot, but a note the action didn't add
@@ -23,10 +23,10 @@ SM01; now the rule holds at every step and SHIFT+SCALE changes the scale.
  2 files changed, 19 insertions(+)
 
 diff --git a/src/deluge/model/action/action_logger.cpp b/src/deluge/model/action/action_logger.cpp
-index 07f1ed68..f27978ea 100644
+index f08ff964a..a15ac0b7a 100644
 --- a/src/deluge/model/action/action_logger.cpp
 +++ b/src/deluge/model/action/action_logger.cpp
-@@ -591,6 +591,18 @@ currentClipSwitchedOver:
+@@ -608,6 +608,18 @@ currentClipSwitchedOver:
  
  	Error error = action->revert(time, modelStack);
  
@@ -46,10 +46,10 @@ index 07f1ed68..f27978ea 100644
  	if (whichAnimation == Animation::ENTER_KEYBOARD_VIEW) {
  		changeRootUI(&keyboardScreen);
 diff --git a/src/deluge/model/song/song.cpp b/src/deluge/model/song/song.cpp
-index d7602d80..1c9a8c1b 100644
+index d935c3c5f..0370022f6 100644
 --- a/src/deluge/model/song/song.cpp
 +++ b/src/deluge/model/song/song.cpp
-@@ -3052,6 +3052,13 @@ bool Song::setScaleNotes(NoteSet newScaleNotes) {
+@@ -3073,6 +3073,13 @@ bool Song::setScaleNotes(NoteSet newScaleNotes) {
  		return false;
  	}
  
@@ -63,6 +63,3 @@ index d7602d80..1c9a8c1b 100644
  	ScaleChange changes;
  	scaleMapper.computeChangeFrom(notesWithinOctavePresent, key.modeNotes, newScaleNotes, changes);
  
--- 
-2.43.0
-

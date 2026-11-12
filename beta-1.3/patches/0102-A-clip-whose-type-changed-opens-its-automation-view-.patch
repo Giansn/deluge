@@ -1,7 +1,7 @@
-From 82fdac6c5c56983dab60eaf643b1bd929d11817f Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 18:06:06 +0000
-Subject: [PATCH 102/102] A clip whose type changed opens its automation view
+Subject: [PATCH 12/36] A clip whose type changed opens its automation view
  without the old parameter
 
 The transitions into a clip that was left in the automation view (session view in rows and in grid,
@@ -25,7 +25,7 @@ CV); without a type change the selection stays.
  4 files changed, 21 insertions(+), 9 deletions(-)
 
 diff --git a/src/deluge/gui/views/arranger_view.cpp b/src/deluge/gui/views/arranger_view.cpp
-index 2c226082..c0c42fd4 100644
+index 89c2e7690..3ee350085 100644
 --- a/src/deluge/gui/views/arranger_view.cpp
 +++ b/src/deluge/gui/views/arranger_view.cpp
 @@ -1842,6 +1842,7 @@ void ArrangerView::transitionToClipView(ClipInstance* clipInstance) {
@@ -37,7 +37,7 @@ index 2c226082..c0c42fd4 100644
  
  		if (clip->type == ClipType::INSTRUMENT) {
 diff --git a/src/deluge/gui/views/automation_view.cpp b/src/deluge/gui/views/automation_view.cpp
-index 0a42de35..9974ad18 100644
+index 2034689f3..0c93d0909 100644
 --- a/src/deluge/gui/views/automation_view.cpp
 +++ b/src/deluge/gui/views/automation_view.cpp
 @@ -431,15 +431,7 @@ void AutomationView::initializeView() {
@@ -57,7 +57,7 @@ index 0a42de35..9974ad18 100644
  
  			// if we're in a kit, we want to make sure the param selected is valid for current context
  			// e.g. only UNPATCHED_GLOBAL param kind's can be used with Kit Affect Entire enabled
-@@ -3197,6 +3189,22 @@ bool AutomationView::inAutomationEditor() {
+@@ -3205,6 +3197,22 @@ bool AutomationView::inAutomationEditor() {
  	return true;
  }
  
@@ -81,7 +81,7 @@ index 0a42de35..9974ad18 100644
  	automationParamType = AutomationParamType::PER_SOUND;
  	if (!onArrangerView && !inAutomationEditor()) {
 diff --git a/src/deluge/gui/views/automation_view.h b/src/deluge/gui/views/automation_view.h
-index 663b5da5..05ca4914 100644
+index 663b5da50..05ca49147 100644
 --- a/src/deluge/gui/views/automation_view.h
 +++ b/src/deluge/gui/views/automation_view.h
 @@ -69,6 +69,7 @@ public:
@@ -93,10 +93,10 @@ index 663b5da5..05ca4914 100644
  	bool onAutomationOverview();
  	bool inAutomationEditor();
 diff --git a/src/deluge/gui/views/session_view.cpp b/src/deluge/gui/views/session_view.cpp
-index 6ff2f4d0..7409b365 100644
+index d571c07f2..92886107b 100644
 --- a/src/deluge/gui/views/session_view.cpp
 +++ b/src/deluge/gui/views/session_view.cpp
-@@ -2772,6 +2772,7 @@ void SessionView::transitionToViewForClip(Clip* clip) {
+@@ -2826,6 +2826,7 @@ void SessionView::transitionToViewForClip(Clip* clip) {
  		// accidentally render stale arranger automation state into the animation store.
  		automationView.onArrangerView = false;
  		automationView.navSysId = automationView.getNavSysId();
@@ -104,7 +104,7 @@ index 6ff2f4d0..7409b365 100644
  		automationView.setAutomationParamType();
  
  		// Store rows 1..kDisplayHeight hold the visible clip rows; rows 0 and kDisplayHeight + 1 are reserved for
-@@ -4592,6 +4593,7 @@ void SessionView::gridTransitionToViewForClip(Clip* clip) {
+@@ -4651,6 +4652,7 @@ void SessionView::gridTransitionToViewForClip(Clip* clip) {
  		// accidentally render stale arranger automation state into the animation store.
  		automationView.onArrangerView = false;
  		automationView.navSysId = automationView.getNavSysId();
@@ -112,6 +112,3 @@ index 6ff2f4d0..7409b365 100644
  		automationView.setAutomationParamType();
  
  		if (clip->type == ClipType::INSTRUMENT) {
--- 
-2.43.0
-

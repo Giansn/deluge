@@ -1,8 +1,8 @@
-From 16cbab33ffb1a0730639847a3c39c53537d6e0d6 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 2 Oct 2026 11:17:34 +0000
-Subject: [PATCH 116/116] No stem export while the output is being resampled:
- no E242, no second recorder
+Subject: [PATCH 34/36] No stem export while the output is being resampled: no
+ E242, no second recorder
 
 SHIFT + RECORD records the output through the audio recorder (resampling).
 SAVE + RECORD (and the song menu's export) then started a stem export: the
@@ -21,7 +21,7 @@ RECORD press then ends it.
  1 file changed, 7 insertions(+)
 
 diff --git a/src/deluge/processing/stem_export/stem_export.cpp b/src/deluge/processing/stem_export/stem_export.cpp
-index 1cbffa98..bfa00503 100644
+index 0f2c0dbba..3e25954c7 100644
 --- a/src/deluge/processing/stem_export/stem_export.cpp
 +++ b/src/deluge/processing/stem_export/stem_export.cpp
 @@ -83,6 +83,13 @@ StemExport::StemExport() {
@@ -38,6 +38,3 @@ index 1cbffa98..bfa00503 100644
  	// in case playback is active when you start stem export, stop it.
  	stopPlayback();
  
--- 
-2.43.0
-

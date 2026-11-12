@@ -1,7 +1,7 @@
-From 325a029035909077c2a32be09545404f37d59e1b Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 1 Oct 2026 22:05:53 +0000
-Subject: [PATCH 107/107] A fast vertical turn in song and arranger view moves
+Subject: [PATCH 19/36] A fast vertical turn in song and arranger view moves
  one square per detent
 
 v1.3 hands a fast turn on as several detents at once (encoder_input.cpp, the
@@ -27,10 +27,10 @@ at row -19).
  2 files changed, 22 insertions(+), 2 deletions(-)
 
 diff --git a/src/deluge/gui/views/arranger_view.cpp b/src/deluge/gui/views/arranger_view.cpp
-index c0c42fd4..e6f9d80f 100644
+index 3ee350085..c5ef8ca00 100644
 --- a/src/deluge/gui/views/arranger_view.cpp
 +++ b/src/deluge/gui/views/arranger_view.cpp
-@@ -3096,7 +3096,17 @@ ActionResult ArrangerView::verticalEncoderAction(int32_t offset, bool inCardRout
+@@ -3103,7 +3103,17 @@ ActionResult ArrangerView::verticalEncoderAction(int32_t offset, bool inCardRout
  			return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE; // Allow sometimes.
  		}
  
@@ -50,10 +50,10 @@ index c0c42fd4..e6f9d80f 100644
  
  	return ActionResult::DEALT_WITH;
 diff --git a/src/deluge/gui/views/session_view.cpp b/src/deluge/gui/views/session_view.cpp
-index 7409b365..02f5ffb9 100644
+index 92886107b..bc25237b9 100644
 --- a/src/deluge/gui/views/session_view.cpp
 +++ b/src/deluge/gui/views/session_view.cpp
-@@ -1461,7 +1461,17 @@ ActionResult SessionView::verticalEncoderAction(int32_t offset, bool inCardRouti
+@@ -1457,7 +1457,17 @@ ActionResult SessionView::verticalEncoderAction(int32_t offset, bool inCardRouti
  			return gridHandleScroll(0, offset);
  		}
  
@@ -72,6 +72,3 @@ index 7409b365..02f5ffb9 100644
  	}
  
  	return ActionResult::DEALT_WITH;
--- 
-2.43.0
-

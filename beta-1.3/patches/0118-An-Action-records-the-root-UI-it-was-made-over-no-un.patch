@@ -1,8 +1,8 @@
-From e6df2166e1b29047e4c68d48275ba5691691259b Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 2 Oct 2026 13:40:21 +0000
-Subject: [PATCH 118/118] An Action records the root UI it was made over: no
- undo into a closed sound editor
+Subject: [PATCH 36/36] An Action records the root UI it was made over: no undo
+ into a closed sound editor
 
 ActionLogger::getNewAction() recorded getCurrentUI(). The sound editor's
 note editor and note row editor may make Actions (they edit notes on the
@@ -22,7 +22,7 @@ PADA's clip view (before: a crash in SoundEditor::beginScreen()).
  1 file changed, 4 insertions(+), 1 deletion(-)
 
 diff --git a/src/deluge/model/action/action_logger.cpp b/src/deluge/model/action/action_logger.cpp
-index a34c1da2..5cdf9029 100644
+index de771d112..8012e641e 100644
 --- a/src/deluge/model/action/action_logger.cpp
 +++ b/src/deluge/model/action/action_logger.cpp
 @@ -192,7 +192,10 @@ Action* ActionLogger::getNewAction(ActionType newActionType, ActionAddition addT
@@ -37,6 +37,3 @@ index a34c1da2..5cdf9029 100644
  		newAction->viewIsArrangerAutomation = (newAction->view == &automationView && automationView.onArrangerView);
  		newAction->currentClip = getCurrentClip();
  	}
--- 
-2.43.0
-

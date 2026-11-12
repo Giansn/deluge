@@ -1,6 +1,6 @@
 #!/bin/bash
-# Sets up the community beta (v1.3) with our fixes, for a fresh container: the community firmware's source at the
-# beta 62a516c2 (cloned read-only: pushing is disabled, see CLAUDE.md), beta-1.3/patches applied on a local branch,
+# Sets up the community firmware v1.3 with our fixes, for a fresh container: the community firmware's source at the
+# release tag v1.3.0 (cloned read-only: pushing is disabled, see CLAUDE.md), beta-1.3/patches applied on a local branch,
 # the dbt toolchain v22 (GCC 14; the beta doesn't build with v16), a Release build, and blockcount.so for the emulator
 # tests. Idempotent: what is already there is kept (an existing tree is not patched again).
 #
@@ -8,7 +8,7 @@
 # Environment (defaults):
 #   WORK=/home/user/work
 #   UPSTREAM=$WORK/DelugeFirmware-beta   the clone of SynthstromAudible/DelugeFirmware (blob-less, read-only)
-#   TREE=$WORK/beta-fixes                the firmware tree: a worktree at 62a516c2, the patches on it
+#   TREE=$WORK/beta-fixes                the firmware tree: a worktree at v1.3.0, the patches on it
 #   BRANCH=beta-fixes                    its local branch (never pushed)
 #   TOOLCHAIN=$WORK/tc22                 holds toolchain/v22/linux-x86_64 (compiler, cmake, ninja: about 700 MB)
 #   NO_BUILD=1                           stop after the tree and the toolchain
@@ -17,7 +17,8 @@ set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 BETA=$REPO/beta-1.3
-BASE_SHORT=62a516c2
+# The base: the v1.3.0 release (until 12 November 2026 the beta 62a516c2; that series is in git history, 6ac932f)
+BASE_SHORT=v1.3.0
 WORK=${WORK:-/home/user/work}
 UPSTREAM=${UPSTREAM:-$WORK/DelugeFirmware-beta}
 TREE=${TREE:-$WORK/beta-fixes}
@@ -39,10 +40,11 @@ if [ ! -d "$UPSTREAM/.git" ]; then
 fi
 # Nothing is ever pushed to the community repository (CLAUDE.md)
 git -C "$UPSTREAM" remote set-url --push origin PUSH_DISABLED_community_repo_is_read_only
-git -C "$UPSTREAM" rev-parse -q --verify "$BASE_SHORT^{commit}" > /dev/null || git -C "$UPSTREAM" fetch -q origin main --tags
+git -C "$UPSTREAM" rev-parse -q --verify "$BASE_SHORT^{commit}" > /dev/null \
+  || git -C "$UPSTREAM" fetch -q origin main release/1.3 --tags
 BASE=$(git -C "$UPSTREAM" rev-parse "$BASE_SHORT^{commit}")
 
-say "The tree: $TREE (beta $BASE_SHORT + beta-1.3/patches, local branch $BRANCH)"
+say "The tree: $TREE ($BASE_SHORT + beta-1.3/patches, local branch $BRANCH)"
 if [ ! -d "$TREE" ]; then
   git -C "$UPSTREAM" worktree add -q --no-checkout -b "$BRANCH" "$TREE" "$BASE"
   # The website and contrib folders aren't needed; the menu generator needs docs/menus
