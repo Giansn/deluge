@@ -23,7 +23,8 @@ with SHIFT held. Back up the card first, as for any beta.
 - **Tested in the emulator only, not yet on a Deluge.** Every patch's test passes (`tests/repro/run.sh`, 39 tests,
   and the SM01 and seed 152 replays with `LONG=1`) on a build of this very tree (`eb41ebb7`; the file differs only in
   the commit hash of its version string), `oom_robust` on this file itself; on unpatched v1.3.0 the tests of the 36
-  patches fail, except where `NIGHTLY.md` section 7 says why not.
+  patches fail, except where `NIGHTLY.md` section 7 says why not. A fuzz round on this file (three 25-minute runs,
+  OLED and 7-segment, one with MIDI input): 4,273 inputs, no problem.
 - **Before (the beta `62a516c2`, until 12 November 2026):** `deluge-1.3.0-beta-62a516c2-nightly-426a0ab4.bin` with 43
   patches, in git history (commit 6ac932f). The helper session's stop run 12 on it: the full 2 hours of `--mode deep`,
   OLED and 7-segment, 12 seeds, 13,100 inputs, no problem. Stop runs 1-12: 102,304 inputs, 10 problems, 9 fixed by

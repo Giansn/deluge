@@ -238,7 +238,9 @@ there) and with its test on unpatched v1.3.0. Two rig fixes came first, without 
 v1.3.0: since #4931 a `DetentedEncoder` keeps its detents at +8, not +4, so turns written by the rig never reached the
 UI (`fuzz_ui.Inputs` now asks gdb for the offset), and since #5150 the PIC's SELECT reply is no longer a UI timer
 (`oom_robust` c1 calls `oledSelectingComplete()` directly there). Result: 36 of 43 patches stay, now on v1.3.0
-(`patches/series`; the 62a516c2 series is in git history, commit 6ac932f).
+(`patches/series`; the 62a516c2 series is in git history, commit 6ac932f). Fuzz round on the delivered build
+(`...-4b7b21af`, 25-minute runs: deep seed 401 OLED, deep seed 411 7-segment, all seed 21001 OLED with 30 % MIDI
+input): 4,273 inputs, no problem, no wild access, no write through null, no error popup.
 
 | On v1.3.0 | Patches | Why |
 |---|---|---|
