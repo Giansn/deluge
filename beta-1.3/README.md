@@ -54,15 +54,31 @@ with SHIFT held. Back up the card first, as for any beta.
   preset in the song already, `...-3b916052.bin` can crash on undo after the sound editor it was made in was
   closed.
 
+## mastertune's features on it
+
+`deluge-1.3.0-mastertune-s1-c2380b0a.bin` (1,779,668 bytes, SHA-256
+`d12eee681f07f716147422f18997eaf8c131966ce7f0fb2f456b94f5fb3b53de`) is the stabilised build above plus the first
+step of mastertune 1.2.1's features ported to v1.3: the arp extras (latch, ratchet notes with roll and ball,
+ratchet bounce, bounce length and velocity; `features/0001`). The Deluge shows it as `1.3.0-beta-c2380b0a0`. The plan
+for the other steps (CPU monitor, master tune, Scan, DJ, USB audio), what each step does and how it is tested:
+`FEATURES.md`. **Tested in the emulator only**, as the build under it.
+
+- Built by `FEATURES=1 tools/setup_beta.sh` (the tree `/home/user/work/beta-features`, commit `c2380b0a0`). Two
+  builds in that same folder give the same file; the folder's path is part of it (one source file name in a
+  message), so a build elsewhere differs in those bytes.
+
 | File | What |
 |---|---|
 | `NIGHTLY.md` | Why the beta crashes, what its own documentation says, the emulator runs, our patches (section 7) |
+| `FEATURES.md` | mastertune 1.2.1's features ported to v1.3 one step at a time: the plan, each step, its tests |
+| `features/` | the features as patches after `patches/`, in the order of `features/series` |
 | `patches/` | The fixes on v1.3.0 (until 12 November 2026 on 62a516c2): 0001-0099 this session's, 0101 and up the helper session's; `patches/series` is the order (`git am`), new ones not listed go after it in name order |
 | `tools/setup_beta.sh` | The patched beta from this repository alone: source, patches, toolchain v22, build, blockcount.so |
 | `tests/emu13.py`, `tests/rig13.py` | mastertune's emulator rig (`mastertune-1.2.1/tests/song`, `tests/stress/ui`) adapted to v1.3 |
 | `tests/fuzz_ui.py` | a random user on the real firmware in the emulator, for v1.3 or mastertune with the same inputs |
 | `tests/menu_walk_emu.py` | walks every menu of nine contexts (OLED or 7-segment, horizontal menus on or off) |
 | `tests/repro/` | one test per patch (failed on 62a516c2, passes with the patches; on v1.3.0 see `run.sh`); `run.sh` runs them all |
+| `tests/features/` | the features' tests (`run.sh` runs them): each fails without its feature and passes with it |
 | `reports/` | the helper session's write-ups of single findings |
 
 ## Setting it up in a new session

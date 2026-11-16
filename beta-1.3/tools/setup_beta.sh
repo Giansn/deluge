@@ -12,6 +12,8 @@
 #   BRANCH=beta-fixes                    its local branch (never pushed)
 #   TOOLCHAIN=$WORK/tc22                 holds toolchain/v22/linux-x86_64 (compiler, cmake, ninja: about 700 MB)
 #   NO_BUILD=1                           stop after the tree and the toolchain
+#   FEATURES=1                           also beta-1.3/features (mastertune's features ported to v1.3, after the
+#                                        fixes); the tree is then $WORK/beta-features, its branch beta-features
 # Disk: about 2 GB. Afterwards: beta-1.3/tests/repro/run.sh <ELF> <tools> <blockcount dir> runs the fixes' tests.
 set -euo pipefail
 
@@ -21,8 +23,13 @@ BETA=$REPO/beta-1.3
 BASE_SHORT=v1.3.0
 WORK=${WORK:-/home/user/work}
 UPSTREAM=${UPSTREAM:-$WORK/DelugeFirmware-beta}
-TREE=${TREE:-$WORK/beta-fixes}
-BRANCH=${BRANCH:-beta-fixes}
+if [ "${FEATURES:-}" = 1 ]; then
+  TREE=${TREE:-$WORK/beta-features}
+  BRANCH=${BRANCH:-beta-features}
+else
+  TREE=${TREE:-$WORK/beta-fixes}
+  BRANCH=${BRANCH:-beta-fixes}
+fi
 TOOLCHAIN=${TOOLCHAIN:-$WORK/tc22}
 URL=https://github.com/SynthstromAudible/DelugeFirmware
 TC_URL=https://github.com/SynthstromAudible/dbt-toolchain/releases/download/v22/dbt-toolchain-22-linux-x86_64.tar.gz
@@ -61,6 +68,13 @@ if [ ! -d "$TREE" ]; then
   done
   git -C "$TREE" -c user.name=beta-fixes -c user.email=beta-fixes@localhost am -q --committer-date-is-author-date \
     "${PATCHES[@]}"
+  # The features, in the order of features/series
+  if [ "${FEATURES:-}" = 1 ]; then
+    FEATS=()
+    while read -r p; do FEATS+=("$BETA/features/$p"); done < <(grep -v -e '^#' -e '^[[:space:]]*$' "$BETA/features/series")
+    git -C "$TREE" -c user.name=beta-features -c user.email=beta-features@localhost am -q \
+      --committer-date-is-author-date "${FEATS[@]}"
+  fi
 fi
 echo "tree $(git -C "$TREE" rev-parse 'HEAD^{tree}'), $(git -C "$TREE" rev-list --count "$BASE"..HEAD) patches on $BASE_SHORT"
 

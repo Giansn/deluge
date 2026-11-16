@@ -1,0 +1,1514 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 16 Nov 2026 21:05:19 +0000
+Subject: [PATCH] Arp extras from mastertune: latch, ratchet notes, bounce,
+ bounce length and velocity, roll and ball
+
+Ports the arpeggiator additions of mastertune 1.2.1 (its patches 0005, 0006, 0021, 0024, 0117 and 0120) onto v1.3.
+mastertune's arp is 1.3's own arp backported, so the engine came over as a three-way merge: v1.3's
+arpeggiator with mastertune's code since its backport, keeping what v1.3 added since (the note's sampleSyncLength,
+song_firmware_version, the "mode" attribute as 1.3 writes it).
+
+- Latch: the arp keeps playing the notes after the keys are let go; the next key pressed after all were let go
+  replaces them without the arp losing time. Switching latch off stops what's latched. Not for a kit row (one note),
+  but for the kit arp.
+- Ratchet notes: Auto (2, 4 or 8 at random, as 1.3), exactly 2 ... 8, Roll (as many hits as fit until the plates
+  close, at least 16 ms apart) or Ball (a ping-pong ball between plates that meet after the first step and part
+  again).
+- Ratchet bounce -10 ... +10: each gap of a ratchet the one before times r (faster or slower), 0 even as in 1.3.
+- Bounce length 1 ... 16: how many arp steps a ratchet lasts.
+- Bounce velocity: Even, Fade (softer as the gaps get shorter) or Rise (louder).
+- Fixes that came with them: a ratchet's hits that fell behind are dropped rather than pushing the next step back, a
+  new step drops what's left of the last step's ratchet, and an arp without settings (an instrument without a clip)
+  plays plain notes instead of reading through null.
+- Latched notes are dropped once the arp is off (its mode, a preset, or a clip of the instrument without the arp), not
+  started as held notes: their keys were let go long before, so nothing would end them. mastertune 1.2.1 has this
+  fault (found in the review of this port); on a kit arp switched off it left the latched rows sounding for good.
+
+Menus in the 1.3 style: Latch is a toggle in the arpeggiator menu, after Mode; the four ratchet settings are a new
+horizontal menu "Ratchet" after Pattern (synth, kit row, kit arp, MIDI and CV), in the arp's menu group. The settings
+are saved as mastertune saves them (latch, ratchetNotes, ratchetBounce, ratchetBounceLength, ratchetBounceFade), so
+songs move between mastertune 1.2.1 and this build; stock v1.3 ignores them.
+---
+ src/deluge/gui/l10n/english.json              |  19 +-
+ src/deluge/gui/l10n/g_english.cpp             |  17 +
+ src/deluge/gui/l10n/g_seven_segment.cpp       |  11 +
+ src/deluge/gui/l10n/seven_segment.json        |  13 +-
+ src/deluge/gui/l10n/strings.h                 |  18 +
+ .../gui/menu_item/arpeggiator/bounce_fade.h   |  62 +++
+ .../gui/menu_item/arpeggiator/bounce_length.h |  56 ++
+ src/deluge/gui/menu_item/arpeggiator/latch.h  |  80 +++
+ .../menu_item/arpeggiator/ratchet_bounce.h    |  56 ++
+ .../gui/menu_item/arpeggiator/ratchet_notes.h |  74 +++
+ src/deluge/gui/ui/menus.cpp                   |  39 +-
+ src/deluge/modulation/arpeggiator.cpp         | 518 +++++++++++++++++-
+ src/deluge/modulation/arpeggiator.h           |  99 +++-
+ 13 files changed, 1034 insertions(+), 28 deletions(-)
+ create mode 100644 src/deluge/gui/menu_item/arpeggiator/bounce_fade.h
+ create mode 100644 src/deluge/gui/menu_item/arpeggiator/bounce_length.h
+ create mode 100644 src/deluge/gui/menu_item/arpeggiator/latch.h
+ create mode 100644 src/deluge/gui/menu_item/arpeggiator/ratchet_bounce.h
+ create mode 100644 src/deluge/gui/menu_item/arpeggiator/ratchet_notes.h
+
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index 683a26648..cbaab814b 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -1000,6 +1000,23 @@
+     "STRING_FOR_FAVOURITES_EMPTY": "Empty",
+     "STRING_FOR_DEFAULT_HORIZONTAL_MENU": "Horizontal Menu",
+     "STRING_FOR_CHORD_KEYBOARD_MODE_ROW": "Chord Row Mode",
+-    "STRING_FOR_CHORD_KEYBOARD_MODE_COLUMN": "Chord Column Mode"
++    "STRING_FOR_CHORD_KEYBOARD_MODE_COLUMN": "Chord Column Mode",
++    "STRING_FOR_ARP_LATCH": "Latch",
++    "STRING_FOR_ARP_LATCH_MENU_TITLE": "Arp latch",
++    "STRING_FOR_RATCHET": "Ratchet",
++    "STRING_FOR_ARP_RATCHET_MENU_TITLE": "Arp ratchet",
++    "STRING_FOR_RATCHET_NOTES": "Ratchet Notes",
++    "STRING_FOR_ARP_RATCHET_NOTES_MENU_TITLE": "Arp ratc notes",
++    "STRING_FOR_RATCHET_BOUNCE": "Ratchet Bounce",
++    "STRING_FOR_ARP_RATCHET_BOUNCE_MENU_TITLE": "Arp ratc bounce",
++    "STRING_FOR_BOUNCE_LENGTH": "Bounce Length",
++    "STRING_FOR_ARP_BOUNCE_LENGTH_MENU_TITLE": "Arp bounce len",
++    "STRING_FOR_BOUNCE_FADE": "Bounce Velocity",
++    "STRING_FOR_ARP_BOUNCE_FADE_MENU_TITLE": "Arp bounce vel",
++    "STRING_FOR_BOUNCE_EVEN": "Even",
++    "STRING_FOR_BOUNCE_SOFTER": "Fade",
++    "STRING_FOR_BOUNCE_LOUDER": "Rise",
++    "STRING_FOR_ROLL": "Roll",
++    "STRING_FOR_BALL": "Ball"
+   }
+ }
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index 0032e81ac..6353111b6 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -1014,6 +1014,23 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_DEFAULT_HORIZONTAL_MENU, "Horizontal Menu"},
+         {STRING_FOR_CHORD_KEYBOARD_MODE_ROW, "Chord Row Mode"},
+         {STRING_FOR_CHORD_KEYBOARD_MODE_COLUMN, "Chord Column Mode"},
++        {STRING_FOR_ARP_LATCH, "Latch"},
++        {STRING_FOR_ARP_LATCH_MENU_TITLE, "Arp latch"},
++        {STRING_FOR_RATCHET, "Ratchet"},
++        {STRING_FOR_ARP_RATCHET_MENU_TITLE, "Arp ratchet"},
++        {STRING_FOR_RATCHET_NOTES, "Ratchet Notes"},
++        {STRING_FOR_ARP_RATCHET_NOTES_MENU_TITLE, "Arp ratc notes"},
++        {STRING_FOR_RATCHET_BOUNCE, "Ratchet Bounce"},
++        {STRING_FOR_ARP_RATCHET_BOUNCE_MENU_TITLE, "Arp ratc bounce"},
++        {STRING_FOR_BOUNCE_LENGTH, "Bounce Length"},
++        {STRING_FOR_ARP_BOUNCE_LENGTH_MENU_TITLE, "Arp bounce len"},
++        {STRING_FOR_BOUNCE_FADE, "Bounce Velocity"},
++        {STRING_FOR_ARP_BOUNCE_FADE_MENU_TITLE, "Arp bounce vel"},
++        {STRING_FOR_BOUNCE_EVEN, "Even"},
++        {STRING_FOR_BOUNCE_SOFTER, "Fade"},
++        {STRING_FOR_BOUNCE_LOUDER, "Rise"},
++        {STRING_FOR_ROLL, "Roll"},
++        {STRING_FOR_BALL, "Ball"},
+     },
+ };
+ } // namespace deluge::l10n::built_in
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index 2024bd2f7..e0acc3899 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -565,6 +565,17 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_DEFAULT_USE_LAST_CLIP_TYPE, "LAST"},
+         {STRING_FOR_FAVOURITES_EMPTY, "NONE"},
+         {STRING_FOR_DEFAULT_HORIZONTAL_MENU, "HORZ"},
++        {STRING_FOR_ARP_LATCH, "LATC"},
++        {STRING_FOR_RATCHET, "RTCH"},
++        {STRING_FOR_RATCHET_NOTES, "RNUM"},
++        {STRING_FOR_RATCHET_BOUNCE, "BNCE"},
++        {STRING_FOR_BOUNCE_LENGTH, "BLEN"},
++        {STRING_FOR_BOUNCE_FADE, "BVEL"},
++        {STRING_FOR_BOUNCE_EVEN, "EVEN"},
++        {STRING_FOR_BOUNCE_SOFTER, "FADE"},
++        {STRING_FOR_BOUNCE_LOUDER, "RISE"},
++        {STRING_FOR_ROLL, "ROLL"},
++        {STRING_FOR_BALL, "BALL"},
+     },
+     &built_in::english,
+ };
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index bc5dd6c8c..6375189ca 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -608,6 +608,17 @@
+ 
+         "STRING_FOR_FAVOURITES_EMPTY": "NONE",
+ 
+-        "STRING_FOR_DEFAULT_HORIZONTAL_MENU": "HORZ"
++        "STRING_FOR_DEFAULT_HORIZONTAL_MENU": "HORZ",
++        "STRING_FOR_ARP_LATCH": "LATC",
++        "STRING_FOR_RATCHET": "RTCH",
++        "STRING_FOR_RATCHET_NOTES": "RNUM",
++        "STRING_FOR_RATCHET_BOUNCE": "BNCE",
++        "STRING_FOR_BOUNCE_LENGTH": "BLEN",
++        "STRING_FOR_BOUNCE_FADE": "BVEL",
++        "STRING_FOR_BOUNCE_EVEN": "EVEN",
++        "STRING_FOR_BOUNCE_SOFTER": "FADE",
++        "STRING_FOR_BOUNCE_LOUDER": "RISE",
++        "STRING_FOR_ROLL": "ROLL",
++        "STRING_FOR_BALL": "BALL"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index 2039f041f..20d7e57c5 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -1146,6 +1146,24 @@ enum class String : size_t {
+ 	STRING_FOR_CHORD_KEYBOARD_MODE_ROW,
+ 	STRING_FOR_CHORD_KEYBOARD_MODE_COLUMN,
+ 
++	// mastertune: arp latch and ratchet extras
++	STRING_FOR_ARP_LATCH,
++	STRING_FOR_ARP_LATCH_MENU_TITLE,
++	STRING_FOR_RATCHET,
++	STRING_FOR_ARP_RATCHET_MENU_TITLE,
++	STRING_FOR_RATCHET_NOTES,
++	STRING_FOR_ARP_RATCHET_NOTES_MENU_TITLE,
++	STRING_FOR_RATCHET_BOUNCE,
++	STRING_FOR_ARP_RATCHET_BOUNCE_MENU_TITLE,
++	STRING_FOR_BOUNCE_LENGTH,
++	STRING_FOR_ARP_BOUNCE_LENGTH_MENU_TITLE,
++	STRING_FOR_BOUNCE_FADE,
++	STRING_FOR_ARP_BOUNCE_FADE_MENU_TITLE,
++	STRING_FOR_BOUNCE_EVEN,
++	STRING_FOR_BOUNCE_SOFTER,
++	STRING_FOR_BOUNCE_LOUDER,
++	STRING_FOR_ROLL,
++	STRING_FOR_BALL,
+ 	STRING_LAST
+ };
+ 
+diff --git a/src/deluge/gui/menu_item/arpeggiator/bounce_fade.h b/src/deluge/gui/menu_item/arpeggiator/bounce_fade.h
+new file mode 100644
+index 000000000..2667eff09
+--- /dev/null
++++ b/src/deluge/gui/menu_item/arpeggiator/bounce_fade.h
+@@ -0,0 +1,62 @@
++/*
++ * Copyright © 2026 Deluge community contributors
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include "gui/menu_item/selection.h"
++#include "gui/l10n/l10n.h"
++#include "gui/ui/sound_editor.h"
++#include "model/drum/drum.h"
++#include "model/instrument/kit.h"
++#include "model/song/song.h"
++#include "modulation/arpeggiator.h"
++
++namespace deluge::gui::menu_item::arpeggiator {
++// Bounce velocity (mastertune): how a bouncing ratchet's velocity follows its gaps: even (every hit keeps it), fade
++// (softer as the gaps get shorter, like a ball coming to rest) or rise (louder, like a ping-pong ball between closing
++// plates)
++class BounceFade final : public Selection {
++public:
++	using Selection::Selection;
++	void readCurrentValue() override {
++		this->setValue(util::to_underlying(soundEditor.currentArpSettings->ratchetBounceFade));
++	}
++	bool usesAffectEntire() override { return true; }
++	void writeCurrentValue() override {
++		auto fade = static_cast<BounceVelocity>(this->getValue());
++		// If affect-entire button held, do whole kit
++		if (currentUIMode == UI_MODE_HOLDING_AFFECT_ENTIRE_IN_SOUND_EDITOR && soundEditor.editingKitRow()) {
++			for (Drum* thisDrum = getCurrentKit()->firstDrum; thisDrum != nullptr; thisDrum = thisDrum->next) {
++				thisDrum->arpSettings.ratchetBounceFade = fade;
++			}
++		}
++		else {
++			soundEditor.currentArpSettings->ratchetBounceFade = fade;
++		}
++	}
++	deluge::vector<std::string_view> getOptions(OptType optType) override {
++		(void)optType;
++		using enum l10n::String;
++		return {l10n::getView(STRING_FOR_BOUNCE_EVEN), l10n::getView(STRING_FOR_BOUNCE_SOFTER),
++		        l10n::getView(STRING_FOR_BOUNCE_LOUDER)};
++	}
++	bool isRelevant(ModControllableAudio* modControllable, int32_t whichThing) const override {
++		return soundEditor.currentArpSettings != nullptr;
++	}
++	void getColumnLabel(StringBuf& label) override {
++		label.append(deluge::l10n::get(deluge::l10n::built_in::seven_segment, this->name));
++	}
++};
++} // namespace deluge::gui::menu_item::arpeggiator
+diff --git a/src/deluge/gui/menu_item/arpeggiator/bounce_length.h b/src/deluge/gui/menu_item/arpeggiator/bounce_length.h
+new file mode 100644
+index 000000000..c58b60100
+--- /dev/null
++++ b/src/deluge/gui/menu_item/arpeggiator/bounce_length.h
+@@ -0,0 +1,56 @@
++/*
++ * Copyright © 2026 Deluge community contributors
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include "gui/menu_item/integer.h"
++#include "gui/l10n/l10n.h"
++#include "gui/ui/sound_editor.h"
++#include "model/drum/drum.h"
++#include "model/instrument/kit.h"
++#include "model/song/song.h"
++#include "modulation/arpeggiator.h"
++
++namespace deluge::gui::menu_item::arpeggiator {
++// Bounce length (mastertune): how many arp steps a ratchet lasts. 1 is one step, as in 1.3. A longer ratchet holds its
++// note over the next steps, its hits spread over all of them, and the arp goes on with its next note after them
++class BounceLength final : public Integer {
++public:
++	using Integer::Integer;
++	void readCurrentValue() override { this->setValue(soundEditor.currentArpSettings->ratchetBounceLength); }
++	bool usesAffectEntire() override { return true; }
++	void writeCurrentValue() override {
++		int32_t value = this->getValue();
++		// If affect-entire button held, do whole kit
++		if (currentUIMode == UI_MODE_HOLDING_AFFECT_ENTIRE_IN_SOUND_EDITOR && soundEditor.editingKitRow()) {
++			for (Drum* thisDrum = getCurrentKit()->firstDrum; thisDrum != nullptr; thisDrum = thisDrum->next) {
++				thisDrum->arpSettings.ratchetBounceLength = value;
++			}
++		}
++		else {
++			soundEditor.currentArpSettings->ratchetBounceLength = value;
++		}
++	}
++	[[nodiscard]] int32_t getMinValue() const override { return 1; }
++	[[nodiscard]] int32_t getMaxValue() const override { return kMaxBounceLength; }
++	bool isRelevant(ModControllableAudio* modControllable, int32_t whichThing) const override {
++		return soundEditor.currentArpSettings != nullptr;
++	}
++	void getColumnLabel(StringBuf& label) override {
++		label.append(deluge::l10n::get(deluge::l10n::built_in::seven_segment, this->name));
++	}
++	[[nodiscard]] RenderingStyle getRenderingStyle() const override { return NUMBER; }
++};
++} // namespace deluge::gui::menu_item::arpeggiator
+diff --git a/src/deluge/gui/menu_item/arpeggiator/latch.h b/src/deluge/gui/menu_item/arpeggiator/latch.h
+new file mode 100644
+index 000000000..bfc40eb65
+--- /dev/null
++++ b/src/deluge/gui/menu_item/arpeggiator/latch.h
+@@ -0,0 +1,80 @@
++/*
++ * Copyright © 2026 Deluge community contributors
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include "gui/l10n/l10n.h"
++#include "gui/menu_item/selection.h"
++#include "gui/ui/sound_editor.h"
++#include "model/clip/instrument_clip.h"
++#include "model/instrument/kit.h"
++#include "model/instrument/melodic_instrument.h"
++#include "model/model_stack.h"
++#include "model/song/song.h"
++#include "processing/sound/sound.h"
++
++namespace deluge::gui::menu_item::arpeggiator {
++// Latch (mastertune): the arp keeps playing the notes after the keys are let go, until a new set of keys is pressed
++class Latch final : public Selection {
++public:
++	using Selection::Selection;
++	void readCurrentValue() override { this->setValue(soundEditor.currentArpSettings->latch); }
++	void writeCurrentValue() override {
++		bool latch = this->getValue() != 0;
++		if (soundEditor.currentArpSettings->latch && !latch) {
++			releaseLatchedNotes();
++		}
++		soundEditor.currentArpSettings->latch = latch;
++	}
++	bool isRelevant(ModControllableAudio* modControllable, int32_t whichThing) const override {
++		// A kit row has one note, nothing to latch: that's what the kit arp is for
++		return soundEditor.currentArpSettings != nullptr && !soundEditor.editingKitRow();
++	}
++	deluge::vector<std::string_view> getOptions(OptType optType) override {
++		(void)optType;
++		using enum l10n::String;
++		return {l10n::getView(STRING_FOR_OFF), l10n::getView(STRING_FOR_ON)};
++	}
++	void getColumnLabel(StringBuf& label) override {
++		label.append(deluge::l10n::get(deluge::l10n::built_in::seven_segment, this->name));
++	}
++	bool isToggle() override { return true; }
++	bool shouldEnterSubmenu() override { return false; }
++
++private:
++	// Switching latch off stops what's latched, like switching the arp off does
++	void releaseLatchedNotes() {
++		if (!getCurrentClip()->isActiveOnOutput()) {
++			return;
++		}
++		char modelStackMemory[MODEL_STACK_MAX_SIZE];
++		ModelStackWithThreeMainThings* modelStack = soundEditor.getCurrentModelStack(modelStackMemory);
++		if (soundEditor.editingKitAffectEntire()) {
++			Kit* kit = getCurrentKit();
++			kit->arpeggiator.reset();
++			kit->cutAllSound();
++		}
++		else if (soundEditor.editingCVOrMIDIClip()) {
++			((MelodicInstrument*)getCurrentOutput())->arpeggiator.reset();
++			getCurrentInstrumentClip()->stopAllNotesForMIDIOrCV(modelStack->toWithTimelineCounter());
++		}
++		else if (soundEditor.currentSound != nullptr) {
++			ModelStackWithSoundFlags* modelStackWithSoundFlags = modelStack->addSoundFlags();
++			soundEditor.currentSound->allNotesOff(modelStackWithSoundFlags, soundEditor.currentSound->getArp());
++			soundEditor.currentSound->reassessRenderSkippingStatus(modelStackWithSoundFlags);
++		}
++	}
++};
++} // namespace deluge::gui::menu_item::arpeggiator
+diff --git a/src/deluge/gui/menu_item/arpeggiator/ratchet_bounce.h b/src/deluge/gui/menu_item/arpeggiator/ratchet_bounce.h
+new file mode 100644
+index 000000000..e05fbad3f
+--- /dev/null
++++ b/src/deluge/gui/menu_item/arpeggiator/ratchet_bounce.h
+@@ -0,0 +1,56 @@
++/*
++ * Copyright © 2026 Deluge community contributors
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include "gui/menu_item/integer.h"
++#include "gui/l10n/l10n.h"
++#include "gui/ui/sound_editor.h"
++#include "model/drum/drum.h"
++#include "model/instrument/kit.h"
++#include "model/song/song.h"
++#include "modulation/arpeggiator.h"
++
++namespace deluge::gui::menu_item::arpeggiator {
++// Ratchet bounce (mastertune): spaces the notes of each ratchet like a bouncing ball. Positive values speed the ratchet
++// up (each gap smaller than the one before), negative ones slow it down, 0 keeps the notes evenly spaced
++class RatchetBounce final : public Integer {
++public:
++	using Integer::Integer;
++	void readCurrentValue() override { this->setValue(soundEditor.currentArpSettings->ratchetBounce); }
++	bool usesAffectEntire() override { return true; }
++	void writeCurrentValue() override {
++		int32_t value = this->getValue();
++		// If affect-entire button held, do whole kit
++		if (currentUIMode == UI_MODE_HOLDING_AFFECT_ENTIRE_IN_SOUND_EDITOR && soundEditor.editingKitRow()) {
++			for (Drum* thisDrum = getCurrentKit()->firstDrum; thisDrum != nullptr; thisDrum = thisDrum->next) {
++				thisDrum->arpSettings.ratchetBounce = value;
++			}
++		}
++		else {
++			soundEditor.currentArpSettings->ratchetBounce = value;
++		}
++	}
++	[[nodiscard]] int32_t getMinValue() const override { return -kMaxRatchetBounce; }
++	[[nodiscard]] int32_t getMaxValue() const override { return kMaxRatchetBounce; }
++	bool isRelevant(ModControllableAudio* modControllable, int32_t whichThing) const override {
++		return soundEditor.currentArpSettings != nullptr;
++	}
++	void getColumnLabel(StringBuf& label) override {
++		label.append(deluge::l10n::get(deluge::l10n::built_in::seven_segment, this->name));
++	}
++	[[nodiscard]] RenderingStyle getRenderingStyle() const override { return NUMBER; }
++};
++} // namespace deluge::gui::menu_item::arpeggiator
+diff --git a/src/deluge/gui/menu_item/arpeggiator/ratchet_notes.h b/src/deluge/gui/menu_item/arpeggiator/ratchet_notes.h
+new file mode 100644
+index 000000000..c5cba1e4f
+--- /dev/null
++++ b/src/deluge/gui/menu_item/arpeggiator/ratchet_notes.h
+@@ -0,0 +1,74 @@
++/*
++ * Copyright © 2026 Deluge community contributors
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include "gui/menu_item/selection.h"
++#include "gui/l10n/l10n.h"
++#include "gui/ui/sound_editor.h"
++#include "model/drum/drum.h"
++#include "model/instrument/kit.h"
++#include "model/song/song.h"
++#include "modulation/arpeggiator.h"
++
++namespace deluge::gui::menu_item::arpeggiator {
++// Number of notes in a ratchet (mastertune): Auto picks 2, 4 or 8 at random as 1.3 does (weighted by the ratchet
++// amount), 2 ... 8 always exactly that many, Roll as many as fit until the plates close, Ball a ping-pong ball between
++// plates that meet and part again (see the arp's setupRatchetRoll())
++class RatchetNotes final : public Selection {
++public:
++	using Selection::Selection;
++	void readCurrentValue() override {
++		uint8_t notes = soundEditor.currentArpSettings->ratchetNotes;
++		this->setValue((notes == kRatchetNotesRoll)   ? kRollOption
++		               : (notes == kRatchetNotesBall) ? kBallOption
++		               : (notes >= 2)                 ? notes - 1
++		                                              : 0);
++	}
++	bool usesAffectEntire() override { return true; }
++	void writeCurrentValue() override {
++		int32_t option = this->getValue();
++		uint8_t notes = (option == kRollOption)   ? kRatchetNotesRoll
++		                : (option == kBallOption) ? kRatchetNotesBall
++		                : (option == 0)           ? 0
++		                                          : option + 1;
++		// If affect-entire button held, do whole kit
++		if (currentUIMode == UI_MODE_HOLDING_AFFECT_ENTIRE_IN_SOUND_EDITOR && soundEditor.editingKitRow()) {
++			for (Drum* thisDrum = getCurrentKit()->firstDrum; thisDrum != nullptr; thisDrum = thisDrum->next) {
++				thisDrum->arpSettings.ratchetNotes = notes;
++			}
++		}
++		else {
++			soundEditor.currentArpSettings->ratchetNotes = notes;
++		}
++	}
++	deluge::vector<std::string_view> getOptions(OptType optType) override {
++		(void)optType;
++		using enum l10n::String;
++		return {l10n::getView(STRING_FOR_AUTO), "2", "3", "4", "5", "6", "7", "8", l10n::getView(STRING_FOR_ROLL),
++		        l10n::getView(STRING_FOR_BALL)};
++	}
++	bool isRelevant(ModControllableAudio* modControllable, int32_t whichThing) const override {
++		return soundEditor.currentArpSettings != nullptr;
++	}
++	void getColumnLabel(StringBuf& label) override {
++		label.append(deluge::l10n::get(deluge::l10n::built_in::seven_segment, this->name));
++	}
++
++private:
++	static constexpr int32_t kRollOption = 8;
++	static constexpr int32_t kBallOption = 9;
++};
++} // namespace deluge::gui::menu_item::arpeggiator
+diff --git a/src/deluge/gui/ui/menus.cpp b/src/deluge/gui/ui/menus.cpp
+index 7bbd559f6..20b19701b 100644
+--- a/src/deluge/gui/ui/menus.cpp
++++ b/src/deluge/gui/ui/menus.cpp
+@@ -2,8 +2,11 @@
+ #include "gui/l10n/strings.h"
+ #include "gui/menu_item/active_scales.h"
+ #include "gui/menu_item/arpeggiator/arp_unpatched_param.h"
++#include "gui/menu_item/arpeggiator/bounce_fade.h"
++#include "gui/menu_item/arpeggiator/bounce_length.h"
+ #include "gui/menu_item/arpeggiator/chord_type.h"
+ #include "gui/menu_item/arpeggiator/include_in_kit_arp.h"
++#include "gui/menu_item/arpeggiator/latch.h"
+ #include "gui/menu_item/arpeggiator/midi_cv/gate.h"
+ #include "gui/menu_item/arpeggiator/midi_cv/rate.h"
+ #include "gui/menu_item/arpeggiator/midi_cv/rhythm.h"
+@@ -15,6 +18,8 @@
+ #include "gui/menu_item/arpeggiator/octave_mode.h"
+ #include "gui/menu_item/arpeggiator/octaves.h"
+ #include "gui/menu_item/arpeggiator/preset_mode.h"
++#include "gui/menu_item/arpeggiator/ratchet_bounce.h"
++#include "gui/menu_item/arpeggiator/ratchet_notes.h"
+ #include "gui/menu_item/arpeggiator/rate.h"
+ #include "gui/menu_item/arpeggiator/rhythm.h"
+ #include "gui/menu_item/arpeggiator/sequence_length.h"
+@@ -289,6 +294,16 @@ PLACE_SDRAM_BSS arpeggiator::midi_cv::SequenceLength arpSequenceLengthMenuMIDIOr
+ PLACE_SDRAM_BSS arpeggiator::IncludeInKitArp arpIncludeInKitArpMenu{STRING_FOR_INCLUDE_IN_KIT_ARP,
+                                                                     STRING_FOR_INCLUDE_IN_KIT_ARP};
+ 
++// mastertune: latch, and how a ratchet's notes are counted and spaced
++PLACE_SDRAM_BSS arpeggiator::Latch arpLatchMenu{STRING_FOR_ARP_LATCH, STRING_FOR_ARP_LATCH_MENU_TITLE};
++PLACE_SDRAM_BSS arpeggiator::RatchetNotes arpRatchetNotesMenu{STRING_FOR_RATCHET_NOTES,
++                                                              STRING_FOR_ARP_RATCHET_NOTES_MENU_TITLE};
++PLACE_SDRAM_BSS arpeggiator::RatchetBounce arpRatchetBounceMenu{STRING_FOR_RATCHET_BOUNCE,
++                                                                STRING_FOR_ARP_RATCHET_BOUNCE_MENU_TITLE};
++PLACE_SDRAM_BSS arpeggiator::BounceLength arpBounceLengthMenu{STRING_FOR_BOUNCE_LENGTH,
++                                                              STRING_FOR_ARP_BOUNCE_LENGTH_MENU_TITLE};
++PLACE_SDRAM_BSS arpeggiator::BounceFade arpBounceFadeMenu{STRING_FOR_BOUNCE_FADE, STRING_FOR_ARP_BOUNCE_FADE_MENU_TITLE};
++
+ // Randomizer ---------------------------------
+ PLACE_SDRAM_BSS randomizer::RandomizerLock randomizerLockMenu{STRING_FOR_RANDOMIZER_LOCK,
+                                                               STRING_FOR_ARP_RANDOMIZER_LOCK_TITLE};
+@@ -393,9 +408,15 @@ PLACE_SDRAM_BSS HorizontalMenu arpPatternMenu{STRING_FOR_PATTERN,
+                                                &arpRhythmMenu, &arpRhythmMenuMIDIOrCV, &arpSequenceLengthMenu,
+                                                &arpSequenceLengthMenuMIDIOrCV}};
+ 
+-PLACE_SDRAM_BSS HorizontalMenuGroup arpMenuGroup{{&arpBasicMenu, &arpPatternMenu}};
+-PLACE_SDRAM_BSS HorizontalMenuGroup arpMenuGroupKit{{&arpBasicMenuKit, &arpPatternMenu}};
+-PLACE_SDRAM_BSS HorizontalMenuGroup arpMenuGroupMIDIOrCV{{&arpBasicMenuMIDIOrCV, &arpPatternMenu}};
++// Arp: Ratchet (mastertune): the number of a ratchet's notes and how they are spaced
++PLACE_SDRAM_BSS HorizontalMenu arpRatchetMenu{
++    STRING_FOR_RATCHET,
++    STRING_FOR_ARP_RATCHET_MENU_TITLE,
++    {&arpRatchetNotesMenu, &arpRatchetBounceMenu, &arpBounceLengthMenu, &arpBounceFadeMenu}};
++
++PLACE_SDRAM_BSS HorizontalMenuGroup arpMenuGroup{{&arpBasicMenu, &arpPatternMenu, &arpRatchetMenu}};
++PLACE_SDRAM_BSS HorizontalMenuGroup arpMenuGroupKit{{&arpBasicMenuKit, &arpPatternMenu, &arpRatchetMenu}};
++PLACE_SDRAM_BSS HorizontalMenuGroup arpMenuGroupMIDIOrCV{{&arpBasicMenuMIDIOrCV, &arpPatternMenu, &arpRatchetMenu}};
+ 
+ // Arp: MPE
+ PLACE_SDRAM_BSS arpeggiator::ArpMpeVelocity arpMpeVelocityMenu{STRING_FOR_VELOCITY, STRING_FOR_VELOCITY};
+@@ -406,10 +427,14 @@ PLACE_SDRAM_BSS Submenu arpMenu{
+     {
+         // Mode
+         &arpModeMenu,
++        // Latch
++        &arpLatchMenu,
+         // Basic
+         &arpBasicMenu,
+         // Pattern
+         &arpPatternMenu,
++        // Ratchet
++        &arpRatchetMenu,
+         // MPE
+         &arpMpeMenu,
+         // Include in kit arp
+@@ -422,10 +447,14 @@ PLACE_SDRAM_BSS Submenu arpMenuMIDIOrCV{
+     {
+         // Mode
+         &arpModeMenu,
++        // Latch
++        &arpLatchMenu,
+         // Basic
+         &arpBasicMenuMIDIOrCV,
+         // Pattern
+         &arpPatternMenu,
++        // Ratchet
++        &arpRatchetMenu,
+         // MPE
+         &arpMpeMenu,
+         // Include in kit arp
+@@ -438,10 +467,14 @@ PLACE_SDRAM_BSS Submenu kitArpMenu{
+     {
+         // Mode
+         &arpModeMenu,
++        // Latch
++        &arpLatchMenu,
+         // Basic
+         &arpBasicMenuKit,
+         // Pattern
+         &arpPatternMenu,
++        // Ratchet
++        &arpRatchetMenu,
+         // Randomizer
+         &randomizerMenu,
+     },
+diff --git a/src/deluge/modulation/arpeggiator.cpp b/src/deluge/modulation/arpeggiator.cpp
+index acb15e4dc..adb338ccc 100644
+--- a/src/deluge/modulation/arpeggiator.cpp
++++ b/src/deluge/modulation/arpeggiator.cpp
+@@ -25,6 +25,8 @@
+ #include "playback/playback_handler.h"
+ #include "storage/flash_storage.h"
+ #include "util/functions.h"
++#include "util/lookuptables/lookuptables.h"
++#include <cmath>
+ #include <cstdint>
+ 
+ #define MIN_MPE_MODULATED_VELOCITY 10
+@@ -124,6 +126,9 @@ void Arpeggiator::reset() {
+ 	notesAsPlayed.empty();
+ 	notesByPattern.empty();
+ 	anyPending = false;
++	numNotesHeld = 0;
++	latchedNotesReplaced = false;
++	anyLatchReleased = false;
+ 	active_note.resetPostArpArrays();
+ 	active_note.velocity = 0;
+ }
+@@ -137,6 +142,11 @@ void ArpeggiatorForDrum::reset() {
+ void ArpeggiatorBase::resetRatchet() {
+ 	// Ratchets
+ 	isRatcheting = false;
++	isRatchetBouncing = false;
++	isRatchetRolling = false;
++	rollBall = false;
++	ratchetSpanSteps = 1;
++	ratchetSpanStep = 0;
+ 	ratchetNotesMultiplier = 0;
+ 	ratchetNotesCount = 0;
+ 	ratchetNotesIndex = 0;
+@@ -266,6 +276,20 @@ void Arpeggiator::noteOn(ArpeggiatorSettings* settings, int32_t noteCode, int32_
+                          ArpReturnInstruction* instruction, int32_t fromMIDIChannel, int16_t const* mpeValues) {
+ 	lastVelocity = originalVelocity;
+ 
++	// Latch: the first key pressed after all were let go replaces the latched notes
++	if (!arpIsOff(settings) && settings->latch) {
++		if (numNotesHeld <= 0 && notes.getNumElements() > 0) {
++			notes.empty();
++			notesAsPlayed.empty();
++			notesByPattern.empty();
++			whichNoteCurrentlyOnPostArp = 0;
++			playedFirstArpeggiatedNoteYet = false;
++			latchedNotesReplaced = true;
++			anyLatchReleased = false;
++		}
++		numNotesHeld = std::max(numNotesHeld, (int32_t)0) + 1;
++	}
++
+ 	bool note_exists = false;
+ 	// Sticky on purpose: with the arp on, switchNoteOn() leaves the `notes` element PENDING (only the active_note copy
+ 	// of it gets marked PLAYING), and that's what lets handlePendingNotes() start the held note if the arp is switched
+@@ -279,6 +303,7 @@ void Arpeggiator::noteOn(ArpeggiatorSettings* settings, int32_t noteCode, int32_
+ 		arp_note = (ArpNote*)notes.getElementAddress(notes_key);
+ 		if (arp_note->inputCharacteristics[util::to_underlying(MIDICharacteristic::NOTE)] == noteCode) {
+ 			note_exists = true;
++			arp_note->latchReleased = false; // Its key is down again
+ 		}
+ 	}
+ 
+@@ -304,6 +329,7 @@ void Arpeggiator::noteOn(ArpeggiatorSettings* settings, int32_t noteCode, int32_
+ 		arp_note->inputCharacteristics[util::to_underlying(MIDICharacteristic::NOTE)] = noteCode;
+ 		arp_note->baseVelocity = originalVelocity;
+ 		arp_note->velocity = originalVelocity;
++		arp_note->latchReleased = false;
+ 
+ 		// MIDIInstrument might set this, but it needs to be MIDI_CHANNEL_NONE until then so it
+ 		// doesn't get included in the survey that will happen of existing output member
+@@ -343,7 +369,11 @@ void Arpeggiator::noteOn(ArpeggiatorSettings* settings, int32_t noteCode, int32_
+ 	if (!arpIsOff(settings)) {
+ 
+ 		// If this was the first note-on and we want to sound a note right now...
+-		if (notes.getNumElements() == 1) {
++		if (notes.getNumElements() == 1 && latchedNotesReplaced) {
++			// Replacing latched notes: carry on in time, the new notes come in at the next step
++			latchedNotesReplaced = false;
++		}
++		else if (notes.getNumElements() == 1) {
+ 			playedFirstArpeggiatedNoteYet = false;
+ 			gateCurrentlyActive = false;
+ 
+@@ -388,6 +418,21 @@ void Arpeggiator::noteOn(ArpeggiatorSettings* settings, int32_t noteCode, int32_
+ }
+ 
+ void Arpeggiator::noteOff(ArpeggiatorSettings* settings, int32_t noteCodePreArp, ArpReturnInstruction* instruction) {
++	// Latch: letting go of a key leaves its note in the arp
++	if (!arpIsOff(settings) && settings->latch) {
++		numNotesHeld = std::max(numNotesHeld - 1, (int32_t)0);
++		int32_t key = notes.search(noteCodePreArp, GREATER_OR_EQUAL);
++		if (key < notes.getNumElements()) {
++			auto* arpNote = static_cast<ArpNote*>(notes.getElementAddress(key));
++			if (arpNote->inputCharacteristics[util::to_underlying(MIDICharacteristic::NOTE)] == noteCodePreArp) {
++				arpNote->latchReleased = true;
++				anyLatchReleased = true;
++			}
++		}
++		return;
++	}
++	numNotesHeld = 0;
++
+ 	int32_t notesKey = notes.search(noteCodePreArp, GREATER_OR_EQUAL);
+ 	if (notesKey < notes.getNumElements()) {
+ 
+@@ -485,8 +530,40 @@ void Arpeggiator::noteOff(ArpeggiatorSettings* settings, int32_t noteCodePreArp,
+ 		playedFirstArpeggiatedNoteYet = false;
+ 	}
+ }
++// Latch with the arp switched off (its mode, a preset, or another clip of the instrument without the arp): the notes
++// whose keys were let go while the latch held them are dropped. They are no held notes, and switchNoteOn() leaves every
++// `notes` element PENDING, so they would otherwise start below as held notes that no note-off ever ends
++void Arpeggiator::dropLatchedNotes(ArpeggiatorSettings* settings) {
++	for (int32_t i = notes.getNumElements() - 1; i >= 0; i--) {
++		auto* arpNote = static_cast<ArpNote*>(notes.getElementAddress(i));
++		if (!arpNote->latchReleased) {
++			continue;
++		}
++		int16_t noteCode = arpNote->inputCharacteristics[util::to_underlying(MIDICharacteristic::NOTE)];
++		notes.deleteAtIndex(i);
++		for (int32_t j = 0; j < notesAsPlayed.getNumElements(); j++) {
++			if (static_cast<ArpJustNoteCode*>(notesAsPlayed.getElementAddress(j))->noteCode == noteCode) {
++				notesAsPlayed.deleteAtIndex(j);
++				break;
++			}
++		}
++		if (whichNoteCurrentlyOnPostArp >= i && whichNoteCurrentlyOnPostArp > 0) {
++			whichNoteCurrentlyOnPostArp--;
++		}
++	}
++	anyLatchReleased = false;
++	rearrangePatterntArpNotes(settings);
++	if (notes.getNumElements() == 0) {
++		resetBase();
++		playedFirstArpeggiatedNoteYet = false;
++	}
++}
++
+ bool Arpeggiator::handlePendingNotes(ArpeggiatorSettings* settings, ArpReturnInstruction* instruction) {
+ 	if (arpIsOff(settings)) {
++		if (anyLatchReleased) {
++			dropLatchedNotes(settings);
++		}
+ 		// if off make sure there aren't any notes waiting to start
+ 		if (anyPending) {
+ 			for (int i = 0; i < notes.getNumElements(); i++) {
+@@ -521,6 +598,11 @@ bool Arpeggiator::hasPendingNotes(ArpeggiatorSettings* settings) {
+ 		return ArpeggiatorBase::hasPendingNotes(settings);
+ 	}
+ 
++	// Latched notes still to drop: handlePendingNotes() must run (in the next render) to drop them
++	if (anyLatchReleased) {
++		return true;
++	}
++
+ 	if (!anyPending) {
+ 		return false;
+ 	}
+@@ -575,11 +657,41 @@ void ArpeggiatorBase::switchAnyNoteOff(ArpReturnInstruction* instruction) {
+ 
+ // Sets up the ratchet state if the probability is met
+ void ArpeggiatorBase::maybeSetupNewRatchet(ArpeggiatorSettings* settings) {
++	bool roll = settings->ratchetNotes == kRatchetNotesRoll || settings->ratchetNotes == kRatchetNotesBall;
++	bool fixedNumberOfNotes = settings->ratchetNotes >= 2; // Includes the roll
+ 	isRatcheting = isPlayRatchetForCurrentStep
+-	               && settings->ratchetAmount > 0
++	               && (settings->ratchetAmount > 0 || fixedNumberOfNotes)
+ 	               // For the highest sync we can't divide the time any more, so not possible to ratchet
+ 	               && !(settings->syncType == SYNC_TYPE_EVEN && settings->syncLevel == SyncLevel::SYNC_LEVEL_256TH);
+-	if (isRatcheting) {
++	// How many steps the ratchet lasts: only more than one if the step's note plays (a note left out by the note
++	// probability stays a one-step rest), and never past the end of the sequence length, where the arp starts over
++	ratchetSpanSteps = 1;
++	if (isRatcheting && isPlayNoteForCurrentStep) {
++		ratchetSpanSteps = std::clamp<uint32_t>(settings->ratchetBounceLength, 1, kMaxBounceLength);
++		uint32_t maxSequenceLength = computeCurrentValueForUnsignedMenuItem(settings->sequenceLength);
++		if (maxSequenceLength > 0 && notesPlayedFromSequence < maxSequenceLength) {
++			ratchetSpanSteps = std::min<uint32_t>(ratchetSpanSteps, maxSequenceLength - notesPlayedFromSequence);
++		}
++	}
++	ratchetSpanStep = 0;
++	if (isRatcheting && roll) {
++		ratchetNotesMultiplier = 0;
++		ratchetNotesCount = 1; // setupRatchetRoll() works out how many
++	}
++	else if (isRatcheting && fixedNumberOfNotes) {
++		// Always the chosen number of notes, except where the step is too short to divide that finely: at most 2 at
++		// 128th and 256th (triplet or dotted) sync, 4 at 64th (per step of a ratchet lasting several)
++		uint32_t maxNotes = kMaxFixedRatchetNotes;
++		if (settings->syncLevel == SyncLevel::SYNC_LEVEL_128TH || settings->syncLevel == SyncLevel::SYNC_LEVEL_256TH) {
++			maxNotes = 2 * ratchetSpanSteps;
++		}
++		else if (settings->syncLevel == SyncLevel::SYNC_LEVEL_64TH) {
++			maxNotes = 4 * ratchetSpanSteps;
++		}
++		ratchetNotesCount = std::min<uint32_t>({settings->ratchetNotes, maxNotes, kMaxFixedRatchetNotes});
++		ratchetNotesMultiplier = 0; // Only used by the random counts, which are powers of two
++	}
++	else if (isRatcheting) {
+ 		ratchetNotesMultiplier = getRandomWeighted2BitsAmount(settings->ratchetAmount);
+ 		ratchetNotesCount = 1 << ratchetNotesMultiplier;
+ 		if (settings->syncLevel == SyncLevel::SYNC_LEVEL_128TH) {
+@@ -603,6 +715,265 @@ void ArpeggiatorBase::maybeSetupNewRatchet(ArpeggiatorSettings* settings) {
+ 		ratchetNotesCount = 0;
+ 	}
+ 	ratchetNotesIndex = 0;
++	setupRatchetBounce(settings);
++}
++
++// Spaces the notes of a new ratchet like a bouncing ball: each gap is the one before times r, so the ratchet speeds
++// up (r < 1) or slows down (r > 1) while still filling exactly one step. A ball hits softer as the bounces get shorter,
++// so with bounce fade on, each note's velocity follows the square root of its gap relative to the longest one.
++void ArpeggiatorBase::setupRatchetBounce(ArpeggiatorSettings* settings) {
++	isRatchetRolling = isRatcheting
++	                   && (settings->ratchetNotes == kRatchetNotesRoll || settings->ratchetNotes == kRatchetNotesBall);
++	rollBall = isRatchetRolling && settings->ratchetNotes == kRatchetNotesBall;
++	if (isRatchetRolling) {
++		isRatchetBouncing = false;
++		setupRatchetRoll(settings);
++		return;
++	}
++	isRatchetBouncing =
++	    isRatcheting && settings->ratchetBounce != 0 && ratchetNotesCount >= 2 && ratchetNotesCount <= kMaxRatchetNotes;
++	if (!isRatchetBouncing) {
++		return;
++	}
++	int32_t amount = std::clamp<int32_t>(settings->ratchetBounce, -kMaxRatchetBounce, kMaxRatchetBounce);
++	float shrink = 1.0f - 0.05f * (float)std::abs(amount); // 0.95 ... 0.5, like a ball losing 5 ... 50 % per bounce
++	float ratio = (amount > 0) ? shrink : 1.0f / shrink;
++
++	std::array<float, kMaxRatchetNotes> gaps;
++	float gap = 1.0f;
++	float total = 0.0f;
++	float longest = 0.0f;
++	float shortest = 1.0f;
++	for (uint32_t i = 0; i < ratchetNotesCount; i++) {
++		gaps[i] = gap;
++		total += gap;
++		longest = std::max(longest, gap);
++		shortest = std::min(shortest, gap);
++		gap *= ratio;
++	}
++
++	constexpr float kMaxGate = (float)(1 << 24);
++	float start = 0.0f;
++	for (uint32_t i = 0; i < ratchetNotesCount; i++) {
++		// A ratchet lasting several steps spreads the same hits over all of them
++		ratchetNoteStarts[i] = (uint32_t)(start * kMaxGate / total) * ratchetSpanSteps;
++		start += gaps[i];
++		ratchetNoteVelocityScales[i] = getBounceVelocityScale(settings->ratchetBounceFade, gaps[i], longest, shortest);
++	}
++	ratchetNoteStarts[ratchetNotesCount] = ratchetSpanSteps << 24;
++}
++
++// The velocity scale (255 = unchanged) of a bouncing ratchet's hit, from its gap to the next one. Fade: the square root
++// of the gap relative to the longest, like a ball hitting softer as it comes to rest. Rise: from half the velocity at
++// the longest gap to the full one at the shortest, like a ping-pong ball getting faster between closing plates
++uint8_t ArpeggiatorBase::getBounceVelocityScale(BounceVelocity mode, float gap, float longest, float shortest) {
++	switch (mode) {
++	case BounceVelocity::FADE:
++		return (uint8_t)(255.0f * std::sqrt(gap / longest) + 0.5f);
++	case BounceVelocity::RISE:
++		if (longest > shortest) {
++			return (uint8_t)(255.0f * (1.0f - 0.5f * (gap - shortest) / (longest - shortest)) + 0.5f);
++		}
++		return 255;
++	default:
++		return 255;
++	}
++}
++
++// Ratchet roll: a ping-pong ball between two plates that close in on each other, meeting where the ratchet ends and
++// the next step lands. The ball crosses the shrinking gap faster and faster: each gap is the one before times r, so
++// hit j starts at S (1 - r^j) of the ratchet's length S, infinitely many before S. From the gap where the hits would
++// come closer than kRollMinGapSamples, they go on at that pace as a buzz (trrrr), until one such gap before S.
++// Negative bounce plays the same hits backwards in time (plates moving apart), bounce 0 is an even roll of 8 hits per
++// step (never closer than the buzz). With r from the bounce amount like the ratchet bounce: 0.95 (+1) ... 0.5 (+10)
++// Ball (mastertune v18.4): the plates close in and part again within the ratchet. The first step is a roll into the
++// meeting point, where the ball buzzes (15 ms), all the other steps a roll backwards (kBallPartFactor): faster and
++// faster, the buzz, then slower and slower for as long as the bounce length leaves, ending slower than it started.
++// With negative bounce the plates meet at both ends of the ratchet (on the step) and are furthest
++// apart in between. The hits come from the two rolls (rollSpan, rollSpanPart), see getRatchetNoteStart()
++void ArpeggiatorBase::setupRatchetRoll(ArpeggiatorSettings* settings) {
++	constexpr float kStep = (float)(1 << 24);
++	float span = kStep * (float)ratchetSpanSteps;
++	float partSpan = 0.0f;
++	if (rollBall) {
++		// The plates meet after the first step (kBallMeet of a ratchet of one step), and part over the rest
++		float closeSpan = (ratchetSpanSteps >= 2) ? kStep : span * kBallMeet;
++		partSpan = span - closeSpan;
++		span = closeSpan;
++	}
++	// The buzz's gap in positions: from the arp's speed at the last render, or a guess before the first one
++	uint32_t increment = lastGateIncrement;
++	if (increment == 0 && settings->syncLevel != 0) {
++		increment = settings->getPhaseIncrement(0) >> 8;
++	}
++	float minGapSamples = rollBall ? kBallMinGapSamples : kRollMinGapSamples;
++	float minGap = (increment != 0) ? (float)increment * minGapSamples : kStep / 8;
++	minGap = std::clamp(minGap, kStep / 256, span);
++
++	int32_t amount = std::clamp<int32_t>(settings->ratchetBounce, -kMaxRatchetBounce, kMaxRatchetBounce);
++	rollSpan = span;
++	rollMinGap = minGap;
++	rollMirrored = amount < 0;
++	uint32_t hits;
++	if (amount == 0) {
++		rollRatio = 1.0f;
++		rollEvenGap = std::max(kStep / 8, minGap);
++		rollGeometricHits = 0;
++		hits = (uint32_t)(span / rollEvenGap);
++		rollLongestGap = rollShortestGap = rollEvenGap;
++	}
++	else {
++		float ratio = 1.0f - 0.05f * (float)std::abs(amount);
++		rollRatio = ratio;
++		// K: the first hit whose gap, S (1 - r) r^K, is shorter than the buzz's
++		float gap = span * (1.0f - ratio);
++		float remaining = span; // S r^K: from hit K to the end
++		uint32_t geometric = 0;
++		while (gap >= minGap && geometric < kMaxRollHits) {
++			gap *= ratio;
++			remaining *= ratio;
++			geometric++;
++		}
++		rollGeometricHits = geometric;
++		// Hits 0 ... K - 1 with their shrinking gaps, then the buzz from hit K, each at least one buzz gap before S
++		hits = geometric + (uint32_t)(remaining / minGap);
++		rollLongestGap = (geometric > 0) ? span * (1.0f - ratio) : minGap;
++		rollShortestGap = minGap;
++	}
++	if (rollBall) {
++		// The closing: the roll into the meeting point, as above, over the first step. The parting: the same kind of
++		// roll over the rest, backwards (its ratio from kBallPartFactor), so the ball slows down for as long as the
++		// bounce length leaves
++		rollSpanPart = partSpan;
++		rollBallHalfHits = std::clamp<uint32_t>(hits, 1, kMaxRollHits / 2);
++		rollRatioPart = rollRatio;
++		rollGeometricHitsPart = 0;
++		uint32_t partHits;
++		if (amount != 0) {
++			float ratio = std::max(0.3f, 1.0f - kBallPartFactor * (1.0f - rollRatio));
++			float gap = partSpan * (1.0f - ratio);
++			float remaining = partSpan;
++			uint32_t geometric = 0;
++			while (gap >= minGap && geometric < kMaxRollHits) {
++				gap *= ratio;
++				remaining *= ratio;
++				geometric++;
++			}
++			rollRatioPart = ratio;
++			rollGeometricHitsPart = geometric;
++			partHits = geometric + (uint32_t)(remaining / minGap);
++			// the parting's first gap (its last in time) is the longest of the ratchet
++			rollLongestGap = std::max(rollLongestGap, (geometric > 0) ? partSpan * (1.0f - ratio) : minGap);
++		}
++		else {
++			partHits = (uint32_t)(partSpan / rollEvenGap);
++		}
++		rollBallPartHits = std::clamp<uint32_t>(partHits, 1, kMaxRollHits / 2);
++		ratchetNotesCount = rollBallHalfHits + rollBallPartHits;
++		return;
++	}
++	ratchetNotesCount = std::clamp<uint32_t>(hits, 1, kMaxRollHits);
++}
++
++// Where hit index of an accelerating roll starts, in positions from the start of the ratchet
++float ArpeggiatorBase::getRollStartAccelerating(uint32_t index) {
++	return getRollStart(index, rollRatio, rollGeometricHits, rollSpan);
++}
++
++// The same for a roll over span with the given ratio and number of hits before its buzz (a ball's parting has its own)
++float ArpeggiatorBase::getRollStart(uint32_t index, float ratio, uint32_t geometricHits, float span) {
++	if (ratio >= 1.0f) {
++		return (float)index * rollEvenGap;
++	}
++	if (index <= geometricHits) {
++		return span * (1.0f - std::pow(ratio, (float)index));
++	}
++	return span * (1.0f - std::pow(ratio, (float)geometricHits)) + (float)(index - geometricHits) * rollMinGap;
++}
++
++// Where the note at index of the current ratchet starts, in 1/2^24ths of a step from the start of the ratchet. Index
++// ratchetNotesCount (and beyond) is its end
++uint32_t ArpeggiatorBase::getRatchetNoteStart(uint32_t index) {
++	uint32_t end = ratchetSpanSteps << 24;
++	if (isRatchetRolling) {
++		if (index >= ratchetNotesCount) {
++			return end;
++		}
++		float start;
++		if (rollBall) {
++			// rollSpan is the closing's part of the ratchet, rollSpanPart the parting's. Meeting inside: the roll into
++			// the meeting point (h hits), a hit right on it, then the parting roll (p hits) backwards from the end.
++			// Meeting at the ends: the parting roll backwards out of the start, then the roll into the end
++			uint32_t h = rollBallHalfHits;
++			uint32_t p = rollBallPartHits;
++			if (!rollMirrored) {
++				if (index < h) {
++					start = getRollStartAccelerating(index);
++				}
++				else if (index == h) {
++					start = rollSpan;
++				}
++				else {
++					start = rollSpan + rollSpanPart
++					        - getRollStart(h + p - index, rollRatioPart, rollGeometricHitsPart, rollSpanPart);
++				}
++			}
++			else {
++				start = (index == 0) ? 0.0f
++				        : (index < p)
++				            ? rollSpanPart - getRollStart(p - index, rollRatioPart, rollGeometricHitsPart, rollSpanPart)
++				            : rollSpanPart + getRollStartAccelerating(index - p);
++			}
++			return std::min((uint32_t)start, end);
++		}
++		if (!rollMirrored) {
++			start = getRollStartAccelerating(index);
++		}
++		else if (index == 0) {
++			start = 0.0f;
++		}
++		else {
++			start = rollSpan - getRollStartAccelerating(ratchetNotesCount - index);
++		}
++		return std::min((uint32_t)start, end);
++	}
++	if (isRatchetBouncing) {
++		return ratchetNoteStarts[std::min(index, ratchetNotesCount)];
++	}
++	if (ratchetNotesCount == 0) {
++		return 0;
++	}
++	// Evenly spaced. For the random counts (powers of two) this is exactly index * (maxGate >> multiplier)
++	return (uint32_t)(((uint64_t)std::min(index, ratchetNotesCount) * end) / ratchetNotesCount);
++}
++
++uint8_t ArpeggiatorBase::applyRatchetBounceToVelocity(ArpeggiatorSettings* settings, uint8_t velocity) {
++	if (ratchetNotesIndex >= ratchetNotesCount) {
++		return velocity;
++	}
++	uint8_t scale;
++	if (isRatchetRolling) {
++		float gap = (float)(getRatchetNoteStart(ratchetNotesIndex + 1) - getRatchetNoteStart(ratchetNotesIndex));
++		gap = std::clamp(gap, rollShortestGap, rollLongestGap);
++		scale = getBounceVelocityScale(settings->ratchetBounceFade, gap, rollLongestGap, rollShortestGap);
++	}
++	else if (isRatchetBouncing) {
++		scale = ratchetNoteVelocityScales[ratchetNotesIndex];
++	}
++	else {
++		return velocity;
++	}
++	uint32_t scaled = ((uint32_t)velocity * scale + 127) / 255;
++	return std::max<uint32_t>(scaled, 1);
++}
++
++// A step inside a ratchet that lasts several: the ratchet goes on (its note held, no new arp note), and the step
++// counts for the rhythm and sequence length like a rest, so the arp comes back in time with them
++void ArpeggiatorBase::advanceRatchetSpanStep(ArpeggiatorSettings* settings) {
++	ratchetSpanStep++;
++	uint32_t maxSequenceLength = computeCurrentValueForUnsignedMenuItem(settings->sequenceLength);
++	uint32_t rhythm = computeCurrentValueForUnsignedMenuItem(settings->rhythm);
++	increaseSequenceIndexes(maxSequenceLength, rhythm);
+ }
+ 
+ uint32_t ArpeggiatorBase::calculateSpreadVelocity(uint8_t velocity, int32_t spreadVelocityForCurrentStep) {
+@@ -838,7 +1209,8 @@ void ArpeggiatorForDrum::switchNoteOn(ArpeggiatorSettings* settings, ArpReturnIn
+ 		}
+ 		active_note.baseVelocity = velocity;
+ 		// Now apply velocity spread to the base velocity
+-		velocity = calculateSpreadVelocity(velocity, spreadVelocityForCurrentStep);
++		velocity =
++		    applyRatchetBounceToVelocity(settings, calculateSpreadVelocity(velocity, spreadVelocityForCurrentStep));
+ 		active_note.velocity = velocity;
+ 		// Get current sequence note
+ 		int16_t note;
+@@ -923,6 +1295,20 @@ int8_t ArpeggiatorBase::getRandomWeighted2BitsAmount(uint32_t value) {
+ }
+ 
+ void ArpeggiatorBase::calculateRandomizerAmounts(ArpeggiatorSettings* settings) {
++	if (settings == nullptr) {
++		// No arp settings (e.g. arp switched off without any): plain notes
++		isPlayNoteForCurrentStep = true;
++		isPlayBassForCurrentStep = false;
++		isPlayRandomStepForCurrentStep = false;
++		isPlayReverseForCurrentStep = false;
++		isPlayChordForCurrentStep = false;
++		isPlayRatchetForCurrentStep = false;
++		isPlayGlideForCurrentStep = false;
++		spreadVelocityForCurrentStep = 0;
++		spreadGateForCurrentStep = 0;
++		spreadOctaveForCurrentStep = 0;
++		return;
++	}
+ 	if (settings->randomizerLock) {
+ 		// Store generated randomized values in an array so we can repeat the sequence
+ 		if (resetLockedRandomizerValuesNextTime
+@@ -1266,7 +1652,10 @@ void Arpeggiator::rearrangePatterntArpNotes(ArpeggiatorSettings* settings) {
+ 	uint32_t notesByPatternIndex;
+ 	int32_t numNotes = notes.getNumElements();
+ 	for (uint32_t i = 0; i < numNotes; i++) {
+-		notesByPatternIndex = std::min((uint32_t)settings->notePattern[std::min(i, PATTERN_MAX_BUFFER_SIZE - 1)], i);
++		// No settings (instrument without a clip): no pattern, keep the notes in order
++		uint32_t patternPosition =
++		    (settings != nullptr) ? (uint32_t)settings->notePattern[std::min(i, PATTERN_MAX_BUFFER_SIZE - 1)] : i;
++		notesByPatternIndex = std::min(patternPosition, i);
+ 		// insert at the position in the array indicated by the pattern
+ 		error = notesByPattern.insertAtIndex(notesByPatternIndex);
+ 		if (error != Error::NONE) {
+@@ -1368,7 +1757,8 @@ void Arpeggiator::switchNoteOn(ArpeggiatorSettings* settings, ArpReturnInstructi
+ 		}
+ 		arpNote->baseVelocity = velocity;
+ 		// Now apply velocity spread to the base velocity
+-		velocity = calculateSpreadVelocity(velocity, spreadVelocityForCurrentStep);
++		velocity =
++		    applyRatchetBounceToVelocity(settings, calculateSpreadVelocity(velocity, spreadVelocityForCurrentStep));
+ 		arpNote->velocity = velocity;
+ 		// Get current sequence note
+ 		int16_t note = 0;
+@@ -1484,6 +1874,7 @@ bool ArpeggiatorBase::hasPendingNotes(ArpeggiatorSettings* settings) {
+ // May switch notes on and/or off.
+ void ArpeggiatorBase::render(ArpeggiatorSettings* settings, ArpReturnInstruction* instruction, int32_t numSamples,
+                              uint32_t gateThreshold, uint32_t phaseIncrement) {
++	lastGateIncrement = phaseIncrement >> 8;
+ 	if (handlePendingNotes(settings, instruction)) {
+ 		return;
+ 	}
+@@ -1492,6 +1883,27 @@ void ArpeggiatorBase::render(ArpeggiatorSettings* settings, ArpReturnInstruction
+ 	}
+ 
+ 	uint32_t maxGate = 1 << 24;
++	bool syncedNow = (settings->syncLevel && (playbackHandler.isEitherClockActive()));
++
++	// A ratchet lasting several steps goes on into its next step here when not synced (synced, the clock's tick does
++	// it)
++	if (!syncedNow && isRatcheting) {
++		while (gatePos >= maxGate && ratchetSpanStep + 1 < ratchetSpanSteps) {
++			gatePos -= maxGate;
++			advanceRatchetSpanStep(settings);
++		}
++	}
++	// Where we are in the ratchet (or the step). Synced, inside a ratchet lasting several steps, not past the step
++	// until the clock's tick moves it on (with swing or an external clock the tick can come later than the arp's own
++	// count), so no hit of the next step comes early
++	uint32_t positionInStep = gatePos;
++	if (syncedNow && isRatcheting && ratchetSpanStep + 1 < ratchetSpanSteps) {
++		positionInStep = std::min(gatePos, maxGate - 1);
++	}
++	uint32_t position = (ratchetSpanStep << 24) + positionInStep;
++	// Unsynced, the step is over: whatever the gate, the note ends and the next step starts (so a ratchet whose note
++	// is still on over the step's end can't hold the arp)
++	bool stepOver = !syncedNow && gatePos >= maxGate;
+ 
+ 	uint32_t gateThresholdSmall = gateThreshold >> 8;
+ 
+@@ -1519,29 +1931,33 @@ void ArpeggiatorBase::render(ArpeggiatorSettings* settings, ArpReturnInstruction
+ 		gateThresholdSmall = (uint32_t)signedGateThreshold;
+ 	}
+ 
++	// When ratcheting, the gate applies to each note of the ratchet (evenly spaced, or bouncing)
++	uint32_t noteStart = 0;
++	uint32_t noteLength = maxGate;
+ 	if (isRatcheting) {
+-		// shorten gate in case we are ratcheting (with the calculated number of ratchet notes)
+-		gateThresholdSmall = gateThresholdSmall >> ratchetNotesMultiplier;
++		noteStart = getRatchetNoteStart(ratchetNotesIndex);
++		noteLength = getRatchetNoteStart(ratchetNotesIndex + 1) - noteStart;
+ 	}
+-	uint32_t maxGateForRatchet = maxGate >> ratchetNotesMultiplier;
+-
+-	bool syncedNow = (settings->syncLevel && (playbackHandler.isEitherClockActive()));
++	uint32_t gateOffPos = noteStart + (uint32_t)(((uint64_t)noteLength * gateThresholdSmall) >> 24);
+ 
+ 	// If gatePos is far enough along that we at least want to switch off any note...
+-	if (gatePos >= ratchetNotesIndex * maxGateForRatchet + gateThresholdSmall) {
++	if (position >= gateOffPos || stepOver) {
+ 		switchAnyNoteOff(instruction);
+ 
++		// If not syncing and the step is over, the next normal note is due. Ratchet notes of this step that haven't
++		// started by now fell behind (only one note starts per render, so a bouncing ratchet's short last gaps, or a
++		// very fast rate, can leave some unplayed): drop them, rather than playing them late and pushing the whole
++		// next step back
++		if (!syncedNow && gatePos >= maxGate) {
++			resetRatchet();
++			switchNoteOn(settings, instruction, false);
++		}
+ 		// If it's ratcheting and time for the next ratchet event
+-		if (isRatcheting && ratchetNotesIndex < ratchetNotesCount - 1
+-		    && gatePos >= (ratchetNotesIndex + 1) * maxGateForRatchet) {
++		else if (isRatcheting && ratchetNotesIndex < ratchetNotesCount - 1
++		         && position >= getRatchetNoteStart(ratchetNotesIndex + 1)) {
+ 			// Switch on next note in the ratchet
+ 			switchNoteOn(settings, instruction, true);
+ 		}
+-		// And maybe (if not syncing) the gatePos is also far enough along that we also want to switch a normal
+-		// note on?
+-		else if (!syncedNow && gatePos >= maxGate) {
+-			switchNoteOn(settings, instruction, false);
+-		}
+ 	}
+ 	if (!syncedNow) {
+ 		gatePos &= (maxGate - 1);
+@@ -1579,9 +1995,35 @@ int32_t ArpeggiatorBase::doTickForward(ArpeggiatorSettings* settings, ArpReturnI
+ 
+ 	if (!howFarIntoPeriod) {
+ 		if (hasAnyInputNotesActive()) {
+-			switchAnyNoteOff(instruction);
+-			instruction->sampleSyncLengthOn = ticksPerPeriod; // Overwrite this
+-			switchNoteOn(settings, instruction, false);
++			if (isRatcheting && playedFirstArpeggiatedNoteYet && ratchetSpanStep + 1 < ratchetSpanSteps) {
++				// A step inside a ratchet that lasts several: it goes on, back in time with the clock
++				gatePos = 0;
++				advanceRatchetSpanStep(settings);
++				// If the tick came earlier than the arp's own count (swing, an external clock), hits of the last step
++				// can be left unplayed: dropped, as a new step drops what's left of its ratchet, so they don't come
++				// late on top of the ones due now. Except one due just before the tick (at most about two audio
++				// blocks), if it doesn't run into the next hit: it plays now, so a fast roll has no gap here
++				uint32_t stepStart = ratchetSpanStep << 24;
++				uint32_t nearTick = lastGateIncrement * 256;
++				while (ratchetNotesIndex + 1 < ratchetNotesCount) {
++					uint32_t missed = getRatchetNoteStart(ratchetNotesIndex + 1);
++					if (missed >= stepStart) {
++						break;
++					}
++					uint32_t next = getRatchetNoteStart(ratchetNotesIndex + 2);
++					if (next >= stepStart && stepStart - missed <= nearTick && next - missed > nearTick) {
++						break;
++					}
++					ratchetNotesIndex++;
++				}
++			}
++			else {
++				switchAnyNoteOff(instruction);
++				// A new step: whatever is left of the last step's ratchet must not play into it (e.g. a rest step)
++				resetRatchet();
++				instruction->sampleSyncLengthOn = ticksPerPeriod; // Overwrite this
++				switchNoteOn(settings, instruction, false);
++			}
+ 		}
+ 		howFarIntoPeriod = ticksPerPeriod;
+ 	}
+@@ -1628,6 +2070,11 @@ void ArpeggiatorSettings::cloneFrom(ArpeggiatorSettings const* other) {
+ 	numStepRepeats = other->numStepRepeats;
+ 	includeInKitArp = other->includeInKitArp;
+ 	randomizerLock = other->randomizerLock;
++	latch = other->latch;
++	ratchetBounce = other->ratchetBounce;
++	ratchetBounceFade = other->ratchetBounceFade;
++	ratchetBounceLength = other->ratchetBounceLength;
++	ratchetNotes = other->ratchetNotes;
+ 	syncType = other->syncType;
+ 	syncLevel = other->syncLevel;
+ 	mpeVelocity = other->mpeVelocity;
+@@ -1664,6 +2111,28 @@ bool ArpeggiatorSettings::readCommonTagsFromFile(Deserializer& reader, char cons
+ 	else if (!strcmp(tagName, "randomizerLock")) {
+ 		randomizerLock = reader.readTagOrAttributeValueInt();
+ 	}
++	else if (!strcmp(tagName, "latch")) {
++		latch = reader.readTagOrAttributeValueInt();
++	}
++	else if (!strcmp(tagName, "ratchetBounce")) {
++		ratchetBounce = std::clamp<int32_t>(reader.readTagOrAttributeValueInt(), -kMaxRatchetBounce, kMaxRatchetBounce);
++	}
++	else if (!strcmp(tagName, "ratchetBounceFade")) {
++		ratchetBounceFade = static_cast<BounceVelocity>(
++		    std::clamp<int32_t>(reader.readTagOrAttributeValueInt(), 0, util::to_underlying(BounceVelocity::RISE)));
++	}
++	else if (!strcmp(tagName, "ratchetBounceLength")) {
++		ratchetBounceLength = std::clamp<int32_t>(reader.readTagOrAttributeValueInt(), 1, kMaxBounceLength);
++	}
++	else if (!strcmp(tagName, "ratchetNotes")) {
++		int32_t notes = reader.readTagOrAttributeValueInt();
++		if (notes == kRatchetNotesRoll || notes == kRatchetNotesBall) {
++			ratchetNotes = notes;
++		}
++		else {
++			ratchetNotes = (notes < 2) ? 0 : std::min<int32_t>(notes, kMaxFixedRatchetNotes);
++		}
++	}
+ 	else if (!strcmp(tagName, "lastLockedNoteProb")) {
+ 		lastLockedNoteProbabilityParameterValue = reader.readTagOrAttributeValueInt();
+ 	}
+@@ -1873,6 +2342,11 @@ void ArpeggiatorSettings::writeCommonParamsToFile(Serializer& writer, Song* song
+ 	writer.writeAttribute("mpeVelocity", (char*)arpMpeModSourceToString(mpeVelocity));
+ 	writer.writeAttribute("stepRepeat", numStepRepeats);
+ 	writer.writeAttribute("randomizerLock", randomizerLock);
++	writer.writeAttribute("latch", latch);
++	writer.writeAttribute("ratchetBounce", ratchetBounce);
++	writer.writeAttribute("ratchetBounceFade", util::to_underlying(ratchetBounceFade));
++	writer.writeAttribute("ratchetBounceLength", ratchetBounceLength);
++	writer.writeAttribute("ratchetNotes", ratchetNotes);
+ 	writer.writeAttribute("kitArp", includeInKitArp);
+ 
+ 	// Note probability
+diff --git a/src/deluge/modulation/arpeggiator.h b/src/deluge/modulation/arpeggiator.h
+index 7216eeee2..8587943ca 100644
+--- a/src/deluge/modulation/arpeggiator.h
++++ b/src/deluge/modulation/arpeggiator.h
+@@ -20,6 +20,7 @@
+ #include "algorithm"
+ #include "definitions_cxx.hpp"
+ #include "model/sync.h"
++#include "modulation/arpeggiator_rhythms.h"
+ #include "storage/storage_manager.h"
+ #include "util/container/array/ordered_resizeable_array.h"
+ #include "util/container/array/resizeable_array.h"
+@@ -39,6 +40,34 @@ constexpr uint32_t PATTERN_MAX_BUFFER_SIZE = 16;
+ 
+ constexpr int16_t ARP_NOTE_NONE = 32767;
+ 
++constexpr int32_t kMaxRatchetBounce = 10;
++constexpr uint32_t kMaxFixedRatchetNotes = 8;
++// ratchetNotes value for a roll: hits until the plates close (see ArpeggiatorBase::setupRatchetRoll())
++constexpr uint8_t kRatchetNotesRoll = 255;
++// ratchetNotes value for a ping-pong ball: the roll into the middle of the ratchet and back out of it
++constexpr uint8_t kRatchetNotesBall = 254;
++// The longest ratchet, in arp steps
++constexpr uint32_t kMaxBounceLength = 16;
++// A roll's buzz: its hits never come closer than this (16 ms), and it has at most this many
++constexpr float kRollMinGapSamples = 706.0f;
++// A ball's buzz: 15 ms, a rattle rather than a tone. The shortest gaps of the arp in Pettra "You Are The Seeds" can't be
++// measured under its bass (references/pettra-arp/METHODS.md); 15 ms is the buzz that came closest by ear
++constexpr float kBallMinGapSamples = 661.0f;
++// Where a ball's plates meet: after the ratchet's first step. The ball speeds up over one step (as the figure in
++// Pettra "You Are The Seeds" does into the beat, 102, 67, 52 ms at 1/8) and slows down over all the others, its last
++// hits slower and slower: the bounce length sets how long it runs out. A ratchet of one step meets after this part
++constexpr float kBallMeet = 1.0f / 3.0f;
++// The parting's ratio: 1 - r_p = this times 1 - r (1: each gap grows by as much as the closing's shrank)
++constexpr float kBallPartFactor = 1.0f;
++constexpr uint32_t kMaxRollHits = 255;
++
++// How a bouncing ratchet's velocity follows its gaps (the numbers are what songs store, 0 and 1 as the old on/off)
++enum class BounceVelocity : uint8_t {
++	EVEN = 0, // every hit keeps its velocity
++	FADE = 1, // softer as the gaps get shorter, like a ball coming to rest
++	RISE = 2, // louder as the gaps get shorter, like a ping-pong ball between closing plates
++};
++
+ enum class ArpType : uint8_t {
+ 	SYNTH,
+ 	DRUM,
+@@ -95,6 +124,23 @@ public:
+ 	// Arp randomizer lock
+ 	bool randomizerLock{false};
+ 
++	// Latch: notes keep being arpeggiated after the keys are let go, until a new set of keys is pressed
++	bool latch{false};
++
++	// Ratchet bounce: spaces a ratchet's notes like a bouncing ball, each gap (and velocity) smaller than the one
++	// before (positive) or bigger (negative). 0 is evenly spaced, like before
++	int8_t ratchetBounce{0};
++	// How a bouncing ratchet's velocity follows its gaps (BounceVelocity)
++	BounceVelocity ratchetBounceFade{BounceVelocity::FADE};
++	// How many arp steps a ratchet lasts: 1 = one step, like before. A longer one holds its note over the next steps
++	// and lands on the step after them
++	uint8_t ratchetBounceLength{1};
++
++	// Number of notes in a ratchet: 0 = random like 1.3 (2, 4 or 8, weighted by the ratchet amount), 2 ... 8 = always
++	// exactly that many, kRatchetNotesRoll = a roll, as many as fit until the plates close, kRatchetNotesBall = the
++	// plates close in and part again within the ratchet
++	uint8_t ratchetNotes{0};
++
+ 	// MPE settings
+ 	ArpMpeModSource mpeVelocity{ArpMpeModSource::OFF};
+ 
+@@ -178,6 +224,9 @@ struct ArpNote {
+ 	uint8_t baseVelocity{0};
+ 	// Keep the stretch length with the note when its voice start is deferred to a later render.
+ 	uint32_t sampleSyncLength{0};
++	// Latch: this note's key was let go while the latch held the note. Once the arp is off, such a note is dropped
++	// rather than started as a held note: nothing would ever end it
++	bool latchReleased{false};
+ 
+ 	// For note-ons
+ 	std::array<ArpNoteStatus, ARP_MAX_INSTRUCTION_NOTES> noteStatus{};
+@@ -268,6 +317,11 @@ protected:
+ 	void increasePatternIndexes(uint8_t numStepRepeats);
+ 	void increaseSequenceIndexes(uint32_t maxSequenceLength, uint32_t rhythm);
+ 	void maybeSetupNewRatchet(ArpeggiatorSettings* settings);
++	void setupRatchetBounce(ArpeggiatorSettings* settings);
++	void setupRatchetRoll(ArpeggiatorSettings* settings);
++	float getRollStartAccelerating(uint32_t index);
++	float getRollStart(uint32_t index, float ratio, uint32_t geometricHits, float span);
++	void advanceRatchetSpanStep(ArpeggiatorSettings* settings);
+ 	bool evaluateRhythm(uint32_t rhythm, bool isRatchet);
+ 	bool evaluateNoteProbability(bool isRatchet);
+ 	bool evaluateBassProbability(bool isRatchet);
+@@ -275,6 +329,9 @@ protected:
+ 	bool evaluateReverseProbability(bool isRatchet);
+ 	bool evaluateChordProbability(bool isRatchet);
+ 	uint32_t calculateSpreadVelocity(uint8_t velocity, int32_t spreadVelocityForCurrentStep);
++	uint8_t applyRatchetBounceToVelocity(ArpeggiatorSettings* settings, uint8_t velocity);
++	static uint8_t getBounceVelocityScale(BounceVelocity mode, float gap, float longest, float shortest);
++	uint32_t getRatchetNoteStart(uint32_t index);
+ 	int32_t getOctaveDirection(ArpeggiatorSettings* settings);
+ 	virtual void switchNoteOn(ArpeggiatorSettings* settings, ArpReturnInstruction* instruction, bool isRatchet) = 0;
+ 	void switchAnyNoteOff(ArpReturnInstruction* instruction);
+@@ -291,7 +348,7 @@ protected:
+ 	uint32_t randomNotesPlayedFromOctave = 0;
+ 
+ 	// Sequence state
+-	int16_t whichNoteCurrentlyOnPostArp; // As in, the index within our list
++	int16_t whichNoteCurrentlyOnPostArp = 0; // As in, the index within our list (mastertune-v13: initialised)
+ 	int8_t currentOctave = 0;
+ 	int8_t currentDirection = 1;
+ 	int8_t currentOctaveDirection = 1;
+@@ -327,6 +384,37 @@ protected:
+ 	uint32_t ratchetNotesCount = 0;
+ 	bool isRatcheting = false;
+ 
++	// Ratchet bounce state: where each note of the ratchet starts (in 1/2^24ths of the step) and its velocity scale
++	static constexpr uint32_t kMaxRatchetNotes = 8;
++	bool isRatchetBouncing = false;
++	std::array<uint32_t, kMaxRatchetNotes + 1> ratchetNoteStarts{};
++	std::array<uint8_t, kMaxRatchetNotes> ratchetNoteVelocityScales{}; // 255 = unchanged
++
++	// A ratchet can last several arp steps (ratchetBounceLength). Positions in it count in 1/2^24ths of a step from its
++	// start, so step ratchetSpanStep of it begins at ratchetSpanStep << 24
++	uint32_t ratchetSpanSteps = 1;
++	uint32_t ratchetSpanStep = 0;
++
++	// Roll state (ratchet notes = Roll): the hits are computed from these as they come, not stored
++	bool isRatchetRolling = false;
++	bool rollMirrored = false;      // negative bounce: the hits of the positive one, backwards in time
++	bool rollBall = false;          // Ball: a roll into the meeting point, and one backwards out of it
++	float rollSpanPart = 0.0f;      // Ball: the parting's length (rollSpan is then the closing's)
++	uint32_t rollBallHalfHits = 0;  // Ball: the hits of the closing half
++	uint32_t rollBallPartHits = 0;  // Ball: the hits of the parting half
++	float rollRatioPart = 1.0f;     // Ball: the parting half's ratio (see kBallPartFactor)
++	uint32_t rollGeometricHitsPart = 0;
++	float rollRatio = 1.0f;         // each gap is the one before times this; 1 = an even roll
++	float rollSpan = 0.0f;          // the whole ratchet, in 1/2^24ths of a step
++	float rollMinGap = 0.0f;        // the buzz: no gap shorter than this
++	float rollEvenGap = 0.0f;       // for an even roll
++	uint32_t rollGeometricHits = 0; // hits 0 ... this one follow the shrinking gaps, the later ones the buzz
++	float rollLongestGap = 0.0f;
++	float rollShortestGap = 0.0f;
++
++	// The arp's position increment per sample at the last render, to turn the buzz's minimum gap into a position
++	uint32_t lastGateIncrement = 0;
++
+ 	// Glide state
+ 	bool glideOnNextNoteOff = false;
+ 
+@@ -387,6 +475,15 @@ protected:
+ 	void rearrangePatterntArpNotes(ArpeggiatorSettings* settings);
+ 	void switchNoteOn(ArpeggiatorSettings* settings, ArpReturnInstruction* instruction, bool isRatchet) override;
+ 	bool anyPending{false};
++
++	// Latch state: how many of the notes are still physically held
++	int32_t numNotesHeld = 0;
++	// Set when a new chord replaced the latched notes: the arp keeps its timing, so the latched note still sounding
++	// gets its note-off from the gate as usual
++	bool latchedNotesReplaced = false;
++	// Some note in `notes` is latchReleased (see dropLatchedNotes())
++	bool anyLatchReleased = false;
++	void dropLatchedNotes(ArpeggiatorSettings* settings);
+ };
+ 
+ class ArpeggiatorForKit : public Arpeggiator {
+-- 
+2.43.0
+
