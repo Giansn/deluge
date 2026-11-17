@@ -56,16 +56,17 @@ with SHIFT held. Back up the card first, as for any beta.
 
 ## mastertune's features on it
 
-`deluge-1.3.0-mastertune-s1-c2380b0a.bin` (1,779,668 bytes, SHA-256
-`d12eee681f07f716147422f18997eaf8c131966ce7f0fb2f456b94f5fb3b53de`) is the stabilised build above plus the first
-step of mastertune 1.2.1's features ported to v1.3: the arp extras (latch, ratchet notes with roll and ball,
-ratchet bounce, bounce length and velocity; `features/0001`). The Deluge shows it as `1.3.0-beta-c2380b0a0`. The plan
-for the other steps (CPU monitor, master tune, Scan, DJ, USB audio), what each step does and how it is tested:
-`FEATURES.md`. **Tested in the emulator only**, as the build under it.
+`deluge-1.3.0-mastertune-s2-72e19139.bin` (1,785,148 bytes, SHA-256
+`62340f9916af406c8b9066da1f2764d2025d97c9fd7555e2bd4e5306c5fcbf31`) is the stabilised build above plus the first two
+steps of mastertune 1.2.1's features ported to v1.3: the arp extras (latch, ratchet notes with roll and ball, ratchet
+bounce, bounce length and velocity; `features/0001`) and the CPU monitor (`features/0002`). The Deluge shows it as
+`1.3.0-beta-72e191398`. The plan for the other steps (master tune, Scan, DJ, USB audio), what each step does and how
+it is tested: `FEATURES.md`. **Tested in the emulator only**, as the build under it.
 
-- Built by `FEATURES=1 tools/setup_beta.sh` (the tree `/home/user/work/beta-features`, commit `c2380b0a0`). Two
+- Built by `FEATURES=1 tools/setup_beta.sh` (the tree `/home/user/work/beta-features`, commit `72e191398`). Two
   builds in that same folder give the same file; the folder's path is part of it (one source file name in a
   message), so a build elsewhere differs in those bytes.
+- Before: `deluge-1.3.0-mastertune-s1-c2380b0a.bin` (step 1 alone, SHA-256 `d12eee68...`).
 
 | File | What |
 |---|---|

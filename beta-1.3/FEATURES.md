@@ -19,8 +19,8 @@ engine's hooks); the features themselves are mostly new files.
 | Step | Feature | mastertune patches | Size | Status |
 |---|---|---|---|---|
 | 1 | **Arp extras**: latch, ratchet notes (exactly 2 ... 8, roll, ball), ratchet bounce, bounce length and velocity | the latch and bounce part of 0005; 0006, 0021, 0024, 0117, 0120 | ~1,000 lines | done: `features/0001` |
-| 2 | **CPU monitor** (the profiler optional) | 0015, 0026, 0039, 0059, 0062, 0069, 0070 (profiler 0053, 0054) | ~1,050 (+670) | next |
-| 3 | **Master tune** | 0001, its hooks in 0002 and 0005 | ~650 | |
+| 2 | **CPU monitor** (the profiler left out) | 0015, 0026, 0039, 0059, 0062, 0069, 0070 (profiler 0053, 0054) | ~1,050 (+670) | done: `features/0002` |
+| 3 | **Master tune** | 0001, its hooks in 0002 and 0005 | ~650 | next |
 | 4 | **Scan** (tuner, tempo, key) | 0118 | ~1,500, nearly all new | |
 | 5 | **DJ** (filter, sync, nudge) | 0119 | ~280 | |
 | 6 | **USB audio** | 0008, 0055, 0112 | ~1,050 | |
@@ -82,3 +82,44 @@ rig: the firmware's own task manager, the audio DMA in real time):
 - **The fixes' test of the arp** (`tests/repro/mpe_arp_noteoff_emu.py`, 0017) still passes.
 - **The build** (`FEATURES=1 tools/setup_beta.sh`) gives the same file twice in the same folder (SHA-256
   `d12eee68...`); its tree is the one the tests ran on.
+
+## Step 2: the CPU monitor (`features/0002`)
+
+mastertune's CPU monitor without its sampling profiler. The core (`processing/engines/cpu_stats_core.{h,cpp}`: the
+collector, the OLED line, the SysEx encoding) is mastertune's file unchanged; the firmware side (`cpu_stats.{h,cpp}`)
+and the hooks are fitted to v1.3 (its audio routine, voice culling, cluster loading, OLED, MIDI cables, settings file
+and task scheduler).
+
+- **Settings > CPU Monitor**: Off, On, Alerts. On: one short line in the OLED's top left corner, `CPU 43% 24V`, with
+  `QL` while the quality is lowered and a blinking `VC` while voices are cut; a popup on the 7-segment display; the
+  numbers once a second as SysEx (command 0x10) to the computer on USB port 3 (`tools/cpu_monitor.html`,
+  `tools/deluge_profiler.py` read them). Alerts: only `QL` and `VC`. v1.3's own High CPU Indicator stays as it is.
+- **LEARN held + tempo encoder pressed** switches it off and back on (the last of On and Alerts) in every view; the
+  view and the tempo popup don't get that press. With Shift the press clears the tempo automation, as ever.
+- **Kept across a restart** as `cpuMonitor` in the community settings file (mastertune's name; its Profile is read as
+  On). The shortcut's save runs in a task of its own that holds the SD card's resource, and keeps the startup song
+  as it was, so a song loaded but not saved doesn't become the one "Last saved" opens.
+- The line goes on top of the finished image in a canvas of its own, so no screen's image is changed; not over the
+  screensaver.
+- **Two faults found by the review, both only in the numbers** (no effect on the sound, the card or USB):
+  - A voice the CPU guard had just stopped (OFF until it next renders) could be picked and counted again in the same
+    pass: now a voice is counted only if it isn't OFF yet. (v1.3 itself picks such a voice again for its next
+    kill or fast release; that is upstream's and stays as it is.)
+  - While a stem export rendered offline the collector kept its window open, so the first window after the export
+    counted the whole export as one gap of the audio routine, and the line stayed up, frozen, over the export.
+    mastertune 1.2.1 has this too. Now the monitor pauses while an export renders offline.
+
+**Tested:**
+- **The core** (`mastertune-1.2.1/tests/cpu_stats`, host test, on this tree): the collector with a simulated timer
+  (and its wrap), the OLED line and the SysEx encoding, decoded by `tools/cpu_monitor.html` and
+  `tools/deluge_profiler.py`: 503 messages, all fields, rejects.
+- **On the v1.3 rig** (`tests/features/cpu_monitor_emu.py`, the fuzzer's card, playing): off at first; LEARN + tempo
+  encoder switches it on (the popup says so, session view stays); after 3 s the line reads e.g. `CPU 71% 21V QL`
+  (load 1 to 99 %, the voices within the range the audio engine had), the image sent to the OLED has it in the
+  corner (102 pixels set there, 0 once off), 3 SysEx messages in 3 s; the shortcut switches it off and on again; a
+  second boot from the same card starts with it on. Then a stem export rendered offline (18 s of emulated time): the
+  window after it has its longest gap under 50 ms (1.1 ms); without the fix 17,899 ms, the export itself.
+- **The menus**: the walk through Settings (and the synth's menus) visits CPU Monitor; no problem.
+- The double count is fixed by the review's reading of the code; the rig has no way to make the CPU guard kill a voice
+  on purpose, so it isn't tested apart.
+

@@ -1,0 +1,1334 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 16 Nov 2026 22:30:57 +0000
+Subject: [PATCH] CPU monitor from mastertune: the load and the voices in the
+ OLED's corner, LEARN + tempo encoder
+
+Ports mastertune 1.2.1's CPU monitor (its patches 0015, 0026, 0039, 0059, 0062, 0069, 0070) onto v1.3, without the
+sampling profiler (0053, 0054). The core (processing/engines/cpu_stats_core.{h,cpp}: the collector, the OLED line,
+the SysEx encoding) is mastertune's unchanged; the firmware side (cpu_stats.{h,cpp}) and the hooks are fitted to v1.3.
+
+- Settings > CPU Monitor: Off, On, Alerts. On: one short line in the OLED's top left corner, "CPU 43% 24V", plus QL
+  while the quality is lowered and a blinking VC while voices are cut; a popup on the 7-segment display; the numbers
+  once a second as SysEx (command 0x10) to the computer on USB port 3, never to DIN. Alerts: only QL and VC.
+- LEARN held + tempo encoder pressed switches it off and back on (the last of On and Alerts), in every view; neither
+  the view nor the tempo popup gets that press. With Shift the press clears the tempo automation, as ever.
+- Kept with the community settings as "cpuMonitor" (mastertune's name; its Profile is read as On). The shortcut's save
+  runs in a task of its own that holds the SD card's resource, and keeps the startup song as it was: a song loaded
+  but not saved doesn't become the one "Last saved" opens (RuntimeFeatureSettings::writeSettingsToFile() takes
+  updateStartupSong, true everywhere else).
+- Measured: each call of AudioEngine::routine() that renders in real time, the voices the CPU guard cuts short
+  (killOneVoice(), terminateOneVoice(), forceReleaseOneVoice() when it starts a release; a voice that pass already
+  stopped, OFF until it next renders, isn't counted again when it is picked again), the card reads of sample
+  clusters. While off each hook costs one flag test.
+- While a stem export renders offline the monitor pauses: the collector stops and the line goes, and the first window
+  after the export starts after it. Before (and in mastertune 1.2.1) the window after an export counted the whole
+  export as one gap of the audio routine and the line stayed up, frozen, over the export.
+- The line goes on top of the finished image in a canvas of its own (OLED::sendMainImage()), so no screen's image is
+  changed and it is gone as soon as the monitor is off; not over the screensaver.
+---
+ src/deluge/deluge.cpp                         |   5 +
+ src/deluge/gui/l10n/english.json              |   4 +-
+ src/deluge/gui/l10n/g_english.cpp             |   2 +
+ src/deluge/gui/l10n/g_seven_segment.cpp       |   2 +
+ src/deluge/gui/l10n/seven_segment.json        |   4 +-
+ src/deluge/gui/l10n/strings.h                 |   3 +
+ src/deluge/gui/menu_item/cpu_monitor_mode.h   |  38 ++
+ src/deluge/gui/ui/menus.cpp                   |   6 +
+ src/deluge/hid/buttons.cpp                    |  10 +
+ src/deluge/hid/display/oled.cpp               |  14 +
+ src/deluge/io/midi/sysex.h                    |   2 +
+ .../settings/runtime_feature_settings.cpp     |  20 +-
+ .../model/settings/runtime_feature_settings.h |   5 +-
+ .../processing/engines/audio_engine.cpp       |  24 ++
+ src/deluge/processing/engines/cpu_stats.cpp   | 237 ++++++++++++
+ src/deluge/processing/engines/cpu_stats.h     |  97 +++++
+ .../processing/engines/cpu_stats_core.cpp     | 344 ++++++++++++++++++
+ .../processing/engines/cpu_stats_core.h       | 160 ++++++++
+ .../storage/audio/audio_file_manager.cpp      |   3 +
+ 19 files changed, 975 insertions(+), 5 deletions(-)
+ create mode 100644 src/deluge/gui/menu_item/cpu_monitor_mode.h
+ create mode 100644 src/deluge/processing/engines/cpu_stats.cpp
+ create mode 100644 src/deluge/processing/engines/cpu_stats.h
+ create mode 100644 src/deluge/processing/engines/cpu_stats_core.cpp
+ create mode 100644 src/deluge/processing/engines/cpu_stats_core.h
+
+diff --git a/src/deluge/deluge.cpp b/src/deluge/deluge.cpp
+index dce38727b..4311308d9 100644
+--- a/src/deluge/deluge.cpp
++++ b/src/deluge/deluge.cpp
+@@ -61,6 +61,7 @@
+ #include "playback/mode/arrangement.h"
+ #include "playback/mode/session.h"
+ #include "processing/engines/audio_engine.h"
++#include "processing/engines/cpu_stats.h"
+ #include "processing/engines/cv_engine.h"
+ #include "scheduler_api.h"
+ #include "storage/audio/audio_file_manager.h"
+@@ -601,6 +602,10 @@ void registerTasks() {
+ 	// formerly part of cluster loading (why? no idea), actions undo/redo midi commands
+ 	addRepeatingTask([]() { playbackHandler.slowRoutine(); }, p++, 0.01, 0.09, 0.1, "playback slow routine",
+ 	                 RESOURCE_SD);
++	// Settings > CPU monitor (mastertune): the OLED line and the SysEx; returns at once while switched off
++	addRepeatingTask([]() { cpu_stats::routine(); }, p++, 0.05, 0.05, 0.1, "cpu monitor", RESOURCE_NONE);
++	// and the community settings file written after its shortcut (LEARN + tempo encoder press) changed the mode
++	addRepeatingTask([]() { cpu_stats::saveRoutine(); }, p++, 0.1, 0.25, 0.5, "cpu monitor save", RESOURCE_SD);
+ 	// 31-39: Idle priority (40 for dyn tasks)
+ 	p = 31;
+ 	addRepeatingTask(&(PIC::flush), p++, 0.001, 0.001, 0.02, "PIC flush", RESOURCE_NONE);
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index cbaab814b..f817c0d9b 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -1017,6 +1017,8 @@
+     "STRING_FOR_BOUNCE_SOFTER": "Fade",
+     "STRING_FOR_BOUNCE_LOUDER": "Rise",
+     "STRING_FOR_ROLL": "Roll",
+-    "STRING_FOR_BALL": "Ball"
++    "STRING_FOR_BALL": "Ball",
++    "STRING_FOR_CPU_MONITOR": "CPU Monitor",
++    "STRING_FOR_CPU_ALERTS": "Alerts"
+   }
+ }
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index 6353111b6..073009dd9 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -1031,6 +1031,8 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_BOUNCE_LOUDER, "Rise"},
+         {STRING_FOR_ROLL, "Roll"},
+         {STRING_FOR_BALL, "Ball"},
++        {STRING_FOR_CPU_MONITOR, "CPU Monitor"},
++        {STRING_FOR_CPU_ALERTS, "Alerts"},
+     },
+ };
+ } // namespace deluge::l10n::built_in
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index e0acc3899..cbacd4695 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -576,6 +576,8 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_BOUNCE_LOUDER, "RISE"},
+         {STRING_FOR_ROLL, "ROLL"},
+         {STRING_FOR_BALL, "BALL"},
++        {STRING_FOR_CPU_MONITOR, "CPU"},
++        {STRING_FOR_CPU_ALERTS, "ALRT"},
+     },
+     &built_in::english,
+ };
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index 6375189ca..9d9052b78 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -619,6 +619,8 @@
+         "STRING_FOR_BOUNCE_SOFTER": "FADE",
+         "STRING_FOR_BOUNCE_LOUDER": "RISE",
+         "STRING_FOR_ROLL": "ROLL",
+-        "STRING_FOR_BALL": "BALL"
++        "STRING_FOR_BALL": "BALL",
++        "STRING_FOR_CPU_MONITOR": "CPU",
++        "STRING_FOR_CPU_ALERTS": "ALRT"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index 20d7e57c5..44fe73e2e 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -1164,6 +1164,9 @@ enum class String : size_t {
+ 	STRING_FOR_BOUNCE_LOUDER,
+ 	STRING_FOR_ROLL,
+ 	STRING_FOR_BALL,
++	// mastertune: CPU monitor
++	STRING_FOR_CPU_MONITOR,
++	STRING_FOR_CPU_ALERTS,
+ 	STRING_LAST
+ };
+ 
+diff --git a/src/deluge/gui/menu_item/cpu_monitor_mode.h b/src/deluge/gui/menu_item/cpu_monitor_mode.h
+new file mode 100644
+index 000000000..72c2ea90b
+--- /dev/null
++++ b/src/deluge/gui/menu_item/cpu_monitor_mode.h
+@@ -0,0 +1,38 @@
++/*
++ * Copyright © 2026 Deluge community contributors
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include "gui/l10n/l10n.h"
++#include "gui/menu_item/selection.h"
++#include "processing/engines/cpu_stats.h"
++
++namespace deluge::gui::menu_item {
++/// Settings > CPU monitor (from mastertune 1.2.1): Off, On (the line in the OLED's top left corner, a popup on the
++/// 7-segment display, the SysEx), Alerts (only the warnings, when voices are cut or the quality is lowered). Saved with
++/// the community features when the menu is left and read at boot (cpu_stats::readSetting()); LEARN + tempo encoder
++/// press switches it off and on (cpu_stats::shortcut())
++class CpuMonitorMode final : public Selection {
++public:
++	using Selection::Selection;
++	void readCurrentValue() override { this->setValue(cpu_stats::mode); }
++	void writeCurrentValue() override { cpu_stats::setMode(this->getValue()); }
++	deluge::vector<std::string_view> getOptions(OptType optType) override {
++		(void)optType;
++		using enum l10n::String;
++		return {l10n::getView(STRING_FOR_OFF), l10n::getView(STRING_FOR_ON), l10n::getView(STRING_FOR_CPU_ALERTS)};
++	}
++};
++} // namespace deluge::gui::menu_item
+diff --git a/src/deluge/gui/ui/menus.cpp b/src/deluge/gui/ui/menus.cpp
+index 20b19701b..27c663eda 100644
+--- a/src/deluge/gui/ui/menus.cpp
++++ b/src/deluge/gui/ui/menus.cpp
+@@ -39,6 +39,7 @@
+ #include "gui/menu_item/bend_range/per_finger.h"
+ #include "gui/menu_item/colour.h"
+ #include "gui/menu_item/cpu/voice_usage.h"
++#include "gui/menu_item/cpu_monitor_mode.h"
+ #include "gui/menu_item/cv/cv2Mapping.h"
+ #include "gui/menu_item/cv/selection.h"
+ #include "gui/menu_item/cv/submenu.h"
+@@ -1925,6 +1926,10 @@ PLACE_SDRAM_BSS menu_item::Submenu soundEditorRootMenuKitGlobalFX{
+     },
+ };
+ 
++// CPU monitor (mastertune): the load and the voices in the OLED's top left corner, a popup on the 7-segment display,
++// SysEx over USB; or only the warnings (Alerts)
++PLACE_SDRAM_BSS CpuMonitorMode cpuMonitorMenu{STRING_FOR_CPU_MONITOR, STRING_FOR_CPU_MONITOR};
++
+ // Root Menu
+ PLACE_SDRAM_BSS Submenu settingsRootMenu{
+     STRING_FOR_SETTINGS,
+@@ -1942,6 +1947,7 @@ PLACE_SDRAM_BSS Submenu settingsRootMenu{
+         &runtimeFeatureSettingsMenu,
+         &batteryLevelMenu,
+         &voiceUsageMenu,
++        &cpuMonitorMenu,
+         &firmwareVersionMenu,
+     },
+ };
+diff --git a/src/deluge/hid/buttons.cpp b/src/deluge/hid/buttons.cpp
+index 21f193b96..9d6256de7 100644
+--- a/src/deluge/hid/buttons.cpp
++++ b/src/deluge/hid/buttons.cpp
+@@ -29,6 +29,7 @@
+ #include "playback/mode/playback_mode.h"
+ #include "playback/playback_handler.h"
+ #include "processing/engines/audio_engine.h"
++#include "processing/engines/cpu_stats.h"
+ #include "storage/flash_storage.h"
+ #include <map>
+ #include <string>
+@@ -137,6 +138,15 @@ ActionResult buttonAction(deluge::hid::Button b, bool on, bool inCardRoutine) {
+ 			selectButtonPressUsedUp = false;
+ 		}
+ 	}
++	// LEARN held and the tempo encoder pressed (mastertune): the CPU monitor off and on, in every view, playing or not.
++	// Neither the view nor the tempo popup gets the press, nor its release while LEARN is still held. With Shift it
++	// clears the tempo automation, as ever.
++	else if (b == TEMPO_ENC && isButtonPressed(LEARN) && !isShiftButtonPressed()) {
++		if (on) {
++			cpu_stats::shortcut();
++		}
++		goto dealtWith;
++	}
+ 
+ 	result = getCurrentUI()->buttonAction(b, on, inCardRoutine);
+ 
+diff --git a/src/deluge/hid/display/oled.cpp b/src/deluge/hid/display/oled.cpp
+index 005cba944..0ec6ede25 100644
+--- a/src/deluge/hid/display/oled.cpp
++++ b/src/deluge/hid/display/oled.cpp
+@@ -29,6 +29,7 @@
+ #include "io/midi/sysex.h"
+ #include "playback/playback_handler.h"
+ #include "processing/engines/audio_engine.h"
++#include "processing/engines/cpu_stats.h"
+ #include "storage/flash_storage.h"
+ #include "util/cfunctions.h"
+ #include "util/d_string.h"
+@@ -57,6 +58,8 @@ uint8_t (*OLED::oledCurrentImage)[OLED_MAIN_WIDTH_PIXELS];
+ oled_canvas::Canvas OLED::main;
+ oled_canvas::Canvas OLED::popup;
+ oled_canvas::Canvas OLED::console;
++/// The finished image with the CPU monitor's line over it (mastertune), so no screen's own image is changed
++static oled_canvas::Canvas overlayImage;
+ 
+ bool OLED::needsSending;
+ uint32_t OLED::mainImageGeneration;
+@@ -427,6 +430,17 @@ void OLED::sendMainImage() {
+ 			                               popupMaxY);
+ 			oledCurrentImage = &popup.hackGetImageStore()[0];
+ 		}
++		// mastertune: the CPU monitor (Settings > CPU monitor) goes on top of the finished image, in a canvas of its
++		// own, so it's gone as soon as the monitor is switched off: one short line in the top left corner, white on
++		// black just behind the letters
++		if (char const* info = cpu_stats::oledInfo(); info != nullptr) {
++			memcpy(overlayImage.hackGetImageStore(), oledCurrentImage, sizeof(ImageStore));
++			oledCurrentImage = &overlayImage.hackGetImageStore()[0];
++			int32_t y = OLED_MAIN_TOPMOST_PIXEL;
++			int32_t width = (int32_t)strlen(info) * kTextSpacingX + 2;
++			overlayImage.clearAreaExact(0, y, std::min<int32_t>(width, OLED_MAIN_WIDTH_PIXELS) - 1, y + 8);
++			overlayImage.drawString(info, 1, y + 1, kTextSpacingX, 7);
++		}
+ 	}
+ 
+ #if OLED_LOG_TIMING
+diff --git a/src/deluge/io/midi/sysex.h b/src/deluge/io/midi/sysex.h
+index 4289501d7..cef02daa6 100644
+--- a/src/deluge/io/midi/sysex.h
++++ b/src/deluge/io/midi/sysex.h
+@@ -54,6 +54,8 @@ enum SysexCommands : uint8_t {
+ 	Debug,      // Debugging
+ 	Json,       // Json Request
+ 	JsonReply,  // Json Response
++	// Sent only: the CPU monitor's numbers once a second (from mastertune, see processing/engines/cpu_stats.h)
++	CpuStats = 0x10,
+ 	Pong = 0x7F // Pong reply
+ };
+ 
+diff --git a/src/deluge/model/settings/runtime_feature_settings.cpp b/src/deluge/model/settings/runtime_feature_settings.cpp
+index 962255e86..830928396 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.cpp
++++ b/src/deluge/model/settings/runtime_feature_settings.cpp
+@@ -19,6 +19,7 @@
+ #include "gui/l10n/l10n.h"
+ #include "hid/display/display.h"
+ #include "model/song/song.h"
++#include "processing/engines/cpu_stats.h"
+ #include "storage/storage_manager.h"
+ #include "util/d_string.h"
+ #include <cstring>
+@@ -295,6 +296,10 @@ void RuntimeFeatureSettings::readSettingsFromFile() {
+ 					setting.value = currentValue;
+ 				}
+ 			}
++			// mastertune's own settings, kept in this file as mastertune keeps them
++			if (!found) {
++				found = cpu_stats::readSetting(currentName.get(), currentValue);
++			}
+ 
+ 			// Remember unknown settings for writing them back
+ 			if (!found) {
+@@ -314,7 +319,11 @@ void RuntimeFeatureSettings::readSettingsFromFile() {
+ 	smDeserializer.closeWriter();
+ }
+ 
+-void RuntimeFeatureSettings::writeSettingsToFile() {
++void RuntimeFeatureSettings::writeSettingsToFile(bool updateStartupSong) {
++	if (updateStartupSong) {
++		String path = currentSong->getSongFullPath();
++		startupSong.set(&path);
++	}
+ 	f_unlink(RUNTIME_FEATURE_SETTINGS_FILE); // May give error, but no real consequence from that.
+ 
+ 	Error error = StorageManager::createXMLFile(RUNTIME_FEATURE_SETTINGS_FILE, smSerializer, true);
+@@ -325,7 +334,7 @@ void RuntimeFeatureSettings::writeSettingsToFile() {
+ 	writer.writeOpeningTagBeginning(TAG_RUNTIME_FEATURE_SETTINGS);
+ 	writer.writeFirmwareVersion();
+ 	writer.writeEarliestCompatibleFirmwareVersion("4.1.3");
+-	writer.writeAttribute("startupSong", currentSong->getSongFullPath().get());
++	writer.writeAttribute("startupSong", startupSong.get());
+ 	writer.writeOpeningTagEnd();
+ 
+ 	for (auto& setting : settings) {
+@@ -336,6 +345,13 @@ void RuntimeFeatureSettings::writeSettingsToFile() {
+ 		writer.writeClosingTag(TAG_RUNTIME_FEATURE_SETTING, false);
+ 	}
+ 
++	// mastertune's own settings
++	writer.writeOpeningTagBeginning(TAG_RUNTIME_FEATURE_SETTING);
++	writer.writeAttribute(TAG_RUNTIME_FEATURE_SETTING_ATTR_NAME, cpu_stats::kSettingName, false);
++	writer.writeAttribute(TAG_RUNTIME_FEATURE_SETTING_ATTR_VALUE, cpu_stats::mode, false);
++	writer.writeOpeningTagEnd(false);
++	writer.writeClosingTag(TAG_RUNTIME_FEATURE_SETTING, false);
++
+ 	// Write unknown elements
+ 	for (uint32_t idxUnknownSetting = 0; idxUnknownSetting < unknownSettings.getNumElements(); idxUnknownSetting++) {
+ 		UnknownSetting* unknownSetting = (UnknownSetting*)unknownSettings.getElementAddress(idxUnknownSetting);
+diff --git a/src/deluge/model/settings/runtime_feature_settings.h b/src/deluge/model/settings/runtime_feature_settings.h
+index a39f698ae..65a556207 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.h
++++ b/src/deluge/model/settings/runtime_feature_settings.h
+@@ -112,7 +112,10 @@ public:
+ 	void init();
+ 	void factoryReset(bool showPopup = true);
+ 	void readSettingsFromFile();
+-	void writeSettingsToFile();
++	/// updateStartupSong: the current song becomes the startup song (a song loaded or saved, the Settings menu left);
++	/// false keeps the one read or last written (mastertune's CPU monitor shortcut, which mustn't make an unsaved song
++	/// the one the Deluge starts with in the startup song mode "Last saved")
++	void writeSettingsToFile(bool updateStartupSong = true);
+ 
+ protected:
+ 	std::array<RuntimeFeatureSetting, RuntimeFeatureSettingType::MaxElement> settings = {};
+diff --git a/src/deluge/processing/engines/audio_engine.cpp b/src/deluge/processing/engines/audio_engine.cpp
+index 818e72233..8c3061757 100644
+--- a/src/deluge/processing/engines/audio_engine.cpp
++++ b/src/deluge/processing/engines/audio_engine.cpp
+@@ -48,6 +48,7 @@
+ #include "modulation/envelope.h"
+ #include "modulation/patch/patch_cable_set.h"
+ #include "processing/audio_output.h"
++#include "processing/engines/cpu_stats.h"
+ #include "processing/engines/cv_engine.h"
+ #include "processing/live/live_input_buffer.h"
+ #include "processing/metronome/metronome.h"
+@@ -302,6 +303,11 @@ void killOneVoice(size_t num_samples) {
+ 	}
+ 
+ 	const Sound::ActiveVoice& voice = *it;
++	// mastertune: the CPU monitor counts the voices the CPU guard cuts short, each once: a voice this pass already
++	// stopped (OFF, it stays in the list until it next renders) can be picked again
++	if (voice->envelopes[0].state != EnvelopeStage::OFF) {
++		cpu_stats::voiceCulled();
++	}
+ 
+ 	bool still_rendering = voice->doImmediateRelease();
+ 	if (!still_rendering) {
+@@ -339,6 +345,9 @@ void terminateOneVoice(size_t numSamples) {
+ 	}
+ 
+ 	const Sound::ActiveVoice& voice = *best;
++	if (voice->envelopes[0].state != EnvelopeStage::OFF) {
++		cpu_stats::voiceCulled();
++	}
+ 	bool still_rendering = voice->doFastRelease(2 * SOFT_CULL_INCREMENT);
+ 	if (!still_rendering) {
+ 		voice->sound.freeActiveVoice(voice);
+@@ -377,6 +386,7 @@ void forceReleaseOneVoice(size_t num_samples) {
+ 
+ 	auto stage = voice->envelopes[0].state;
+ 	if (stage < EnvelopeStage::FAST_RELEASE) {
++		cpu_stats::voiceCulled(); // A release started early, not one sped up that was already fading fast
+ 		D_PRINTLN("force released 1 voice.  numSamples:  %d. Voices left: %d. Audio clips left: %d", num_samples,
+ 		          getNumVoices(), getNumAudio());
+ 	}
+@@ -1219,6 +1229,17 @@ void routine() {
+ 
+ 	audioRoutineLocked = true;
+ 
++	// mastertune: Settings > CPU monitor measures each call that renders in real time; while a stem export renders
++	// offline it pauses (no window spans the export, no line stays up over it)
++	bool offline = stemExport.processStarted && stemExport.renderOffline;
++	bool measure = cpu_stats::enabled && !offline;
++	if (measure) [[unlikely]] {
++		cpu_stats::routineStart();
++	}
++	else if (cpu_stats::enabled && offline) [[unlikely]] {
++		cpu_stats::offlineRender();
++	}
++
+ 	numRoutines = 0;
+ 	if (!stemExport.processStarted || (stemExport.processStarted && !stemExport.renderOffline)) {
+ 		while (doSomeOutputting() && numRoutines < 2) {
+@@ -1289,6 +1310,9 @@ void routine() {
+ 			}
+ 		}
+ 	}
++	if (measure) [[unlikely]] {
++		cpu_stats::routineDone();
++	}
+ 	audioRoutineLocked = false;
+ 	routineBeenCalled = true;
+ }
+diff --git a/src/deluge/processing/engines/cpu_stats.cpp b/src/deluge/processing/engines/cpu_stats.cpp
+new file mode 100644
+index 000000000..a155fdf86
+--- /dev/null
++++ b/src/deluge/processing/engines/cpu_stats.cpp
+@@ -0,0 +1,237 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "processing/engines/cpu_stats.h"
++#include "extern.h"
++#include "hid/display/display.h"
++#include "hid/display/oled.h"
++#include "io/midi/midi_device.h"
++#include "io/midi/midi_device_manager.h"
++#include "io/midi/sysex.h"
++#include "lib/printf.h" // Not stdio: the firmware's snprintf, which doesn't allocate
++#include "model/settings/runtime_feature_settings.h"
++#include "processing/engines/audio_engine.h"
++#include "storage/storage_manager.h"
++#include <cstring>
++
++extern "C" {
++#include "RZA1/ostm/ostm.h"
++}
++
++namespace cpu_stats {
++
++static_assert(kSysexCommand == SysEx::SysexCommands::CpuStats);
++
++uint8_t mode = OFF;
++bool enabled = false;
++Collector collector;
++
++namespace {
++uint8_t lastOnMode = ON; ///< What the shortcut switches back on: the last of On and Alerts
++bool savePending = false;
++bool pausedOffline = false; ///< Set by offlineRender(), cleared by routineStart()
++
++} // namespace
++
++void saveRoutine() {
++	// Not while the card routine is in the middle of something; the task holds the SD card's resource
++	if (savePending && !sdRoutineLock) {
++		savePending = false;
++		// The startup song as it was: a song loaded but not saved mustn't become the one of "Last saved"
++		runtimeFeatureSettings.writeSettingsToFile(false);
++	}
++}
++
++void setMode(uint8_t newMode) {
++	mode = (newMode <= ALERTS) ? newMode : OFF;
++	enabled = (mode != OFF);
++	if (mode == ON || mode == ALERTS) {
++		lastOnMode = mode;
++	}
++}
++
++void shortcut() {
++	setMode(mode == OFF ? lastOnMode : OFF);
++	char const* text[2] = {"COFF", "CPU monitor: Off"}; // 7-segment, OLED
++	if (mode == ON) {
++		text[0] = "C-ON";
++		text[1] = "CPU monitor: On";
++	}
++	else if (mode == ALERTS) {
++		text[0] = "C-AL";
++		text[1] = "CPU monitor: Alerts";
++	}
++	display->displayPopup(text);
++	savePending = true;
++}
++
++bool readSetting(char const* name, int32_t value) {
++	if (strcmp(name, kSettingName) != 0) {
++		return false;
++	}
++	uint8_t saved = (value >= 0 && value <= kSavedProfile) ? (uint8_t)value : (uint8_t)OFF;
++	setMode((saved == kSavedProfile) ? (uint8_t)ON : saved);
++	return true;
++}
++
++namespace {
++
++/// Room that must stay free in the USB MIDI send buffer, so the numbers never crowd out notes or clock
++constexpr int32_t kMinUsbSendSpace = 1024;
++
++bool wasEnabled = false;
++uint32_t lastHalfSeq = 0;
++/// Warnings: voices cut in the window shown, and how many more half-seconds the warning stays up after the last cut
++int32_t cutHoldHalves = 0;
++bool blinkOff = false;
++constexpr int32_t kCutHoldHalves = 4; // 2 s
++uint32_t lastSecondSeq = 0;
++Window previousHalf;
++char line[kLineChars + 1]; // Empty until the first window is in
++uint32_t sysexSeq = 0;
++uint32_t secondsSeen = 0;
++uint8_t sysexMessage[kSysexLength];
++
++void sendSysex(const Summary& summary) {
++	uint32_t seq = sysexSeq++;
++	// Only to the computer, on USB port 3 (not used for notes); 0 space if the Deluge isn't connected to one
++	MIDICableUSBUpstream& port = MIDIDeviceManager::upstreamUSBMIDICable3;
++	if (port.sendBufferSpace() < (size_t)kMinUsbSendSpace) {
++		return;
++	}
++	size_t length = encodeSysex(summary, seq, sysexMessage);
++	port.sendSysex(sysexMessage, (int32_t)length);
++}
++
++void markOLEDChanged() {
++	if (display->haveOLED()) {
++		deluge::hid::display::OLED::markChanged();
++	}
++}
++
++} // namespace
++
++uint32_t now() {
++	return getTimerValue(0);
++}
++
++void offlineRender() {
++	collector.stop();
++	pausedOffline = true;
++}
++
++void routineStart() {
++	pausedOffline = false;
++	uint32_t time = now();
++	collector.routineStart(time, AudioEngine::audioSampleTimer);
++}
++
++void routineDone() {
++	uint32_t time = now();
++	collector.routineDone(time, AudioEngine::audioSampleTimer, AudioEngine::getNumVoices(), AudioEngine::cpuDireness);
++}
++
++ReadStart readStart() {
++	return ReadStart{now(), collector.busyTicksTotal()};
++}
++
++void clusterLoaded(ReadStart start) {
++	if (enabled && !pausedOffline) {
++		collector.clusterLoaded(now() - start.time, collector.busyTicksTotal() - start.busyTicks);
++	}
++}
++
++void routine() {
++	if (!enabled || pausedOffline) {
++		if (wasEnabled) {
++			wasEnabled = false;
++			collector.stop();
++			line[0] = 0;
++			cutHoldHalves = 0;
++			blinkOff = false;
++			markOLEDChanged(); // Takes the line away
++		}
++		return;
++	}
++
++	Window window;
++	if (!wasEnabled) {
++		wasEnabled = true;
++		previousHalf = Window{};
++		line[0] = 0;
++		// Skip anything left over from before
++		collector.readHalf(window, lastHalfSeq);
++		collector.readSecond(window, lastSecondSeq);
++		return;
++	}
++
++	// OLED: the last two half-second windows, so the numbers are new twice a second. Under them the warning: voices
++	// cut (blinking, and up 2 s after the last cut) or the quality lowered
++	if (collector.readHalf(window, lastHalfSeq)) {
++		Window shown = previousHalf;
++		merge(shown, window);
++		previousHalf = window;
++		Summary summary = summarize(shown);
++		if (window.culled > 0) {
++			cutHoldHalves = kCutHoldHalves;
++		}
++		else if (cutHoldHalves > 0) {
++			cutHoldHalves--;
++		}
++		bool cutting = cutHoldHalves > 0;
++		blinkOff = cutting && !blinkOff;
++		if (display->haveOLED()) {
++			// VC blinks while voices are cut (and 2 s after the last cut)
++			formatCorner(summary, mode == ON, summary.direMax > 0, cutting && !blinkOff, line,
++			             sizeof(line));
++			deluge::hid::display::OLED::markChanged();
++		}
++		else {
++			line[0] = 0;
++		}
++	}
++
++	// SysEx each second (mode On); the 7-segment display gets a short popup every other second, unless it shows
++	// another one: "CUT" while voices are cut, else the CPU (mode On)
++	if (collector.readSecond(window, lastSecondSeq)) {
++		Summary summary = summarize(window);
++		if (mode == ON) {
++			sendSysex(summary);
++		}
++		if (!display->haveOLED() && (secondsSeen++ & 1) == 0 && !display->hasPopup()) {
++			char text[8];
++			if (cutHoldHalves > 0) {
++				snprintf(text, sizeof(text), "CUT");
++			}
++			else if (mode == ON) {
++				formatSevenSegment(summary, text, sizeof(text));
++			}
++			else {
++				text[0] = 0;
++			}
++			if (text[0]) {
++				display->displayPopup(text, 1);
++			}
++		}
++	}
++}
++
++char const* oledInfo() {
++	return (enabled && line[0]) ? line : nullptr;
++}
++
++} // namespace cpu_stats
+diff --git a/src/deluge/processing/engines/cpu_stats.h b/src/deluge/processing/engines/cpu_stats.h
+new file mode 100644
+index 000000000..2a163ce11
+--- /dev/null
++++ b/src/deluge/processing/engines/cpu_stats.h
+@@ -0,0 +1,97 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++// CPU monitor (from mastertune 1.2.1): Settings > CPU monitor, or LEARN held and the tempo encoder pressed (shortcut());
++// the mode is kept on the card across a restart (readSetting()). While on, it measures how long AudioEngine::routine()
++// takes for the audio it renders, counts voices, direness, culled voices and SD cluster reads, shows a line on the OLED
++// (a short popup on the 7-segment display) and sends the numbers once a second as SysEx to the computer over USB MIDI
++// (port 3, never to DIN). It only measures: no sound is changed. While off, each hook costs one flag test. The SysEx
++// format is in cpu_stats_core.h, the page that shows it is mastertune-1.2.1/tools/cpu_monitor.html.
++
++#include "processing/engines/cpu_stats_core.h"
++
++namespace cpu_stats {
++
++/// Settings > CPU monitor: Off, On, Alerts. (mastertune 1.2.1 has a fourth mode, Profile, with its sampling profiler,
++/// which this port leaves out; a Profile saved there is read as On.)
++enum Mode : uint8_t {
++	OFF,    ///< Nothing measured
++	ON,     ///< The line on the OLED (a popup on the 7-segment display) and the SysEx
++	ALERTS, ///< Only the warnings, when voices are cut or the quality is lowered
++};
++constexpr uint8_t kSavedProfile = 3; ///< mastertune 1.2.1's Profile, as saved on the card
++extern uint8_t mode;
++void setMode(uint8_t newMode);
++
++/// LEARN held and the tempo encoder pressed (hid/buttons.cpp): Off, and back on in the last of On and Alerts (at first
++/// On). Shows the mode in a popup; the save to the card follows in saveRoutine().
++void shortcut();
++
++/// Task with the SD card's resource: writes the community settings file after the shortcut changed the mode
++void saveRoutine();
++
++/// The mode's entry in CommunityFeatures.XML on the SD card (written with the community features, as MasterTune's), so
++/// it survives a restart. Firmware that doesn't know it keeps it as an unknown setting.
++constexpr char const* kSettingName = "cpuMonitor";
++
++/// Reads our entry from the community settings file at boot (mastertune's Profile as On). Returns false if the entry is
++/// not ours.
++bool readSetting(char const* name, int32_t value);
++
++/// Measuring: On or Alerts
++extern bool enabled;
++extern Collector collector;
++
++/// OS timer 0, see cpu_stats_core.h
++uint32_t now();
++
++/// Frame one call of AudioEngine::routine(), only while enabled
++void routineStart();
++void routineDone();
++
++/// The audio routine renders offline (a stem export): the collector stops, the line is taken away and SD reads aren't
++/// counted, until the routine renders in real time again (routineStart()), which starts new windows
++void offlineRender();
++
++/// A voice was culled because the CPU was behind
++inline void voiceCulled() {
++	if (enabled) [[unlikely]] {
++		collector.voiceCulled();
++	}
++}
++
++/// Taken just before a sample cluster is read from the SD card
++struct ReadStart {
++	uint32_t time;      ///< now()
++	uint32_t busyTicks; ///< Collector::busyTicksTotal()
++};
++ReadStart readStart();
++
++/// That read has finished. Records its wall-clock time and, apart, the time without the audio routine calls that ran
++/// while the read waited for the card (it yields to the task manager meanwhile).
++void clusterLoaded(ReadStart start);
++
++/// Task, a few times a second: display and SysEx, and a save the shortcut left for when the card is free
++void routine();
++
++/// What goes in the top left corner of every image sent to the OLED, nullptr if nothing: one short line (see
++/// formatCorner()), "CPU 43% 24V QL VC" in mode On, the warnings alone in mode Alerts
++char const* oledInfo();
++
++} // namespace cpu_stats
+diff --git a/src/deluge/processing/engines/cpu_stats_core.cpp b/src/deluge/processing/engines/cpu_stats_core.cpp
+new file mode 100644
+index 000000000..b89c80bd9
+--- /dev/null
++++ b/src/deluge/processing/engines/cpu_stats_core.cpp
+@@ -0,0 +1,344 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "processing/engines/cpu_stats_core.h"
++#include <algorithm>
++#include <atomic>
++#include <cstring>
++
++#include "lib/printf.h" // Not stdio: the firmware's snprintf, which doesn't allocate
++
++namespace cpu_stats {
++
++namespace {
++
++uint32_t saturate(uint64_t value) {
++	return (value > UINT32_MAX) ? UINT32_MAX : (uint32_t)value;
++}
++
++uint32_t addSaturated(uint32_t a, uint32_t b) {
++	return saturate((uint64_t)a + b);
++}
++
++uint32_t divideRounded(uint64_t numerator, uint64_t denominator) {
++	return (denominator == 0) ? 0 : saturate((numerator + denominator / 2) / denominator);
++}
++
++/// Render time over the audio time rendered, in 0.1 %. 1000 * 44100 / 33330000 = 4410 / 3333.
++uint32_t loadPermille(uint64_t ticks, uint32_t samples) {
++	return divideRounded(ticks * 4410, (uint64_t)samples * 3333);
++}
++
++/// 1000000 / 33330000 = 100 / 3333
++uint32_t ticksToUs(uint64_t ticks) {
++	return divideRounded(ticks * 100, 3333);
++}
++
++/// Whether a block of ticksA / samplesA was busier than one of ticksB / samplesB (samplesA > 0)
++bool busier(uint32_t ticksA, uint32_t samplesA, uint32_t ticksB, uint32_t samplesB) {
++	return samplesB == 0 || (uint64_t)ticksA * samplesB > (uint64_t)ticksB * samplesA;
++}
++
++void compilerBarrier() {
++	std::atomic_signal_fence(std::memory_order_seq_cst);
++}
++
++} // namespace
++
++void merge(Window& into, const Window& later) {
++	into.ticks = addSaturated(into.ticks, later.ticks);
++	into.busyTicks += later.busyTicks;
++	into.samples = addSaturated(into.samples, later.samples);
++	if (later.peakSamples != 0 && busier(later.peakTicks, later.peakSamples, into.peakTicks, into.peakSamples)) {
++		into.peakTicks = later.peakTicks;
++		into.peakSamples = later.peakSamples;
++	}
++	into.voicesNow = later.voicesNow;
++	if (later.voicesMax > into.voicesMax) {
++		into.voicesMax = later.voicesMax;
++	}
++	if (later.direMax > into.direMax) {
++		into.direMax = later.direMax;
++	}
++	into.direSamples = addSaturated(into.direSamples, later.direSamples);
++	into.culled = addSaturated(into.culled, later.culled);
++	into.sdLoads = addSaturated(into.sdLoads, later.sdLoads);
++	into.sdTicks += later.sdTicks;
++	into.sdCardTicks += later.sdCardTicks;
++	if (later.sdMaxTicks > into.sdMaxTicks) {
++		into.sdMaxTicks = later.sdMaxTicks;
++	}
++	if (later.sdCardMaxTicks > into.sdCardMaxTicks) {
++		into.sdCardMaxTicks = later.sdCardMaxTicks;
++	}
++	if (later.maxGapTicks > into.maxGapTicks) {
++		into.maxGapTicks = later.maxGapTicks;
++	}
++}
++
++Summary summarize(const Window& w) {
++	Summary s{};
++	s.windowMs = divideRounded((uint64_t)w.ticks * 1000, kTicksPerSecond);
++	s.dspAvgPermille = loadPermille(w.busyTicks, w.samples);
++	s.dspPeakPermille = loadPermille(w.peakTicks, w.peakSamples);
++	s.voicesNow = w.voicesNow;
++	s.voicesMax = w.voicesMax;
++	s.direMax = w.direMax;
++	s.direSharePermille = divideRounded((uint64_t)w.direSamples * 1000, w.samples);
++	s.culled = w.culled;
++	s.sdLoads = w.sdLoads;
++	s.sdAvgUs = (w.sdLoads != 0) ? ticksToUs(w.sdTicks / w.sdLoads) : 0;
++	s.sdMaxUs = ticksToUs(w.sdMaxTicks);
++	s.maxGapUs = ticksToUs(w.maxGapTicks);
++	s.samples = w.samples;
++	s.sdCardAvgUs = (w.sdLoads != 0) ? ticksToUs(w.sdCardTicks / w.sdLoads) : 0;
++	s.sdCardMaxUs = ticksToUs(w.sdCardMaxTicks);
++	return s;
++}
++
++void Collector::routineStart(uint32_t now, uint32_t sampleCounter) {
++	if (!running_) {
++		running_ = true;
++		acc_ = Window{};
++		secondAcc_ = Window{};
++		halvesInSecond_ = 0;
++		lastVoices_ = 0;
++		windowStart_ = now;
++	}
++	else {
++		uint32_t gap = now - routineStart_;
++		if (gap > acc_.maxGapTicks) {
++			acc_.maxGapTicks = gap;
++		}
++	}
++	routineStart_ = now;
++	routineSamplesStart_ = sampleCounter;
++}
++
++void Collector::routineDone(uint32_t now, uint32_t sampleCounter, uint32_t voices, int32_t direness) {
++	uint32_t ticks = now - routineStart_;
++	uint32_t samples = sampleCounter - routineSamplesStart_;
++	busyTotal_ += ticks; // Wraps, which is fine for differences
++	// mastertune-v17: a call that rendered nothing (nothing due yet, or less than the minimum window at light load, see
++	// AudioEngine's kMinWindowSamples) isn't rendering: it doesn't count towards the load shown. Its time is still
++	// spent, though, and so are the calls that only write out samples rendered ahead before: the load shown reads a
++	// little low by those (a few hundred instructions each; in the emulator, tests/sdload S2 idle, ~2,200 such calls a
++	// second, ~0.3 % of the CPU)
++	if (samples != 0) {
++		acc_.busyTicks += ticks;
++	}
++	acc_.samples = addSaturated(acc_.samples, samples);
++	if (samples >= kMinPeakSamples && busier(ticks, samples, acc_.peakTicks, acc_.peakSamples)) {
++		acc_.peakTicks = ticks;
++		acc_.peakSamples = samples;
++	}
++	lastVoices_ = voices;
++	if (voices > acc_.voicesMax) {
++		acc_.voicesMax = voices;
++	}
++	if (direness > 0) {
++		acc_.direSamples = addSaturated(acc_.direSamples, samples);
++		if ((uint32_t)direness > acc_.direMax) {
++			acc_.direMax = direness;
++		}
++	}
++
++	uint32_t elapsed = now - windowStart_;
++	if (elapsed < kWindowTicks) {
++		return;
++	}
++	acc_.ticks = elapsed;
++	acc_.voicesNow = lastVoices_;
++	publish(half_, acc_);
++	merge(secondAcc_, acc_);
++	if (++halvesInSecond_ >= 2) {
++		publish(second_, secondAcc_);
++		secondAcc_ = Window{};
++		halvesInSecond_ = 0;
++	}
++	acc_ = Window{};
++	windowStart_ = now;
++}
++
++void Collector::clusterLoaded(uint32_t readTicks, uint32_t audioTicks) {
++	// Only audio routine calls that ran while waiting for the card can be in audioTicks, so it can't be more than the
++	// read took (unless the monitor was switched on in between); be safe anyway
++	uint32_t cardTicks = (audioTicks < readTicks) ? readTicks - audioTicks : 0;
++	acc_.sdLoads = addSaturated(acc_.sdLoads, 1);
++	acc_.sdTicks += readTicks;
++	acc_.sdCardTicks += cardTicks;
++	if (readTicks > acc_.sdMaxTicks) {
++		acc_.sdMaxTicks = readTicks;
++	}
++	if (cardTicks > acc_.sdCardMaxTicks) {
++		acc_.sdCardMaxTicks = cardTicks;
++	}
++}
++
++void Collector::publish(Slot& slot, const Window& w) {
++	slot.seq = slot.seq + 1; // Odd: being written
++	compilerBarrier();
++	slot.window = w;
++	compilerBarrier();
++	slot.seq = slot.seq + 1;
++}
++
++bool Collector::read(const Slot& slot, Window& out, uint32_t& lastSeq) {
++	uint32_t seq = slot.seq;
++	if ((seq & 1) || seq == lastSeq) {
++		return false;
++	}
++	compilerBarrier();
++	out = slot.window;
++	compilerBarrier();
++	if (slot.seq != seq) {
++		return false; // Written meanwhile (only possible from an interrupt): the next call gets it
++	}
++	lastSeq = seq;
++	return true;
++}
++
++namespace {
++
++class SysexWriter {
++public:
++	explicit SysexWriter(uint8_t* out) : out_(out) {}
++	void byte(uint8_t b) { out_[pos_++] = b; }
++	/// Little-endian groups of 7 bits, saturated to what fits
++	void value(uint32_t v, int32_t numBytes) {
++		uint32_t max = (1u << (7 * numBytes)) - 1;
++		if (v > max) {
++			v = max;
++		}
++		for (int32_t i = 0; i < numBytes; i++) {
++			byte((v >> (7 * i)) & 0x7F);
++		}
++	}
++	size_t length() const { return pos_; }
++
++private:
++	uint8_t* out_;
++	size_t pos_ = 0;
++};
++
++} // namespace
++
++size_t encodeSysex(const Summary& s, uint32_t seq, uint8_t* out) {
++	SysexWriter w{out};
++	w.byte(0xF0);
++	w.byte(0x00);
++	w.byte(0x21);
++	w.byte(0x7B);
++	w.byte(0x01);
++	w.byte(kSysexCommand);
++	w.value(kSysexFormatVersion, 1);
++	w.value(seq & 0x3FFF, 2);
++	w.value(s.windowMs, 2);
++	w.value(s.dspAvgPermille, 2);
++	w.value(s.dspPeakPermille, 2);
++	w.value(s.voicesNow, 2);
++	w.value(s.voicesMax, 2);
++	w.value(s.direMax, 1);
++	w.value(s.direSharePermille, 2);
++	w.value(s.culled, 2);
++	w.value(s.sdLoads, 2);
++	w.value(s.sdAvgUs, 4);
++	w.value(s.sdMaxUs, 4);
++	w.value(s.maxGapUs, 4);
++	w.value(s.samples, 4);
++	w.value(s.sdCardAvgUs, 4);
++	w.value(s.sdCardMaxUs, 4);
++	w.byte(0xF7);
++	return w.length();
++}
++
++namespace {
++
++uint32_t percent(uint32_t permille) {
++	uint32_t p = (permille + 5) / 10;
++	return (p > 999) ? 999 : p;
++}
++
++uint32_t atMost999(uint32_t value) {
++	return (value > 999) ? 999 : value;
++}
++
++} // namespace
++
++void formatLine(const Summary& s, char* buffer, size_t size) {
++	if (size == 0) {
++		return;
++	}
++	unsigned avg = percent(s.dspAvgPermille);
++	unsigned peak = percent(s.dspPeakPermille);
++	unsigned voices = atMost999(s.voicesNow);
++	unsigned dire = atMost999(s.direMax);
++
++	// SD, without the audio rendered while waiting for the card: average read with one decimal below 10 ms, longest
++	// read rounded up to whole ms, "S-" if nothing was read
++	char sdLong[24];
++	char sdShort[8];
++	if (s.sdLoads == 0) {
++		strcpy(sdLong, "S-");
++		strcpy(sdShort, "S-");
++	}
++	else {
++		unsigned sdMaxMs = atMost999((s.sdCardMaxUs + 999) / 1000);
++		if (s.sdCardAvgUs < 9950) {
++			unsigned tenths = (s.sdCardAvgUs + 50) / 100;
++			snprintf(sdLong, sizeof(sdLong), "S%u.%u/%u", tenths / 10, tenths % 10, sdMaxMs);
++		}
++		else {
++			snprintf(sdLong, sizeof(sdLong), "S%u/%u", (unsigned)atMost999((s.sdCardAvgUs + 500) / 1000), sdMaxMs);
++		}
++		snprintf(sdShort, sizeof(sdShort), "S%u", sdMaxMs);
++	}
++
++	// The first that fits: the last one always does, as all numbers are below 1000
++	char line[48];
++	snprintf(line, sizeof(line), "C%u/%u%% V%u D%u %s", avg, peak, voices, dire, sdLong);
++	if (strlen(line) > kLineChars) {
++		snprintf(line, sizeof(line), "C%u/%u V%u D%u %s", avg, peak, voices, dire, sdLong);
++	}
++	if (strlen(line) > kLineChars) {
++		snprintf(line, sizeof(line), "C%u/%u V%u D%u %s", avg, peak, voices, dire, sdShort);
++	}
++	if (strlen(line) > kLineChars) {
++		snprintf(line, sizeof(line), "C%u/%u V%u D%u", avg, peak, voices, dire);
++	}
++	line[kLineChars] = 0;
++	snprintf(buffer, size, "%s", line);
++}
++
++void formatCorner(const Summary& s, bool numbers, bool qualityLowered, bool voicesCut, char* buffer, size_t size) {
++	char const* ql = qualityLowered ? " QL" : "";
++	char const* vc = voicesCut ? " VC" : "";
++	if (numbers) {
++		snprintf(buffer, size, "CPU %u%% %uV%s%s", percent(s.dspAvgPermille), atMost999(s.voicesNow), ql, vc);
++	}
++	else {
++		char flags[8];
++		snprintf(flags, sizeof(flags), "%s%s", ql, vc);
++		snprintf(buffer, size, "%s", flags[0] ? flags + 1 : ""); // Without the space in front
++	}
++}
++
++void formatSevenSegment(const Summary& s, char* buffer, size_t size) {
++	snprintf(buffer, size, "C%3u", (unsigned)percent(s.dspAvgPermille));
++}
++
++} // namespace cpu_stats
+diff --git a/src/deluge/processing/engines/cpu_stats_core.h b/src/deluge/processing/engines/cpu_stats_core.h
+new file mode 100644
+index 000000000..4890c551f
+--- /dev/null
++++ b/src/deluge/processing/engines/cpu_stats_core.h
+@@ -0,0 +1,160 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++// CPU monitor (mastertune-v12-diag), the part without any hardware access, so it also compiles and runs on a computer
++// (mastertune-1.2.1/tests/cpu_stats). The firmware side is cpu_stats.h.
++//
++// Times are counts of the free-running OS timer 0 (33.33 MHz, started by the task manager). All differences are taken
++// as uint32_t, so a wrap-around of the counter (every 129 s) does no harm. Nothing here allocates.
++
++#include <cstddef>
++#include <cstdint>
++
++namespace cpu_stats {
++
++/// Timer ticks per second, as in RZA1/ostm/ostm.h
++constexpr uint32_t kTicksPerSecond = 33330000;
++constexpr uint32_t kAudioSampleRate = 44100;
++/// Length of one measuring window. The display shows the last two, the SysEx message is sent for each pair.
++constexpr uint32_t kWindowTicks = kTicksPerSecond / 2;
++/// Calls that rendered less than this only count towards the average: their fixed cost would make the peak meaningless
++constexpr uint32_t kMinPeakSamples = 16;
++
++/// Raw sums of one measuring window. Everything shown or sent is derived from it, and two windows can be merged.
++struct Window {
++	uint32_t ticks = 0;          ///< Wall-clock length of the window
++	uint64_t busyTicks = 0;      ///< Time spent in the AudioEngine::routine() calls that rendered
++	uint32_t samples = 0;        ///< Samples it rendered
++	uint32_t peakTicks = 0;      ///< The busiest call (relative to the audio it rendered): its time
++	uint32_t peakSamples = 0;    ///< and the samples it rendered
++	uint32_t voicesNow = 0;      ///< Active voices after the last call
++	uint32_t voicesMax = 0;      ///< Most active voices after any call
++	uint32_t direMax = 0;        ///< Highest AudioEngine::cpuDireness after any call
++	uint32_t direSamples = 0;    ///< Samples rendered while cpuDireness was above 0
++	uint32_t culled = 0;         ///< Voices culled because the CPU was behind
++	uint32_t sdLoads = 0;        ///< Sample clusters read from the SD card
++	uint64_t sdTicks = 0;        ///< Their summed read time (wall clock, including the audio routine calls meanwhile)
++	uint64_t sdCardTicks = 0;    ///< The same without the audio routine calls that ran while waiting for the card
++	uint32_t sdMaxTicks = 0;     ///< The longest read (wall clock)
++	uint32_t sdCardMaxTicks = 0; ///< The longest read without the audio routine calls meanwhile
++	uint32_t maxGapTicks = 0;    ///< Longest time between the starts of two audio routine calls
++};
++
++/// Adds a later window to an earlier one (or to an empty one)
++void merge(Window& into, const Window& later);
++
++/// What is shown and sent, in whole units
++struct Summary {
++	uint32_t windowMs;
++	uint32_t dspAvgPermille;  ///< Render time / audio time rendered, in 0.1 %
++	uint32_t dspPeakPermille; ///< The same for the busiest call (one or two blocks)
++	uint32_t voicesNow;
++	uint32_t voicesMax;
++	uint32_t direMax;
++	uint32_t direSharePermille; ///< Share of the audio rendered while cpuDireness was above 0, in 0.1 %
++	uint32_t culled;
++	uint32_t sdLoads;
++	uint32_t sdAvgUs; ///< Wall clock from the start of a read to its end: what streaming has to wait
++	uint32_t sdMaxUs;
++	uint32_t maxGapUs;
++	uint32_t samples;
++	uint32_t sdCardAvgUs; ///< The same without the audio rendered meanwhile: how fast the card is
++	uint32_t sdCardMaxUs;
++};
++
++Summary summarize(const Window& w);
++
++/// Collects the numbers. Each call of the audio routine is framed by routineStart() and routineDone(); the others may
++/// come from anywhere in the main loop. Readers use readHalf() / readSecond(), which never block and never return a
++/// half-written window.
++class Collector {
++public:
++	bool running() const { return running_; }
++	void stop() { running_ = false; }
++
++	void routineStart(uint32_t now, uint32_t sampleCounter);
++	/// voices and direness as they are after the call
++	void routineDone(uint32_t now, uint32_t sampleCounter, uint32_t voices, int32_t direness);
++
++	/// Time spent in the audio routine since it first ran (all calls, also those that rendered nothing): never reset,
++	/// wraps (every 129 s of rendering). The difference (as uint32_t) of two readings is the render time in between.
++	uint32_t busyTicksTotal() const { return busyTotal_; }
++
++	/// readTicks: wall clock of the read; audioTicks: busyTicksTotal() at its end minus at its start
++	void clusterLoaded(uint32_t readTicks, uint32_t audioTicks);
++	void voiceCulled() { acc_.culled++; }
++
++	/// The latest half-second window, if there is one newer than lastSeq (which is updated)
++	bool readHalf(Window& out, uint32_t& lastSeq) const { return read(half_, out, lastSeq); }
++	/// The latest one-second window (two halves), if there is one newer than lastSeq (which is updated)
++	bool readSecond(Window& out, uint32_t& lastSeq) const { return read(second_, out, lastSeq); }
++
++private:
++	struct Slot {
++		volatile uint32_t seq = 0; // Odd while being written
++		Window window;
++	};
++	static void publish(Slot& slot, const Window& w);
++	static bool read(const Slot& slot, Window& out, uint32_t& lastSeq);
++
++	bool running_ = false;
++	uint32_t windowStart_ = 0;
++	uint32_t routineStart_ = 0;
++	uint32_t routineSamplesStart_ = 0;
++	uint32_t lastVoices_ = 0;
++	uint32_t busyTotal_ = 0;
++	int32_t halvesInSecond_ = 0;
++	Window acc_;
++	Window secondAcc_;
++	Slot half_;
++	Slot second_;
++};
++
++/// SysEx: F0 00 21 7B 01 10, then the payload, then F7. Each field is 1, 2 or 4 bytes of 7 bits, least significant
++/// first, saturated at the largest value that fits:
++///   format version (1) = 2, sequence number (2, counts seconds, wraps at 16384), window length in ms (2),
++///   CPU average in 0.1 % (2), CPU peak in 0.1 % (2), voices now (2), voices max (2), direness max (1),
++///   time with direness above 0 in 0.1 % (2), voices culled (2), SD cluster reads (2), their average in us (4),
++///   the longest in us (4), longest time between two audio routine calls in us (4), samples rendered (4),
++///   from version 2: SD cluster reads without the audio rendered meanwhile, average in us (4), the longest in us (4).
++/// The first SD pair is wall clock: while the read waits for the card, the audio routine and other tasks run.
++/// Readers accept a longer payload, so fields can be added at the end.
++constexpr uint8_t kSysexCommand = 0x10;
++constexpr uint8_t kSysexFormatVersion = 2;
++constexpr size_t kSysexPayloadLength = 44;
++constexpr size_t kSysexLength = 6 + kSysexPayloadLength + 1;
++
++/// Writes the whole message (kSysexLength bytes, all data bytes below 0x80) and returns its length
++size_t encodeSysex(const Summary& s, uint32_t seq, uint8_t* out);
++
++/// Characters that fit on one OLED line in the small font
++constexpr size_t kLineChars = 21;
++/// "C43/71% V24 D0 S2.4/9": CPU average/peak, voices, direness, SD average/longest read in ms (without the audio
++/// rendered meanwhile). Gets shorter when the numbers are big, never more than kLineChars.
++void formatLine(const Summary& s, char* buffer, size_t size);
++/// "C 43": CPU average for the 7-segment display
++void formatSevenSegment(const Summary& s, char* buffer, size_t size);
++
++/// mastertune-v15, one short line in the top left corner: "CPU 43% 24V QL VC". The numbers (mode On): CPU average and
++/// the voices sounding. Then the warnings, each only while it happens: QL while the quality is lowered (the direness
++/// above 0: the Deluge renders more cheaply to keep up), VC while voices are cut because the CPU is behind. Mode
++/// Alerts: only the warnings ("" if none).
++void formatCorner(const Summary& s, bool numbers, bool qualityLowered, bool voicesCut, char* buffer, size_t size);
++
++} // namespace cpu_stats
+diff --git a/src/deluge/storage/audio/audio_file_manager.cpp b/src/deluge/storage/audio/audio_file_manager.cpp
+index 2b0f89fcd..466a66eda 100644
+--- a/src/deluge/storage/audio/audio_file_manager.cpp
++++ b/src/deluge/storage/audio/audio_file_manager.cpp
+@@ -31,6 +31,7 @@
+ #include "model/song/song.h"
+ #include "playback/playback_handler.h"
+ #include "processing/engines/audio_engine.h"
++#include "processing/engines/cpu_stats.h"
+ #include "storage/cluster/cluster.h"
+ #include "storage/storage_manager.h"
+ #include "storage/wave_table/wave_table.h"
+@@ -999,8 +1000,10 @@ getOutEarly:
+ 	}
+ #endif
+ 
++	cpu_stats::ReadStart statsReadStart = cpu_stats::readStart(); // mastertune: read time for the CPU monitor
+ 	DRESULT result = disk_read_without_streaming_first(
+ 	    SD_PORT, (BYTE*)cluster.data, sample->clusters.getElement(cluster.clusterIndex)->sdAddress, numSectors);
++	cpu_stats::clusterLoaded(statsReadStart);
+ 
+ #if REPORT_LOAD_TIME
+ 	uint16_t endTime = MTU2.TCNT_0;
+-- 
+2.43.0
+
