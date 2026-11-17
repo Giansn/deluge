@@ -1,3 +1,4 @@
 # The order tools/setup_beta.sh applies the features in (FEATURES=1), after patches/ (FEATURES.md)
 0001-Arp-extras-from-mastertune.patch
 0002-CPU-monitor-from-mastertune.patch
+0003-Master-tune-from-mastertune.patch

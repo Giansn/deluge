@@ -20,8 +20,8 @@ engine's hooks); the features themselves are mostly new files.
 |---|---|---|---|---|
 | 1 | **Arp extras**: latch, ratchet notes (exactly 2 ... 8, roll, ball), ratchet bounce, bounce length and velocity | the latch and bounce part of 0005; 0006, 0021, 0024, 0117, 0120 | ~1,000 lines | done: `features/0001` |
 | 2 | **CPU monitor** (the profiler left out) | 0015, 0026, 0039, 0059, 0062, 0069, 0070 (profiler 0053, 0054) | ~1,050 (+670) | done: `features/0002` |
-| 3 | **Master tune** | 0001, its hooks in 0002 and 0005 | ~650 | next |
-| 4 | **Scan** (tuner, tempo, key) | 0118 | ~1,500, nearly all new | |
+| 3 | **Master tune** | 0001 (its MIDI drum hook as 0005 moved it) | ~650 | done: `features/0003` |
+| 4 | **Scan** (tuner, tempo, key) | 0118 | ~1,500, nearly all new | next |
 | 5 | **DJ** (filter, sync, nudge) | 0119 | ~280 | |
 | 6 | **USB audio** | 0008, 0055, 0112 | ~1,050 | |
 
@@ -123,3 +123,62 @@ and task scheduler).
 - The double count is fixed by the review's reading of the code; the rig has no way to make the CPU guard kill a voice
   on purpose, so it isn't tested apart.
 
+## Step 3: master tune (`features/0003`)
+
+mastertune's master tune: `model/tuning/master_tune{.h,.cpp,_math.h}` are mastertune's files with the migration from
+the flash taken out; the hooks are fitted to v1.3 (its voice, audio clip, CV engine, MIDI output, recorder, WAV reader,
+sample browser, settings file and task scheduler).
+
+- **Settings > Tuning > Master tune (Hz)**: the reference pitch of A4, 415.3 to 466.2 Hz in steps of 0.1 Hz (the select
+  encoder 1 Hz a detent, the cursor moved for 0.1). Kept as `masterTune` (tenths of Hz) in the community settings file,
+  as mastertune keeps it.
+- **Everything that makes sound follows it**: synth and kit voices with every oscillator type (sample, wavetable, the
+  basic waves, FM carriers and modulators, DX7), audio clips (pitch-shifted, their length kept), the CV outputs, and
+  external MIDI by RPN 1, Channel Fine Tuning (before a note on a channel that hasn't got the current tuning; to every
+  channel the song plays on when the tuning changes and when playback starts). Also v1.3's own MIDI output of a synth
+  or kit row (its MIDI menu's channel), which mastertune 1.2.1 doesn't have. Held notes retune at once.
+- **Recordings remember their tuning**: audio recorded on the Deluge (recording, resampling, stem export) at another
+  tuning gets an `mtun` chunk (the tuning in tenths of Hz) before its data, so it is only shifted by the difference
+  later and never tuned twice; other software skips the chunk. Live input used as an oscillator is left alone.
+- At 440.0 Hz everything not recorded at another tuning plays as without it.
+- **Three faults found by the review**, all v1.3's own interplay:
+  - Settings > Actions > Reset settings (community features, or all) left the tuning, and the CPU monitor's mode
+    (step 2), as they were, and leaving the menu wrote them straight back into the file: both now go back to their
+    defaults.
+  - A CV instrument whose CV2 carries an expression (v1.3: aftertouch, mod or velocity) would have had that voltage
+    replaced by an old pitch at a tuning change: only a channel whose last voltage was a pitch is re-sent.
+  - A value out of range in the file (`440`, Hz instead of tenths) gave 415.3 Hz, as in mastertune 1.2.1: now it is
+    ignored (440 Hz).
+- Left out: the migration from the flash bytes 198-199 of early master-tune builds. In v1.3 they are the next free
+  bytes of the flash settings, and the tuning has been in the settings file since mastertune v16.
+
+**Tested:**
+- **The arithmetic and the WAV header** (mastertune's host tests on this tree: `master_tune_math_test.cpp`,
+  `wav_mtun_chunk_test.py`): the ratio, the cents, RPN 1 at 415.3/440/466.2 Hz (0/8192/16383), the phase increments
+  (worst error 0.001 cents), a recorded tuning; the recorder's header with and without the chunk, read by the firmware's
+  chunk walk and by other readers.
+- **On the v1.3 rig** (`tests/features/master_tune_emu.py`, a card of its own: the song of mastertune's retune test and
+  a sine synth, an FM synth, a kit row playing a file recorded at 432 Hz, a MIDI and a CV track; the settings file at
+  432.0 Hz), playing:
+  - **The pitch of every part in the output** (the phase slope of its band, 4 bars): 15 tones, from a 48 kHz file, an
+    AIFF, a loop, a transposed row, a time-stretched row, the sample synth, the multisample, the audio clip, the sine,
+    the FM carrier and its first sideband (where an untuned modulator would put it elsewhere): each within 0.02 cents of
+    432/440 of its tone at 440 Hz; the file recorded at 432 Hz at its own pitch.
+  - **MIDI**: RPN 1 with 5590 (-31.8 cents) on the MIDI track's channel before its first note.
+  - **CV**: the note's voltage 19483 (19656 at 440 Hz), as the firmware's formula gives it.
+  - **Retuned while playing**, through Settings > Tuning > Master tune and the select encoder (+14 detents: 446.0 Hz):
+    every part within 0.05 cents in the 2 bars after (the file recorded at 432 Hz now 446/432 up); the CV voltage
+    re-sent at once (19784); RPN 1 with 10113 to the MIDI channel.
+  - **A stem export** at 446.0 Hz: every WAV it wrote has the `mtun` chunk with 4460, its audio where the `data` chunk
+    says (byte 124), read by `soundfile` as any WAV.
+  - **A second boot** from the same card starts at 446.0 Hz; then **a settings reset** brings it back to 440.0 Hz and
+    the CPU monitor to off.
+  - No crash, freeze or hang.
+  - **On the build without it** (step 2): every part 31.8 cents off (at 440 Hz), no RPN, the CV voltage that of
+    440 Hz: the test fails, as it should.
+- **The menus**: the walk through Settings (`tests/menu_walk_emu.py`, 963 inputs, 169 items) visits Tuning and Master tune; no
+  crash, freeze, hang, null write or wild access.
+- **The other features' tests** (`tests/features/run.sh`: the arp extras, the CPU monitor) pass on this build too.
+- **The build** (`FEATURES=1 tools/setup_beta.sh`) gives the same file twice in the same folder (SHA-256
+  `dfb86b62...`); its tree is the one the tests ran on.
+- The CV2 expression case is fixed by the review's reading of the code; the rig has no CV instrument in that mode.

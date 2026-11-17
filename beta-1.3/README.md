@@ -56,17 +56,19 @@ with SHIFT held. Back up the card first, as for any beta.
 
 ## mastertune's features on it
 
-`deluge-1.3.0-mastertune-s2-72e19139.bin` (1,785,148 bytes, SHA-256
-`62340f9916af406c8b9066da1f2764d2025d97c9fd7555e2bd4e5306c5fcbf31`) is the stabilised build above plus the first two
+`deluge-1.3.0-mastertune-s3-825332fc.bin` (1,788,452 bytes, SHA-256
+`dfb86b62c9823b8b0db9c4bf0864c1312be3e956347178aeec65af77e2fd56dd`) is the stabilised build above plus the first three
 steps of mastertune 1.2.1's features ported to v1.3: the arp extras (latch, ratchet notes with roll and ball, ratchet
-bounce, bounce length and velocity; `features/0001`) and the CPU monitor (`features/0002`). The Deluge shows it as
-`1.3.0-beta-72e191398`. The plan for the other steps (master tune, Scan, DJ, USB audio), what each step does and how
-it is tested: `FEATURES.md`. **Tested in the emulator only**, as the build under it.
+bounce, bounce length and velocity; `features/0001`), the CPU monitor (`features/0002`) and master tune (A4 at 415.3
+to 466.2 Hz for everything that sounds, CV and MIDI; recordings marked with their tuning; `features/0003`). The Deluge
+shows it as `1.3.0-beta-825332fc9`. The plan for the other steps (Scan, DJ, USB audio), what each step does and how it
+is tested: `FEATURES.md`. **Tested in the emulator only**, as the build under it.
 
-- Built by `FEATURES=1 tools/setup_beta.sh` (the tree `/home/user/work/beta-features`, commit `72e191398`). Two
+- Built by `FEATURES=1 tools/setup_beta.sh` (the tree `/home/user/work/beta-features`, commit `825332fc9`). Two
   builds in that same folder give the same file; the folder's path is part of it (one source file name in a
   message), so a build elsewhere differs in those bytes.
-- Before: `deluge-1.3.0-mastertune-s1-c2380b0a.bin` (step 1 alone, SHA-256 `d12eee68...`).
+- Before: `deluge-1.3.0-mastertune-s2-72e19139.bin` (steps 1 and 2, SHA-256 `62340f99...`),
+  `deluge-1.3.0-mastertune-s1-c2380b0a.bin` (step 1 alone, SHA-256 `d12eee68...`).
 
 | File | What |
 |---|---|
