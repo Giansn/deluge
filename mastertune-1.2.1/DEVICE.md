@@ -2,7 +2,7 @@
 
 These instructions are for the Claude session on the computer the Deluge is connected to by USB.
 
-**Renamed on 28.09.2026:** this file used to be `GERAET.md`, and the folder `geraet/` is now `device/` (`geraet/analyse/` → `device/analysis/`, `geraet/karte/` → `device/card/`). The results branch is now `device-results` (formerly `geraet-ergebnisse`, which will be deleted once both sessions have switched): `git fetch && git checkout -b device-results origin/device-results`, then merge the development branch into it as before. **The whole repository is in English now: write reports, notes and commit messages in English.**
+**Renamed on 28.09.2026:** this file used to be `GERAET.md`, and the folder `geraet/` is now `device/` (`geraet/analyse/` → `device/analysis/`, `geraet/karte/` → `device/card/`). The results branch is `device-results` (the old `geraet-ergebnisse` was deleted on 18.11.2026): `git fetch && git checkout -b device-results origin/device-results`, then merge the development branch into it as before. The cloud session looks at it once a day. **The whole repository is in English now: write reports, notes and commit messages in English.**
 
 **Roles:**
 - **The cloud session develops:** firmware code, builds, emulator tests, releases. It alone is responsible for these.
@@ -23,7 +23,7 @@ Run `git pull` before any work: the cloud session keeps delivering.
 - **Use Python 3.12.** `python-rtmidi` has no ready-made packages for newer versions.
 - **Port names:** The ports are called `Deluge 0`, `MIDIIN2 (Deluge) 1` and `MIDIIN3 (Deluge) 2`. From the commit after `0377a67` the script finds `MIDIIN3` by itself, `-p` is no longer needed.
 
-## Tasks (as of 01.10.2026, v19.0.4 is out)
+## Tasks (as of 18.11.2026, v19.0.4 is current)
 
 Done: the report on v16, l2d, the song for the emulator, the retune test on Windows, "Rescue". The tasks for v17 are dropped: v18.3 contains v17, v18 and v18.2, so everything now applies to v18.3. What it brings is in the README, in the sections "v18", "v18.2" and "v18.3".
 
@@ -128,6 +128,13 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
    - **Saved songs:** save a song that has an audio track, then run `python mastertune-1.2.1/tools/song_check.py <card>` (task 13): that song must show no WARN for duplicate attributes any more. Load it again: the audio track's clip has its length, colour and section as before.
    - **A synth into a kit row:** in a kit clip, hold a row's audition pad and press SYNTH, choose a preset with the select encoder, and while the browser is still open turn a gold knob a few times. Then leave the browser. Nothing may freeze; the knob acts on the new sound.
    - **Report:** a short report in English to `device/`, pushed to `device-results`.
+
+15. **Check the samples in `SAMPLES/KickHm` and the kits in `KITS`** (new on 18.11.2026; the user asks whether they are done well). On the folder `~/deluge-samples` (with `SAMPLES/` and `KITS/`), read-only:
+   - `git pull` first: the sample checker `tools/sample_check.py` is new. It needs numpy, like `retune_library.py`.
+   - **The audio:** `python mastertune-1.2.1/tools/sample_check.py ~/deluge-samples/SAMPLES/KickHm --card ~/deluge-samples -o mastertune-1.2.1/device/2026-11-XX-sample-check-kickhm.md`. Per file: whether the Deluge loads it, level and clipping, a late start, a cut-off end, sample rate, stereo for nothing, the tuning tag, duplicates, a rough pitch, and which kits use it.
+   - **The kits' XML:** `python mastertune-1.2.1/tools/song_check.py ~/deluge-samples -v > mastertune-1.2.1/device/2026-11-XX-song-check-kits.txt` (well-formed, missing samples, firmware).
+   - Change nothing in `deluge-samples` and copy nothing onto the card: the cloud session evaluates the reports and proposes the fixes.
+   - **Report:** both files (XX = the day), pushed to `device-results`. No WAV needed.
 
 ### Done: "Rescue", the LPF has no effect (27.09.2026)
 

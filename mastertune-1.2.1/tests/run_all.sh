@@ -61,6 +61,7 @@ if [ "$WHAT" = pc ] || [ "$WHAT" = both ]; then
 	[ -f "$FW/src/deluge/dsp/scan/scan.cpp" ] && run "Scan: pitch, tempo, key (v18.4)" sh "$HERE/scan/run.sh" "$FW"
 	[ -f "$FW/src/deluge/dsp/dj/dj_filter.h" ] && run "DJ filter knob (v19.0)" sh "$HERE/dj/run.sh" "$FW"
 	run "song file checker (tools)" python3 "$HERE/song_check_test.py"
+	run "sample checker (tools)" python3 "$HERE/sample_check_test.py"
 fi
 if [ "$WHAT" = arm ] || [ "$WHAT" = both ]; then
 	echo "On the Deluge's Cortex-A9, in the emulator:"
