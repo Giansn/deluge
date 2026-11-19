@@ -56,18 +56,23 @@ with SHIFT held. Back up the card first, as for any beta.
 
 ## mastertune's features on it
 
-`deluge-1.3.0-mastertune-s3-825332fc.bin` (1,788,452 bytes, SHA-256
-`dfb86b62c9823b8b0db9c4bf0864c1312be3e956347178aeec65af77e2fd56dd`) is the stabilised build above plus the first three
-steps of mastertune 1.2.1's features ported to v1.3: the arp extras (latch, ratchet notes with roll and ball, ratchet
-bounce, bounce length and velocity; `features/0001`), the CPU monitor (`features/0002`) and master tune (A4 at 415.3
-to 466.2 Hz for everything that sounds, CV and MIDI; recordings marked with their tuning; `features/0003`). The Deluge
-shows it as `1.3.0-beta-825332fc9`. The plan for the other steps (Scan, DJ, USB audio), what each step does and how it
-is tested: `FEATURES.md`. **Tested in the emulator only**, as the build under it.
+`deluge-1.3.0-mastertune-s6-b1a91c9b.bin` (1,810,816 bytes, SHA-256
+`c0a02c6b142c28c6b925e2738ea7a9714f3817e7b3f5ad96b1d74ed68db82532`) is the stabilised build above plus all six steps
+of mastertune 1.2.1's features ported to v1.3: the arp extras (latch, ratchet notes with roll and ball, ratchet
+bounce, bounce length and velocity; `features/0001`), the CPU monitor (`features/0002`), master tune (A4 at 415.3 to
+466.2 Hz for everything that sounds, CV and MIDI; recordings marked with their tuning; `features/0003`), Scan (a
+tuner, tempo meter and key finder on the audio input; `features/0004`), the DJ tool (a DJ filter on the song's gold
+knobs that drives v1.3's own LPF and HPF, sync to the tempo Scan hears, a nudge; `features/0005`) and USB audio (the
+Deluge's output as a USB audio input on the computer, the song's name for DelugeRec; `features/0006`). The filters
+and their levels are v1.3's. The Deluge shows it as `1.3.0-beta-b1a91c9be`. What each step does and how it is
+tested: `FEATURES.md`. **Tested in the emulator only**, as the build under it; USB audio's enumeration and recording
+need the Deluge.
 
-- Built by `FEATURES=1 tools/setup_beta.sh` (the tree `/home/user/work/beta-features`, commit `825332fc9`). Two
-  builds in that same folder give the same file; the folder's path is part of it (one source file name in a
-  message), so a build elsewhere differs in those bytes.
-- Before: `deluge-1.3.0-mastertune-s2-72e19139.bin` (steps 1 and 2, SHA-256 `62340f99...`),
+- Built by `FEATURES=1 tools/setup_beta.sh` (the tree `/home/user/work/beta-features`, commit `b1a91c9be`). Two
+  runs of it in that same folder (a fresh tree each time) give the same file; the folder's path is part of it (one
+  source file name in a message), so a build elsewhere differs in those bytes.
+- Before: `deluge-1.3.0-mastertune-s3-825332fc.bin` (steps 1 to 3, SHA-256 `dfb86b62...`),
+  `deluge-1.3.0-mastertune-s2-72e19139.bin` (steps 1 and 2, SHA-256 `62340f99...`),
   `deluge-1.3.0-mastertune-s1-c2380b0a.bin` (step 1 alone, SHA-256 `d12eee68...`).
 
 | File | What |

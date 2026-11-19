@@ -21,9 +21,9 @@ engine's hooks); the features themselves are mostly new files.
 | 1 | **Arp extras**: latch, ratchet notes (exactly 2 ... 8, roll, ball), ratchet bounce, bounce length and velocity | the latch and bounce part of 0005; 0006, 0021, 0024, 0117, 0120 | ~1,000 lines | done: `features/0001` |
 | 2 | **CPU monitor** (the profiler left out) | 0015, 0026, 0039, 0059, 0062, 0069, 0070 (profiler 0053, 0054) | ~1,050 (+670) | done: `features/0002` |
 | 3 | **Master tune** | 0001 (its MIDI drum hook as 0005 moved it) | ~650 | done: `features/0003` |
-| 4 | **Scan** (tuner, tempo, key) | 0118 | ~1,500, nearly all new | next |
-| 5 | **DJ** (filter, sync, nudge) | 0119 | ~280 | |
-| 6 | **USB audio** | 0008, 0055, 0112 | ~1,050 | |
+| 4 | **Scan** (tuner, tempo, key) | 0118 | ~1,500, nearly all new | done: `features/0004` |
+| 5 | **DJ** (filter, sync, nudge) | 0119 | ~280 | done: `features/0005` |
+| 6 | **USB audio** | 0008, 0055, 0112 | ~1,050 | done: `features/0006` |
 
 - The CPU monitor comes early: it is the measuring tool for the steps after it.
 - Master tune before Scan, DJ and USB audio: they read it (Scan's cents at 432 Hz, the tuning in a recording).
@@ -31,6 +31,9 @@ engine's hooks); the features themselves are mostly new files.
 - Settings and song attributes keep mastertune's names, so songs and settings move between mastertune 1.2.1 and this
   build. Stock v1.3 ignores them on loading and drops them at the next save, as stock 1.2.1 does with mastertune's.
 - Menus follow v1.3's style (horizontal menus).
+- The filters are v1.3's: mastertune 1.2.1's own filter changes (v16 to v19: the resonance 6 dB quieter, parallel
+  routing 6 dB quieter, the Drive and crossing changes) are not part of the plan. The DJ filter (step 5) only drives
+  the song's LPF and HPF params, so their levels stay as in v1.3.
 - The base is tested in the emulator only, like the features; a fault on the Deluge may be the base's.
 
 ## Step 1: the arp extras (`features/0001`)
@@ -182,3 +185,113 @@ sample browser, settings file and task scheduler).
 - **The build** (`FEATURES=1 tools/setup_beta.sh`) gives the same file twice in the same folder (SHA-256
   `dfb86b62...`); its tree is the one the tests ran on.
 - The CV2 expression case is fixed by the review's reading of the code; the rig has no CV instrument in that mode.
+
+## Step 4: Scan (`features/0004`)
+
+mastertune's Scan view: `dsp/scan/scan.{h,cpp}` and `gui/views/scan_view.{h,cpp}` are mastertune's files (the view
+without the name override v1.3's UI doesn't have, its menu item's `isRelevant()` const as v1.3 declares it). The audio
+routine feeds the analysis the input frames the recorders get; the item is the second of Settings > Tuning.
+
+- **Settings > Tuning > Scan** (from Song view): the note with its cents against the master tune (so at 432 Hz too), its
+  frequency, the tempo in BPM and the key, major or minor, with its Camelot number. Select encoder: the input (Auto,
+  Left, Right, Stereo); pressed: what is big (note, Hz, BPM, key). Horizontal encoder: the BPM halved or doubled. The
+  pads are the needle, the sidebar the input's level. BACK, SONG or SCALE: back to Song view, the analysis freed.
+- **Three faults found by the review**, two of them v1.3's interplay:
+  - v1.3 leaves a menu with SONG straight to Song view (`changeRootUI()`), also a menu opened over the Scan view
+    (SHIFT + select): the view never knew, so the audio routine went on feeding the analysis and its 95 KB stayed
+    allocated until Scan was opened and left again. A song loaded from the view did the same (as in mastertune 1.2.1).
+    Now `changeRootUI()` and `nullifyUIs()` release it when the Scan view stops being the root UI.
+  - On the 7-segment display the analysis wrote its note over a menu opened on top of the view (v1.3 keeps calling the
+    view's graphics routine under the menu): it now shows only while the view is the current UI.
+  - The debug builds' table of UI names had no entry for the new UI type.
+
+**Tested:**
+- **The analysis** (mastertune's host test `tests/scan`, on this tree): pitches, tempos and keys of the test material
+  (every key right, 24 of 24, at 432 Hz, at 440 Hz with drums, and analysed every 116 ms), silence, noise and a held
+  note without a key; 0.4 % of real time on the computer.
+- **On the v1.3 rig** (`tests/features/scan_emu.py`, the fuzzer's card; a tone of 861.33 Hz in the input ring): the
+  menu opens the view, the analysis is the audio engine's; at 440 Hz "A4 -37.1" and "861.32 Hz  -- BPM"; SHIFT + select,
+  Master tune turned to 432.0 Hz, BACK: "A4 -5.4" with "432" in the title; Hz, BPM ("-- BPM" for a steady tone, the
+  tempo analysis ran) and key ("--" for a held note) in turn; a C major chord and the input turned to Left: "C major",
+  "Camelot 8B" after 4 s; BACK: Song view, the analysis freed; again with Settings over the view left by SONG: freed
+  too (the fault above). No crash, freeze, hang or wild access.
+- **The menus**: the walk through Settings and the song menu (`tests/menu_walk_emu.py`, about 1,400 inputs, 233 items)
+  visits Tuning > Scan (which opens the view and leaves the menu) and comes back; no problem, before the review's fixes
+  and on the release build.
+
+## Step 5: the DJ tool (`features/0005`)
+
+mastertune's DJ filter, sync and nudge: `dsp/dj/dj_filter.h` is mastertune's file; the glue merged with v1.3 (the end
+of a nudge is checked in `PlaybackHandler::routine()`, as v1.3 moved the MIDI input into `midiRoutine()`).
+
+- **DJ filter**: the song's filter type DJ, after LPF, HPF and EQ when the upper gold knob is pressed (Song view with
+  AFFECT ENTIRE, the filter row); clips and sounds go round as before. **It adds no filter of its own**: the upper knob
+  drives the song's own LPF and HPF cutoff params as their own knobs set them (left of the middle the low-pass closes,
+  right of it the high-pass opens, in the middle both are off; where they were set apart a detent goes on from there
+  without a jump), the lower knob both resonances. So the filters' sound and levels are v1.3's. Popups "DJ: LPF 16",
+  "DJ: OFF", "DJ: HPF 16". Saved as `currentFilterType="dj"`; a firmware without it loads LPF there.
+- **Sync** (Scan view): TAP TEMPO sets the song's tempo to the BPM shown, undoable; "No tempo yet" before a tempo is
+  heard, "External clock" where one sets it.
+- **Nudge**: the horizontal encoder held and the tempo encoder turned bends the internal clock for 0.25 s (4 % a
+  detent, about 10 ms at any tempo), then the tempo is exactly what it was; STOP ends it at once; a song saved while
+  bent saves the unbent tempo. SHIFT keeps v1.3's nudge of the MIDI clock out.
+
+**Tested:**
+- **The knob's curve** (mastertune's host test `tests/dj`, on this tree): every position, a detent at all 129, and no
+  jump from any LPF and HPF knob set apart (33,282 starts).
+- **On the v1.3 rig** (`tests/features/dj_emu.py`, the fuzzer's card):
+  - The filter types go round LPF, HPF, EQ, DJ; 20 detents left: the LPF's cutoff exactly at knob 24, the HPF off,
+    "DJ: LPF 16"; 40 right: the LPF off, the HPF at knob -24, "DJ: HPF 16"; 20 left: "DJ: OFF", both off; the lower
+    knob 10 right: both resonances 10 up; pressed once more: LPF.
+  - **The levels against v1.3's own filter knobs**: the four params (both cutoffs, both resonances) bit for bit the
+    same with DJ at OFF as with the LPF opened and the HPF closed by their own knobs, and with "DJ: LPF 16" as with the
+    LPF's own knob at 24. The filters compute their output from these params alone, so this is the decisive check.
+    Coarser, the output over the song's first 3 s (played from its start each time), on the release build: with the
+    LPF open -18.72 dBFS by its own knobs, -19.13 with DJ at OFF; at knob 24 -19.11 and -18.73; above 3 kHz -36.25 and
+    -36.18, -49.45 and -49.12. The test song's free-running oscillators vary the same setting by up to 0.4 dB from run
+    to run (the run before gave +0.18 and -0.09 dB the other way round), so the output is only compared within 0.5 dB;
+    the low-pass at 24 takes 13 dB above 3 kHz, as it should.
+  - Sync from the Scan view: "No tempo yet" without a tempo, the tempo kept; the analysis at 128 BPM: "Sync 128.0 BPM",
+    the song at 128.0000 BPM.
+  - The nudge, playing: a detent right makes the time per tick exactly 4 % shorter ("Sync nudged"), 0.4 s later it is
+    what it was; left 4 % longer, then back; a nudge then STOP: back at once.
+  - No crash, freeze, hang or wild access.
+
+## Step 6: USB audio (`features/0006`)
+
+mastertune's USB audio: `io/usb/usb_audio*`, `usb_song_info*` and the changes to the Renesas USB driver are
+mastertune's (they applied unchanged); the glue is fitted to v1.3 (the community features read before USB starts, the
+frames pushed from v1.3's output buffer, the song info on v1.3's USB MIDI cable 3).
+
+- **Settings > Community features > USB audio** (off by default, read at boot): the Deluge enumerates as a USB Audio
+  Class 1.0 device next to its MIDI interface, stereo, 24 bits, 44.1 kHz; the computer records exactly what goes to the
+  outputs. Empty packets the computer got show "USB audio gap", at most every 10 s. Nothing during an offline stem
+  export.
+- The setting is saved at once ("Restart to apply"), so a restart from the menu keeps it; that save keeps the startup
+  song as it was (as the CPU monitor's save), so a song loaded but not saved doesn't become the one "Last saved" opens.
+  (Leaving the menu writes the file as v1.3 does.)
+- While the computer has the stream open, the song's name and the firmware go to USB MIDI port 3 as SysEx 0x12 (JSON,
+  packed 7 bits in 8), for DelugeRec.
+
+**Tested** (the emulator has no USB host: nothing enumerates the Deluge or opens the stream):
+- **The descriptors and the ring** (mastertune's host tests `tests/usbaudio`, on this tree): the descriptors against
+  the USB 2.0, USB Audio Class 1.0 and USB MIDI rules; the ring and the packet sizes against clock drift, a computer
+  that stops reading and an engine stall, with the sanitizers.
+- **On the v1.3 rig** (`tests/features/usb_audio_emu.py`): off without a settings file; switched on as the menu does:
+  "Restart to apply", `SETTINGS/CommunityFeatures.XML` written at once with `usbAudio` 1 and the startup song left as
+  it was; a second boot reads it before USB starts (on); the stream opened as `usbAudioStart()` opens it, playing: the
+  2,048 frames in the ring are the frames sent to the codec, bit for bit and in order; the song info goes out on cable 3
+  as `{"song":"","fw":"1.3.0-beta-..."}` (the song from the template was never saved). No crash, freeze, hang or wild
+  access.
+- **The menus**: the walk through Settings visits Community features > USB audio; no problem.
+- **Not tested here**: the enumeration on a computer, the recording itself and MIDI next to it. That needs the Deluge
+  (mastertune 1.2.1's device tests did it for the same driver code).
+
+## The build with all six steps
+
+`deluge-1.3.0-mastertune-s6-b1a91c9b.bin` (`README.md`): `tests/features/run.sh` on it runs mastertune's host tests on
+its tree (the CPU monitor's core, the master tune arithmetic and WAV header, Scan's analysis, the DJ knob, USB audio's
+descriptors and ring) and the six emulator tests; all pass. Two runs of `FEATURES=1 tools/setup_beta.sh` (a fresh tree
+each time, in the same folder) give the same file, SHA-256 `c0a02c6b...`. A rebuild of the existing build folder after
+its `clean` target gives a file of the same size with about 40 KB of code laid out differently; the file to compare
+with is the one from `setup_beta.sh`.
