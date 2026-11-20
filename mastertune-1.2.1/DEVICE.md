@@ -23,7 +23,7 @@ Run `git pull` before any work: the cloud session keeps delivering.
 - **Use Python 3.12.** `python-rtmidi` has no ready-made packages for newer versions.
 - **Port names:** The ports are called `Deluge 0`, `MIDIIN2 (Deluge) 1` and `MIDIIN3 (Deluge) 2`. From the commit after `0377a67` the script finds `MIDIIN3` by itself, `-p` is no longer needed.
 
-## Tasks (as of 18.11.2026, v19.0.4 is current)
+## Tasks (as of 20.11.2026, v19.0.4 is current; v1.3 with mastertune's features: task 16)
 
 Done: the report on v16, l2d, the song for the emulator, the retune test on Windows, "Rescue". The tasks for v17 are dropped: v18.3 contains v17, v18 and v18.2, so everything now applies to v18.3. What it brings is in the README, in the sections "v18", "v18.2" and "v18.3".
 
@@ -135,6 +135,17 @@ Done: the report on v16, l2d, the song for the emulator, the retune test on Wind
    - **The kits' XML:** `python mastertune-1.2.1/tools/song_check.py ~/deluge-samples -v > mastertune-1.2.1/device/2026-11-XX-song-check-kits.txt` (well-formed, missing samples, firmware).
    - Change nothing in `deluge-samples` and copy nothing onto the card: the cloud session evaluates the reports and proposes the fixes.
    - **Report:** both files (XX = the day), pushed to `device-results`. No WAV needed.
+
+16. **The community firmware v1.3 with mastertune's six features (s6)** (new on 20.11.2026; `beta-1.3/README.md` and `beta-1.3/FEATURES.md` on the branch `nightly`; tested in the emulator only, so far):
+   - **Use a second card, or a full copy of the card.** v1.3 moves `CommunityFeatures.XML`, `MIDIDevices.XML`, `MIDIFollow.XML` and `PerformanceView.XML` into `SETTINGS/`; mastertune 1.2.1 finds them only in the card's root. Save no song you need on 1.2.1 with it.
+   - **Get and flash it:** `git fetch origin nightly && git show origin/nightly:beta-1.3/deluge-1.3.0-mastertune-s6-b1a91c9b.bin > deluge-1.3.0-mastertune-s6-b1a91c9b.bin` (SHA-256 `c0a02c6b...`). Settings → Firmware version shows `1.3.0-beta-b1a91c9be`. Back to 1.2.1: flash `deluge-1.2.1-mastertune-v19.0.4-l2d-92b7ebbe.bin` with the 1.2.1 card.
+   - **USB audio, the part the emulator can't test:** Settings → Community features → USB audio on ("Restart to apply"), restart without leaving the menu. Does the computer show the Deluge as an audio input next to its MIDI ports? Record a song with DelugeRec: the file named after the song and `1.3.0-beta-b1a91c9be`, the recording as the Deluge sounds (no gaps, no clicks; "USB audio gap" on the OLED?). Meanwhile MIDI over USB (a DAW's clock or notes) still works. The CPU monitor (below) with USB audio on and off.
+   - **The DJ filter's levels against v1.3's own filter:** in Song view, AFFECT ENTIRE, the filter row; press the upper gold knob to `DJ`. Turn it to `DJ: OFF`: the song sounds exactly as with the filter in LPF mode fully open. Turn it to `DJ: LPF 16` and compare with LPF mode and its own knob at the same cutoff: the same sound and level. Then a few detents through the middle while a song plays: no click, no jump.
+   - **Sync and nudge:** a track with a known tempo into the line input, Settings → Tuning → Scan, the BPM shown, TAP TEMPO: `Sync … BPM`, the song at that tempo. Back in Song view, playing: the horizontal encoder held and the tempo encoder turned moves the beat about 10 ms a detent; afterwards the tempo is what it was.
+   - **Scan:** the tuner with the internal microphone and the line input against a tuner app (within about 2 cents), at 440 and at 432 Hz (Settings → Tuning → Master tune); a few tracks for tempo and key. Leave it once with BACK and once with SHIFT + select (Settings), then SONG: both times back in Song view.
+   - **Master tune, arp, CPU monitor (steps 1 to 3):** at 432 Hz a synth, a kit row and an audio clip in tune with a tuner app; a MIDI track's receiver retuned; the arp's latch and ratchet roll and ball (the songs of task 7); LEARN + tempo encoder press switches the CPU monitor on, `live` shows its lines.
+   - **The big song:** "New Sitar Grii 10" for 5 minutes with the CPU monitor on: the load and the voices against task 2's measurement with v18.3/v19 (v1.3 is a different base, so this shows where it stands), any crash or freeze with what you did and what the display showed.
+   - **Report:** a short report in English to `device/2026-11-XX-v1.3-s6.md`, the `live` measurement as `.jsonl`, a DelugeRec recording only if something sounds wrong, pushed to `device-results`.
 
 ### Done: "Rescue", the LPF has no effect (27.09.2026)
 
