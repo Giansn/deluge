@@ -36,6 +36,59 @@ engine's hooks); the features themselves are mostly new files.
   the song's LPF and HPF params, so their levels stay as in v1.3.
 - The base is tested in the emulator only, like the features; a fault on the Deluge may be the base's.
 
+## Next: steps 7 to 9 (planned 20.11.2026)
+
+What is essential and still missing, after a look at the arp in this build, the community's open work and
+mastertune's own plans (no open arp requests in the community's issues; its draft velvet reverb,
+SynthstromAudible/DelugeFirmware#4939, has no code).
+
+| Step | What | Source | Size | Status |
+|---|---|---|---|---|
+| 7 | **Arp freeze**: what the arp plays written into the clip as notes, the arp off, one undo | the community's open PR SynthstromAudible/DelugeFirmware#5208 (commit `9641fbb31`, 25.10.2026), ported | ~1,500 lines, nearly all new | planned |
+| 8 | **More note orders**: Converge, Diverge, Up/Down without repeated ends, Thumb, Pinky | own | ~150 | planned |
+| 9 | **Velvet reverb, the prototype**: a fourth reverb model, first on the computer | `mastertune-1.2.1/research/VELVET-REVERB-PLAN.md` (branch `claude/wizardly-brahmagupta-nnrk07`), its step 1 | Python only | planned |
+
+**Step 7, arp freeze** (`features/0007`):
+- What #5208 does: FREEZE at the end of the arp's Pattern menu (synth, MIDI and CV clips, the kit arp), with a
+  confirmation, replaces the notes that feed the arp with the notes it plays and switches the arp off, as one undoable
+  action. It runs the real arpeggiator tick by tick over the clip outside playback, on a copy of its settings
+  (unsynced arps in samples at the current tempo); reversed and ping-pong clips are written out as they sound; the
+  randomizer settings that would act on the frozen notes again are reset. A community feature switches it off.
+- The port: the PR's new files (`model/clip/arp_freeze.*`, two consequences for the undo) as they are; the glue as in
+  steps 4 to 6 (strings, menus, the community features' list) and the arpeggiator, where step 1 changed the same
+  places (the PR adds `isClockActive()` and `getTicksPerPeriod()`). The PR is pinned at its commit; the author is named
+  in the patch and here. Nothing is posted to the community.
+- Our arp extras: a tick is 1/96 of a quarter (5.2 ms at 120 BPM). Ratchet hits fall on ticks or between them; a
+  roll's hits are at least 16 ms (3 ticks at 120 BPM) apart, so each hit becomes a note of its own, rounded to its tick
+  (at most half a tick, 2.6 ms at 120 BPM, off). Latch, bounce velocity and the ball come through the real arp.
+- Tests (`tests/features/arp_freeze_emu.py`): a clip with a chord, the arp playing it while the song plays (the note-ons
+  captured), then FREEZE: the clip's notes are the notes the arp played (pitch, velocity, start within a tick, length
+  within a tick); UNDO brings the chord and the arp back. The same with a ratchet roll, a ball, a kit arp and a
+  reversed clip. The menu walk visits FREEZE.
+
+**Step 8, more note orders** (`features/0008`):
+- New `ArpNoteMode` values after the existing ones (the stored numbers and names stay): **Converge** (lowest, highest,
+  2nd lowest, 2nd highest, ...), **Diverge** (from the middle outwards), **Up/Down excl.** (today's Up/Down plays the
+  top and the bottom note twice; this one once), **Thumb** (the lowest note between each of the others, going up:
+  C E C G C B), **Pinky** (the highest note between each of the others, going up). Each goes through one octave, then
+  on as the octave mode says, like Up.
+- Saved as `converge`, `diverge`, `upDownExcl`, `thumb`, `pinky`; a firmware without them reads Up there.
+- Menus: Note mode for synths and the kit arp; 7-segment `CONV`, `DIVG`, `UPDX`, `THMB`, `PNKY`.
+- Tests: a host test of the sequences (1 to 7 notes, each octave mode), an emulator test of the notes played for a
+  four-note chord, the menu walk.
+
+**Step 9, the velvet reverb's prototype** (on the computer; no firmware yet):
+- The plan's design B: a feedback delay network with a velvet feedback matrix (8 or 16 lines, about 2 to 3 % CPU
+  estimated, within the 32,768-sample buffer Mutable and Digital share), Room size as Digital's reverb time, Damping
+  as the ratio of high to mid decay, Width, HPF and LPF.
+- In `mastertune-1.2.1/research/velvet/` (Python and numpy), compared with Mutable and Digital built for the computer
+  from the firmware's own code (as `tests/reverb` builds them): reverb time per octave band, echo density, resonances
+  (at most Digital's 11.2 dB), left/right correlation against Width, level within 0.5 dB of Mutable, operations per
+  sample and memory. v1.3 has the same three models with the same numbers, so a Velvet would be model 3 in both.
+- Demo WAVs (drums, a held chord, a voice) through Mutable, Digital and Velvet go to the user to listen to.
+- Go or no-go by ear: only if Velvet sounds better than Digital at no more than its cost does the firmware follow
+  (the plan's step 2, for mastertune 1.2.1 and this build).
+
 ## Step 1: the arp extras (`features/0001`)
 
 mastertune's arpeggiator is v1.3's own, backported to 1.2.1 in mastertune's 0005, so the engine came over as a
