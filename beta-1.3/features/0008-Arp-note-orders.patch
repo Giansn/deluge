@@ -1,0 +1,392 @@
+From 357bfcab653b1a86a3130ee4d59445f0d1e0abbd Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 21 Nov 2026 00:42:29 +0000
+Subject: [PATCH] Arp: five fixed note orders, Converge, Diverge, Up & Down
+ excl., Thumb and Pinky
+
+New arp note modes after the existing ones (their numbers and saved names stay), for synths, MIDI, CV and the kit arp.
+Each goes once through the notes held (in order of pitch), then on to the next octave as the octave mode says, as Up
+does (modulation/arp_note_order.h):
+- Converge: lowest, highest, 2nd lowest, 2nd highest, ...
+- Diverge: from the middle outwards (Converge backwards)
+- Up & Down excl.: up, then down without the top and the bottom note twice (Up & Down plays them twice)
+- Thumb: the lowest note between each of the others, going up (C E C G C B)
+- Pinky: the highest note between each of the others, going up (C B E B G B)
+Saved as "converge", "diverge", "upDownExcl", "thumb", "pinky"; a firmware without them reads Up there. The kit arp's
+menu leaves out Played Order and Pattern, so its options are mapped to the modes. 7-segment: CONV, DIVG, UPDX, THMB,
+PNKY.
+---
+ src/definitions_cxx.hpp                       | 12 +++-
+ src/deluge/gui/l10n/english.json              |  7 +-
+ src/deluge/gui/l10n/g_english.cpp             |  5 ++
+ src/deluge/gui/l10n/g_seven_segment.cpp       |  5 ++
+ src/deluge/gui/l10n/seven_segment.json        |  7 +-
+ src/deluge/gui/l10n/strings.h                 |  6 ++
+ .../gui/menu_item/arpeggiator/note_mode.h     | 12 ++++
+ .../arpeggiator/note_mode_for_drums.h         | 26 +++++++-
+ src/deluge/modulation/arp_note_order.h        | 66 +++++++++++++++++++
+ src/deluge/modulation/arpeggiator.cpp         | 16 +++++
+ src/deluge/modulation/arpeggiator.h           |  1 +
+ src/deluge/util/functions.cpp                 | 30 +++++++++
+ 12 files changed, 188 insertions(+), 5 deletions(-)
+ create mode 100644 src/deluge/modulation/arp_note_order.h
+
+diff --git a/src/definitions_cxx.hpp b/src/definitions_cxx.hpp
+index 1e72b4dc5..c14e8db4d 100644
+--- a/src/definitions_cxx.hpp
++++ b/src/definitions_cxx.hpp
+@@ -542,7 +542,17 @@ enum class ArpNoteMode {
+ 	WALK3,
+ 	AS_PLAYED,
+ 	PATTERN,
+-};
++	// mastertune: fixed orders of the held notes, an octave each (modulation/arp_note_order.h)
++	CONVERGE,     // lowest, highest, 2nd lowest, 2nd highest, ...
++	DIVERGE,      // from the middle outwards (Converge backwards)
++	UP_DOWN_EXCL, // up, then down without playing the top and the bottom note twice
++	THUMB,        // the lowest note between each of the others, going up
++	PINKY,        // the highest note between each of the others, going up
++};
++/// mastertune: whether the note mode is one of the fixed orders above
++constexpr bool isOrderedArpNoteMode(ArpNoteMode mode) {
++	return mode >= ArpNoteMode::CONVERGE && mode <= ArpNoteMode::PINKY;
++}
+ 
+ enum class ArpOctaveMode {
+ 	UP,
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index 3f9ed3315..1d07f61f6 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -1037,6 +1037,11 @@
+     "STRING_FOR_CANT_FREEZE_ARP_TOO_MANY_NOTES": "Can't freeze: too many notes",
+     "STRING_FOR_CANT_FREEZE_ARP_MUTED_ROW": "Can't freeze: a muted row is in the way",
+     "STRING_FOR_CANT_FREEZE_ARP_UNFROZEN_ROW": "Can't freeze: arp plays a row not in the kit arp",
+-    "STRING_FOR_CANT_FREEZE_ARP_AUTOMATION": "Can't freeze: automation in the way"
++    "STRING_FOR_CANT_FREEZE_ARP_AUTOMATION": "Can't freeze: automation in the way",
++    "STRING_FOR_CONVERGE": "Converge",
++    "STRING_FOR_DIVERGE": "Diverge",
++    "STRING_FOR_UP_DOWN_EXCL": "Up & Down excl.",
++    "STRING_FOR_THUMB": "Thumb",
++    "STRING_FOR_PINKY": "Pinky"
+   }
+ }
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index 429eb82c1..c70f75e88 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -1051,6 +1051,11 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_CANT_FREEZE_ARP_MUTED_ROW, "Can't freeze: a muted row is in the way"},
+         {STRING_FOR_CANT_FREEZE_ARP_UNFROZEN_ROW, "Can't freeze: arp plays a row not in the kit arp"},
+         {STRING_FOR_CANT_FREEZE_ARP_AUTOMATION, "Can't freeze: automation in the way"},
++        {STRING_FOR_CONVERGE, "Converge"},
++        {STRING_FOR_DIVERGE, "Diverge"},
++        {STRING_FOR_UP_DOWN_EXCL, "Up & Down excl."},
++        {STRING_FOR_THUMB, "Thumb"},
++        {STRING_FOR_PINKY, "Pinky"},
+     },
+ };
+ } // namespace deluge::l10n::built_in
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index 393411fd1..e1358ec06 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -594,6 +594,11 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_CANT_FREEZE_ARP_MUTED_ROW, "MUTE"},
+         {STRING_FOR_CANT_FREEZE_ARP_UNFROZEN_ROW, "ROW"},
+         {STRING_FOR_CANT_FREEZE_ARP_AUTOMATION, "AUTO"},
++        {STRING_FOR_CONVERGE, "CONV"},
++        {STRING_FOR_DIVERGE, "DIVG"},
++        {STRING_FOR_UP_DOWN_EXCL, "UPDX"},
++        {STRING_FOR_THUMB, "THMB"},
++        {STRING_FOR_PINKY, "PNKY"},
+     },
+     &built_in::english,
+ };
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index a9acbec1f..4f300ca56 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -637,6 +637,11 @@
+         "STRING_FOR_CANT_FREEZE_ARP_TOO_MANY_NOTES": "FULL",
+         "STRING_FOR_CANT_FREEZE_ARP_MUTED_ROW": "MUTE",
+         "STRING_FOR_CANT_FREEZE_ARP_UNFROZEN_ROW": "ROW",
+-        "STRING_FOR_CANT_FREEZE_ARP_AUTOMATION": "AUTO"
++        "STRING_FOR_CANT_FREEZE_ARP_AUTOMATION": "AUTO",
++        "STRING_FOR_CONVERGE": "CONV",
++        "STRING_FOR_DIVERGE": "DIVG",
++        "STRING_FOR_UP_DOWN_EXCL": "UPDX",
++        "STRING_FOR_THUMB": "THMB",
++        "STRING_FOR_PINKY": "PNKY"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index e9ca34172..f52dfab6c 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -1186,6 +1186,12 @@ enum class String : size_t {
+ 	STRING_FOR_CANT_FREEZE_ARP_MUTED_ROW,
+ 	STRING_FOR_CANT_FREEZE_ARP_UNFROZEN_ROW,
+ 	STRING_FOR_CANT_FREEZE_ARP_AUTOMATION,
++	// mastertune: the arp's fixed note orders
++	STRING_FOR_CONVERGE,
++	STRING_FOR_DIVERGE,
++	STRING_FOR_UP_DOWN_EXCL,
++	STRING_FOR_THUMB,
++	STRING_FOR_PINKY,
+ 	STRING_LAST
+ };
+ 
+diff --git a/src/deluge/gui/menu_item/arpeggiator/note_mode.h b/src/deluge/gui/menu_item/arpeggiator/note_mode.h
+index 6b5e7761f..ec8e19213 100644
+--- a/src/deluge/gui/menu_item/arpeggiator/note_mode.h
++++ b/src/deluge/gui/menu_item/arpeggiator/note_mode.h
+@@ -54,6 +54,12 @@ public:
+ 			    l10n::getView(l10n::built_in::seven_segment, STRING_FOR_WALK3),     //<
+ 			    l10n::getView(l10n::built_in::seven_segment, STRING_FOR_AS_PLAYED), //<
+ 			    l10n::getView(l10n::built_in::seven_segment, STRING_FOR_PATTERN),   //<
++			    // mastertune: the fixed note orders
++			    l10n::getView(l10n::built_in::seven_segment, STRING_FOR_CONVERGE),     //<
++			    l10n::getView(l10n::built_in::seven_segment, STRING_FOR_DIVERGE),      //<
++			    l10n::getView(l10n::built_in::seven_segment, STRING_FOR_UP_DOWN_EXCL), //<
++			    l10n::getView(l10n::built_in::seven_segment, STRING_FOR_THUMB),        //<
++			    l10n::getView(l10n::built_in::seven_segment, STRING_FOR_PINKY),        //<
+ 			};
+ 		}
+ 		return {
+@@ -66,6 +72,12 @@ public:
+ 		    l10n::getView(STRING_FOR_WALK3),     //<
+ 		    l10n::getView(STRING_FOR_AS_PLAYED), //<
+ 		    l10n::getView(STRING_FOR_PATTERN),   //<
++		    // mastertune: the fixed note orders
++		    l10n::getView(STRING_FOR_CONVERGE),     //<
++		    l10n::getView(STRING_FOR_DIVERGE),      //<
++		    l10n::getView(STRING_FOR_UP_DOWN_EXCL), //<
++		    l10n::getView(STRING_FOR_THUMB),        //<
++		    l10n::getView(STRING_FOR_PINKY),        //<
+ 		};
+ 	}
+ };
+diff --git a/src/deluge/gui/menu_item/arpeggiator/note_mode_for_drums.h b/src/deluge/gui/menu_item/arpeggiator/note_mode_for_drums.h
+index 0e40cb093..6c57902e3 100644
+--- a/src/deluge/gui/menu_item/arpeggiator/note_mode_for_drums.h
++++ b/src/deluge/gui/menu_item/arpeggiator/note_mode_for_drums.h
+@@ -28,11 +28,27 @@ namespace deluge::gui::menu_item::arpeggiator {
+ class NoteModeForDrums : public Selection {
+ public:
+ 	using Selection::Selection;
+-	void readCurrentValue() override { this->setValue(soundEditor.currentArpSettings->noteMode); }
++	// mastertune: the menu's options skip Played Order and Pattern (not for kit rows), so the fixed note orders after
++	// Walk3 are numbered apart from ArpNoteMode
++	static constexpr int32_t kFirstOrderOption = util::to_underlying(ArpNoteMode::WALK3) + 1;
++	static int32_t optionOf(ArpNoteMode mode) {
++		if (isOrderedArpNoteMode(mode)) {
++			return kFirstOrderOption + util::to_underlying(mode) - util::to_underlying(ArpNoteMode::CONVERGE);
++		}
++		return (mode <= ArpNoteMode::WALK3) ? util::to_underlying(mode) : 0;
++	}
++	static ArpNoteMode modeOf(int32_t option) {
++		if (option >= kFirstOrderOption) {
++			return static_cast<ArpNoteMode>(util::to_underlying(ArpNoteMode::CONVERGE) + option - kFirstOrderOption);
++		}
++		return static_cast<ArpNoteMode>(option);
++	}
++
++	void readCurrentValue() override { this->setValue(optionOf(soundEditor.currentArpSettings->noteMode)); }
+ 
+ 	bool usesAffectEntire() override { return true; }
+ 	void writeCurrentValue() override {
+-		auto current_value = this->getValue<ArpNoteMode>();
++		auto current_value = modeOf(this->getValue());
+ 
+ 		// If affect-entire button held, do whole kit
+ 		if (currentUIMode == UI_MODE_HOLDING_AFFECT_ENTIRE_IN_SOUND_EDITOR && soundEditor.editingKitRow()) {
+@@ -74,6 +90,12 @@ public:
+ 		    l10n::getView(STRING_FOR_WALK1),   //<
+ 		    l10n::getView(STRING_FOR_WALK2),   //<
+ 		    l10n::getView(STRING_FOR_WALK3),   //<
++		    // mastertune: the fixed note orders (optionOf())
++		    l10n::getView(STRING_FOR_CONVERGE),     //<
++		    l10n::getView(STRING_FOR_DIVERGE),      //<
++		    l10n::getView(STRING_FOR_UP_DOWN_EXCL), //<
++		    l10n::getView(STRING_FOR_THUMB),        //<
++		    l10n::getView(STRING_FOR_PINKY),        //<
+ 		};
+ 	}
+ };
+diff --git a/src/deluge/modulation/arp_note_order.h b/src/deluge/modulation/arp_note_order.h
+new file mode 100644
+index 000000000..4fb9d5d41
+--- /dev/null
++++ b/src/deluge/modulation/arp_note_order.h
+@@ -0,0 +1,66 @@
++/*
++ * Copyright © 2026 mastertune
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include "definitions_cxx.hpp"
++#include <cstdint>
++
++/// mastertune: the arpeggiator's fixed note orders (isOrderedArpNoteMode()). A cycle goes once through the n notes
++/// held (0 the lowest, n - 1 the highest); after it the arpeggiator moves on to the next octave as its octave mode
++/// says, as Up does.
++namespace arp_note_order {
++
++/// How many steps a cycle through n notes takes
++constexpr int32_t cycleLength(ArpNoteMode mode, int32_t n) {
++	if (n <= 1) {
++		return 1;
++	}
++	switch (mode) {
++	case ArpNoteMode::UP_DOWN_EXCL:
++		return 2 * n - 2; // 0 .. n-1, then n-2 .. 1
++	case ArpNoteMode::THUMB:
++	case ArpNoteMode::PINKY:
++		return 2 * (n - 1); // the held note between each of the others
++	default:
++		return n; // Converge, Diverge
++	}
++}
++
++/// Which of the n notes the step plays
++constexpr int32_t noteIndex(ArpNoteMode mode, int32_t step, int32_t n) {
++	if (n <= 1) {
++		return 0;
++	}
++	step %= cycleLength(mode, n);
++	switch (mode) {
++	case ArpNoteMode::CONVERGE: // 0, n-1, 1, n-2, ...
++		return (step & 1) ? n - 1 - (step >> 1) : (step >> 1);
++	case ArpNoteMode::DIVERGE: // Converge backwards: from the middle outwards
++		return noteIndex(ArpNoteMode::CONVERGE, n - 1 - step, n);
++	case ArpNoteMode::UP_DOWN_EXCL:
++		return (step < n) ? step : 2 * n - 2 - step;
++	case ArpNoteMode::THUMB: // 0, 1, 0, 2, 0, 3, ...
++		return (step & 1) ? 1 + (step >> 1) : 0;
++	case ArpNoteMode::PINKY: // 0, n-1, 1, n-1, 2, n-1, ...
++		return (step & 1) ? n - 1 : (step >> 1);
++	default:
++		return 0;
++	}
++}
++
++} // namespace arp_note_order
+diff --git a/src/deluge/modulation/arpeggiator.cpp b/src/deluge/modulation/arpeggiator.cpp
+index 0e098dd73..06c70e41f 100644
+--- a/src/deluge/modulation/arpeggiator.cpp
++++ b/src/deluge/modulation/arpeggiator.cpp
+@@ -16,6 +16,7 @@
+  */
+ 
+ #include "modulation/arpeggiator.h"
++#include "modulation/arp_note_order.h"
+ #include "definitions_cxx.hpp"
+ #include "gui/menu_item/value_scaling.h"
+ #include "model/model_stack.h"
+@@ -1469,6 +1470,15 @@ void ArpeggiatorBase::calculateNextNoteAndOrOctave(ArpeggiatorSettings* settings
+ 				changeOctave = true;
+ 			}
+ 		}
++		else if (isOrderedArpNoteMode(noteMode)) {
++			// mastertune: a fixed order; after its cycle, the next octave as the octave mode says (as Up does)
++			orderStep++;
++			if (orderStep >= arp_note_order::cycleLength(noteMode, numActiveNotes)) {
++				orderStep = 0;
++				changeOctave = true;
++			}
++			whichNoteCurrentlyOnPostArp = (int16_t)arp_note_order::noteIndex(noteMode, orderStep, numActiveNotes);
++		}
+ 		else {
+ 			// TODO do here the walk
+ 			if (noteMode == ArpNoteMode::WALK1 || noteMode == ArpNoteMode::WALK2 || noteMode == ArpNoteMode::WALK3) {
+@@ -1623,6 +1633,12 @@ void ArpeggiatorBase::setInitialNoteAndOctave(ArpeggiatorSettings* settings, uin
+ 		whichNoteCurrentlyOnPostArp = numActiveNotes - 1;
+ 		currentDirection = -1;
+ 	}
++	else if (isOrderedArpNoteMode(settings->noteMode)) {
++		// mastertune: a fixed order, from its start
++		orderStep = 0;
++		whichNoteCurrentlyOnPostArp = (int16_t)arp_note_order::noteIndex(settings->noteMode, 0, numActiveNotes);
++		currentDirection = 1;
++	}
+ 	else {
+ 		// Note: Up or Up&Down
+ 		whichNoteCurrentlyOnPostArp = 0;
+diff --git a/src/deluge/modulation/arpeggiator.h b/src/deluge/modulation/arpeggiator.h
+index 6e78785d9..68d0f9e79 100644
+--- a/src/deluge/modulation/arpeggiator.h
++++ b/src/deluge/modulation/arpeggiator.h
+@@ -359,6 +359,7 @@ protected:
+ 
+ 	// Sequence state
+ 	int16_t whichNoteCurrentlyOnPostArp = 0; // As in, the index within our list (mastertune-v13: initialised)
++	int16_t orderStep = 0; // mastertune: the step within a fixed note order's cycle (isOrderedArpNoteMode())
+ 	int8_t currentOctave = 0;
+ 	int8_t currentDirection = 1;
+ 	int8_t currentOctaveDirection = 1;
+diff --git a/src/deluge/util/functions.cpp b/src/deluge/util/functions.cpp
+index 70a9b3fa8..47750271d 100644
+--- a/src/deluge/util/functions.cpp
++++ b/src/deluge/util/functions.cpp
+@@ -1098,6 +1098,21 @@ char const* arpNoteModeToString(ArpNoteMode mode) {
+ 	case ArpNoteMode::PATTERN:
+ 		return "pattern";
+ 
++	case ArpNoteMode::CONVERGE:
++		return "converge";
++
++	case ArpNoteMode::DIVERGE:
++		return "diverge";
++
++	case ArpNoteMode::UP_DOWN_EXCL:
++		return "upDownExcl";
++
++	case ArpNoteMode::THUMB:
++		return "thumb";
++
++	case ArpNoteMode::PINKY:
++		return "pinky";
++
+ 	default:
+ 		return "up";
+ 	}
+@@ -1128,6 +1143,21 @@ ArpNoteMode stringToArpNoteMode(char const* string) {
+ 	else if (!strcmp(string, "random")) {
+ 		return ArpNoteMode::RANDOM;
+ 	}
++	else if (!strcmp(string, "converge")) {
++		return ArpNoteMode::CONVERGE;
++	}
++	else if (!strcmp(string, "diverge")) {
++		return ArpNoteMode::DIVERGE;
++	}
++	else if (!strcmp(string, "upDownExcl")) {
++		return ArpNoteMode::UP_DOWN_EXCL;
++	}
++	else if (!strcmp(string, "thumb")) {
++		return ArpNoteMode::THUMB;
++	}
++	else if (!strcmp(string, "pinky")) {
++		return ArpNoteMode::PINKY;
++	}
+ 	else {
+ 		return ArpNoteMode::UP;
+ 	}
+-- 
+2.43.0
+

@@ -12,6 +12,10 @@
 #                       sync to 128 BPM from Scan, the nudge and its return
 #   usb_audio_emu.py    0006: USB audio's setting saved at once and read before USB starts, the frames into the ring as
 #                       sent to the codec, the song info SysEx
+#   arp_freeze_emu.py   0007: arp freeze: the frozen clip plays what the arp played (plain, reversed, mastertune's
+#                       ratchets), undo brings the arp back
+#   arp_note_order_emu.py 0008: the five note orders over a four-note chord and two octaves
+#   arp_note_order_test.cpp (host, 0008): the orders' cycles for 1 to 7 notes
 #   (and mastertune's host tests on the ELF's tree: the CPU monitor's core, mastertune-1.2.1/tests/cpu_stats; the
 #   master tune arithmetic, master_tune_math_test.cpp; the recorder's WAV header with the "mtun" chunk; Scan's
 #   analysis, tests/scan; the DJ knob, tests/dj; USB audio's descriptors and ring, tests/usbaudio)
@@ -58,7 +62,18 @@ for h in scan:dsp/scan/scan.cpp dj:dsp/dj/dj_filter.h usbaudio:io/usb/usb_audio_
 		echo "skipped: no ${h#*:} in $TREE"
 	fi
 done
-for t in arp_extras_emu.py cpu_monitor_emu.py master_tune_emu.py scan_emu.py dj_emu.py usb_audio_emu.py; do
+echo "== arp_note_order_test.cpp (host)"
+if [ -f "$TREE/src/deluge/modulation/arp_note_order.h" ]; then
+	if g++ -std=c++20 -O1 -I "$TREE/src" -I "$TREE/src/deluge" "$HERE/arp_note_order_test.cpp" -o "$OUT/arp_note_order" \
+		&& "$OUT/arp_note_order" > "$OUT/arp_note_order_host.log" 2>&1
+	then tail -1 "$OUT/arp_note_order_host.log"
+	else tail -3 "$OUT/arp_note_order_host.log"; status=1
+	fi
+else
+	echo "skipped: no modulation/arp_note_order.h in $TREE"
+fi
+for t in arp_extras_emu.py cpu_monitor_emu.py master_tune_emu.py scan_emu.py dj_emu.py usb_audio_emu.py \
+	arp_freeze_emu.py arp_note_order_emu.py; do
 	echo "== $t"
 	if python3 "$HERE/$t" "$ELF" --tools "$TOOLS" --build "$BUILD" --out "$OUT/${t%.py}" > "$OUT/${t%.py}.log" 2>&1
 	then tail -1 "$OUT/${t%.py}.log"

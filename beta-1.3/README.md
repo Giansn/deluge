@@ -56,22 +56,25 @@ with SHIFT held. Back up the card first, as for any beta.
 
 ## mastertune's features on it
 
-`deluge-1.3.0-mastertune-s6-b1a91c9b.bin` (1,810,816 bytes, SHA-256
-`c0a02c6b142c28c6b925e2738ea7a9714f3817e7b3f5ad96b1d74ed68db82532`) is the stabilised build above plus all six steps
-of mastertune 1.2.1's features ported to v1.3: the arp extras (latch, ratchet notes with roll and ball, ratchet
-bounce, bounce length and velocity; `features/0001`), the CPU monitor (`features/0002`), master tune (A4 at 415.3 to
-466.2 Hz for everything that sounds, CV and MIDI; recordings marked with their tuning; `features/0003`), Scan (a
-tuner, tempo meter and key finder on the audio input; `features/0004`), the DJ tool (a DJ filter on the song's gold
-knobs that drives v1.3's own LPF and HPF, sync to the tempo Scan hears, a nudge; `features/0005`) and USB audio (the
-Deluge's output as a USB audio input on the computer, the song's name for DelugeRec; `features/0006`). The filters
-and their levels are v1.3's. The Deluge shows it as `1.3.0-beta-b1a91c9be`. What each step does and how it is
-tested: `FEATURES.md`. **Tested in the emulator only**, as the build under it; USB audio's enumeration and recording
-need the Deluge.
+`deluge-1.3.0-mastertune-s8-26c0d1ab.bin` (1,830,456 bytes, SHA-256
+`d4d7c37d787c21fb3cea2a8067bc955f2c55706ef61154e127cbadf4a6e643d0`) is the stabilised build above plus all six steps
+of mastertune 1.2.1's features ported to v1.3 and two more for the arp: the arp extras (latch, ratchet notes with roll
+and ball, ratchet bounce, bounce length and velocity; `features/0001`), the CPU monitor (`features/0002`), master tune
+(A4 at 415.3 to 466.2 Hz for everything that sounds, CV and MIDI; recordings marked with their tuning;
+`features/0003`), Scan (a tuner, tempo meter and key finder on the audio input; `features/0004`), the DJ tool (a DJ
+filter on the song's gold knobs that drives v1.3's own LPF and HPF, sync to the tempo Scan hears, a nudge;
+`features/0005`), USB audio (the Deluge's output as a USB audio input on the computer, the song's name for DelugeRec;
+`features/0006`), arp freeze (the community's open pull request 5208, ported: what the arp plays written into the
+clip as notes, the arp off, one undo; `features/0007`) and five more arp note orders (Converge, Diverge, Up & Down
+excl., Thumb, Pinky; `features/0008`). The filters and their levels are v1.3's. The Deluge shows it as
+`1.3.0-beta-26c0d1ab5`. What each step does and how it is tested: `FEATURES.md`. **Tested in the emulator only**, as
+the build under it; USB audio's enumeration and recording need the Deluge.
 
-- Built by `FEATURES=1 tools/setup_beta.sh` (the tree `/home/user/work/beta-features`, commit `b1a91c9be`). Two
+- Built by `FEATURES=1 tools/setup_beta.sh` (the tree `/home/user/work/beta-features`, commit `26c0d1ab5`). Two
   runs of it in that same folder (a fresh tree each time) give the same file; the folder's path is part of it (one
   source file name in a message), so a build elsewhere differs in those bytes.
-- Before: `deluge-1.3.0-mastertune-s3-825332fc.bin` (steps 1 to 3, SHA-256 `dfb86b62...`),
+- Before: `deluge-1.3.0-mastertune-s6-b1a91c9b.bin` (steps 1 to 6, SHA-256 `c0a02c6b...`),
+  `deluge-1.3.0-mastertune-s3-825332fc.bin` (steps 1 to 3, SHA-256 `dfb86b62...`),
   `deluge-1.3.0-mastertune-s2-72e19139.bin` (steps 1 and 2, SHA-256 `62340f99...`),
   `deluge-1.3.0-mastertune-s1-c2380b0a.bin` (step 1 alone, SHA-256 `d12eee68...`).
 

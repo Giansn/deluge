@@ -44,8 +44,8 @@ SynthstromAudible/DelugeFirmware#4939, has no code).
 
 | Step | What | Source | Size | Status |
 |---|---|---|---|---|
-| 7 | **Arp freeze**: what the arp plays written into the clip as notes, the arp off, one undo | the community's open PR SynthstromAudible/DelugeFirmware#5208 (commit `9641fbb31`, 25.10.2026), ported | ~1,500 lines, nearly all new | planned |
-| 8 | **More note orders**: Converge, Diverge, Up/Down without repeated ends, Thumb, Pinky | own | ~150 | planned |
+| 7 | **Arp freeze**: what the arp plays written into the clip as notes, the arp off, one undo | the community's open PR SynthstromAudible/DelugeFirmware#5208 (commit `9641fbb31`, 25.10.2026), ported | ~1,500 lines, nearly all new | done: `features/0007` |
+| 8 | **More note orders**: Converge, Diverge, Up/Down without repeated ends, Thumb, Pinky | own | ~150 | done: `features/0008` |
 | 9 | **Velvet reverb, the prototype**: a fourth reverb model, first on the computer | `mastertune-1.2.1/research/VELVET-REVERB-PLAN.md` (branch `claude/wizardly-brahmagupta-nnrk07`), its step 1 | Python only | planned |
 
 **Step 7, arp freeze** (`features/0007`):
@@ -301,9 +301,10 @@ of a nudge is checked in `PlaybackHandler::routine()`, as v1.3 moved the MIDI in
     LPF's own knob at 24. The filters compute their output from these params alone, so this is the decisive check.
     Coarser, the output over the song's first 3 s (played from its start each time), on the release build: with the
     LPF open -18.72 dBFS by its own knobs, -19.13 with DJ at OFF; at knob 24 -19.11 and -18.73; above 3 kHz -36.25 and
-    -36.18, -49.45 and -49.12. The test song's free-running oscillators vary the same setting by up to 0.4 dB from run
-    to run (the run before gave +0.18 and -0.09 dB the other way round), so the output is only compared within 0.5 dB;
-    the low-pass at 24 takes 13 dB above 3 kHz, as it should.
+    -36.18, -49.45 and -49.12. The test song's free-running oscillators vary the same setting by up to 0.6 dB from run
+    to run (the run before gave +0.18 and -0.09 dB the other way round, the s8 run 0.57 dB at knob 24 with the params
+    bit for bit the same), so the output is only compared within 1.0 dB; the low-pass at 24 takes 13 dB above 3 kHz,
+    as it should.
   - Sync from the Scan view: "No tempo yet" without a tempo, the tempo kept; the analysis at 128 BPM: "Sync 128.0 BPM",
     the song at 128.0000 BPM.
   - The nudge, playing: a detent right makes the time per tick exactly 4 % shorter ("Sync nudged"), 0.4 s later it is
@@ -348,3 +349,72 @@ descriptors and ring) and the six emulator tests; all pass. Two runs of `FEATURE
 each time, in the same folder) give the same file, SHA-256 `c0a02c6b...`. A rebuild of the existing build folder after
 its `clean` target gives a file of the same size with about 40 KB of code laid out differently; the file to compare
 with is the one from `setup_beta.sh`.
+
+## Step 7: arp freeze (`features/0007`)
+
+The community's open PR "Add arp freeze" by Loïc Wisniewski (SynthstromAudible/DelugeFirmware#5208, commit
+`9641fbb31` of 25.10.2026, planned for 1.4), ported: its new files as they are, the glue merged with steps 1 to 6.
+
+- **FREEZE** at the end of the arp's Pattern menu (synth, MIDI and CV clips, the kit arp), with a confirmation: the
+  notes that feed the arp are replaced by the notes it plays and the arp is switched off, as one undoable action
+  ("Arp frozen"). The real arpeggiator runs tick by tick over the clip outside playback, on a copy of its settings;
+  reversed and ping-pong clips are written out as they sound. Community features > Arp Freeze switches it off.
+- **For mastertune's ratchets**, two changes to the freeze's loop: while a ratchet runs, the arp's render runs at 16
+  subticks a tick, as the audio buffers run it when playing, and each hit or note-off goes to its nearest tick; and a
+  ratchet's next step (the tick resets the gate without a note-on) starts the gate's count anew, as a new note does.
+  Without the second, the hits of a ratchet over several steps piled up at the start of each step (24 notes frozen
+  where the arp played 31, 12 of 30 for a roll).
+- **Four faults found by the review of the port**, all in the freeze's loop:
+  - A hit rounded onto the next step's note at the same key could make the sort drop the step's note instead of the
+    hit (the sort isn't stable): now the shorter of two notes at the same key and position goes, and no hit is
+    rounded past the clip's end.
+  - The audio was kept going every 1,024 ticks, though a ratchet's ticks now render 16 times: now by the work done.
+  - The arp got no phase increment while freezing, so a hit due just before a ratchet's next step was dropped where
+    playing keeps it.
+  - With mastertune's latch the frozen clip started without the notes the arp latched at the clip's end, which play
+    from its start when it loops: now a first pass, not recorded, leaves the arp as it is from the second loop on.
+
+**Tested** (`tests/features/arp_freeze_emu.py`; a synth holding a chord, the arp playing a bar, then FREEZE through
+the menu item and its confirmation, then the same bar from the clip's notes):
+- A plain arp (Up, 16ths) and the same clip reversed: 16 of 16 notes, the same notes and velocities, to the sample.
+- mastertune's ratchets, all at 100 % ratchet probability: a fixed 4 with bounce over 2 steps (31 notes), a roll over 4
+  steps with Rise (30), a ball over 2 steps (95): the same notes and velocities, each within 117 samples (2.7 ms) of
+  where the arp played it.
+- mastertune's latch with the only note on the 2nd quarter: the frozen clip plays the arp's second loop (the latched
+  note from the bar's start), 16 of 16 notes to the sample.
+- Undo (BACK in Song view) switches the arp back on, and it plays as before.
+- No crash, freeze, hang or wild access.
+
+## Step 8: more note orders (`features/0008`)
+
+Five arp note modes after the existing ones (their numbers and saved names stay), for synths, MIDI, CV and the kit
+arp; each goes once through the notes held, in order of pitch, then on to the next octave as the octave mode says
+(`modulation/arp_note_order.h`):
+
+| Mode | 7-segment | Order (C E G B held) | Saved as |
+|---|---|---|---|
+| Converge | `CONV` | C B E G | `converge` |
+| Diverge | `DIVG` | G E B C | `diverge` |
+| Up & Down excl. | `UPDX` | C E G B G E (Up & Down plays C and B twice) | `upDownExcl` |
+| Thumb | `THMB` | C E C G C B | `thumb` |
+| Pinky | `PNKY` | C B E B G B | `pinky` |
+
+A firmware without them reads Up there. The kit arp's menu leaves out Played Order and Pattern, so its options are
+mapped to the modes.
+
+**Tested:**
+- **The orders** (`tests/features/arp_note_order_test.cpp`, host): each cycle written out by hand, and for 1 to 7
+  notes every index in range, every note played, the cycle wrapping.
+- **On the v1.3 rig** (`tests/features/arp_note_order_emu.py`; a song file naming the mode, so loading it is checked
+  too): a synth holding C E G B, the arp in 16ths over 2 octaves: for each mode the first 16 notes are exactly the
+  order, an octave up, and again.
+
+## The build with steps 1 to 8
+
+`deluge-1.3.0-mastertune-s8-26c0d1ab.bin` (`README.md`): `tests/features/run.sh` on it runs mastertune's host tests on
+its tree, the note orders' host test and the eight emulator tests; all pass. The DJ test's coarse output check needed
+a wider margin (1.0 dB, see step 5): with the params bit for bit the same, the DJ filter at LPF 16 measured 0.57 dB
+louder than the LPF's own knob at 24, from the test song's free-running oscillators, not from the filter. The menu
+walk (synth, kit row, kit affect-entire, MIDI; 4,104 inputs) visits 260 items, FREEZE and its confirmation among
+them: no crash, freeze, hang, null write, wild access or error popup. Two runs of `FEATURES=1 tools/setup_beta.sh` (a
+fresh tree each time, in the same folder) give the same file, SHA-256 `d4d7c37d...`.

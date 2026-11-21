@@ -1,0 +1,1918 @@
+From 5030dfcd1bc95901d27f21f467704841374971af Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 21 Nov 2026 00:42:21 +0000
+Subject: [PATCH] Arp freeze from the community's open PR #5208: what the arp
+ plays written into the clip as notes, the arp off, undo
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Ports "Add arp freeze" by Loïc Wisniewski (SynthstromAudible/DelugeFirmware#5208, commit 9641fbb31, 25.10.2026, still
+open and planned for 1.4) onto v1.3 with mastertune's features. Its new files (model/clip/arp_freeze.*, the freeze
+confirmation, the menu item, two consequences for the undo) as they are; the glue merged with steps 1 to 6 (strings,
+the community features' list, the arpeggiator's clock checks in mastertune's render()).
+
+- FREEZE at the end of the arp's Pattern menu (synth, MIDI and CV clips, the kit arp), with a confirmation: the notes
+  that feed the arp are replaced by the notes it plays, the arp is switched off, as one undoable action. The real
+  arpeggiator is run tick by tick over the clip outside playback, on a copy of its settings; reversed and ping-pong
+  clips are written out as they sound. Community features > Arp Freeze switches it off.
+- For mastertune's ratchets (fixed counts, bounce, roll, ball, a ratchet over several steps), two changes to the
+  freeze's loop: while a ratchet runs, render() is run at every subtick (16 a tick), as the audio buffers run it when
+  playing, and each hit or note-off goes to its nearest tick; and a ratchet's next step (the tick resets gatePos
+  without a note-on) starts the gate's count anew, as a new note does. Without them the hits of a ratchet lasting
+  several steps piled up at the start of each step.
+- Four faults found by the review of the port, in the freeze's loop: a hit rounded onto the next step's note at the
+  same key could make the unstable sort drop the step's note instead of the hit (now the shorter note goes, and no hit
+  is rounded past the clip's end); the audio was kept going every 1,024 ticks, though a ratchet's ticks now render 16
+  times (now by the work done); render() got no phase increment, so a hit due just before a ratchet's next step was
+  dropped where playing keeps it; and with mastertune's latch the frozen clip started without the notes the arp has
+  latched from the clip's end when it loops (now a first pass, not recorded, leaves the arp as it is from the second
+  loop on).
+---
+ src/deluge/gui/context_menu/freeze_arp.cpp    |  83 ++
+ src/deluge/gui/context_menu/freeze_arp.h      |  40 +
+ src/deluge/gui/l10n/english.json              |  13 +-
+ src/deluge/gui/l10n/g_english.cpp             |  11 +
+ src/deluge/gui/l10n/g_seven_segment.cpp       |   9 +
+ src/deluge/gui/l10n/seven_segment.json        |  11 +-
+ src/deluge/gui/l10n/strings.h                 |  12 +
+ src/deluge/gui/menu_item/arpeggiator/freeze.h |  73 ++
+ .../menu_item/runtime_feature/settings.cpp    |   4 +-
+ src/deluge/gui/ui/menus.cpp                   |   8 +-
+ src/deluge/model/clip/arp_freeze.cpp          | 987 ++++++++++++++++++
+ src/deluge/model/clip/arp_freeze.h            |  67 ++
+ .../consequence_arp_freeze_layout.cpp         |  63 ++
+ .../consequence_arp_freeze_layout.h           |  42 +
+ .../consequence_arp_settings_change.cpp       |  43 +
+ .../consequence_arp_settings_change.h         |  37 +
+ .../settings/runtime_feature_settings.cpp     |   4 +
+ .../model/settings/runtime_feature_settings.h |   1 +
+ src/deluge/model/song/song.cpp                |   7 +-
+ src/deluge/model/song/song.h                  |   3 +-
+ src/deluge/modulation/arpeggiator.cpp         |  32 +-
+ src/deluge/modulation/arpeggiator.h           |  13 +
+ 22 files changed, 1544 insertions(+), 19 deletions(-)
+ create mode 100644 src/deluge/gui/context_menu/freeze_arp.cpp
+ create mode 100644 src/deluge/gui/context_menu/freeze_arp.h
+ create mode 100644 src/deluge/gui/menu_item/arpeggiator/freeze.h
+ create mode 100644 src/deluge/model/clip/arp_freeze.cpp
+ create mode 100644 src/deluge/model/clip/arp_freeze.h
+ create mode 100644 src/deluge/model/consequence/consequence_arp_freeze_layout.cpp
+ create mode 100644 src/deluge/model/consequence/consequence_arp_freeze_layout.h
+ create mode 100644 src/deluge/model/consequence/consequence_arp_settings_change.cpp
+ create mode 100644 src/deluge/model/consequence/consequence_arp_settings_change.h
+
+diff --git a/src/deluge/gui/context_menu/freeze_arp.cpp b/src/deluge/gui/context_menu/freeze_arp.cpp
+new file mode 100644
+index 000000000..32409004d
+--- /dev/null
++++ b/src/deluge/gui/context_menu/freeze_arp.cpp
+@@ -0,0 +1,83 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "gui/context_menu/freeze_arp.h"
++#include "gui/l10n/l10n.h"
++#include "gui/ui/root_ui.h"
++#include "gui/ui/sound_editor.h"
++#include "gui/ui/ui.h"
++#include "hid/display/display.h"
++#include "model/clip/arp_freeze.h"
++#include <array>
++
++namespace deluge::gui::context_menu {
++
++FreezeArp& getFreezeArp() {
++	static FreezeArp freeze_arp;
++	return freeze_arp;
++}
++
++char const* FreezeArp::getTitle() {
++	return l10n::get(l10n::String::STRING_FOR_FREEZE_ARP_QMARK);
++}
++
++std::span<char const*> FreezeArp::getOptions() {
++	using enum l10n::String;
++	if (display->haveOLED()) {
++		static std::array<char const*, 1> options{l10n::get(STRING_FOR_OK)};
++		return options;
++	}
++	static std::array<char const*, 1> options{l10n::get(STRING_FOR_SURE)};
++	return options;
++}
++
++bool FreezeArp::acceptCurrentOption() {
++	soundEditor.exitCompletely();
++
++	using enum l10n::String;
++	l10n::String message = STRING_FOR_ARP_FROZEN;
++	switch (arp_freeze::freeze(clip)) {
++	case arp_freeze::Result::OK:
++		uiNeedsRendering(getRootUI());
++		break;
++	case arp_freeze::Result::RECORDING:
++		message = STRING_FOR_CLIP_IS_RECORDING;
++		break;
++	case arp_freeze::Result::TOO_LONG:
++		message = STRING_FOR_CANT_FREEZE_ARP_TOO_LONG;
++		break;
++	case arp_freeze::Result::TOO_MANY_NOTES:
++		message = STRING_FOR_CANT_FREEZE_ARP_TOO_MANY_NOTES;
++		break;
++	case arp_freeze::Result::MUTED_ROW:
++		message = STRING_FOR_CANT_FREEZE_ARP_MUTED_ROW;
++		break;
++	case arp_freeze::Result::UNFROZEN_ROW:
++		message = STRING_FOR_CANT_FREEZE_ARP_UNFROZEN_ROW;
++		break;
++	case arp_freeze::Result::AUTOMATION:
++		message = STRING_FOR_CANT_FREEZE_ARP_AUTOMATION;
++		break;
++	case arp_freeze::Result::NO_MEMORY:
++		message = STRING_FOR_ERROR_INSUFFICIENT_RAM;
++		break;
++	}
++	display->displayPopup(l10n::get(message));
++	return true;
++}
++
++} // namespace deluge::gui::context_menu
+diff --git a/src/deluge/gui/context_menu/freeze_arp.h b/src/deluge/gui/context_menu/freeze_arp.h
+new file mode 100644
+index 000000000..c34d510b2
+--- /dev/null
++++ b/src/deluge/gui/context_menu/freeze_arp.h
+@@ -0,0 +1,40 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include "gui/context_menu/context_menu.h"
++
++class InstrumentClip;
++
++namespace deluge::gui::context_menu {
++
++/// Asks for confirmation before freezing the arpeggiator of a clip
++class FreezeArp final : public ContextMenu {
++public:
++	FreezeArp() = default;
++
++	char const* getTitle() override;
++	std::span<char const*> getOptions() override;
++	bool acceptCurrentOption() override;
++
++	InstrumentClip* clip = nullptr;
++};
++
++FreezeArp& getFreezeArp();
++
++} // namespace deluge::gui::context_menu
+diff --git a/src/deluge/gui/l10n/english.json b/src/deluge/gui/l10n/english.json
+index 914b5629a..3f9ed3315 100644
+--- a/src/deluge/gui/l10n/english.json
++++ b/src/deluge/gui/l10n/english.json
+@@ -1026,6 +1026,17 @@
+     "STRING_FOR_DJ_FILTER": "DJ",
+     "STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO": "USB audio",
+     "STRING_FOR_RESTART_TO_APPLY": "Restart to apply",
+-    "STRING_FOR_USB_AUDIO_GAP": "USB audio gap"
++    "STRING_FOR_USB_AUDIO_GAP": "USB audio gap",
++    "STRING_FOR_COMMUNITY_FEATURE_ARP_FREEZE": "Arp Freeze",
++    "STRING_FOR_FREEZE": "Freeze",
++    "STRING_FOR_APPLY": "Apply",
++    "STRING_FOR_FREEZE_ARP_QMARK": "Freeze arp?",
++    "STRING_FOR_ARP_IS_OFF": "Arp is off",
++    "STRING_FOR_ARP_FROZEN": "Arp frozen",
++    "STRING_FOR_CANT_FREEZE_ARP_TOO_LONG": "Can't freeze: row lengths only line up after too long",
++    "STRING_FOR_CANT_FREEZE_ARP_TOO_MANY_NOTES": "Can't freeze: too many notes",
++    "STRING_FOR_CANT_FREEZE_ARP_MUTED_ROW": "Can't freeze: a muted row is in the way",
++    "STRING_FOR_CANT_FREEZE_ARP_UNFROZEN_ROW": "Can't freeze: arp plays a row not in the kit arp",
++    "STRING_FOR_CANT_FREEZE_ARP_AUTOMATION": "Can't freeze: automation in the way"
+   }
+ }
+diff --git a/src/deluge/gui/l10n/g_english.cpp b/src/deluge/gui/l10n/g_english.cpp
+index 41c909342..429eb82c1 100644
+--- a/src/deluge/gui/l10n/g_english.cpp
++++ b/src/deluge/gui/l10n/g_english.cpp
+@@ -1040,6 +1040,17 @@ PLACE_SDRAM_DATA Language english{
+         {STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO, "USB audio"},
+         {STRING_FOR_RESTART_TO_APPLY, "Restart to apply"},
+         {STRING_FOR_USB_AUDIO_GAP, "USB audio gap"},
++        {STRING_FOR_COMMUNITY_FEATURE_ARP_FREEZE, "Arp Freeze"},
++        {STRING_FOR_FREEZE, "Freeze"},
++        {STRING_FOR_APPLY, "Apply"},
++        {STRING_FOR_FREEZE_ARP_QMARK, "Freeze arp?"},
++        {STRING_FOR_ARP_IS_OFF, "Arp is off"},
++        {STRING_FOR_ARP_FROZEN, "Arp frozen"},
++        {STRING_FOR_CANT_FREEZE_ARP_TOO_LONG, "Can't freeze: row lengths only line up after too long"},
++        {STRING_FOR_CANT_FREEZE_ARP_TOO_MANY_NOTES, "Can't freeze: too many notes"},
++        {STRING_FOR_CANT_FREEZE_ARP_MUTED_ROW, "Can't freeze: a muted row is in the way"},
++        {STRING_FOR_CANT_FREEZE_ARP_UNFROZEN_ROW, "Can't freeze: arp plays a row not in the kit arp"},
++        {STRING_FOR_CANT_FREEZE_ARP_AUTOMATION, "Can't freeze: automation in the way"},
+     },
+ };
+ } // namespace deluge::l10n::built_in
+diff --git a/src/deluge/gui/l10n/g_seven_segment.cpp b/src/deluge/gui/l10n/g_seven_segment.cpp
+index 1e675de0e..393411fd1 100644
+--- a/src/deluge/gui/l10n/g_seven_segment.cpp
++++ b/src/deluge/gui/l10n/g_seven_segment.cpp
+@@ -585,6 +585,15 @@ PLACE_SDRAM_DATA Language seven_segment{
+         {STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO, "UAUD"},
+         {STRING_FOR_RESTART_TO_APPLY, "RSTR"},
+         {STRING_FOR_USB_AUDIO_GAP, "UGAP"},
++        {STRING_FOR_COMMUNITY_FEATURE_ARP_FREEZE, "FREZ"},
++        {STRING_FOR_FREEZE, "FREZ"},
++        {STRING_FOR_ARP_IS_OFF, "OFF"},
++        {STRING_FOR_ARP_FROZEN, "DONE"},
++        {STRING_FOR_CANT_FREEZE_ARP_TOO_LONG, "LONG"},
++        {STRING_FOR_CANT_FREEZE_ARP_TOO_MANY_NOTES, "FULL"},
++        {STRING_FOR_CANT_FREEZE_ARP_MUTED_ROW, "MUTE"},
++        {STRING_FOR_CANT_FREEZE_ARP_UNFROZEN_ROW, "ROW"},
++        {STRING_FOR_CANT_FREEZE_ARP_AUTOMATION, "AUTO"},
+     },
+     &built_in::english,
+ };
+diff --git a/src/deluge/gui/l10n/seven_segment.json b/src/deluge/gui/l10n/seven_segment.json
+index 63f50ac69..a9acbec1f 100644
+--- a/src/deluge/gui/l10n/seven_segment.json
++++ b/src/deluge/gui/l10n/seven_segment.json
+@@ -628,6 +628,15 @@
+         "STRING_FOR_DJ_FILTER": "DJ",
+         "STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO": "UAUD",
+         "STRING_FOR_RESTART_TO_APPLY": "RSTR",
+-        "STRING_FOR_USB_AUDIO_GAP": "UGAP"
++        "STRING_FOR_USB_AUDIO_GAP": "UGAP",
++        "STRING_FOR_COMMUNITY_FEATURE_ARP_FREEZE": "FREZ",
++        "STRING_FOR_FREEZE": "FREZ",
++        "STRING_FOR_ARP_IS_OFF": "OFF",
++        "STRING_FOR_ARP_FROZEN": "DONE",
++        "STRING_FOR_CANT_FREEZE_ARP_TOO_LONG": "LONG",
++        "STRING_FOR_CANT_FREEZE_ARP_TOO_MANY_NOTES": "FULL",
++        "STRING_FOR_CANT_FREEZE_ARP_MUTED_ROW": "MUTE",
++        "STRING_FOR_CANT_FREEZE_ARP_UNFROZEN_ROW": "ROW",
++        "STRING_FOR_CANT_FREEZE_ARP_AUTOMATION": "AUTO"
+     }
+ }
+diff --git a/src/deluge/gui/l10n/strings.h b/src/deluge/gui/l10n/strings.h
+index 137a691c4..e9ca34172 100644
+--- a/src/deluge/gui/l10n/strings.h
++++ b/src/deluge/gui/l10n/strings.h
+@@ -1174,6 +1174,18 @@ enum class String : size_t {
+ 	STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO, // mastertune: USB audio
+ 	STRING_FOR_RESTART_TO_APPLY,
+ 	STRING_FOR_USB_AUDIO_GAP,
++	// Arp freeze
++	STRING_FOR_COMMUNITY_FEATURE_ARP_FREEZE,
++	STRING_FOR_FREEZE,
++	STRING_FOR_APPLY,
++	STRING_FOR_FREEZE_ARP_QMARK,
++	STRING_FOR_ARP_IS_OFF,
++	STRING_FOR_ARP_FROZEN,
++	STRING_FOR_CANT_FREEZE_ARP_TOO_LONG,
++	STRING_FOR_CANT_FREEZE_ARP_TOO_MANY_NOTES,
++	STRING_FOR_CANT_FREEZE_ARP_MUTED_ROW,
++	STRING_FOR_CANT_FREEZE_ARP_UNFROZEN_ROW,
++	STRING_FOR_CANT_FREEZE_ARP_AUTOMATION,
+ 	STRING_LAST
+ };
+ 
+diff --git a/src/deluge/gui/menu_item/arpeggiator/freeze.h b/src/deluge/gui/menu_item/arpeggiator/freeze.h
+new file mode 100644
+index 000000000..7be6e95f2
+--- /dev/null
++++ b/src/deluge/gui/menu_item/arpeggiator/freeze.h
+@@ -0,0 +1,73 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++#pragma once
++#include "gui/context_menu/freeze_arp.h"
++#include "gui/menu_item/menu_item.h"
++#include "gui/ui/sound_editor.h"
++#include "gui/ui/ui.h"
++#include "hid/display/display.h"
++#include "hid/display/oled.h"
++#include "model/clip/arp_freeze.h"
++#include "model/clip/instrument_clip.h"
++#include "model/settings/runtime_feature_settings.h"
++#include "model/song/song.h"
++
++namespace deluge::gui::menu_item::arpeggiator {
++
++/// Replaces the notes of the clip with the notes its arpeggiator plays, and switches the arpeggiator off, after asking
++/// for confirmation. It's at the end of the arp pattern menu, also when the arpeggiator is off (then showing a dash),
++/// so it's always found in the same place.
++class Freeze final : public MenuItem {
++public:
++	using MenuItem::MenuItem;
++
++	bool isRelevant(ModControllableAudio* /*modControllable*/, int32_t /*whichThing*/) const override {
++		return runtimeFeatureSettings.isOn(RuntimeFeatureSettingType::ArpFreeze) && !soundEditor.editingKitRow();
++	}
++
++	MenuItem* selectButtonPress() override {
++		if (!isAvailable()) {
++			display->displayPopup(l10n::get(l10n::String::STRING_FOR_ARP_IS_OFF));
++		}
++		else {
++			auto& confirmation = context_menu::getFreezeArp();
++			confirmation.clip = getCurrentInstrumentClip();
++			if (confirmation.setupAndCheckAvailability()) {
++				openUI(&confirmation);
++			}
++		}
++		return NO_NAVIGATION; // NOLINT(cppcoreguidelines-pro-type-cstyle-cast): the cast is in the macro
++	}
++
++	bool shouldEnterSubmenu() override { return false; }
++
++	[[nodiscard]] int32_t getOccupiedSlots() const override { return 2; }
++	// Not while the arp is off, as it would cover the popup selectButtonPress() shows
++	[[nodiscard]] bool showNotification() const override { return getCurrentUI() == &soundEditor && isAvailable(); }
++	void getNotificationValue(StringBuf& valueBuf) override { valueBuf.append(getValueText()); }
++	void renderInHorizontalMenu(const SlotPosition& slot) override {
++		hid::display::OLED::main.drawStringCentered(getValueText(), slot.start_x,
++		                                            slot.start_y + kHorizontalMenuSlotYOffset, kTextSpacingX,
++		                                            kTextSpacingY, slot.width);
++	}
++
++private:
++	static bool isAvailable() { return arp_freeze::isAvailable(getCurrentClip()); }
++	static char const* getValueText() { return isAvailable() ? l10n::get(l10n::String::STRING_FOR_APPLY) : "-"; }
++};
++
++} // namespace deluge::gui::menu_item::arpeggiator
+diff --git a/src/deluge/gui/menu_item/runtime_feature/settings.cpp b/src/deluge/gui/menu_item/runtime_feature/settings.cpp
+index 4e9c52d6c..87c4fa9df 100644
+--- a/src/deluge/gui/menu_item/runtime_feature/settings.cpp
++++ b/src/deluge/gui/menu_item/runtime_feature/settings.cpp
+@@ -75,6 +75,7 @@ SettingToggle menuShowBatteryLevel(RuntimeFeatureSettingType::ShowBatteryLevel);
+ RoundedCornersSettingToggle menuRoundedCorners(RuntimeFeatureSettingType::RoundedCorners);
+ Setting menuShortcutOverlay(RuntimeFeatureSettingType::ShortcutOverlay);
+ UsbAudioSetting menuUsbAudio(RuntimeFeatureSettingType::UsbAudio);
++SettingToggle menu_arp_freeze(RuntimeFeatureSettingType::ArpFreeze);
+ 
+ std::array<MenuItem*, RuntimeFeatureSettingType::MaxElement - kNonTopLevelSettings> subMenuEntries{
+     &menuDrumRandomizer,
+@@ -102,7 +103,8 @@ std::array<MenuItem*, RuntimeFeatureSettingType::MaxElement - kNonTopLevelSettin
+     &menuTrimFromStartOfAudioClip,
+     &menuShowBatteryLevel,
+     &menuShortcutOverlay,
+-    &menuUsbAudio};
++    &menuUsbAudio,
++    &menu_arp_freeze};
+ 
+ Settings::Settings(l10n::String name, l10n::String title) : menu_item::Submenu(name, title, subMenuEntries) {
+ }
+diff --git a/src/deluge/gui/ui/menus.cpp b/src/deluge/gui/ui/menus.cpp
+index 86bcd07f8..a07c8b521 100644
+--- a/src/deluge/gui/ui/menus.cpp
++++ b/src/deluge/gui/ui/menus.cpp
+@@ -5,6 +5,7 @@
+ #include "gui/menu_item/arpeggiator/bounce_fade.h"
+ #include "gui/menu_item/arpeggiator/bounce_length.h"
+ #include "gui/menu_item/arpeggiator/chord_type.h"
++#include "gui/menu_item/arpeggiator/freeze.h"
+ #include "gui/menu_item/arpeggiator/include_in_kit_arp.h"
+ #include "gui/menu_item/arpeggiator/latch.h"
+ #include "gui/menu_item/arpeggiator/midi_cv/gate.h"
+@@ -390,6 +391,9 @@ PLACE_SDRAM_BSS HorizontalMenu randomizerMenu{STRING_FOR_RANDOMIZER,
+                                                // Reverse
+                                                &reverseProbabilityMenu}};
+ 
++// Arp: Freeze
++PLACE_SDRAM_BSS arpeggiator::Freeze arp_freeze_menu{STRING_FOR_FREEZE};
++
+ // Arp: Basic
+ PLACE_SDRAM_BSS HorizontalMenu arpBasicMenu{
+     STRING_FOR_BASIC, STRING_FOR_ARP_BASIC_MENU_TITLE, {&arpPresetModeMenu, &arpGateMenu, &arpSyncMenu, &arpRateMenu}};
+@@ -409,7 +413,9 @@ PLACE_SDRAM_BSS HorizontalMenu arpPatternMenu{STRING_FOR_PATTERN,
+                                                &arpNoteModeMenu, &arpNoteModeMenuForDrums, &arpChordSimulatorMenuKit,
+                                                // Note and rhythm settings
+                                                &arpRhythmMenu, &arpRhythmMenuMIDIOrCV, &arpSequenceLengthMenu,
+-                                               &arpSequenceLengthMenuMIDIOrCV}};
++                                               &arpSequenceLengthMenuMIDIOrCV,
++                                               // Freeze
++                                               &arp_freeze_menu}};
+ 
+ // Arp: Ratchet (mastertune): the number of a ratchet's notes and how they are spaced
+ PLACE_SDRAM_BSS HorizontalMenu arpRatchetMenu{
+diff --git a/src/deluge/model/clip/arp_freeze.cpp b/src/deluge/model/clip/arp_freeze.cpp
+new file mode 100644
+index 000000000..f091e6a35
+--- /dev/null
++++ b/src/deluge/model/clip/arp_freeze.cpp
+@@ -0,0 +1,987 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "model/clip/arp_freeze.h"
++#include "definitions_cxx.hpp"
++#include "memory/general_memory_allocator.h"
++#include "model/action/action.h"
++#include "model/action/action_logger.h"
++#include "model/clip/instrument_clip.h"
++#include "model/consequence/consequence_arp_freeze_layout.h"
++#include "model/consequence/consequence_arp_settings_change.h"
++#include "model/consequence/consequence_param_change.h"
++#include "model/drum/drum.h"
++#include "model/instrument/kit.h"
++#include "model/model_stack.h"
++#include "model/note/note.h"
++#include "model/note/note_row.h"
++#include "model/song/song.h"
++#include "modulation/arpeggiator.h"
++#include "modulation/params/param_set.h"
++#include "playback/mode/playback_mode.h"
++#include "playback/playback_handler.h"
++#include "processing/engines/audio_engine.h"
++#include "processing/sound/sound_drum.h"
++#include "processing/sound/sound_instrument.h"
++#include "util/containers.h"
++#include "util/exceptions.h"
++#include "util/functions.h"
++#include "util/misc.h"
++#include <algorithm>
++#include <array>
++#include <limits>
++#include <numeric>
++
++namespace params = deluge::modulation::params;
++
++namespace arp_freeze {
++namespace {
++
++/// Limit for the notes the arpeggiator gets and for the notes it plays, so that a freeze can't use up all the memory
++constexpr size_t kMaxNotes = 16384;
++
++/// A note of the clip starting or ending, as the arpeggiator gets it
++struct InputEvent {
++	int32_t pos;
++	int16_t rowIndex;
++	uint8_t velocity;
++	bool on;
++};
++
++struct FrozenNote {
++	int32_t pos;
++	int32_t length; // Negative while the note is still sounding
++	int16_t key;
++	uint8_t velocity;
++};
++
++/// Collects the notes the arpeggiator plays, from the instructions it returns
++class Recorder {
++public:
++	[[nodiscard]] bool hasTooManyNotes() const { return too_many_notes_; }
++	deluge::vector<FrozenNote> takeNotes() { return std::move(notes_); }
++
++	void handle(ArpReturnInstruction& instruction, int32_t pos) {
++		for (uint32_t n = 0; n < ARP_MAX_INSTRUCTION_NOTES; n++) {
++			if (instruction.glideNoteCodeOffPostArp[n] != ARP_NOTE_NONE) {
++				end(instruction.glideNoteCodeOffPostArp[n], pos);
++			}
++			if (instruction.noteCodeOffPostArp[n] != ARP_NOTE_NONE) {
++				end(instruction.noteCodeOffPostArp[n], pos);
++			}
++		}
++		if (instruction.arpNoteOn == nullptr) {
++			return;
++		}
++
++		// Notes which are still sounding now are being glided from. Gliding is played when notes overlap, so let them
++		// overlap the new notes by one tick. If a new note has the same key, the note just keeps sounding instead.
++		//
++		// keep[] and num_open_before index open_[], which start() would reorder if it had to make room by ending a
++		// note. It never has to here: after a note-on only the notes of that chord stay open (the others are ended
++		// below), so at most ARP_MAX_INSTRUCTION_NOTES are open now, and adding at most as many more fits.
++		std::array<bool, kMaxOpenNotes> keep{};
++		int32_t num_open_before = num_open_;
++		static_assert(kMaxOpenNotes >= 2 * ARP_MAX_INSTRUCTION_NOTES);
++		for (uint32_t n = 0; n < ARP_MAX_INSTRUCTION_NOTES; n++) {
++			int16_t key = instruction.arpNoteOn->noteCodeOnPostArp[n];
++			if (key == ARP_NOTE_NONE) {
++				break;
++			}
++			// Done what the instrument would do with it
++			instruction.arpNoteOn->noteStatus[n] = ArpNoteStatus::PLAYING;
++
++			int32_t i = findOpen(key);
++			if (i >= 0 && i < num_open_before) {
++				keep[i] = true;
++				continue;
++			}
++			if (i >= 0) {
++				continue; // Same key twice in a chord
++			}
++			start(key, pos, instruction.arpNoteOn->velocity);
++		}
++		for (int32_t i = num_open_before - 1; i >= 0; i--) {
++			if (!keep[i]) {
++				endAt(i, pos + 1);
++			}
++		}
++	}
++
++	void endAll(int32_t pos) {
++		while (num_open_ > 0) {
++			endAt(num_open_ - 1, pos);
++		}
++	}
++
++private:
++	// Enough for a chord and the chord it glides from
++	static constexpr int32_t kMaxOpenNotes = ARP_MAX_INSTRUCTION_NOTES * 2;
++	deluge::vector<FrozenNote> notes_;
++	bool too_many_notes_ = false;
++	std::array<size_t, kMaxOpenNotes> open_{};
++	int32_t num_open_ = 0;
++
++	[[nodiscard]] int32_t findOpen(int16_t key) const {
++		for (int32_t i = 0; i < num_open_; i++) {
++			if (notes_[open_[i]].key == key) {
++				return i;
++			}
++		}
++		return -1;
++	}
++
++	void start(int16_t key, int32_t pos, uint8_t velocity) {
++		if (notes_.size() >= kMaxNotes) {
++			too_many_notes_ = true;
++			return;
++		}
++		if (num_open_ == kMaxOpenNotes) {
++			endAt(0, pos);
++		}
++		notes_.push_back({pos, -1, key, velocity});
++		open_[num_open_++] = notes_.size() - 1;
++	}
++
++	void end(int16_t key, int32_t pos) {
++		int32_t i = findOpen(key);
++		if (i >= 0) {
++			endAt(i, pos);
++		}
++	}
++
++	// NOLINTNEXTLINE(readability-convert-member-functions-to-static): CI partial-parse false positive
++	void endAt(int32_t i, int32_t pos) {
++		FrozenNote& note = notes_[open_[i]];
++		note.length = std::max(pos - note.pos, 1_i32);
++		open_[i] = open_[--num_open_];
++	}
++};
++
++/// Longest clip a freeze can make: rows of different lengths are written out until they line up again
++constexpr int64_t kMaxRenderLength = 1 << 20;
++
++/// The audio engine renders at most this many samples at once, which is how often an unsynced arpeggiator moves on
++constexpr int32_t kMaxSamplesPerRender = 128;
++
++/// A note of a row sounding, from one pass of the row
++struct Interval {
++	int32_t start;
++	int32_t end;
++	uint8_t velocity;
++};
++
++bool isKit(InstrumentClip* clip) {
++	return clip->output->type == OutputType::KIT;
++}
++
++/// Whether the notes of a row go through the arpeggiator of the clip, as in Kit::noteOnPreKitArp()
++bool rowFeedsArp(InstrumentClip* clip, int32_t rowIndex, ModelStackWithTimelineCounter* modelStack) {
++	NoteRow* note_row = clip->noteRows.getElement(rowIndex);
++	if (note_row->muted) {
++		return false;
++	}
++	if (!isKit(clip)) {
++		return true;
++	}
++	Drum* drum = note_row->drum;
++	if (drum == nullptr || !drum->arpSettings.includeInKitArp) {
++		return false;
++	}
++	if (drum->type == DrumType::SOUND) {
++		auto* sound_drum = static_cast<SoundDrum*>(drum);
++		ModelStackWithSoundFlags* model_stack_with_sound_flags =
++		    modelStack->addNoteRow(clip->getNoteRowId(note_row, rowIndex), note_row)
++		        ->addOtherTwoThings(sound_drum, &note_row->paramManager)
++		        ->addSoundFlags();
++		return sound_drum->allowNoteTails(model_stack_with_sound_flags, true);
++	}
++	return true;
++}
++
++int32_t getRowLength(InstrumentClip* clip, NoteRow* noteRow) {
++	return noteRow->loopLengthIfIndependent != 0 ? noteRow->loopLengthIfIndependent : clip->loopLength;
++}
++
++SequenceDirection getRowDirection(InstrumentClip* clip, NoteRow* noteRow) {
++	return noteRow->sequenceDirectionMode == SequenceDirection::OBEY_PARENT ? clip->sequenceDirectionMode
++	                                                                        : noteRow->sequenceDirectionMode;
++}
++
++/// How long it takes until something plays the same again: ping-pong plays forwards then backwards
++int64_t getCycleLength(int32_t length, SequenceDirection direction) {
++	return direction == SequenceDirection::PINGPONG ? 2 * (int64_t)length : length;
++}
++
++/// The length of the frozen clip: until the clip and the rows going through the arpeggiator all start again together.
++/// Returns -1 if that's too long.
++int32_t getRenderLength(InstrumentClip* clip, deluge::vector<bool> const& rowsFeedingArp) {
++	int64_t length = getCycleLength(clip->loopLength, clip->sequenceDirectionMode);
++	if (length > kMaxRenderLength) {
++		return -1;
++	}
++	for (int32_t r = 0; r < clip->noteRows.getNumElements(); r++) {
++		if (!rowsFeedingArp[r]) {
++			continue;
++		}
++		NoteRow* note_row = clip->noteRows.getElement(r);
++		length = std::lcm(length, getCycleLength(getRowLength(clip, note_row), getRowDirection(clip, note_row)));
++		if (length > kMaxRenderLength) {
++			return -1;
++		}
++	}
++	return (int32_t)length;
++}
++
++/// Whether a note plays without fill being held. Fill notes only play while it's held, so they aren't frozen.
++bool playsWithoutFill(Note const* note) {
++	return note->fill != FillMode::FILL;
++}
++
++/// When the notes of a row sound during the render, with the row played as it plays: looping at its own length, and
++/// mirrored on the passes it plays backwards (synth notes then sound from their end to their start). Returns false if
++/// there would be more than maxIntervals, before merging, so that a row can't use up all the memory.
++bool getRowIntervals(InstrumentClip* clip, NoteRow* noteRow, int32_t renderLength, size_t maxIntervals,
++                     deluge::vector<Interval>& intervals) {
++	int32_t row_length = getRowLength(clip, noteRow);
++	SequenceDirection direction = getRowDirection(clip, noteRow);
++	int32_t num_passes = renderLength / row_length;
++
++	intervals.clear();
++
++	// A note filling the whole row drones: when playing it's never released as the row loops or changes direction, so
++	// the arpeggiator gets it once for the whole render. It's the only note of its row.
++	if (noteRow->notes.getNumElements() == 1) {
++		Note* note = noteRow->notes.getElement(0);
++		if (note->isDrone(row_length) && playsWithoutFill(note)) {
++			intervals.push_back({0, renderLength, note->velocity});
++			return true;
++		}
++	}
++
++	// From the pass before the render, for the notes which wrap around into it
++	for (int32_t pass = -1; pass <= num_passes; pass++) {
++		bool reversed =
++		    direction == SequenceDirection::REVERSE || (direction == SequenceDirection::PINGPONG && (pass & 1) != 0);
++		int64_t pass_start = (int64_t)pass * row_length;
++		for (int32_t i = 0; i < noteRow->notes.getNumElements(); i++) {
++			Note* note = noteRow->notes.getElement(i);
++			if (!playsWithoutFill(note)) {
++				continue;
++			}
++			int64_t start = reversed ? pass_start + row_length - (note->pos + note->length) : pass_start + note->pos;
++			int64_t end = std::min(start + note->length, (int64_t)renderLength);
++			start = std::max(start, 0_i64);
++			if (start >= end) {
++				continue;
++			}
++			if (intervals.size() >= maxIntervals) {
++				return false;
++			}
++			intervals.push_back({(int32_t)start, (int32_t)end, note->velocity});
++		}
++	}
++
++	// A note longer than the row overlaps itself: it keeps sounding. Notes which only touch are played again, as when
++	// playing.
++	std::ranges::sort(intervals, [](Interval const& a, Interval const& b) { return a.start < b.start; });
++	size_t num_merged = 0;
++	for (Interval const& interval : intervals) {
++		if (num_merged > 0 && interval.start < intervals[num_merged - 1].end) {
++			intervals[num_merged - 1].end = std::max(intervals[num_merged - 1].end, interval.end);
++			continue;
++		}
++		intervals[num_merged++] = interval;
++	}
++	intervals.resize(num_merged);
++	return true;
++}
++
++/// The key a row has for the arpeggiator: the note for synth, MIDI and CV clips, the row index for kits
++int16_t getRowKey(InstrumentClip* clip, int32_t rowIndex) {
++	return (int16_t)(isKit(clip) ? rowIndex : clip->noteRows.getElement(rowIndex)->y);
++}
++
++/// Get the notes of the rows going through the arpeggiator, as it gets them while the clip plays
++bool getInputEvents(InstrumentClip* clip, deluge::vector<bool> const& rowsFeedingArp, int32_t renderLength,
++                    deluge::vector<InputEvent>& events) {
++	deluge::vector<Interval> intervals;
++	for (int32_t r = 0; r < clip->noteRows.getNumElements(); r++) {
++		if (!rowsFeedingArp[r]) {
++			continue;
++		}
++		// Each interval makes up to two events
++		size_t max_intervals = (kMaxNotes * 2 - events.size()) / 2;
++		if (!getRowIntervals(clip, clip->noteRows.getElement(r), renderLength, max_intervals, intervals)) {
++			return false;
++		}
++		auto row_index = (int16_t)r;
++		for (Interval const& interval : intervals) {
++			events.push_back({interval.start, row_index, interval.velocity, true});
++			if (interval.end < renderLength) {
++				events.push_back({interval.end, row_index, interval.velocity, false});
++			}
++		}
++	}
++	// Note-offs before note-ons at the same position, as when playing
++	std::ranges::sort(events, [](InputEvent const& a, InputEvent const& b) {
++		return a.pos != b.pos ? a.pos < b.pos : (!a.on && b.on);
++	});
++	return true;
++}
++
++struct ClipPos {
++	int32_t pos;
++	bool reversed;
++};
++
++/// Where the clip is and whether it plays backwards, a number of ticks after it started, as Clip::setPos() and
++/// Clip::processCurrentPos() work it out. A synced arpeggiator is ticked with that position.
++ClipPos getClipPos(int32_t loopLength, SequenceDirection direction, int32_t ticks) {
++	int32_t pos_in_cycle = ticks % (int32_t)getCycleLength(loopLength, direction);
++	bool reversed = direction == SequenceDirection::REVERSE
++	                || (direction == SequenceDirection::PINGPONG && pos_in_cycle >= loopLength);
++	if (direction == SequenceDirection::PINGPONG && reversed) {
++		pos_in_cycle -= loopLength;
++	}
++	// Playing backwards counts down from the end, which is at position 0
++	return {.pos = (reversed && pos_in_cycle != 0) ? loopLength - pos_in_cycle : pos_in_cycle, .reversed = reversed};
++}
++
++/// The expression values a row's notes get when they start, as NoteRow::playNote() gives them (used by the arp's MPE
++/// velocity). These are the values where the row is now: expression automation isn't followed.
++using MPEValues = std::array<int16_t, kNumExpressionDimensions>;
++deluge::vector<MPEValues> getRowMPEValues(InstrumentClip* clip) {
++	std::array<char, MODEL_STACK_MAX_SIZE> model_stack_memory{};
++	ModelStackWithTimelineCounter* model_stack =
++	    setupModelStackWithTimelineCounter(model_stack_memory.data(), currentSong, clip);
++	deluge::vector<MPEValues> values(clip->noteRows.getNumElements());
++	for (int32_t r = 0; r < clip->noteRows.getNumElements(); r++) {
++		NoteRow* note_row = clip->noteRows.getElement(r);
++		note_row->getMPEValues(model_stack->addNoteRow(clip->getNoteRowId(note_row, r), note_row), values[r].data());
++	}
++	return values;
++}
++
++/// render() is run once per tick for the gate of a synced arpeggiator, as at this fraction of a tick before the next
++/// tick: what the gate does during a tick is put at its start. A gate of 50 % or 100 % ends a hair before a tick, and
++/// is put at that tick, as it sounds.
++constexpr uint64_t kGateSubticks = 16;
++
++/// Run the arpeggiator over the notes it gets, tick by tick
++Result runArpeggiator(Arpeggiator& arpeggiator, ArpeggiatorSettings& settings, uint32_t gateThreshold,
++                      uint32_t phaseIncrement, InstrumentClip* clip, deluge::vector<InputEvent> const& events,
++                      int32_t renderLength, deluge::vector<FrozenNote>& frozenNotes) {
++	bool synced = settings.syncLevel != SYNC_LEVEL_NONE;
++	uint64_t ticks_per_period = synced ? settings.getTicksPerPeriod() : 1;
++	// An unsynced arpeggiator runs in samples, at the current tempo
++	float samples_per_tick = playbackHandler.getTimePerInternalTickFloat();
++	float samples_to_render = 0;
++
++	arpeggiator.setSimulateClock(true);
++	deluge::vector<MPEValues> mpe_values = getRowMPEValues(clip);
++	// mastertune: the audio kept going by the work done (a ratchet's ticks render 16 times), not by ticks alone
++	int32_t work = 0;
++
++	// One pass over the clip. mastertune: with latch on (mastertune's arp latch), the notes latched at the clip's end
++	// go on from its start when it loops, so a first pass, not recorded, leaves the arp as it is from the second loop
++	// on
++	auto pass = [&](Recorder& recorder) -> bool {
++		size_t e = 0;
++		int32_t gate_start = 0;
++		samples_to_render = 0;
++
++		for (int32_t pos = 0; pos < renderLength; pos++) {
++			// Long clips take a while, keep the audio going
++			if (work >= 1024) {
++				work = 0;
++				AudioEngine::routineWithClusterLoading();
++			}
++			work++;
++
++			// The notes of the clip first, then the arpeggiator, as in Session::doTickForward()
++			for (; e < events.size() && events[e].pos == pos; e++) {
++				ArpReturnInstruction instruction;
++				int16_t key = getRowKey(clip, events[e].rowIndex);
++				if (events[e].on) {
++					arpeggiator.noteOn(&settings, key, events[e].velocity, &instruction, MIDI_CHANNEL_NONE,
++					                   mpe_values[events[e].rowIndex].data());
++				}
++				else {
++					arpeggiator.noteOff(&settings, key, &instruction);
++				}
++				recorder.handle(instruction, pos);
++			}
++
++			// Ticked with the position of the clip, as in Session::doTickForward(): its steps line up with the clip
++			// (also when the clip plays backwards), and the locked randomizer starts again where the clip does.
++			// Unsynced, this only does the latter.
++			ClipPos clip_pos = getClipPos(clip->loopLength, clip->sequenceDirectionMode, pos);
++			ArpReturnInstruction tick_instruction;
++			// mastertune: a ratchet lasting several steps (mastertune's bounce length) moves on to its next step at the
++			// tick and resets gatePos there without a note-on: seen by gatePos changed from a value it can't take
++			uint32_t gate_pos_before = arpeggiator.gatePos;
++			if (synced) {
++				arpeggiator.gatePos = std::numeric_limits<uint32_t>::max();
++			}
++			arpeggiator.doTickForward(&settings, &tick_instruction, clip_pos.pos, clip_pos.reversed);
++			bool gate_reset = synced && arpeggiator.gatePos != std::numeric_limits<uint32_t>::max();
++			if (synced && !gate_reset) {
++				arpeggiator.gatePos = gate_pos_before;
++			}
++			if (tick_instruction.arpNoteOn != nullptr || gate_reset) {
++				gate_start = pos; // switchNoteOn() (or the ratchet's next step) reset gatePos
++			}
++			recorder.handle(tick_instruction, pos);
++
++			if (synced) {
++				// What render() does with the gate (note-offs and ratchets) during this tick. When playing it runs per
++				// audio buffer, here it's run once with gatePos as it is just before the next tick (see kGateSubticks).
++				// mastertune: while a ratchet runs, its hits can come closer than a tick (mastertune's bouncing
++				// ratchets, rolls and balls), and render() starts at most one hit per call: then it's run at every
++				// subtick, as the audio buffers run it when playing, and each hit or note-off goes to the nearest tick.
++				bool fine = arpeggiator.isRatchetingNow();
++				if (fine) {
++					work += kGateSubticks - 1;
++				}
++				for (uint64_t sub = fine ? 0 : kGateSubticks - 1; sub < kGateSubticks; sub++) {
++					ArpReturnInstruction gate_instruction;
++					uint64_t gate_time = ((uint64_t)(pos - gate_start) * kGateSubticks) + sub;
++					arpeggiator.gatePos = (uint32_t)std::min<uint64_t>(
++					    (gate_time << 24) / (ticks_per_period * kGateSubticks), std::numeric_limits<uint32_t>::max());
++					// The arp's own phase increment (no samples: the gate stays as set), so that it knows how far a
++					// tick reaches, as when playing (a ratchet hit due just before its next step plays then)
++					arpeggiator.render(&settings, &gate_instruction, 0, gateThreshold, phaseIncrement);
++					int32_t at = (fine && 2 * sub >= kGateSubticks) ? std::min(pos + 1, renderLength - 1) : pos;
++					recorder.handle(gate_instruction, at);
++				}
++			}
++			else {
++				// Unsynced, render() plays the notes too, buffer by buffer
++				samples_to_render += samples_per_tick;
++				while (samples_to_render >= 1) {
++					int32_t num_samples = std::min((int32_t)samples_to_render, kMaxSamplesPerRender);
++					ArpReturnInstruction instruction;
++					arpeggiator.render(&settings, &instruction, num_samples, gateThreshold, phaseIncrement);
++					recorder.handle(instruction, pos);
++					samples_to_render -= (float)num_samples;
++				}
++			}
++
++			if (recorder.hasTooManyNotes()) {
++				return false;
++			}
++		}
++		return true;
++	};
++
++	if (settings.latch) {
++		Recorder discarded;
++		if (!pass(discarded)) {
++			return Result::TOO_MANY_NOTES;
++		}
++	}
++	Recorder recorder;
++	if (!pass(recorder)) {
++		return Result::TOO_MANY_NOTES;
++	}
++	recorder.endAll(renderLength);
++
++	frozenNotes = recorder.takeNotes();
++	return Result::OK;
++}
++
++/// Run the arpeggiator over the clip, as it runs when the clip plays from its start
++Result render(InstrumentClip* clip, deluge::vector<bool> const& rowsFeedingArp, int32_t renderLength,
++              deluge::vector<FrozenNote>& frozenNotes) {
++	deluge::vector<InputEvent> events;
++	if (!getInputEvents(clip, rowsFeedingArp, renderLength, events)) {
++		return Result::TOO_MANY_NOTES;
++	}
++
++	// A copy, so that rendering doesn't change the randomizer state of the clip. The parameters are taken as
++	// Sound::render(), Kit::setupAndRenderArpPreOutput() and NonAudioInstrument::renderOutput() take them.
++	ArpeggiatorSettings settings = clip->arpSettings;
++	uint32_t gate_threshold = 0;
++	int32_t rate = 0;
++	OutputType type = clip->output->type;
++	if (type == OutputType::SYNTH || type == OutputType::KIT) {
++		UnpatchedParamSet* unpatched_params = clip->paramManager.getUnpatchedParamSet();
++		settings.updateParamsFromUnpatchedParamSet(unpatched_params);
++		gate_threshold = (uint32_t)unpatched_params->getValue(params::UNPATCHED_ARP_GATE) + 2147483648;
++		if (type == OutputType::SYNTH) {
++			// The clip's own value, without modulation, as the patcher makes it with no patch cables
++			rate = getFinalParameterValueExp(
++			    paramNeutralValues[params::GLOBAL_ARP_RATE],
++			    cableToExpParamShortcut(clip->paramManager.getPatchedParamSet()->getValue(params::GLOBAL_ARP_RATE)));
++		}
++		else {
++			rate = getFinalParameterValueExp(
++			    paramNeutralValues[params::GLOBAL_ARP_RATE],
++			    cableToExpParamShortcut(unpatched_params->getValue(params::UNPATCHED_ARP_RATE)));
++			// Not supported by the kit arpeggiator
++			settings.chordPolyphony = 0;
++			settings.chordProbability = 0;
++			settings.spreadOctave = 0;
++		}
++	}
++	else {
++		gate_threshold = (uint32_t)settings.gate + 2147483648;
++		rate = getFinalParameterValueExp(paramNeutralValues[params::GLOBAL_ARP_RATE],
++		                                 cableToExpParamShortcut(settings.rate));
++	}
++	uint32_t phase_increment = settings.getPhaseIncrement(rate);
++
++	if (isKit(clip)) {
++		ArpeggiatorForKit arpeggiator;
++		return runArpeggiator(arpeggiator, settings, gate_threshold, phase_increment, clip, events, renderLength,
++		                      frozenNotes);
++	}
++	Arpeggiator arpeggiator;
++	return runArpeggiator(arpeggiator, settings, gate_threshold, phase_increment, clip, events, renderLength,
++	                      frozenNotes);
++}
++
++/// Make the clip play forwards at its new length, its rows which were frozen following it, and the other rows playing
++/// as before
++void unrollLayout(InstrumentClip* clip, deluge::vector<bool> const& rowsFrozen, int32_t newLoopLength) {
++	SequenceDirection old_direction = clip->sequenceDirectionMode;
++	for (int32_t r = 0; r < clip->noteRows.getNumElements(); r++) {
++		NoteRow* note_row = clip->noteRows.getElement(r);
++		if (rowsFrozen[r]) {
++			note_row->loopLengthIfIndependent = 0;
++			note_row->sequenceDirectionMode = SequenceDirection::OBEY_PARENT;
++			continue;
++		}
++		if (note_row->loopLengthIfIndependent == 0 && newLoopLength != clip->loopLength) {
++			note_row->loopLengthIfIndependent = clip->loopLength;
++		}
++		if (note_row->sequenceDirectionMode == SequenceDirection::OBEY_PARENT
++		    && old_direction != SequenceDirection::FORWARD) {
++			note_row->sequenceDirectionMode = old_direction;
++		}
++	}
++	clip->sequenceDirectionMode = SequenceDirection::FORWARD;
++	clip->currentlyPlayingReversed = false;
++
++	// Once the rows have their own lengths. Playback is resynced and resumed afterwards.
++	if (newLoopLength != clip->loopLength) {
++		setLoopLength(clip, newLoopLength);
++	}
++}
++
++/// Sort the frozen notes by row and position, and shorten them so that they don't overlap in their row or go past the
++/// end of the clip. Notes left with no length aren't written.
++void fitNotes(deluge::vector<FrozenNote>& frozenNotes, int32_t loopLength) {
++	std::ranges::sort(frozenNotes, [](FrozenNote const& a, FrozenNote const& b) {
++		// mastertune: at the same key and position (a ratchet hit rounded onto the next step's note) the shorter first,
++		// so that the longer note is the one kept, whatever the sort's order
++		return a.key != b.key ? a.key < b.key : a.pos != b.pos ? a.pos < b.pos : a.length < b.length;
++	});
++	for (size_t i = 0; i < frozenNotes.size(); i++) {
++		FrozenNote& note = frozenNotes[i];
++		note.length = std::min(note.length, loopLength - note.pos);
++		if (i + 1 < frozenNotes.size() && frozenNotes[i + 1].key == note.key) {
++			note.length = std::min(note.length, frozenNotes[i + 1].pos - note.pos);
++		}
++	}
++}
++
++/// Whether a muted row is in the way of a note the arpeggiator plays, for synth, MIDI and CV clips (e.g. an octave
++/// above a note, on a muted row). The note would be silent there.
++bool isMutedRowInTheWay(InstrumentClip* clip, deluge::vector<FrozenNote> const& frozenNotes) {
++	for (FrozenNote const& note : frozenNotes) {
++		if (note.length < 1) {
++			continue;
++		}
++		NoteRow* note_row = clip->getNoteRowForYNote(note.key);
++		if (note_row != nullptr && note_row->muted) {
++			return true;
++		}
++	}
++	return false;
++}
++
++/// The row the kit arpeggiator plays for a key, if there's one: as in Kit::doTickForwardForArp(), a key past the last
++/// row or on a row without a drum plays nothing.
++NoteRow* getKitRowPlayed(InstrumentClip* clip, int16_t key) {
++	if (key < 0 || key >= clip->noteRows.getNumElements()) {
++		return nullptr;
++	}
++	NoteRow* note_row = clip->noteRows.getElement(key);
++	return note_row->drum != nullptr ? note_row : nullptr;
++}
++
++/// Whether the kit arpeggiator plays a row which isn't frozen, as it doesn't go to the kit arpeggiator (e.g. reached
++/// through the octaves, or a muted row). Its notes there couldn't be written without changing the row.
++bool isUnfrozenKitRowPlayed(InstrumentClip* clip, deluge::vector<bool> const& rowsFrozen,
++                            deluge::vector<FrozenNote> const& frozenNotes) {
++	return std::ranges::any_of(frozenNotes, [&](FrozenNote const& note) {
++		return note.length >= 1 && getKitRowPlayed(clip, note.key) != nullptr && !rowsFrozen[note.key];
++	});
++}
++
++/// Whether the freeze changes the layout of the clip: its length or direction, or the length or direction of a row
++/// which is frozen
++bool changesLayout(InstrumentClip* clip, deluge::vector<bool> const& rowsFrozen, int32_t renderLength) {
++	if (renderLength != clip->loopLength || clip->sequenceDirectionMode != SequenceDirection::FORWARD) {
++		return true;
++	}
++	for (int32_t r = 0; r < clip->noteRows.getNumElements(); r++) {
++		NoteRow* note_row = clip->noteRows.getElement(r);
++		if (rowsFrozen[r]
++		    && (note_row->loopLengthIfIndependent != 0
++		        || note_row->sequenceDirectionMode != SequenceDirection::OBEY_PARENT)) {
++			return true;
++		}
++	}
++	return false;
++}
++
++/// Whether the clip, or a row which is frozen, has automation. It isn't written out when the layout changes.
++bool hasAutomation(InstrumentClip* clip, deluge::vector<bool> const& rowsFrozen) {
++	if (clip->paramManager.mightContainAutomation()) {
++		return true;
++	}
++	for (int32_t r = 0; r < clip->noteRows.getNumElements(); r++) {
++		if (rowsFrozen[r] && clip->noteRows.getElement(r)->paramManager.mightContainAutomation()) {
++			return true;
++		}
++	}
++	return false;
++}
++
++/// Clear the rows which are frozen by moving all their notes into the action, as NoteRow::clearArea() does with the
++/// notes it keeps. Returns false if it ran out of memory.
++bool clearFrozenRows(InstrumentClip* clip, deluge::vector<bool> const& rowsFrozen, Action* action) {
++	for (int32_t r = 0; r < clip->noteRows.getNumElements(); r++) {
++		if (!rowsFrozen[r]) {
++			continue;
++		}
++		NoteRow* note_row = clip->noteRows.getElement(r);
++		if (action->recordNoteArrayChangeDefinitely(clip, clip->getNoteRowId(note_row, r), &note_row->notes, true)
++		    != Error::NONE) {
++			return false;
++		}
++		clip->expectEvent();
++	}
++	return true;
++}
++
++/// Write the frozen notes (from fitNotes()), once the rows going through the arpeggiator are cleared. Returns false if
++/// it ran out of memory, with what it changed until then recorded in the action.
++bool writeNotes(InstrumentClip* clip, deluge::vector<FrozenNote> const& frozenNotes, Action* action) {
++	std::array<char, MODEL_STACK_MAX_SIZE> model_stack_memory{};
++	ModelStackWithTimelineCounter* model_stack =
++	    setupModelStackWithTimelineCounter(model_stack_memory.data(), currentSong, clip);
++
++	NoteRow* snapshotted_row = nullptr;
++	for (size_t i = 0; i < frozenNotes.size(); i++) {
++		// Many notes take a while, keep the audio going
++		if ((i & 1023) == 1023) {
++			AudioEngine::routineWithClusterLoading();
++		}
++
++		FrozenNote const& note = frozenNotes[i];
++		if (note.length < 1) {
++			continue;
++		}
++
++		ModelStackWithNoteRow* model_stack_with_note_row = nullptr;
++		NoteRow* note_row = nullptr;
++		if (isKit(clip)) {
++			// Only frozen rows are played (isUnfrozenKitRowPlayed()), or nothing
++			note_row = getKitRowPlayed(clip, note.key);
++			if (note_row == nullptr) {
++				continue;
++			}
++			model_stack_with_note_row = model_stack->addNoteRow(clip->getNoteRowId(note_row, note.key), note_row);
++		}
++		else {
++			model_stack_with_note_row = clip->getOrCreateNoteRowForYNote(note.key, model_stack, action, nullptr);
++			note_row = model_stack_with_note_row->getNoteRowAllowNull();
++			if (note_row == nullptr) {
++				return false;
++			}
++		}
++
++		// Each row is snapshotted for undo once (new rows too), rather than each note added. The notes are sorted by
++		// row, so this only needs doing when the row changes.
++		if (note_row != snapshotted_row) {
++			if (action->recordNoteArrayChangeIfNotAlreadySnapshotted(clip, model_stack_with_note_row->noteRowId,
++			                                                         &note_row->notes, true)
++			    != Error::NONE) {
++				return false;
++			}
++			snapshotted_row = note_row;
++		}
++
++		if (note_row->attemptNoteAdd(note.pos, note.length, std::clamp<int32_t>(note.velocity, 1, 127),
++		                             kNumProbabilityValues, kDefaultIteranceValue, FillMode::OFF,
++		                             model_stack_with_note_row, nullptr)
++		    == 0) {
++			return false; // The notes don't overlap, so it ran out of memory
++		}
++	}
++	return true;
++}
++
++/// Make the randomizer settings which still apply with the arpeggiator off (in Arpeggiator::noteOn()) have no effect,
++/// so that the frozen notes play as they were frozen. For synths and kits they're parameters of the clip, for MIDI and
++/// CV clips they're in its arp settings (recorded by ConsequenceArpSettingsChange). Returns false if it ran out of
++/// memory.
++bool resetRandomizer(InstrumentClip* clip, Action* action) {
++	clip->arpSettings.noteProbability = std::numeric_limits<uint32_t>::max();
++	clip->arpSettings.spreadVelocity = 0;
++	clip->arpSettings.reverseProbability = 0;
++	if (clip->output->type != OutputType::SYNTH && clip->output->type != OutputType::KIT) {
++		return true;
++	}
++
++	struct NeutralValue {
++		int32_t param;
++		int32_t value;
++	};
++	constexpr std::array<NeutralValue, 3> neutral_values{{
++	    {.param = params::UNPATCHED_NOTE_PROBABILITY, .value = std::numeric_limits<int32_t>::max()},
++	    {.param = params::UNPATCHED_SPREAD_VELOCITY, .value = std::numeric_limits<int32_t>::min()},
++	    {.param = params::UNPATCHED_REVERSE_PROBABILITY, .value = std::numeric_limits<int32_t>::min()},
++	}};
++	std::array<char, MODEL_STACK_MAX_SIZE> model_stack_memory{};
++	ModelStackWithThreeMainThings* model_stack = setupModelStackWithThreeMainThingsButNoNoteRow(
++	    model_stack_memory.data(), currentSong, clip->output->toModControllable(), clip, &clip->paramManager);
++	for (NeutralValue const& neutral : neutral_values) {
++		ModelStackWithAutoParam* model_stack_with_param = model_stack->getUnpatchedAutoParamFromId(neutral.param);
++		if (model_stack_with_param == nullptr || model_stack_with_param->autoParam == nullptr
++		    || model_stack_with_param->autoParam->getCurrentValue() == neutral.value) {
++			continue;
++		}
++		// Only the current value is set: automation, which isn't frozen either, stays as it is
++		void* consequence_memory = GeneralMemoryAllocator::get().allocLowSpeed(sizeof(ConsequenceParamChange));
++		if (consequence_memory == nullptr) {
++			return false;
++		}
++		// NOLINTNEXTLINE(cppcoreguidelines-owning-memory): the action owns and destroys its consequences
++		action->addConsequence(new (consequence_memory) ConsequenceParamChange(model_stack_with_param, false));
++		model_stack_with_param->autoParam->setCurrentValueWithNoReversionOrRecording(model_stack_with_param,
++		                                                                             neutral.value);
++	}
++	return true;
++}
++
++/// freeze() once recording was checked. Throws deluge::exception::BAD_ALLOC if a vector runs out of memory, which can
++/// only happen before anything is changed.
++Result freezeClip(InstrumentClip* clip) {
++	std::array<char, MODEL_STACK_MAX_SIZE> model_stack_memory{};
++	ModelStackWithTimelineCounter* model_stack =
++	    setupModelStackWithTimelineCounter(model_stack_memory.data(), currentSong, clip);
++	deluge::vector<bool> rows_feeding_arp(clip->noteRows.getNumElements());
++	for (int32_t r = 0; r < clip->noteRows.getNumElements(); r++) {
++		rows_feeding_arp[r] = rowFeedsArp(clip, r, model_stack);
++	}
++
++	// NOLINTNEXTLINE(cppcoreguidelines-init-variables): CI partial-parse false positive
++	int32_t render_length = getRenderLength(clip, rows_feeding_arp);
++	if (render_length < 0) {
++		return Result::TOO_LONG;
++	}
++	// Automation would have to be written out like the notes, which isn't done
++	if (changesLayout(clip, rows_feeding_arp, render_length) && hasAutomation(clip, rows_feeding_arp)) {
++		return Result::AUTOMATION;
++	}
++
++	deluge::vector<FrozenNote> frozen_notes;
++	// NOLINTNEXTLINE(cppcoreguidelines-init-variables): CI partial-parse false positive
++	Result result = render(clip, rows_feeding_arp, render_length, frozen_notes);
++	if (result != Result::OK) {
++		return result;
++	}
++	fitNotes(frozen_notes, render_length);
++	if (isKit(clip) ? isUnfrozenKitRowPlayed(clip, rows_feeding_arp, frozen_notes)
++	                : isMutedRowInTheWay(clip, frozen_notes)) {
++		return isKit(clip) ? Result::UNFROZEN_ROW : Result::MUTED_ROW;
++	}
++
++	// The consequences first, so that running out of memory leaves no action behind. The layout is snapshotted before
++	// anything changes.
++	void* layout_memory = GeneralMemoryAllocator::get().allocLowSpeed(sizeof(ConsequenceArpFreezeLayout));
++	if (layout_memory == nullptr) {
++		return Result::NO_MEMORY;
++	}
++	ConsequenceArpFreezeLayout* layout = nullptr;
++	try {
++		// NOLINTNEXTLINE(cppcoreguidelines-owning-memory): the action owns and destroys its consequences
++		layout = new (layout_memory) ConsequenceArpFreezeLayout(clip);
++	} catch (deluge::exception e) {
++		delugeDealloc(layout_memory);
++		throw;
++	}
++	void* settings_memory = GeneralMemoryAllocator::get().allocLowSpeed(sizeof(ConsequenceArpSettingsChange));
++	Action* action = nullptr;
++	if (settings_memory != nullptr) {
++		action = actionLogger.getNewAction(ActionType::MISC, ActionAddition::NOT_ALLOWED);
++	}
++	if (action == nullptr) {
++		layout->~ConsequenceArpFreezeLayout();
++		delugeDealloc(layout_memory);
++		if (settings_memory != nullptr) {
++			delugeDealloc(settings_memory);
++		}
++		return Result::NO_MEMORY;
++	}
++
++	// Undo reverts in reverse order: the notes come back before the layout, so that they aren't cut when the clip gets
++	// shorter, and the arpeggiator change is reverted last when redoing, so that it can start the frozen notes again
++	action->addConsequence(layout);
++	// NOLINTNEXTLINE(cppcoreguidelines-owning-memory): the action owns and destroys its consequences
++	auto* settings = new (settings_memory) ConsequenceArpSettingsChange(clip);
++	int64_t play_pos = getPlayPos(clip);
++
++	// The arpeggiator is switched off first, so that it can't start notes again while the clip changes
++	stopNotesForArpChange(clip);
++	clip->arpSettings.preset = ArpPreset::OFF;
++	clip->arpSettings.mode = ArpMode::OFF;
++	clip->arpSettings.flagForceArpRestart = true;
++
++	// The notes going to the arpeggiator mustn't sound without it, while writing many notes keeps the audio going: the
++	// rows are cleared first, and playback is only resumed once the frozen notes are written. Until then the clip is
++	// kept in place.
++	bool done = resetRandomizer(clip, action);
++	done = done && clearFrozenRows(clip, rows_feeding_arp, action);
++	if (done) {
++		unrollLayout(clip, rows_feeding_arp, render_length);
++		resyncPlayback(clip, play_pos, false);
++		done = writeNotes(clip, frozen_notes, action);
++	}
++	action->addConsequence(settings);
++	actionLogger.closeAction(ActionType::MISC);
++
++	if (!done) {
++		// Undo what was done, so that the clip is left as it was
++		if (actionLogger.firstAction[BEFORE] == action) {
++			actionLogger.revert(BEFORE, false, false);
++			actionLogger.deleteLog(AFTER);
++		}
++		return Result::NO_MEMORY;
++	}
++
++	resumePlayback(clip);
++	return Result::OK;
++}
++
++} // namespace
++
++bool isAvailable(Clip* clip) {
++	if (clip == nullptr || clip->type != ClipType::INSTRUMENT) {
++		return false;
++	}
++	return static_cast<InstrumentClip*>(clip)->arpSettings.mode != ArpMode::OFF;
++}
++
++Result freeze(InstrumentClip* clip) {
++	if (clip->getCurrentlyRecordingLinearly() || playbackHandler.isCurrentlyRecording()) {
++		return Result::RECORDING;
++	}
++	try {
++		return freezeClip(clip);
++	} catch (deluge::exception e) {
++		if (e != deluge::exception::BAD_ALLOC) {
++			throw;
++		}
++		return Result::NO_MEMORY;
++	}
++}
++
++void stopNotesForArpChange(InstrumentClip* clip) {
++	if (!clip->isActiveOnOutput()) {
++		return;
++	}
++	std::array<char, MODEL_STACK_MAX_SIZE> model_stack_memory{};
++	switch (clip->output->type) {
++	case OutputType::SYNTH: {
++		// Not playing the notes any more, so that resuming playback starts them again
++		clip->stopAllNotesPlaying(setupModelStackWithTimelineCounter(model_stack_memory.data(), currentSong, clip));
++		auto* sound = static_cast<SoundInstrument*>(clip->output);
++		ModelStackWithSoundFlags* model_stack =
++		    setupModelStackWithThreeMainThingsButNoNoteRow(model_stack_memory.data(), currentSong, sound, clip,
++		                                                   &clip->paramManager)
++		        ->addSoundFlags();
++		sound->allNotesOff(model_stack, sound->getArp());
++		sound->reassessRenderSkippingStatus(model_stack);
++		break;
++	}
++	case OutputType::KIT:
++		clip->stopAllNotesPlaying(setupModelStackWithTimelineCounter(model_stack_memory.data(), currentSong, clip));
++		clip->output->cutAllSound();
++		break;
++	default:
++		clip->stopAllNotesForMIDIOrCV(setupModelStackWithTimelineCounter(model_stack_memory.data(), currentSong, clip));
++		break;
++	}
++}
++
++void setLoopLength(InstrumentClip* clip, int32_t loopLength) {
++	currentSong->setClipLength(clip, loopLength, nullptr, false, false);
++	// What PlaybackMode::reSyncClip() would do for the clip the external clock is scaled to (which, as for any change
++	// to that clip's length, resyncs all clips). Otherwise all that's left to do is set the position of the clip,
++	// which resyncPlayback() does.
++	if (playbackHandler.isExternalClockActive() && clip == currentSong->getSyncScalingClip()) {
++		playbackHandler.resyncInternalTicksToInputTicks(currentSong);
++	}
++}
++
++int64_t getPlayPos(InstrumentClip* clip) {
++	int32_t pos = clip->lastProcessedPos;
++	// Playing backwards counts down from the end, which is at position 0
++	if (clip->currentlyPlayingReversed && pos != 0) {
++		pos = clip->loopLength - pos;
++	}
++	return ((int64_t)clip->repeatCount * clip->loopLength) + pos;
++}
++
++void resyncPlayback(InstrumentClip* clip, int64_t playPos, bool resume) {
++	if (!playbackHandler.isEitherClockActive() || !currentSong->isClipActive(clip)) {
++		return;
++	}
++	std::array<char, MODEL_STACK_MAX_SIZE> model_stack_memory{};
++	ModelStackWithTimelineCounter* model_stack =
++	    setupModelStackWithTimelineCounter(model_stack_memory.data(), currentSong, clip);
++	// The notes playing were from the old layout
++	clip->stopAllNotesPlaying(model_stack);
++	// Not PlaybackMode::reSyncClip(), which would cancel the clip being armed to launch or stop: its position is set
++	// below. (setLoopLength() did what it does for the clip the external clock is scaled to.)
++
++	// The clip, and each row with its own length or direction, carries on from the same place as before. This keeps
++	// the rows which weren't frozen in time with the clip, and an unrolled clip in the pass it was playing.
++	if (playPos > std::numeric_limits<int32_t>::max()) {
++		playPos %= clip->loopLength;
++	}
++	clip->setPos(model_stack, (int32_t)std::max(playPos, -(int64_t)clip->loopLength));
++	if (resume) {
++		clip->resumePlayback(model_stack);
++	}
++}
++
++void resumePlayback(InstrumentClip* clip) {
++	if (!playbackHandler.isEitherClockActive() || !currentSong->isClipActive(clip)) {
++		return;
++	}
++	std::array<char, MODEL_STACK_MAX_SIZE> model_stack_memory{};
++	clip->resumePlayback(setupModelStackWithTimelineCounter(model_stack_memory.data(), currentSong, clip));
++}
++
++} // namespace arp_freeze
+diff --git a/src/deluge/model/clip/arp_freeze.h b/src/deluge/model/clip/arp_freeze.h
+new file mode 100644
+index 000000000..6e7a24b1d
+--- /dev/null
++++ b/src/deluge/model/clip/arp_freeze.h
+@@ -0,0 +1,67 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include <cstdint>
++
++class Clip;
++class InstrumentClip;
++
++/// Freezing the arpeggiator of a clip replaces the notes going through the arpeggiator with the notes it plays from
++/// them, and switches the arpeggiator off. It's one undoable action.
++///
++/// The arpeggiator is run over the clip as it plays from its start. If the clip doesn't simply play forwards at its
++/// length, it's written out: a reversed clip as it sounds, a ping-pong clip forwards then backwards, and rows with
++/// their own length or direction until everything lines up again. The frozen clip then plays forwards at that length.
++namespace arp_freeze {
++
++enum class Result {
++	OK,
++	RECORDING,
++	TOO_LONG, // The rows would only line up again after too long
++	TOO_MANY_NOTES,
++	MUTED_ROW,    // A muted row is in the way of notes the arpeggiator plays
++	UNFROZEN_ROW, // The kit arpeggiator plays a row which doesn't go to it, so it can't be frozen
++	AUTOMATION,   // The layout would change, which automation can't follow
++	NO_MEMORY,
++};
++
++/// Whether the clip has an arpeggiator which could be frozen: a synth, kit, MIDI or CV clip with the arpeggiator on
++bool isAvailable(Clip* clip);
++
++Result freeze(InstrumentClip* clip);
++
++/// Stop the notes of a clip which is about to have its arpeggiator switched on or off. For synth, MIDI and CV clips it
++/// does the same as arpeggiator::PresetMode::writeCurrentValue(); for kits it stops all the kit's notes.
++void stopNotesForArpChange(InstrumentClip* clip);
++
++/// Change the length of the clip as Song::setClipLength() does, leaving it to resyncPlayback() to carry on playing
++void setLoopLength(InstrumentClip* clip, int32_t loopLength);
++
++/// How far the clip has played since it started (negative before it starts). Unlike its play position, this keeps the
++/// place of the clip and its rows when their lengths or directions change.
++int64_t getPlayPos(InstrumentClip* clip);
++
++/// Let the clip carry on playing from playPos (from getPlayPos()) after its layout was changed. Without resume, the
++/// clip is put in place but left silent, for resumePlayback() to start its notes later.
++void resyncPlayback(InstrumentClip* clip, int64_t playPos, bool resume = true);
++
++/// Start the notes the clip is in the middle of, after its notes or its arpeggiator changed
++void resumePlayback(InstrumentClip* clip);
++
++} // namespace arp_freeze
+diff --git a/src/deluge/model/consequence/consequence_arp_freeze_layout.cpp b/src/deluge/model/consequence/consequence_arp_freeze_layout.cpp
+new file mode 100644
+index 000000000..a8ae7847d
+--- /dev/null
++++ b/src/deluge/model/consequence/consequence_arp_freeze_layout.cpp
+@@ -0,0 +1,63 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "model/consequence/consequence_arp_freeze_layout.h"
++#include "model/clip/arp_freeze.h"
++#include "model/clip/instrument_clip.h"
++#include "model/model_stack.h"
++#include "model/note/note_row.h"
++#include "model/song/song.h"
++#include <utility>
++
++ConsequenceArpFreezeLayout::ConsequenceArpFreezeLayout(InstrumentClip* newClip)
++    : clip(newClip), loopLength(newClip->loopLength), sequenceDirectionMode(newClip->sequenceDirectionMode) {
++	rows.reserve(clip->noteRows.getNumElements());
++	for (int32_t r = 0; r < clip->noteRows.getNumElements(); r++) {
++		NoteRow* note_row = clip->noteRows.getElement(r);
++		rows.push_back(
++		    {clip->getNoteRowId(note_row, r), note_row->loopLengthIfIndependent, note_row->sequenceDirectionMode});
++	}
++}
++
++Error ConsequenceArpFreezeLayout::revert(TimeType /*time*/, ModelStack* /*modelStack*/) {
++	int64_t play_pos = arp_freeze::getPlayPos(clip);
++
++	std::swap(sequenceDirectionMode, clip->sequenceDirectionMode);
++	clip->currentlyPlayingReversed = (clip->sequenceDirectionMode == SequenceDirection::REVERSE);
++
++	for (RowLayout& row : rows) {
++		NoteRow* note_row = clip->getNoteRowFromId(row.noteRowId);
++		if (note_row == nullptr) {
++			continue;
++		}
++		std::swap(row.loopLengthIfIndependent, note_row->loopLengthIfIndependent);
++		std::swap(row.sequenceDirectionMode, note_row->sequenceDirectionMode);
++		note_row->currentlyPlayingReversedIfIndependent =
++		    (note_row->sequenceDirectionMode == SequenceDirection::REVERSE);
++	}
++
++	// After the rows got their own lengths back, so that their notes aren't cut when the clip gets shorter
++	if (loopLength != clip->loopLength) {
++		int32_t current_loop_length = clip->loopLength;
++		arp_freeze::setLoopLength(clip, loopLength);
++		loopLength = current_loop_length;
++	}
++
++	// Resumes playback, which setLoopLength() left to it
++	arp_freeze::resyncPlayback(clip, play_pos);
++	return Error::NONE;
++}
+diff --git a/src/deluge/model/consequence/consequence_arp_freeze_layout.h b/src/deluge/model/consequence/consequence_arp_freeze_layout.h
+new file mode 100644
+index 000000000..0a68ad442
+--- /dev/null
++++ b/src/deluge/model/consequence/consequence_arp_freeze_layout.h
+@@ -0,0 +1,42 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include "definitions_cxx.hpp"
++#include "model/consequence/consequence.h"
++#include "util/containers.h"
++
++/// The length and play direction of a clip and the lengths and directions of its rows, as an arp freeze changes them.
++/// Construct it before the change: reverting swaps the stored layout with the current one, so the same consequence does
++/// the undo and the redo. It keeps the clip playing from the same place.
++class ConsequenceArpFreezeLayout final : public Consequence {
++public:
++	ConsequenceArpFreezeLayout(InstrumentClip* newClip);
++	Error revert(TimeType time, ModelStack* modelStack) override;
++
++	struct RowLayout {
++		int32_t noteRowId;
++		int32_t loopLengthIfIndependent;
++		SequenceDirection sequenceDirectionMode;
++	};
++
++	InstrumentClip* clip;
++	int32_t loopLength;
++	SequenceDirection sequenceDirectionMode;
++	deluge::vector<RowLayout> rows;
++};
+diff --git a/src/deluge/model/consequence/consequence_arp_settings_change.cpp b/src/deluge/model/consequence/consequence_arp_settings_change.cpp
+new file mode 100644
+index 000000000..8b57d5469
+--- /dev/null
++++ b/src/deluge/model/consequence/consequence_arp_settings_change.cpp
+@@ -0,0 +1,43 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "model/consequence/consequence_arp_settings_change.h"
++#include "model/clip/arp_freeze.h"
++#include "model/clip/instrument_clip.h"
++#include <utility>
++
++ConsequenceArpSettingsChange::ConsequenceArpSettingsChange(InstrumentClip* newClip)
++    : clip(newClip), preset(newClip->arpSettings.preset), mode(newClip->arpSettings.mode),
++      noteProbability(newClip->arpSettings.noteProbability), spreadVelocity(newClip->arpSettings.spreadVelocity),
++      reverseProbability(newClip->arpSettings.reverseProbability) {
++}
++
++Error ConsequenceArpSettingsChange::revert(TimeType /*time*/, ModelStack* /*modelStack*/) {
++	arp_freeze::stopNotesForArpChange(clip);
++
++	std::swap(preset, clip->arpSettings.preset);
++	std::swap(mode, clip->arpSettings.mode);
++	std::swap(noteProbability, clip->arpSettings.noteProbability);
++	std::swap(spreadVelocity, clip->arpSettings.spreadVelocity);
++	std::swap(reverseProbability, clip->arpSettings.reverseProbability);
++	clip->arpSettings.flagForceArpRestart = true;
++
++	// This is reverted last when redoing, after the frozen notes are back
++	arp_freeze::resumePlayback(clip);
++
++	return Error::NONE;
++}
+diff --git a/src/deluge/model/consequence/consequence_arp_settings_change.h b/src/deluge/model/consequence/consequence_arp_settings_change.h
+new file mode 100644
+index 000000000..360093c82
+--- /dev/null
++++ b/src/deluge/model/consequence/consequence_arp_settings_change.h
+@@ -0,0 +1,37 @@
++/*
++ * Copyright © 2026 Synthstrom Audible Limited
++ *
++ * This file is part of The Synthstrom Audible Deluge Firmware.
++ *
++ * The Synthstrom Audible Deluge Firmware is free software: you can redistribute it and/or modify it under the
++ * terms of the GNU General Public License as published by the Free Software Foundation,
++ * either version 3 of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program.
++ * If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#pragma once
++
++#include "model/consequence/consequence.h"
++#include "modulation/arpeggiator.h"
++
++/// Switching the arpeggiator of a clip on or off, with the randomizer settings which still apply when it's off (for
++/// MIDI and CV clips, which keep them in their arp settings). Construct it before the change: reverting swaps the
++/// stored state with the current one, so the same consequence does the undo and the redo.
++class ConsequenceArpSettingsChange final : public Consequence {
++public:
++	ConsequenceArpSettingsChange(InstrumentClip* newClip);
++	Error revert(TimeType time, ModelStack* modelStack) override;
++
++	InstrumentClip* clip;
++	ArpPreset preset;
++	ArpMode mode;
++	uint32_t noteProbability;
++	uint32_t spreadVelocity;
++	uint32_t reverseProbability;
++};
+diff --git a/src/deluge/model/settings/runtime_feature_settings.cpp b/src/deluge/model/settings/runtime_feature_settings.cpp
+index 823af25f6..2024e20bb 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.cpp
++++ b/src/deluge/model/settings/runtime_feature_settings.cpp
+@@ -207,6 +207,10 @@ void RuntimeFeatureSettings::init() {
+ 	SetupOnOffSetting(settings[RuntimeFeatureSettingType::RoundedCorners], STRING_FOR_COMMUNITY_FEATURE_ROUNDED_CORNERS,
+ 	                  "roundedCorners", RuntimeFeatureStateToggle::On);
+ 
++	// Arp Freeze
++	SetupOnOffSetting(settings[RuntimeFeatureSettingType::ArpFreeze], STRING_FOR_COMMUNITY_FEATURE_ARP_FREEZE,
++	                  "arpFreeze", RuntimeFeatureStateToggle::On);
++
+ 	// Shortcut Overlay
+ 	auto& overlay = settings[RuntimeFeatureSettingType::ShortcutOverlay];
+ 	overlay.displayName = STRING_FOR_COMMUNITY_FEATURE_SHORTCUT_OVERLAY;
+diff --git a/src/deluge/model/settings/runtime_feature_settings.h b/src/deluge/model/settings/runtime_feature_settings.h
+index df13771fc..f7526230d 100644
+--- a/src/deluge/model/settings/runtime_feature_settings.h
++++ b/src/deluge/model/settings/runtime_feature_settings.h
+@@ -72,6 +72,7 @@ enum RuntimeFeatureSettingType : uint32_t {
+ 	RoundedCorners,
+ 	ShortcutOverlay,
+ 	UsbAudio, // mastertune: the Deluge's output as a USB audio input on the computer
++	ArpFreeze, // NOLINT(readability-identifier-naming): named like the other settings
+ 	MaxElement // Keep as boundary
+ };
+ 
+diff --git a/src/deluge/model/song/song.cpp b/src/deluge/model/song/song.cpp
+index 477bbd257..d2781262e 100644
+--- a/src/deluge/model/song/song.cpp
++++ b/src/deluge/model/song/song.cpp
+@@ -971,7 +971,8 @@ void Song::loadNextSong() {
+ 
+ // If action is NULL, that means this is being called as part of an undo, so don't do any extra stuff.
+ // Currently mayReSyncClip is only set to false in a call that happens when we've just finished recording that Clip.
+-void Song::setClipLength(Clip* clip, uint32_t newLength, Action* action, bool mayReSyncClip) {
++// With mayResumeClip false, the caller resumes playback of the Clip itself.
++void Song::setClipLength(Clip* clip, uint32_t newLength, Action* action, bool mayReSyncClip, bool mayResumeClip) {
+ 	uint32_t oldLength = clip->loopLength;
+ 
+ 	if (clip == syncScalingClip) {
+@@ -1010,7 +1011,9 @@ void Song::setClipLength(Clip* clip, uint32_t newLength, Action* action, bool ma
+ 			playbackHandler.expectEvent(); // Is this maybe redundant now that Arranger has a reSyncClip()?
+ 		}
+ 
+-		clip->resumePlayback(modelStack);
++		if (mayResumeClip) {
++			clip->resumePlayback(modelStack);
++		}
+ 	}
+ }
+ 
+diff --git a/src/deluge/model/song/song.h b/src/deluge/model/song/song.h
+index 3faf6358e..218c79791 100644
+--- a/src/deluge/model/song/song.h
++++ b/src/deluge/model/song/song.h
+@@ -272,7 +272,8 @@ public:
+ 	inline bool isFillModeActive() { return fillModeActive; }
+ 	void changeFillMode(bool on);
+ 	void loadNextSong();
+-	void setClipLength(Clip* clip, uint32_t newLength, Action* action, bool mayReSyncClip = true);
++	void setClipLength(Clip* clip, uint32_t newLength, Action* action, bool mayReSyncClip = true,
++	                   bool mayResumeClip = true);
+ 	void doubleClipLength(InstrumentClip* clip, Action* action = nullptr);
+ 	Clip* getClipWithOutput(Output* output, bool mustBeActive = false, Clip* excludeClip = nullptr);
+ 	Error readFromFile(Deserializer& reader);
+diff --git a/src/deluge/modulation/arpeggiator.cpp b/src/deluge/modulation/arpeggiator.cpp
+index adb338ccc..0e098dd73 100644
+--- a/src/deluge/modulation/arpeggiator.cpp
++++ b/src/deluge/modulation/arpeggiator.cpp
+@@ -194,7 +194,7 @@ void ArpeggiatorForDrum::noteOn(ArpeggiatorSettings* settings, int32_t noteCode,
+ 			playedFirstArpeggiatedNoteYet = false;
+ 			gateCurrentlyActive = false;
+ 
+-			if (!(playbackHandler.isEitherClockActive()) || !settings->syncLevel) {
++			if (!isClockActive() || !settings->syncLevel) {
+ 				switchNoteOn(settings, instruction, false);
+ 			}
+ 		}
+@@ -377,7 +377,7 @@ void Arpeggiator::noteOn(ArpeggiatorSettings* settings, int32_t noteCode, int32_
+ 			playedFirstArpeggiatedNoteYet = false;
+ 			gateCurrentlyActive = false;
+ 
+-			if (!(playbackHandler.isEitherClockActive()) || !settings->syncLevel) {
++			if (!isClockActive() || !settings->syncLevel) {
+ 				switchNoteOn(settings, instruction, false);
+ 			}
+ 		}
+@@ -515,7 +515,7 @@ void Arpeggiator::noteOff(ArpeggiatorSettings* settings, int32_t noteCodePreArp,
+ 				}
+ 			}
+ 
+-			if (isRatcheting && (ratchetNotesIndex >= ratchetNotesCount || !playbackHandler.isEitherClockActive())) {
++			if (isRatcheting && (ratchetNotesIndex >= ratchetNotesCount || !isClockActive())) {
+ 				// If it was ratcheting but it reached the last note in the ratchet or play was stopped
+ 				// then we can reset the ratchet temp values in advance
+ 				resetRatchet();
+@@ -616,6 +616,10 @@ bool Arpeggiator::hasPendingNotes(ArpeggiatorSettings* settings) {
+ 	return false;
+ }
+ 
++bool ArpeggiatorBase::isClockActive() const {
++	return simulate_clock_ || playbackHandler.isEitherClockActive();
++}
++
+ void ArpeggiatorBase::switchAnyNoteOff(ArpReturnInstruction* instruction) {
+ 	if (gateCurrentlyActive) {
+ 		// Schedule any glided note to be turned off
+@@ -1883,7 +1887,7 @@ void ArpeggiatorBase::render(ArpeggiatorSettings* settings, ArpReturnInstruction
+ 	}
+ 
+ 	uint32_t maxGate = 1 << 24;
+-	bool syncedNow = (settings->syncLevel && (playbackHandler.isEitherClockActive()));
++	bool syncedNow = (settings->syncLevel && isClockActive());
+ 
+ 	// A ratchet lasting several steps goes on into its next step here when not synced (synced, the clock's tick does
+ 	// it)
+@@ -1982,14 +1986,7 @@ int32_t ArpeggiatorBase::doTickForward(ArpeggiatorSettings* settings, ArpReturnI
+ 	if (settings->mode == ArpMode::OFF || (settings->syncLevel == 0u)) {
+ 		return 2147483647;
+ 	}
+-	uint32_t ticksPerPeriod = 3 << (9 - settings->syncLevel);
+-	if (settings->syncType == SYNC_TYPE_EVEN) {} // Do nothing
+-	else if (settings->syncType == SYNC_TYPE_TRIPLET) {
+-		ticksPerPeriod = ticksPerPeriod * 2 / 3;
+-	}
+-	else if (settings->syncType == SYNC_TYPE_DOTTED) {
+-		ticksPerPeriod = ticksPerPeriod * 3 / 2;
+-	}
++	uint32_t ticksPerPeriod = settings->getTicksPerPeriod();
+ 
+ 	int32_t howFarIntoPeriod = clipCurrentPos % ticksPerPeriod;
+ 
+@@ -2036,6 +2033,17 @@ int32_t ArpeggiatorBase::doTickForward(ArpeggiatorSettings* settings, ArpReturnI
+ 	                         // what its name says.
+ }
+ 
++uint32_t ArpeggiatorSettings::getTicksPerPeriod() const {
++	uint32_t ticksPerPeriod = 3 << (9 - syncLevel);
++	if (syncType == SYNC_TYPE_TRIPLET) {
++		ticksPerPeriod = ticksPerPeriod * 2 / 3;
++	}
++	else if (syncType == SYNC_TYPE_DOTTED) {
++		ticksPerPeriod = ticksPerPeriod * 3 / 2;
++	}
++	return ticksPerPeriod;
++}
++
+ uint32_t ArpeggiatorSettings::getPhaseIncrement(int32_t arpRate) {
+ 	uint32_t phaseIncrement;
+ 	if (syncLevel == 0) {
+diff --git a/src/deluge/modulation/arpeggiator.h b/src/deluge/modulation/arpeggiator.h
+index 8587943ca..6e78785d9 100644
+--- a/src/deluge/modulation/arpeggiator.h
++++ b/src/deluge/modulation/arpeggiator.h
+@@ -98,6 +98,9 @@ public:
+ 
+ 	uint32_t getPhaseIncrement(int32_t arpRate);
+ 
++	/// Length in ticks of one arp step when the arp is synced
++	[[nodiscard]] uint32_t getTicksPerPeriod() const;
++
+ 	// Main settings
+ 	ArpPreset preset{ArpPreset::OFF};
+ 	ArpMode mode{ArpMode::OFF};
+@@ -303,8 +306,14 @@ public:
+ 	std::array<int16_t, ARP_MAX_INSTRUCTION_NOTES> glideNoteCodeCurrentlyOnPostArp;
+ 	std::array<uint8_t, ARP_MAX_INSTRUCTION_NOTES> outputMIDIChannelForGlideNoteCurrentlyOnPostArp;
+ 	uint32_t gatePos = 0;
++	/// mastertune: whether a step's ratchet is running (arp freeze renders its hits more finely)
++	[[nodiscard]] bool isRatchetingNow() const { return isRatcheting; }
+ 	uint8_t lastVelocity = 0;
+ 
++	/// Set when the arp is run outside of playback (to freeze its notes into a clip), so that it behaves as if the
++	/// clock was running
++	void setSimulateClock(bool simulate) { simulate_clock_ = simulate; }
++
+ protected:
+ 	void calculateNextNoteAndOrOctave(ArpeggiatorSettings* settings, uint8_t numActiveNotes);
+ 	void setInitialNoteAndOctave(ArpeggiatorSettings* settings, uint8_t numActiveNotes);
+@@ -338,6 +347,7 @@ protected:
+ 	bool getRandomProbabilityResult(uint32_t value);
+ 	int8_t getRandomBipolarProbabilityAmount(uint32_t value);
+ 	int8_t getRandomWeighted2BitsAmount(uint32_t value);
++	[[nodiscard]] bool isClockActive() const;
+ 
+ 	bool gateCurrentlyActive = false;
+ 
+@@ -430,6 +440,9 @@ protected:
+ 	int32_t spreadGateForCurrentStep = 0;
+ 	int32_t spreadOctaveForCurrentStep = 0;
+ 	bool resetLockedRandomizerValuesNextTime = false;
++
++private:
++	bool simulate_clock_ = false;
+ };
+ 
+ class ArpeggiatorForDrum : public ArpeggiatorBase {
+-- 
+2.43.0
+

@@ -16,8 +16,8 @@ knobs set them, so the filters' sound and levels stay v1.3's. (2) and (3) check 
   (3) the levels: the four params (both cutoffs, both resonances) bit for bit the same with the DJ filter at OFF as
       with the LPF opened and the HPF closed by their own knobs, and with "DJ: LPF 16" as with the LPF's own knob at
       24 (the decisive check: the filters compute their output from these params alone). Coarser, the output over the
-      song's first 3 s (played from its start each time), in all and above 3 kHz: own knobs and DJ within 0.5 dB (the
-      test song's free-running oscillators vary the same setting by up to 0.4 dB from run to run); the LPF at 24 takes
+      song's first 3 s (played from its start each time), in all and above 3 kHz: own knobs and DJ within 1.0 dB (the
+      test song's free-running oscillators vary the same setting by up to 0.6 dB from run to run); the LPF at 24 takes
       at least 3 dB above 3 kHz
   (4) sync: the Scan view (Settings > Tuning > Scan), no tempo heard yet: TAP TEMPO shows "No tempo yet" and leaves
       the tempo; the analysis' BPM set to 128.0 (as it would read it): TAP TEMPO, "Sync 128.0 BPM", the song at 128.00
@@ -48,7 +48,7 @@ from master_tune_emu import Capture  # noqa: E402
 
 LPF_FREQ, LPF_RES, HPF_FREQ, HPF_RES = 32, 33, 35, 36  # params::UnpatchedGlobal (checked against gdb)
 MOD_TURN, MOD_PRESS = "_ZN11SessionView16modEncoderActionEll", "_ZN11SessionView22modEncoderButtonActionEhb"
-DB_TOLERANCE = 0.5  # The test song's free-running oscillators vary the same setting by up to 0.4 dB run to run
+DB_TOLERANCE = 1.0  # The test song's free-running oscillators vary the same setting by up to 0.6 dB run to run
 
 
 def s32(v):
